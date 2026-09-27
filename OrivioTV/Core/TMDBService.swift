@@ -1024,12 +1024,35 @@ enum TMDBService {
         let logoURL: String
     }
 
+    /// Season and episode counts of a series, for compact meta lines.
+    struct ShowSize: Hashable {
+        let seasons: Int
+        let episodes: Int
+    }
+
+    /// Season/episode counts from TMDB. Nil without a key, for movies, or
+    /// when TMDB doesn't know the show. Best-effort, one light request.
+    static func showSize(imdbID: String, type: String) async -> ShowSize? {
+        guard hasAPIKey,
+              let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type),
+              !isMovie else { return nil }
+        struct Body: Decodable {
+            let number_of_seasons: Int?
+            let number_of_episodes: Int?
+        }
+        guard let body: Body = try? await get("/tv/\(tmdbID)") else { return nil }
+        return ShowSize(seasons: body.number_of_seasons ?? 0,
+                        episodes: body.number_of_episodes ?? 0)
+    }
+    
     /// Per-episode extras (rating, air date, better still) keyed by episode
     /// number, resolved from a TMDB season.
     struct EpisodeExtra: Hashable {
         let rating: Double?
         let airDate: String?
         let still: String?
+        /// Episode length in minutes, when TMDB has it.
+        var runtime: Int? = nil
     }
 
     /// A YouTube trailer/teaser. `youtubeKey` feeds the stream extractor.
@@ -1340,6 +1363,7 @@ enum TMDBService {
                 let vote_average: Double?
                 let air_date: String?
                 let still_path: String?
+                let runtime: Int?
             }
             let episodes: [Episode]?
         }
@@ -1352,7 +1376,8 @@ enum TMDBService {
             map[n] = EpisodeExtra(
                 rating: (ep.vote_average ?? 0) > 0 ? ep.vote_average : nil,
                 airDate: ep.air_date,
-                still: imageURL(ep.still_path, size: "w300")
+                still: imageURL(ep.still_path, size: "w300"),
+                runtime: ep.runtime
             )
         }
         storeSeasonEpisodes(map, for: cacheKey)

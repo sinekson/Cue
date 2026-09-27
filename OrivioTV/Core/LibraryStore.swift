@@ -97,7 +97,11 @@ struct SavedLibraryItem: Codable, Identifiable, Hashable {
 
 @MainActor
 final class LibraryStore: ObservableObject {
-    @Published private(set) var items: [String: SavedLibraryItem] = [:]
+    @Published private(set) var items: [String: SavedLibraryItem] = [:] {
+        // Keep the Top Shelf's Library section in step with every change
+        // (adds, removes, sync pulls, profile switches).
+        didSet { TopShelfExporter.exportLibrary(sorted) }
+    }
 
     /// Called after a local change so account sync can push. Suppressed while
     /// merging remote data.

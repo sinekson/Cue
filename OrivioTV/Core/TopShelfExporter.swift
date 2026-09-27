@@ -1,9 +1,15 @@
 import Foundation
+import TVServices
+import UIKit
+import CryptoKit
 
-/// Writes the Continue Watching list into the shared app-group container so
-/// the Top Shelf extension can render it on the tvOS home screen. Called from
-/// ProgressStore whenever progress persists — the snapshot is tiny (≤10
-/// entries) and written off-main alongside the progress save itself.
+/// Writes the Continue Watching list AND the Library (watchlist) into the
+/// shared app-group container so the Top Shelf extension can render them on
+/// the tvOS home screen — Continue Watching as landscape cards, the Library
+/// as portrait posters beside it (the Crunchyroll layout). Continue Watching
+/// is exported by ProgressStore whenever progress persists; the Library by
+/// LibraryStore whenever it changes. Both snapshots are tiny and written
+/// off-main.
 ///
 /// Sideload caveat: if the signing tool strips the app-group entitlement,
 /// `containerURL` is nil and this is a silent no-op — the app works, the
@@ -21,6 +27,20 @@ enum TopShelfExporter {
         /// Optional so a snapshot written by an older build still decodes; it
         /// reads back as nil and the card simply has no bar.
         var progress: Double? = nil
+        /// What the shelf shows under the card: the EPISODE title for a
+        /// series (falling back to "S1:E3" when it has none). Nil for movies
+        /// and library items, which show `title`. Optional so older
+        /// snapshots still decode.
+        var caption: String? = nil
+        /// Raw art for the card renderer (see TopShelfCardRenderer): the
+        /// show/movie BACKDROP for the landscape card, the POSTER for the
+        /// portrait ones. Optional so older snapshots still decode.
+        var backdropURL: String? = nil
+        var posterURL: String? = nil
+        /// Episode coordinates, so the renderer can fetch the episode's TMDB
+        /// still in full resolution (see `EpisodeStill`).
+        var season: Int? = nil
+        var episode: Int? = nil
     }
 
     /// Build the export entries on the caller's (main) side — cheap — so the
@@ -28,9 +48,14 @@ enum TopShelfExporter {
     static func entries(from progresses: [WatchProgress]) -> [Entry] {
         progresses.prefix(10).map { p in
             var subtitle: String?
+            var caption: String?
             if let s = p.season, let e = p.episode {
                 subtitle = "S\(s):E\(e)"
-                if let t = p.episodeTitle, !t.isEmpty { subtitle! += " · \(t)" }
+                caption = subtitle
+                if let t = p.episodeTitle, !t.isEmpty {
+                    subtitle! += " · \(t)"
+                    caption = t
+                }
             }
             return Entry(
                 id: p.metaID,
@@ -44,8 +69,49 @@ enum TopShelfExporter {
                 // zero duration; clamp anyway because playbackProgress is
                 // documented as 0...1 and a row restored from another device
                 // can carry a position past its duration.
-                progress: min(max(p.fraction, 0), 1)
+                progress: min(max(p.fraction, 0), 1),
+                caption: caption,
+                // Wide card fallback when there's no TMDB episode still (the
+                // renderer tries that first): the show/movie backdrop at full
+                // resolution, then whatever still the add-on supplied.
+                backdropURL: sharper(p.background, size: "original")
+                    ?? sharper(p.episodeThumbnail ?? p.poster, size: "original"),
+                posterURL: sharper(p.poster ?? p.background, size: "w780"),
+                season: p.season,
+                episode: p.episode
             )
+        }
+    }
+
+    /// The stored art URLs are often TMDB's small renditions (w300/w500),
+    /// which is what made the shelf cards look soft. TMDB serves every size
+    /// from the same path, so ask for a bigger one. Other hosts: unchanged.
+    /// `size` must be one TMDB offers for that kind of image: posters go up
+    /// to w780, stills and backdrops use "original" (stills have no w1280).
+    static func sharper(_ url: String?, size: String) -> String? {
+        guard let url, url.contains("image.tmdb.org") else { return url }
+        return url.replacingOccurrences(of: "/t/p/(w[0-9]+|original)/", with: "/t/p/\(size)/",
+                                        options: .regularExpression)
+    }
+
+    /// Library → Top Shelf entries, newest first (the Library grid's order).
+    /// Portrait art: the poster, with the backdrop as a last resort.
+    static func libraryEntries(from items: [SavedLibraryItem]) -> [Entry] {
+        items.prefix(15).map { item in
+            Entry(id: item.id, type: item.type, title: item.name,
+                  subtitle: nil, imageURL: item.poster ?? item.background)
+        }
+    }
+
+    @MainActor private static var librarySequence: UInt64 = 0
+
+    /// Export the Library. Called by LibraryStore on every change.
+    @MainActor static func exportLibrary(_ items: [SavedLibraryItem]) {
+        let entries = libraryEntries(from: items)
+        librarySequence += 1
+        let ticket = librarySequence
+        Task.detached(priority: .utility) {
+            await TopShelfWriter.shared.writeLibrary(entries, sequence: ticket)
         }
     }
 
@@ -85,9 +151,12 @@ enum TopShelfExporter {
         await TopShelfWriter.shared.write(entries, sequence: sequence)
     }
 
+    static let continueFile = "topshelf.json"
+    static let libraryFile = "topshelf-library.json"
+
     /// Persist to the shared container. Safe to call from any thread.
-    static func write(_ entries: [Entry]) {
-        guard let file = AppGroupResolver.sharedFile("topshelf.json") else {
+    static func write(_ entries: [Entry], to fileName: String = continueFile) {
+        guard let file = AppGroupResolver.sharedFile(fileName) else {
             NSLog("[TopShelf] no shared container — app group unavailable")
             return
         }
@@ -114,6 +183,12 @@ enum TopShelfExporter {
         if let schemeFile = AppGroupResolver.sharedFile("topshelf-scheme.txt") {
             try? Data(AppCallbackScheme.value.utf8).write(to: schemeFile, options: .atomic)
         }
+        // Ask tvOS to reload the shelf now, instead of whenever it next
+        // decides to — otherwise a title added to the Library (or a finished
+        // episode) could sit wrong on the home screen for a long while.
+        DispatchQueue.main.async {
+            TVTopShelfContentProvider.topShelfContentDidChange()
+        }
     }
 }
 
@@ -121,10 +196,155 @@ enum TopShelfExporter {
 private actor TopShelfWriter {
     static let shared = TopShelfWriter()
     private var lastSequence: UInt64 = 0
+    private var lastLibrarySequence: UInt64 = 0
 
-    func write(_ entries: [TopShelfExporter.Entry], sequence: UInt64) {
+    func write(_ entries: [TopShelfExporter.Entry], sequence: UInt64) async {
         guard sequence > lastSequence else { return }
         lastSequence = sequence
-        TopShelfExporter.write(entries)
+        // Continue Watching cards are rendered by the app (art + progress
+        // pill baked in): the FIRST as a landscape card from the backdrop,
+        // the rest as portrait posters. tvOS's own progress bar sits flush on
+        // the card's bottom edge and can't be moved, so it isn't used.
+        var rendered = entries
+        var keep: Set<String> = []
+        for index in rendered.indices {
+            let entry = rendered[index]
+            let landscape = index == 0
+            // The wide card shows the EPISODE — its TMDB still in full
+            // resolution, the same image the app's Continue Watching uses.
+            var wideSource = entry.backdropURL
+            if landscape, let still = await EpisodeStill.url(
+                metaID: entry.id, type: entry.type, season: entry.season, episode: entry.episode) {
+                wideSource = still
+            }
+            guard let source = landscape ? wideSource : entry.posterURL,
+                  let card = await TopShelfCardRenderer.card(
+                      from: source, landscape: landscape, progress: entry.progress ?? 0)
+            else { continue }   // render failed: keep the remote art + system bar
+            keep.insert(card.lastPathComponent)
+            rendered[index] = TopShelfExporter.Entry(
+                id: entry.id, type: entry.type, title: entry.title,
+                subtitle: entry.subtitle, imageURL: card.absoluteString,
+                progress: nil,   // baked into the image instead
+                caption: entry.caption,
+                backdropURL: entry.backdropURL, posterURL: entry.posterURL,
+                season: entry.season, episode: entry.episode)
+        }
+        // A newer snapshot arrived while this one was rendering: it wins.
+        guard sequence == lastSequence else { return }
+        TopShelfExporter.write(rendered)
+        TopShelfCardRenderer.removeCards(except: keep)
+    }
+
+    func writeLibrary(_ entries: [TopShelfExporter.Entry], sequence: UInt64) {
+        guard sequence > lastLibrarySequence else { return }
+        lastLibrarySequence = sequence
+        TopShelfExporter.write(entries, to: TopShelfExporter.libraryFile)
+    }
+}
+
+/// Renders Continue Watching cards for the Top Shelf: the artwork with a
+/// tvOS-style progress pill (grey track, white fill) baked in, inset from
+/// the card's edges. Files live in the shared app-group folder, named by
+/// art + shape + 5% progress step, so an unchanged card is never re-rendered
+/// and a changed one gets a NEW file name (tvOS caches shelf images by URL).
+enum TopShelfCardRenderer {
+    /// Rendered at full 1080p / a tall poster so nothing is upscaled on 4K.
+    static let landscapeSize = CGSize(width: 1920, height: 1080)
+    static let portraitSize = CGSize(width: 600, height: 900)
+    private static let prefix = "shelf-card-"
+
+    static func card(from source: String, landscape: Bool, progress: Double) async -> URL? {
+        // 5% steps; anything started shows at least one step.
+        let clamped = min(max(progress, 0), 1)
+        let bucket = clamped > 0 ? max(Int((clamped * 20).rounded()), 1) : 0
+        let digest = SHA256.hash(data: Data(source.utf8))
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        let name = "\(prefix)v2-\(digest)-\(landscape ? "l" : "p")-\(bucket).jpg"
+        guard let file = AppGroupResolver.sharedFile(name) else { return nil }
+        if FileManager.default.fileExists(atPath: file.path) { return file }
+
+        // Disk cache first (the app has usually shown this art already).
+        var data = await ImageCache.shared.diskData(for: source)
+        if data == nil, let url = URL(string: source) {
+            data = try? await ImageCache.shared.download(url)
+        }
+        let size = landscape ? landscapeSize : portraitSize
+        guard let data,
+              let image = ImageCache.decodeDownsampled(data, budget: max(size.width, size.height)),
+              let jpeg = render(image, size: size, progress: Double(bucket) / 20)
+        else { return nil }
+        do {
+            try jpeg.write(to: file, options: .atomic)
+            return file
+        } catch {
+            return nil
+        }
+    }
+
+    private static func render(_ image: UIImage, size: CGSize, progress: Double) -> Data? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let rendered = renderer.image { ctx in
+            // Artwork, aspect-FILL.
+            let scale = max(size.width / image.size.width, size.height / image.size.height)
+            let drawn = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            image.draw(in: CGRect(x: (size.width - drawn.width) / 2,
+                                  y: (size.height - drawn.height) / 2,
+                                  width: drawn.width, height: drawn.height))
+            // EVERY Continue Watching card gets the pill — an "up next"
+            // episode (nothing watched yet) just shows the empty track.
+
+            // Soft shade along the bottom so the pill reads on bright art.
+            let cg = ctx.cgContext
+            let colors = [UIColor.black.withAlphaComponent(0).cgColor,
+                          UIColor.black.withAlphaComponent(0.3).cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors, locations: [0, 1]) {
+                cg.drawLinearGradient(gradient,
+                                      start: CGPoint(x: 0, y: size.height * 0.72),
+                                      end: CGPoint(x: 0, y: size.height), options: [])
+            }
+
+            // The pill: inset from the left/right AND bottom edges.
+            let inset = size.width * 0.06
+            let height = max(size.height * 0.022, 10)
+            let bottom = size.height * 0.065
+            let track = CGRect(x: inset, y: size.height - bottom - height,
+                               width: size.width - 2 * inset, height: height)
+            UIColor.white.withAlphaComponent(0.35).setFill()
+            UIBezierPath(roundedRect: track, cornerRadius: height / 2).fill()
+            var fill = track
+            if progress > 0 {
+                fill.size.width = max(track.width * progress, height)
+                UIColor.white.setFill()
+                UIBezierPath(roundedRect: fill, cornerRadius: height / 2).fill()
+            }
+        }
+        return rendered.jpegData(compressionQuality: 0.92)
+    }
+
+    /// Delete old cards so the shared folder doesn't fill up over time.
+    static func removeCards(except keep: Set<String>) {
+        guard let dir = AppGroupResolver.sharedFile("x")?.deletingLastPathComponent(),
+              let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+        else { return }
+        for file in files where file.hasPrefix(prefix) && !keep.contains(file) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(file))
+        }
+    }
+}
+
+/// The episode's still from TMDB, in full resolution. The stills stored with
+/// Continue Watching come from whichever add-on served the episode list and
+/// are often small (or missing); TMDB has a consistent, sharp one for
+/// practically every episode. Needs a TMDB key; TMDBService caches seasons.
+enum EpisodeStill {
+    static func url(metaID: String, type: String, season: Int?, episode: Int?) async -> String? {
+        guard TMDBService.hasAPIKey, let season, let episode else { return nil }
+        let extras = await TMDBService.seasonEpisodes(imdbID: metaID, type: type, season: season)
+        return TMDBService.originalSize(extras[episode]?.still)
     }
 }
