@@ -178,6 +178,7 @@ enum Route: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var theme: ThemeManager
+    @ObservedObject private var spotlightGate = SpotlightFocusGate.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @ObservedObject private var liveTV = LiveTVSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
@@ -1242,7 +1243,7 @@ struct RootView: View {
                              onTabSelected: { newTab in selectTab(newTab) },
                              position: navPosition)
                     .focusSection()
-                    .disabled(!sidebarEnabled)
+                    .disabled(!sidebarEnabled || spotlightGate.holdsLeft)
                     // Back while IN the rail collapses it into content instead
                     // of falling through to the system (which quit the app).
                     .onExitCommand { collapseSidebarFromExit() }
@@ -1539,6 +1540,13 @@ struct RootView: View {
         HomeView(
             viewModel: homeViewModel,
             onSelect: { homePath.append(Route.detail($0)) },
+            // From the billboard: no slide. It already looks like the Detail
+            // page's top, so the page just takes over in place.
+            onSelectFeatured: { item in
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { homePath.append(Route.detail(item)) }
+            },
             onResume: { resume($0) },
             onResumeFromStart: { resume($0, fromBeginning: true) },
             onPlayManually: { meta, video in playManually(meta, video) },

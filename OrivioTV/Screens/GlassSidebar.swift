@@ -8,8 +8,11 @@ enum AppTab: Int, CaseIterable, Identifiable {
     case home, search, library, settings, liveTV
     var id: Int { rawValue }
 
-    /// Order the rail renders in (Live TV above Settings, despite raw value).
-    static let sidebarOrder: [AppTab] = [.home, .search, .library, .liveTV, .settings]
+    /// Order the navigation renders in (Live TV before Settings, despite raw
+    /// value).
+    static let sidebarOrder: [AppTab] = [.home, .library, .search, .liveTV, .settings]
+    /// The top navigation: the search icon first, left of Home.
+    static let topBarOrder: [AppTab] = [.search, .home, .library, .liveTV, .settings]
 
     var label: String {
         switch self {
@@ -89,52 +92,102 @@ struct GlassSidebar: View {
         }
     }
 
-    /// The top bar is ALWAYS fully drawn — every tab's word and the profile
-    /// chip, focused or not. The left rail collapses to icons because it is a
-    /// narrow column against the screen edge and labels would cost content
-    /// width; a horizontal bar has the width to spare, and a row of unlabelled
-    /// icons reads as a toolbar rather than as navigation. Focus still expands
-    /// nothing here, so there is no widening lurch when you step into it.
+    /// The top navigation: no bar, no pill — just the tab names, sitting
+    /// straight on the screen, centred. The profile picture sits at the
+    /// top-right, on the content margin. Grey text, white for the current /
+    /// focused tab — no highlight shapes.
+    ///
+    /// Moving focus along it SWITCHES tab right away (no Select needed), so
+    /// the page underneath follows as you browse the tabs. Select on a tab
+    /// (or Down) goes into its content.
     private var horizontalBody: some View {
-        HStack(alignment: .center, spacing: 0) {
-            Button(action: onProfileTap) {
-                GlassProfileHeader(profile: profiles.active, compact: true)
-            }
-            .buttonStyle(PlainCardButtonStyle())
-            .focused(focusBinding, equals: -1)
-            .padding(.trailing, OrivioSpacing.sm)
-
-            HStack(alignment: .center, spacing: 10) {
-                ForEach(AppTab.sidebarOrder.filter { $0 != .liveTV || liveTV.enabled }) { tab in
+        let tabs = AppTab.topBarOrder.filter { $0 != .liveTV || liveTV.enabled }
+        let navFocused = focusBinding.wrappedValue != nil
+        // The highlighted item: the focused one (a tab or the profile, -1)
+        // while the navigation has focus, else the current tab.
+        let lit = focusBinding.wrappedValue ?? selected
+        return HStack(alignment: .center, spacing: 20) {
+            // Tabs and profile in ONE floating Liquid Glass pill (tvOS 26).
+            HStack(alignment: .center, spacing: 0) {
+                ForEach(tabs) { tab in
                     Button {
                         onTabSelected(tab.rawValue)
                         selected = tab.rawValue
                     } label: {
-                        GlassItemLabel(tab: tab, selected: selected == tab.rawValue,
-                                       expanded: true, horizontal: true)
+                        TopNavLabel(tab: tab, lit: lit == tab.rawValue,
+                                    focusPlatter: navFocused && lit == tab.rawValue)
+                            .matchedGeometryEffect(id: tab.rawValue, in: navHighlight, isSource: true)
                     }
                     .buttonStyle(PlainCardButtonStyle())
                     .focused(focusBinding, equals: tab.rawValue)
                 }
+                // The profile, last in the pill — a square slot, so the
+                // highlight is a circle on it (as on the search icon).
+                Button(action: onProfileTap) {
+                    ProfileAvatarView(profile: profiles.active, size: 44)
+                        .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
+                        .matchedGeometryEffect(id: -1, in: navHighlight, isSource: true)
+                }
+                .buttonStyle(PlainCardButtonStyle())
+                .focused(focusBinding, equals: -1)
             }
-            .padding(.vertical, 12)
+            // The highlight inside the pill, gliding from tab to tab: a
+            // bright white capsule on the FOCUSED tab (dark text — the tvOS
+            // focus look), a subtle light one on the current tab otherwise.
+            // (A capsule: on the square slots — search, profile — a circle;
+            // it morphs between the two as it glides.)
+            .background {
+                GlassHighlight(focused: navFocused, shape: Capsule())
+                    .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
+                    .animation(.smooth(duration: 0.3), value: lit)
+                    .animation(.easeOut(duration: 0.2), value: navFocused)
+            }
+            .padding(Self.pillInset)
+            // The app's glass surface (see `AppGlass`).
+            .glassSurface(in: Capsule())
             .defaultFocus(focusBinding, selected)
+            // Focused, the pill grows a little (like the system tab bar).
+            .scaleEffect(navFocused ? Self.focusedScale : 1, anchor: .top)
+            .animation(.smooth(duration: 0.3), value: navFocused)
         }
-        .padding(.horizontal, OrivioSpacing.md)
-        .fixedSize(horizontal: true, vertical: true)
-        .background(Color.clear.liquidGlass(in: panelShape))
-        .padding(.top, 28)
         .frame(maxWidth: .infinity, alignment: .center)
-        // Hug the top edge the way the vertical rail hugs the left one.
-        .ignoresSafeArea(edges: .vertical)
-        .animation(PerformanceSettingsStore.shared.sidebarAnimationEffective
-                   ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: expanded)
+        .padding(.top, Self.topBarTop)
+        .frame(maxWidth: .infinity, alignment: .top)
+        // Placed against the real screen edges (the inset above is ours).
+        .ignoresSafeArea()
         .onChange(of: expanded) { _, isExpanded in
             if isExpanded && focusBinding.wrappedValue != selected {
                 focusBinding.wrappedValue = selected
             }
         }
+        // Focus follows → tab follows. Only the selection changes: focus
+        // stays in the navigation (unlike Select, which hands it to the
+        // page).
+        //
+        // Only for moves WITHIN the navigation (old value non-nil). Entering
+        // it from the page, the engine first lands on the geometrically
+        // nearest tab (often Search, in the middle) before the snap to the
+        // current tab above — following that first landing flashed the
+        // other tab's screen for a frame.
+        .onChange(of: focusBinding.wrappedValue) { old, focused in
+            guard old != nil, let focused, focused >= 0, focused != selected else { return }
+            selected = focused
+        }
     }
+
+    /// The tab pill: how much it grows while the navigation has focus, and
+    /// the room between its edge and the tabs' highlight.
+    static let focusedScale: CGFloat = 1.06
+    static let pillInset: CGFloat = 8
+    /// The highlight gliding between the tabs.
+    @Namespace private var navHighlight
+
+    /// Top navigation geometry (absolute, from the screen edges). The
+    /// avatar's right edge mirrors Home's left content margin.
+    static let topBarInset: CGFloat = 84
+    static let topBarTop: CGFloat = 40
+    /// Height of the top navigation's items.
+    static let topBarItemHeight: CGFloat = 60
 
     private var verticalBody: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -202,6 +255,38 @@ struct GlassSidebar: View {
                 focusBinding.wrappedValue = selected
             }
         }
+    }
+}
+
+/// One tab in the top navigation: its name, grey — white when it's the
+/// current or focused tab. Nothing else.
+private struct TopNavLabel: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let tab: AppTab
+    /// Highlighted (the current tab, or the focused one): white text.
+    let lit: Bool
+    /// On the white focus capsule: dark text.
+    var focusPlatter = false
+
+    var body: some View {
+        Group {
+            // Search is an icon; the others are their names.
+            if tab == .search {
+                // A square slot, so the highlight is a circle here.
+                Image(systemName: tab.icon)
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: GlassSidebar.topBarItemHeight)
+            } else {
+                Text(tab.label)
+                    .font(.system(size: 28, weight: .semibold))
+                    .padding(.horizontal, 26)
+            }
+        }
+        .foregroundStyle(focusPlatter ? AppGlass.textOnFocus
+                         : lit ? AppGlass.text : AppGlass.textMuted)
+        .frame(height: GlassSidebar.topBarItemHeight)
+        .animation(.easeOut(duration: 0.18), value: lit)
+        .animation(.easeOut(duration: 0.18), value: focusPlatter)
     }
 }
 

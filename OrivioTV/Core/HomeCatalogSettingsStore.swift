@@ -83,9 +83,9 @@ enum HeroLayout: String, CaseIterable, Identifiable, Codable {
 /// way — same items, icons, labels, focus behaviour and glass — turned on its
 /// side; see `GlassSidebar`.
 enum NavigationPosition: String, CaseIterable, Identifiable, Codable {
-    /// The shipped layout: a vertical rail hugging the left edge.
+    /// A vertical rail hugging the left edge.
     case left
-    /// A horizontal bar across the top.
+    /// Tab names across the top of the screen. The default.
     case top
 
     var id: String { rawValue }
@@ -99,8 +99,8 @@ enum NavigationPosition: String, CaseIterable, Identifiable, Codable {
 
     var summary: String {
         switch self {
-        case .left: return "A vertical rail down the left edge. The default."
-        case .top:  return "A horizontal bar across the top of the screen."
+        case .left: return "A vertical rail down the left edge."
+        case .top:  return "Tabs across the top of the screen. The default."
         }
     }
 
@@ -197,9 +197,9 @@ struct HomePresentationSnapshot: Codable, Equatable {
     var pinnedHero = false
     var heroLayout: HeroLayout = .hybrid
     var autoHideSidebar = false
-    /// Where the navigation rail sits. `.left` is the shipped layout and stays
-    /// the default, so an existing install sees no change.
-    var navigationPosition: NavigationPosition = .left
+    /// Where the navigation sits. New installs get the top navigation; an
+    /// install that saved a choice keeps it.
+    var navigationPosition: NavigationPosition = .top
     var fullStreamTitles = false
     var heroTrailersEnabled = true
     var heroTrailerSound = false
@@ -383,7 +383,7 @@ final class HomeCatalogSettingsStore: ObservableObject {
         didSet { guard autoHideSidebar != oldValue else { return }; save(); notifyPresentationChange() }
     }
     /// Settings → Layout → Navigation Position.
-    @Published var navigationPosition: NavigationPosition = .left {
+    @Published var navigationPosition: NavigationPosition = .top {
         didSet { guard navigationPosition != oldValue else { return }; save(); notifyPresentationChange() }
     }
     /// Sources page: let every link's release name wrap in full instead of

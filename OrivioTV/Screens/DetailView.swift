@@ -1,6 +1,32 @@
 import SwiftUI
 import AVKit
 
+let detailButtonSize: CGFloat = 78
+let episodeSlideDuration: Double = 0.15      // row slide
+let episodeLiftDelay: Duration = .milliseconds(110)  // lift starts just before slide ends
+let episodeLiftAnimation: Animation = .easeOut(duration: 0.12)  // the grow itself
+
+// MARK: - Detail pages
+//
+// The Detail page is three "pages", each a full screen: Overview (logo,
+// text, buttons), Episodes (series only) and More (cast, collection, …).
+// Moving focus into another page scrolls it to the top of the screen.
+
+/// The page-to-page scroll: quick start, long gentle finish.
+let detailPageScroll: Animation = .timingCurve(0.15, 0.85, 0.25, 1, duration: 0.65)
+/// How much the backdrop is darkened on the Episodes and More pages.
+let detailDimmedBackdrop: Double = 0.6
+
+enum DetailPage: Hashable { case overview, episodes, more }
+
+/// The season selector's name widths, by season.
+private struct SeasonWidthKey: PreferenceKey {
+    static let defaultValue: [Int: CGFloat] = [:]
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 @MainActor
 final class DetailViewModel: ObservableObject {
     @Published var meta: MetaItem {
@@ -335,7 +361,7 @@ struct DetailView: View {
     @State private var activeTrailer: TMDBService.Trailer?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, startOver, library, watched, rate, trailer
+        case play, startOver, library, watched, rate, trailer, more
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -345,11 +371,45 @@ struct DetailView: View {
     /// `.defaultFocus` on the scroll view in `body` is a different thing —
     /// it only decides the page's OPENING focus, not directional moves.)
     @FocusState private var actionFocus: ActionControl?
+    /// The episode that currently holds focus, reported by `EpisodeCell`'s
+    /// `onFocus` callback. Drives the "focused episode stays in the first
+    /// column, the row slides" scroll in `episodesSection`.
+    @State private var focusedEpisode: String?
+    /// Programmatic focus INTO the episode row (Down from the buttons lands
+    /// on an episode, not on the season chips).
+    @FocusState private var episodeFocus: String?
+    /// Which page holds focus — drives the page scroll, the backdrop
+    /// darkening and the trailer (Overview only).
+    @State private var page: DetailPage = .overview
+    /// The season row opens on the Play target's season, once.
+    @State private var seasonAutoPicked = false
+
+    // Episode row (Home-spotlight style): ONE focusable box at a fixed spot,
+    // the row slides underneath. Continuous across the regular seasons;
+    // the Specials chip switches the row to the specials.
+    @State private var episodeIndex = 0
+    /// The episode row moves like Home's rows: the cards' resistance nudge,
+    /// a heavy step across a season seam, the pressed ‹ ›, the pressed
+    /// seam card.
+    @State private var episodeNudge: CGFloat = 0
+    @State private var episodeWrapping = false
+    @State private var episodePressedChevron = 0
+    @State private var seasonSeamPressed = false
+    /// The season selector above the box has focus.
+    @FocusState private var seasonFocused: Bool
+    /// The season names' widths (at full size), for the selector's layout.
+    @State private var seasonWidths: [Int: CGFloat] = [:]
+    /// Which way the season names last moved (for their slide).
+    @State private var seasonStep = 1
+    private enum RowSlot: Hashable { case box, left, right }
+    @FocusState private var rowFocus: RowSlot?
     /// How Play was pressed while a series' episode list was still loading —
     /// replayed against the real episode the moment it resolves.
     private enum PendingPlay { case auto, manual, infuse }
     @State private var pendingSeriesPlay: PendingPlay?
     @State private var showRatingPicker = false
+    /// The ⋯ button's choices (rate, watched, start over, play manually).
+    @State private var showMoreActions = false
     /// Trailer playing silently in the backdrop after the idle delay.
     @State private var backdropPlayer: AVPlayer?
     @State private var showBackdropTrailer = false
@@ -426,21 +486,46 @@ struct DetailView: View {
         ZStack {
             ATVBackground()
             backdrop
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: OrivioSpacing.xl) {
-                    header
-                    if viewModel.meta.isSeries {
-                        episodesSection
+            // Full screen, like Home's spotlight: the pages place everything
+            // themselves with the SAME margins and label heights as Home.
+            GeometryReader { geo in
+                ScrollViewReader { pageProxy in
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            overviewPage(height: geo.size.height)
+                                .id(DetailPage.overview)
+                            if viewModel.meta.isSeries {
+                                episodesPage(size: geo.size)
+                                    .id(DetailPage.episodes)
+                            }
+                            if morePageTitle != nil {
+                                morePage(height: geo.size.height)
+                                    .id(DetailPage.more)
+                            }
+                        }
                     }
-                    castSection
-                    collectionSection
-                    moreLikeThisSection
-                    companiesSection
-                    commentsSection
+                    .scrollClipDisabled()
+                    // Focus entered another page: bring that page's top to
+                    // the top of the screen. (Within More, scrolling is free.)
+                    .onChange(of: page) { _, newPage in
+                        withAnimation(detailPageScroll) {
+                            pageProxy.scrollTo(newPage, anchor: .top)
+                        }
+                        // The focus engine scrolls too — just enough to show
+                        // the newly focused view — and that can stop our
+                        // scroll short (coming back up from deep in More).
+                        // Scroll again once it's done, so the page wins.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(60))
+                            guard page == newPage else { return }
+                            withAnimation(detailPageScroll) {
+                                pageProxy.scrollTo(newPage, anchor: .top)
+                            }
+                        }
+                    }
                 }
-                .padding(.bottom, OrivioSpacing.huge)
             }
-            .scrollClipDisabled()
+            .ignoresSafeArea()
             // Play owns the page from the first frame. Without this the focus
             // engine picks the topmost focusable — the synopsis teaser — and
             // the action row's entry redirect then hops focus down to Play in
@@ -528,9 +613,23 @@ struct DetailView: View {
                 }
             }
         }
+        // Trailer only on the Overview page: leaving it stops the trailer
+        // at once (fully torn down, no decoder left running).
+        .onChange(of: page) { _, newPage in
+            if newPage != .overview { teardownBackdropTrailer() }
+        }
         // Play pressed before the episode list arrived: run it now, against
         // the episode the loaded data actually points at.
         .onChange(of: seriesPlayTarget?.id) { _, _ in
+            // The episode row opens on the season Play would start.
+            // The episode row opens ON the episode Play would start.
+            if !seasonAutoPicked, let target = seriesPlayTarget {
+                seasonAutoPicked = true
+                if let index = rowEpisodes.firstIndex(where: { $0.id == target.id }) {
+                    episodeIndex = index
+                }
+                if let season = target.season { viewModel.selectedSeason = season }
+            }
             guard let pending = pendingSeriesPlay, let target = seriesPlayTarget else { return }
             pendingSeriesPlay = nil
             switch pending {
@@ -594,6 +693,9 @@ struct DetailView: View {
                               alternates: viewModel.trailers.map(\.youtubeKey))
                 .environmentObject(theme)
         }
+        .confirmationDialog(viewModel.meta.name, isPresented: $showMoreActions) {
+            moreActions
+        }
         .fullScreenCover(isPresented: $showRatingPicker) {
             RatingPickerOverlay(
                 title: viewModel.meta.name,
@@ -631,8 +733,15 @@ struct DetailView: View {
                     .frame(width: geo.size.width, height: geo.size.height)
                     .allowsHitTesting(false)
                     .opacity(showBackdropTrailer ? 1 : 0)
-                HeroGradient(background: theme.stageBlend, fullBleed: true)
+                // The shared scrim (same as Home's).
+                StageScrim()
                     .opacity(trailerFullscreen ? 0 : 1)
+                // Episodes / More: the same backdrop, darkened so cards and
+                // text stay readable. It never scrolls.
+                Color.black
+                    .opacity(page == .overview ? 0 : detailDimmedBackdrop)
+                    .animation(.easeInOut(duration: 0.45), value: page)
+                    .allowsHitTesting(false)
             }
         }
         .ignoresSafeArea()
@@ -641,7 +750,7 @@ struct DetailView: View {
     /// Changes when the delay setting or the first trailer changes, so the
     /// timed `.task` restarts appropriately.
     private var autoTrailerKey: String {
-        "\(playerSettings.settings.autoPlayTrailerSeconds)#\(viewModel.trailers.first?.youtubeKey ?? "")"
+        "\(playerSettings.settings.autoPlayTrailerSeconds)#\(viewModel.trailers.first?.youtubeKey ?? "")#\(page == .overview)"
     }
 
     private func startBackdropTrailerIfEnabled() async {
@@ -651,6 +760,8 @@ struct DetailView: View {
         // to full screen a few seconds later — a large positional transition
         // the viewer never asked for and the setting's copy never mentions.
         guard !perf.reduceMotion else { return }
+        // Overview page only; returning to it starts the trailer again.
+        guard page == .overview else { return }
         guard delay > 0, !viewModel.trailers.isEmpty else { return }
         // EVERY trailer the title has, best first — not just the top one. A
         // geo-restricted first pick (routine when the connection leaves the
@@ -830,84 +941,173 @@ struct DetailView: View {
         showBackdropTrailer = false
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
-            // Push the logo down so it sits lower on the backdrop (APK layout).
-            Spacer().frame(height: 260)
+    // MARK: - Pages
 
-            // Both title treatments occupy the SAME 180pt slot, bottom-aligned.
-            // They did not before: a logo got a fixed 180pt box while the text
-            // fallback was sized by its own content, so a one-line title sat
-            // about a hundred points higher than a logo and dragged the meta
-            // lines, description and buttons up with it. Moving between two
-            // titles — one with artwork, one without — visibly re-laid out the
-            // whole header. Bottom alignment is what keeps a short wide logo
-            // and a two-line title sharing a baseline.
-            Group {
-                if let logo = viewModel.meta.logo {
-                    RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading, maxDimension: 520)
-                        // Grounds a white logo on both a light frost and dark art.
-                        .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
-                        .frame(width: 520)
-                } else {
-                    Text(viewModel.meta.name)
-                        .font(FusionType.heroTitle(theme.font))
-                        .foregroundStyle(theme.palette.textPrimary)
-                        .lineLimit(2)
-                        .frame(maxWidth: 900, alignment: .leading)
-                        .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
-                }
-            }
-            .frame(height: 180, alignment: .bottomLeading)
-
-            // Meta line 1: Genres • Full release date • IMDb.
-            MetaLine(segments: primaryMetaSegments, imdbRating: viewModel.meta.imdbRating)
-            // Meta line 2: Runtime • Country • Language.
-            if !secondaryMetaSegments.isEmpty {
-                MetaLine(segments: secondaryMetaSegments)
-            }
-
-            if let description = viewModel.meta.description {
-                // Clickable teaser → full-description overlay (the Android
-                // app's scrollable hero-description feature).
-                DescriptionTeaser(
-                    text: description,
-                    title: viewModel.meta.name,
-                    onFocusChanged: { focused in
-                        teaserFocused = focused
-                        // NOT clearing fullscreenCooldown here: focus falls
-                        // back onto the teaser as part of exiting full-screen.
-                        interactionCount += 1
-                    }
-                )
-                .disabled(!teaserArmed)
-            }
-
-            actionRow
-
-            if let director = viewModel.director {
-                Text("Director: \(director)")
-                    .font(FusionType.metadata(theme.font))
-                    .foregroundStyle(theme.palette.textTertiary)
-            }
-
-            // Fact chips grouped on one tight block under the actions.
-            if let contentRating = viewModel.contentRating {
-                ContentRatingBadge(rating: contentRating)
-            }
-
-            if let mdbRatings = viewModel.mdbRatings {
-                let entries = mdbRatings.entries(settings: mdblist.settings)
-                if !entries.isEmpty {
-                    MDBListRatingsRow(entries: entries)
-                }
-            }
-
-            if !viewModel.parentalGuide.isEmpty {
-                ParentalGuideRow(entries: viewModel.parentalGuide)
+    /// A page's hint, placed at a fixed height and shown ONLY while its own
+    /// page is the current one — otherwise the next page's "▴ …" peeked in
+    /// at the edge of this one (and this one's "▾ …" at the edge of that).
+    private func hint(_ title: String?, up: Bool, on owner: DetailPage, y: CGFloat) -> some View {
+        Group {
+            if let title {
+                // The shared signpost (same as Home's billboard); steps
+                // aside on the overview while the trailer plays.
+                SectionHint.place(
+                    SectionHint(title: title, up: up,
+                                hidden: owner == .overview && backdropTrailerPlaying))
             }
         }
-        .padding(.leading, OrivioSpacing.huge)
+        .padding(.top, y)
+        .opacity(page == owner ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: page)
+    }
+
+    /// Overview: the title block (logo, meta, description) exactly where
+    /// Home's billboard shows it — see `TitleBlock` — and below it the
+    /// buttons and the rest, in the space kept free for them.
+    private func overviewPage(height: CGFloat) -> some View {
+        // Laid out from the logo (`TitleBlock`): its bottom on the vertical
+        // centre, the meta line, ratings and buttons below at fixed
+        // distances. (The billboard is laid out the same.)
+        return ZStack(alignment: .topLeading) {
+            TitleBlockView(logo: viewModel.meta.logo, name: viewModel.meta.name,
+                           metaSegments: overviewMetaSegments,
+                           description: viewModel.meta.description,
+                           ratings: ratingsBadges,
+                           descriptionHidden: backdropTrailerPlaying)
+                .padding(.leading, Spotlight.screenInset)
+                .frame(height: TitleBlock.bottomY(screenHeight: height), alignment: .bottomLeading)
+            headerExtras
+                .frame(height: TitleBlock.buttonHeight)
+                .padding(.top, TitleBlock.extrasY(screenHeight: height))
+            // The parental guide, top-left — at the height of the other
+            // sections' "▴" hints (steps aside for the trailer with the text).
+            if !viewModel.parentalGuide.isEmpty {
+                ParentalGuideRow(entries: viewModel.parentalGuide)
+                    .padding(.leading, Spotlight.screenInset)
+                    .padding(.top, TitleBlock.topHintY)
+                    .opacity(backdropTrailerPlaying ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.4), value: backdropTrailerPlaying)
+            }
+        }
+        .frame(height: height, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            hint(viewModel.meta.isSeries ? "Episodes" : morePageTitle,
+                 up: false, on: .overview, y: TitleBlock.hintY(screenHeight: height))
+        }
+    }
+
+    /// Episodes: the show's name, seasons + episode row. Exactly one screen,
+    /// hints at Home's label heights.
+    private func episodesPage(size: CGSize) -> some View {
+        let height = size.height
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("Episodes")
+                .font(.system(size: 56, weight: .bold))
+                .foregroundStyle(theme.palette.textPrimary)
+                .lineLimit(1)
+                .padding(.leading, Spotlight.screenInset)
+            episodesSection(width: size.width)
+                .padding(.top, 12)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, Spotlight.topPadding + Spotlight.labelHeight + 24)
+        .frame(height: height, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            hint("Overview", up: true, on: .episodes, y: TitleBlock.topHintY)
+        }
+        .overlay(alignment: .topLeading) {
+            hint(morePageTitle, up: false, on: .episodes, y: TitleBlock.hintY(screenHeight: height))
+        }
+    }
+
+    /// More: every remaining section, scrolling freely below the hint.
+    private func morePage(height: CGFloat) -> some View {
+        // What you most likely want next first: something similar, the
+        // rest of the collection, then who made it, then the footers.
+        VStack(alignment: .leading, spacing: OrivioSpacing.xxl) {
+            moreLikeThisSection
+            collectionSection
+            castSection
+            companiesSection
+            commentsSection
+        }
+        .padding(.top, Spotlight.topPadding + Spotlight.labelHeight + 24)
+        .padding(.bottom, Spotlight.topPadding)
+        .frame(minHeight: height, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            hint(viewModel.meta.isSeries ? "Episodes" : "Overview",
+                 up: true, on: .more, y: TitleBlock.topHintY)
+        }
+    }
+
+    /// Name of the More page, after its first section that actually has
+    /// content — so a hint never points at something that isn't there.
+    /// Nil = no More page at all.
+    private var morePageTitle: String? {
+        // One name for the whole section (similar titles, collection, cast,
+        // production, comments) — whenever any of it has content.
+        let hasAny = (layout.detailShowMoreLikeThis && !viewModel.moreLikeThis.isEmpty)
+            || (layout.detailShowCollection && viewModel.collection != nil
+                && !viewModel.collectionParts.isEmpty)
+            || (layout.detailShowCast && !(viewModel.crew + viewModel.cast).isEmpty)
+            || (layout.detailShowProduction && !viewModel.companies.isEmpty)
+            || (layout.detailShowComments && !viewModel.comments.isEmpty)
+        return hasAny ? "More" : nil
+    }
+
+    /// Down from the buttons: land on an episode — the one last focused in
+    /// the row, else the Play target (if it's in the shown season), else
+    /// the season's first. Scroll it into place first so its cell exists.
+    private func enterEpisodeRow() {
+        guard !rowEpisodes.isEmpty else { return }
+        // Deferred one turn: the engine's own move onto the chip must finish
+        // before a programmatic focus change can win.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            rowFocus = .box
+        }
+    }
+
+    /// Everything on the overview below the shared title block: just the
+    /// buttons (the rest is in `aboutSection`, on the More page).
+    private var headerExtras: some View {
+        actionRow
+            .padding(.leading, Spotlight.screenInset)
+    }
+
+    /// The ⋯ menu: the rarer actions, off the button row.
+    @ViewBuilder
+    private var moreActions: some View {
+        let meta = viewModel.meta
+        let target: MetaVideo? = meta.isSeries ? seriesPlayTarget : nil
+        let resumable = meta.isSeries ? (target.map(episodeInProgress) ?? false)
+                                      : playButtonTitle == "Resume"
+        if resumable {
+            Button("Start Over") { onPlayFromBeginning(meta, target) }
+        }
+        Button(ratings.rating(for: meta.id) != nil ? "Change Rating" : "Rate") {
+            showRatingPicker = true
+        }
+        if !meta.isSeries {
+            Button(watched.isWatched(meta) ? "Mark as Unwatched" : "Mark as Watched") {
+                let wasWatched = watched.isWatched(meta)
+                watched.toggleMovie(meta)
+                ToastCenter.shared.show(wasWatched ? "Marked Unwatched" : "Marked Watched",
+                                        icon: "eye.fill")
+            }
+        }
+        if !meta.isSeries || target != nil {
+            Button("Choose Source") { onPlayManually(meta, target) }
+            Button("Play in Infuse") { onPlayInInfuse(meta, target) }
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    /// The MDBList ratings for the title block's ratings row (nil = none).
+    private var ratingsBadges: AnyView? {
+        guard let mdbRatings = viewModel.mdbRatings else { return nil }
+        let entries = mdbRatings.entries(settings: mdblist.settings)
+        return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(entries: entries))
     }
 
     /// Play/Resume (+ Start Over) + circular add / watched / rate / trailer.
@@ -947,14 +1147,6 @@ struct DetailView: View {
                             else { pendingSeriesPlay = .infuse }
                         }
                     )
-                    // Start Over sits right next to Resume: replay the
-                    // in-progress episode from 0:00.
-                    if let target, episodeInProgress(target) {
-                        CircleIconButton(systemName: "gobackward", active: false) {
-                            onPlayFromBeginning(viewModel.meta, target)
-                        }
-                        .focused($actionFocus, equals: .startOver)
-                    }
                 } else {
                     PlayActionButton(title: playButtonTitle) {
                         onPlay(viewModel.meta, nil)
@@ -965,13 +1157,6 @@ struct DetailView: View {
                         action: { onPlayManually(viewModel.meta, nil) },
                         infuse: { onPlayInInfuse(viewModel.meta, nil) }
                     )
-                    // Movie with saved progress → offer a fresh start.
-                    if playButtonTitle == "Resume" {
-                        CircleIconButton(systemName: "gobackward", active: false) {
-                            onPlayFromBeginning(viewModel.meta, nil)
-                        }
-                        .focused($actionFocus, equals: .startOver)
-                    }
                 }
                 // The secondary icons are one focus section, so a vertical
                 // move into the row resolves against the section as a unit
@@ -981,7 +1166,15 @@ struct DetailView: View {
                 // card (centre ~344) a bare circle always beat Play at x=64 —
                 // so focus visibly landed on an icon before the row's redirect
                 // pulled it back. That flash is the "jump".
+                // Play, then: Trailer, My List, ⋯ (everything rarer —
+                // rate, watched, start over, play manually).
                 HStack(spacing: OrivioSpacing.md) {
+                if layout.detailPageTrailerButtonEnabled, let trailer = viewModel.trailers.first {
+                    CircleIconButton(systemName: "play.rectangle.fill", active: false) {
+                        activeTrailer = trailer
+                    }
+                    .focused($actionFocus, equals: .trailer)
+                }
                 CircleIconButton(
                     systemName: library.contains(viewModel.meta) ? "checkmark" : "plus",
                     active: library.contains(viewModel.meta)
@@ -992,31 +1185,10 @@ struct DetailView: View {
                                             icon: wasSaved ? "bookmark.slash" : "checkmark")
                 }
                 .focused($actionFocus, equals: .library)
-                if !viewModel.meta.isSeries {
-                    // Eye = seen. Filled + accent when watched, outline when not.
-                    CircleIconButton(
-                        systemName: watched.isWatched(viewModel.meta) ? "eye.fill" : "eye",
-                        active: watched.isWatched(viewModel.meta)
-                    ) {
-                        let wasWatched = watched.isWatched(viewModel.meta)
-                        watched.toggleMovie(viewModel.meta)
-                        ToastCenter.shared.show(wasWatched ? "Marked Unwatched" : "Marked Watched",
-                                                icon: "eye.fill")
-                    }
-                    .focused($actionFocus, equals: .watched)
+                CircleIconButton(systemName: "ellipsis", active: false) {
+                    showMoreActions = true
                 }
-                // Rate (Trakt) — star fills when you've rated; opens a 1–10 picker.
-                CircleIconButton(
-                    systemName: ratings.rating(for: viewModel.meta.id) != nil ? "star.fill" : "star",
-                    active: ratings.rating(for: viewModel.meta.id) != nil
-                ) { showRatingPicker = true }
-                .focused($actionFocus, equals: .rate)
-                if layout.detailPageTrailerButtonEnabled, let trailer = viewModel.trailers.first {
-                    CircleIconButton(systemName: "play.rectangle.fill", active: false) {
-                        activeTrailer = trailer
-                    }
-                    .focused($actionFocus, equals: .trailer)
-                }
+                .focused($actionFocus, equals: .more)
                 }
                 .focusSection()
                 Spacer(minLength: 0)
@@ -1044,6 +1216,7 @@ struct DetailView: View {
             // WITHIN the row (old != nil) are left alone.
             .onChange(of: actionFocus) { old, new in
                 interactionCount += 1
+                if new != nil { page = .overview }
                 // Deferred one turn: arming flips the teaser from unfocusable
                 // to focusable, and doing that INSIDE the focus change that
                 // put Play in focus is the "focusable set depends on focus"
@@ -1075,34 +1248,9 @@ struct DetailView: View {
             }
     }
 
-    private var primaryMetaSegments: [String] {
-        var segments: [String] = []
-        if let genres = viewModel.meta.genres, !genres.isEmpty {
-            segments.append(genres.prefix(3).joined(separator: " • "))
-        }
-        if let contentRating = viewModel.contentRating {
-            segments.append(contentRating)
-        }
-        if let full = DateFormat.releaseDate(viewModel.releaseDate) ?? viewModel.meta.releaseInfo {
-            if layout.showFullReleaseDate {
-                segments.append(full)
-            } else {
-                segments.append(Self.firstYear(in: viewModel.releaseDate ?? full) ?? full)
-            }
-        }
-        return segments
-    }
-
-    /// First 4-digit year found in a date/string (for the year-only display).
-    private static func firstYear(in text: String) -> String? {
-        let digits = Array(text)
-        for i in 0...(max(0, digits.count - 4)) where i + 4 <= digits.count {
-            let slice = String(digits[i..<i + 4])
-            if slice.allSatisfy(\.isNumber), let year = Int(slice), (1900...2100).contains(year) {
-                return slice
-            }
-        }
-        return nil
+    /// The same meta line as Home's (see `TitleBlock.metaSegments`).
+    private var overviewMetaSegments: [String] {
+        TitleBlock.metaSegments(for: viewModel.meta)
     }
 
     private var secondaryMetaSegments: [String] {
@@ -1188,124 +1336,541 @@ struct DetailView: View {
         return "\(inProgress ? "Resume" : "Play") \(sxe)"
     }
 
-    private var episodesSection: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.md) {
+    // MARK: - Episode row
+
+    /// What the row shows: the specials, then every regular episode in play
+    /// order — ONE row, a season seam between each (Left from S1:E1 crosses
+    /// into the specials).
+    private var rowEpisodes: [MetaVideo] {
+        let regular = viewModel.allEpisodesInPlayOrder
+        let specials = regular.contains { $0.season == 0 } ? [] : viewModel.episodes(season: 0)
+        return specials + regular
+    }
+
+    private var currentIndex: Int {
+        min(episodeIndex, max(rowEpisodes.count - 1, 0))
+    }
+
+    private var currentEpisode: MetaVideo? {
+        let list = rowEpisodes
+        return list.indices.contains(currentIndex) ? list[currentIndex] : nil
+    }
+
+    private func episodesSection(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // The season selector, centred over the box: the current season
+            // with ‹ ›, and a faded preview of the one before and after.
+            // Up from the box focuses it; Left/Right switches season.
             if viewModel.meta.seasons.count > 1 {
-                ScrollView(.horizontal) {
-                    HStack(spacing: OrivioSpacing.sm) {
-                        ForEach(viewModel.meta.seasons, id: \.self) { season in
-                            Button {
-                                viewModel.selectedSeason = season
-                            } label: {
-                                SeasonChip(season: season, selected: viewModel.selectedSeason == season)
-                            }
-                            .buttonStyle(PlainCardButtonStyle())
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.sm)
-                }
-                .scrollClipDisabled()
+                seasonSelector
+                    .padding(.leading, Spotlight.screenInset)
             }
 
-            if let season = viewModel.selectedSeason {
-                HStack(alignment: .firstTextBaseline) {
-                    RowHeader(title: season == 0 ? "Specials" : "Season \(season)")
-                    // How many AIRED episodes are still unwatched. The count
-                    // deliberately excludes anything that has not aired — a
-                    // season listed through to next month's finale is not
-                    // "12 left", it is however many you can actually watch.
-                    let left = episodesLeft(season: season)
-                    if left > 0 {
-                        Text(left == 1 ? "1 episode left" : "\(left) episodes left")
-                            .font(.system(size: 21, weight: .semibold))
-                            .foregroundStyle(theme.palette.textSecondary)
-                            .padding(.leading, OrivioSpacing.sm)
-                    }
-                    Spacer()
-                    // Mark/unmark the whole season in one press.
-                    Button {
-                        let episodes = viewModel.episodes(season: season)
-                        for episode in episodes where episode.hasAired && !watched.isWatched(
-                            contentID: viewModel.meta.id, season: episode.season ?? season, episode: episode.episode
-                        ) {
-                            // `hasAired` matters: this marked every episode the
-                            // season LISTS, including ones that have not been
-                            // broadcast yet. Those phantom rows are pushed to
-                            // Trakt and SIMKL as real plays, and they make the
-                            // show look permanently caught-up — the new-episode
-                            // badge measures against the furthest episode you
-                            // have reached, so a season marked through to a
-                            // finale that airs next month can never report a
-                            // new episode again.
-                            watched.mark(meta: viewModel.meta, video: episode)
-                        }
-                    } label: {
-                        SeeAllLabel(text: "Mark Season Watched")
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    .padding(.trailing, OrivioSpacing.huge)
+            if let episode = currentEpisode {
+                ZStack(alignment: .topLeading) {
+                    episodeStrip()
+                        .frame(width: width - Spotlight.screenInset,
+                               height: Spotlight.rowHeight, alignment: .topLeading)
+                        .allowsHitTesting(false)
+                    // The box: stationary, its card crossfading in place.
+                    episodeBox()
+                        .allowsHitTesting(false)
+                    episodeFocusLayer(episode)
                 }
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: OrivioSpacing.lg) {
-                        ForEach(viewModel.episodes(season: season)) { episode in
-                            let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
-                            EpisodeCell(
-                                imageURL: episode.thumbnail ?? extra?.still
-                                    ?? viewModel.meta.background ?? viewModel.meta.poster,
-                                title: episodeTitle(episode),
-                                subtitle: episodeSubtitle(episode, extra: extra),
-                                progress: progressStore.progress(for: episode.id)?.fraction,
-                                isWatched: watched.isWatched(
-                                    contentID: viewModel.meta.id,
-                                    season: season,
-                                    episode: episode.episode
-                                ),
-                                rating: extra?.rating.map { String(format: "%.1f", $0) },
-                                detailLine: episodeCastLine(viewModel.episodeCasts[episode.id]),
-                                unreleasedText: episode.airCountdownText,
-                                blurImage: shouldBlurEpisode(episode, season: season),
-                                onPlay: { onPlay(viewModel.meta, episode) },
-                                onToggleWatched: { toggleWatched(episode, season: season) },
-                                // Auto-select armed: holding an episode offers
-                                // the manual source list, same as hold-Play.
-                                onPlayManually: autoLinkOn
-                                    ? { onPlayManually(viewModel.meta, episode) }
-                                    : nil
-                            )
-                            .task {
-                                // Debounce: a fast scroll across a 24-episode
-                                // season materializes every cell, and each used
-                                // to fire a TMDB cast request immediately —
-                                // each response republishing the whole page.
-                                // Waiting a beat lets the `.task` cancellation
-                                // of scrolled-past cells win before any fetch.
-                                try? await Task.sleep(nanoseconds: 300_000_000)
-                                guard !Task.isCancelled else { return }
-                                await viewModel.loadCast(for: episode)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.lg)
-                }
-                .scrollClipDisabled()
-                // The EPISODE ROW is the focus section, not the whole block.
-                // With the section around the block, Down from Play entered it
-                // and the engine picked the section's nearest item — "Mark
-                // Season Watched", parked at the far right — so leaving Play
-                // threw focus 1400pt across the screen. Sectioning only the row
-                // leaves the header button to the ordinary directional rules,
-                // which never pick it for a Down out of Play: it isn't below
-                // Play, the episodes are.
-                .focusSection()
+                .frame(width: width - Spotlight.screenInset, alignment: .topLeading)
+                .padding(.leading, Spotlight.screenInset)
+                .opacity(rowFocus == nil ? 0.85 : 1)
+                .animation(.easeOut(duration: 0.2), value: rowFocus == nil)
+
+                episodeInfo(episode)
+                    // Meta line + synopsis (the title is on the card now).
+                    .frame(height: 170, alignment: .topLeading)
+                    .padding(.leading, Spotlight.screenInset)
             } else if viewModel.isLoading {
                 OrivioLoadingView(label: "Loading episodes")
-                    .frame(height: 260)
+                    .frame(height: Spotlight.rowHeight)
             }
         }
         .onChange(of: viewModel.selectedSeason) { _, newSeason in
             if let newSeason { Task { await viewModel.loadSeason(newSeason) } }
+        }
+        // A press landed on a side target: step, then hand focus straight
+        // back to the box. Only a move that STARTED on the box steps —
+        // arriving on a side target from elsewhere (Up from the cast row)
+        // just settles on the box, on the episode you left.
+        .onChange(of: rowFocus) { old, new in
+            if new != nil { page = .episodes }
+            guard let new, new != .box else { return }
+            if old == .box { stepEpisode(by: new == .left ? -1 : 1) }
+            rowFocus = .box
+        }
+    }
+
+    /// The season selector's dots for the seasons after the next one.
+    private static let seasonDot: CGFloat = 10
+    private static let seasonMaxDots = 6
+
+    /// The seasons in order, Specials first.
+    private var orderedSeasons: [Int] {
+        viewModel.meta.seasons.sorted { ($0 == 0 ? -1 : $0) < ($1 == 0 ? -1 : $1) }
+    }
+
+    /// The seasons as a small row, like the catalog rows: the current one at
+    /// the box's left edge (large, white); before it the previous ones,
+    /// smaller and dimmed, running off into the margin (only a sliver of
+    /// the nearest shows); after it just the next one. Focused: the current
+    /// season grows a little. On a change the row slides.
+    private var seasonSelector: some View {
+        let seasons = orderedSeasons
+        let current = viewModel.selectedSeason ?? seasons.first ?? 1
+        let i = seasons.firstIndex(of: current) ?? 0
+        let prev = i > 0 ? seasons[i - 1] : nil
+        let next = i + 1 < seasons.count ? seasons[i + 1] : nil
+        // Laid out by the names' real widths: the current one at the box's
+        // left edge, the next one a gap after it, the previous ones a gap
+        // before it (and before each other), running off into the margin.
+        // Each name slides to its spot on a change, and grows / shrinks (a
+        // scale — font sizes don't animate). Focused: the current one grows
+        // a little.
+        let gap: CGFloat = 26
+        let small: CGFloat = 20.0 / 26.0
+        func w(_ k: Int) -> CGFloat { seasonWidths[seasons[k]] ?? 140 }
+        func x(_ k: Int) -> CGFloat {
+            if k == i { return 0 }
+            if k > i {
+                // (After the current one's width as drawn — grown when focused.)
+                return w(i) * (seasonFocused ? 1.1 : 1) + gap
+                    + (i + 1 ..< k).reduce(0) { $0 + w($1) * small + gap }
+            }
+            // Right edge a gap before the next one's (scaled) left edge;
+            // the frame is the unscaled width, the scale keeps the right edge.
+            let right = -gap - (k + 1 ..< i).reduce(0) { $0 + w($1) * small + gap }
+            return right - w(k)
+        }
+        return ZStack(alignment: .leading) {
+            ForEach(Array(seasons.enumerated()), id: \.element) { k, season in
+                let isCurrent = k == i
+                Text(seasonName(season).uppercased())
+                    .font(.system(size: 26, weight: .bold))
+                    .tracking(1.5)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(isCurrent ? AppGlass.text : AppGlass.text.opacity(0.4))
+                    .background {
+                        GeometryReader { geo in
+                            Color.clear.preference(key: SeasonWidthKey.self,
+                                                   value: [season: geo.size.width])
+                        }
+                    }
+                    .scaleEffect(isCurrent ? (seasonFocused ? 1.1 : 1) : small,
+                                 anchor: k < i ? .trailing : .leading)
+                    .offset(x: x(k))
+                    // Before: all (cut off by the screen edge). After: only
+                    // the next one — the rest are dots (below).
+                    .opacity(k <= i + 1 ? 1 : 0)
+            }
+            // More seasons than shown: a small glass dot for each after the
+            // next one (at most `maxDots`, the last ones tapering — "and
+            // more"). A season's dot becomes its name as it comes next.
+            let dotsStart = i + 1 < seasons.count
+                ? x(i + 1) + w(i + 1) * small + gap : 0
+            ForEach(Array(seasons.enumerated()), id: \.element) { k, _ in
+                let n = k - (i + 2)            // 0 = the first dot
+                let shown = n >= 0 && n < Self.seasonMaxDots
+                let taper: CGFloat = n >= Self.seasonMaxDots - 2
+                    && seasons.count - (i + 2) > Self.seasonMaxDots ? (n == Self.seasonMaxDots - 1 ? 0.5 : 0.75) : 1
+                let size = Self.seasonDot * taper
+                Circle()
+                    .fill(Color.white.opacity(0.22))
+                    .frame(width: size, height: size)
+                    .glassSurface(in: Circle())
+                    .overlay { GlassRim(cornerRadius: size / 2, strength: 1.2) }
+                    .frame(width: Self.seasonDot, height: Self.seasonDot)
+                    .offset(x: dotsStart + CGFloat(max(n, 0)) * (Self.seasonDot + 12))
+                    .opacity(shown ? 1 : 0)
+            }
+        }
+        .onPreferenceChange(SeasonWidthKey.self) { widths in
+            seasonWidths.merge(widths) { _, new in new }
+        }
+        .frame(height: 56)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.smooth(duration: 0.3), value: current)
+        .animation(.easeOut(duration: 0.2), value: seasonFocused)
+        .contentShape(Rectangle())
+        .focusable()
+        .focused($seasonFocused)
+        .onChange(of: seasonFocused) { _, focused in
+            guard focused else { return }
+            // Down from the overview's buttons lands here first (it's in the
+            // way): pass it on to the episode. Otherwise it's a real visit.
+            if page == .overview { enterEpisodeRow() } else { page = .episodes }
+        }
+        // Left/Right: the season before / after (the row jumps with it).
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:  if let prev { switchSeason(to: prev, step: -1) }
+            case .right: if let next { switchSeason(to: next, step: 1) }
+            default: break
+            }
+        }
+    }
+
+    private func switchSeason(to season: Int, step: Int) {
+        seasonStep = step
+        jumpToSeason(season)
+    }
+
+    /// The episode row, exactly like Home's rows (all cards landscape, the
+    /// box's size): the cards slide under the fixed box, the previous one
+    /// peeking in at the left; between two seasons a glass SEAM card
+    /// ("Season 2") takes a slot — crossed with Home's heavy resistance.
+    private func episodeStrip() -> some View {
+        let list = rowEpisodes
+        let current = currentIndex
+        let n = list.count
+        let first = max(current - 2, 0)
+        let last = min(current + 4, n - 1)
+        let slot = Spotlight.boxWidth + Spotlight.spacing
+        /// Season changes between `a` and `b` (a ≤ b): seam cards between.
+        func seams(_ a: Int, _ b: Int) -> Int {
+            guard b > a else { return 0 }
+            return (a..<b).filter { list[$0].season != list[$0 + 1].season }.count
+        }
+        func x(_ k: Int) -> CGFloat {
+            if k >= current { return CGFloat(k - current + seams(current, k)) * slot }
+            return -CGFloat(current - k + seams(k, current)) * slot
+        }
+        return ZStack(alignment: .topLeading) {
+            if n > 0 {
+                ForEach(Array(first...max(first, last)), id: \.self) { k in
+                    episodeCard(list[k], startsSeason: false)
+                        .offset(x: x(k))
+                        // The previous card peeks; older ones have slid away;
+                        // the current one is under the box.
+                        .opacity(k < current - 1 || k == current ? 0 : 1)
+                }
+                // The seam cards: in the slot before each season's first
+                // episode.
+                ForEach(Array(first...max(first, last)).filter {
+                    $0 > 0 && list[$0 - 1].season != list[$0].season
+                }, id: \.self) { k in
+                    seasonSeamCard(list[k].season ?? 0)
+                        .offset(x: x(k) - slot)
+                        .opacity(k >= current ? 1 : 0)
+                }
+            }
+        }
+        // The resistance: the cards give a little.
+        .offset(x: episodeNudge)
+    }
+
+    /// Between two seasons: a landscape glass card, "Season N" — pressed
+    /// (like a glass button) while the row resists before crossing it.
+    private func seasonSeamCard(_ season: Int) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+        return ZStack {
+            Color.clear.glassSurface(in: shape)
+            VStack(spacing: 10) {
+                Text(seasonName(season))
+                    .font(.system(size: 40, weight: .bold))
+                    .foregroundStyle(AppGlass.text)
+                let count = viewModel.episodes(season: season).count
+                if count > 0 {
+                    Text(count == 1 ? "1 Episode" : "\(count) Episodes")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(AppGlass.textMuted)
+                }
+            }
+        }
+        .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+        .overlay { GlassRim(cornerRadius: Spotlight.cornerRadius) }
+        .overlay { shape.fill(Color.white.opacity(seasonSeamPressed ? Spotlight.seamPressGlow : 0)) }
+        .scaleEffect(seasonSeamPressed ? Spotlight.seamPressScale : 1)
+    }
+
+    /// The box: stationary; the current episode's card crossfades in place
+    /// (its neighbours mounted invisibly, so a step is instant).
+    private func episodeBox() -> some View {
+        let list = rowEpisodes
+        let current = currentIndex
+        let window = list.isEmpty ? [] : Array(max(0, current - 1)...min(list.count - 1, current + 1))
+        return ZStack {
+            Color.black
+            ForEach(window, id: \.self) { k in
+                episodeCard(list[k], startsSeason: false)
+                    .opacity(k == current ? 1 : 0)
+                    .zIndex(k == current ? 1 : 0)
+            }
+        }
+        .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+        .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+        .overlay { GlassRim(cornerRadius: Spotlight.cornerRadius) }
+    }
+
+    /// Brightness of the text on the episode cards.
+    private static let cardNumberOpacity: Double = 0.78
+    private static let cardTitleOpacity: Double = 0.92
+
+    private func episodeCard(_ episode: MetaVideo, startsSeason: Bool) -> some View {
+        let season = episode.season ?? 0
+        let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
+        // TMDB's still in full resolution first: the add-on's thumbnail is
+        // often small, and these cards are big.
+        let image = TMDBService.originalSize(extra?.still) ?? episode.thumbnail
+            ?? viewModel.meta.background ?? viewModel.meta.poster
+        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+        let progress = progressStore.progress(for: episode.id)?.fraction ?? 0
+        let isDone = isWatched(episode, season: season)
+
+        return ZStack(alignment: .topLeading) {
+            EpisodeArt(url: image, blurred: shouldBlurEpisode(episode, season: season))
+                .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+
+            // Soft shade at the bottom for the number and title.
+            LinearGradient(colors: [.clear, .black.opacity(0.7)],
+                           startPoint: .center, endPoint: .bottom)
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                if isDone {
+                    EpisodeBadge(icon: "checkmark", text: "Watched", tint: .white)
+                } else if let airs = episode.airCountdownText {
+                    EpisodeBadge(icon: "calendar", text: airs, tint: .white)
+                }
+            }
+            .padding(18)
+
+            VStack(alignment: .leading, spacing: 4) {
+                // Softer than pure white — pure white on the artwork read
+                // too bright next to the rest of the page's text.
+                // The episode's number small and plain; its TITLE is the
+                // headline.
+                Text(episode.episode.map { "Episode \($0)" } ?? "Episode")
+                    .font(.system(size: 25, weight: .medium))
+                    .foregroundStyle(.white.opacity(Self.cardNumberOpacity))
+                if let title = episode.title, !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundStyle(.white.opacity(Self.cardTitleOpacity))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
+            .padding(.horizontal, 28)
+            // Above the progress pill when there is one.
+            .padding(.bottom, progress > 0.02 && progress < 0.95
+                     ? Spotlight.progressBarBottomInset + Spotlight.continueProgressBarHeight + 16
+                     : 26)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+
+            if progress > 0.02, progress < 0.95 {
+                EpisodeProgressPill(fraction: progress)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+        .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+        .clipShape(shape)
+    }
+
+    /// The stationary spot: outline, the focusable box, its side targets.
+    private func episodeFocusLayer(_ episode: MetaVideo) -> some View {
+        let count = rowEpisodes.count
+        return HStack(spacing: 0) {
+            // (Always: at the row's ends a press bounces.)
+            rowSentinel(.left, enabled: !rowEpisodes.isEmpty, width: 20)
+            Color.clear
+                .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+                .overlay {
+                    // The same glass focus rim as Home's box.
+                    GlassFocusRim(cornerRadius: Spotlight.cornerRadius,
+                                  lineWidth: Spotlight.outlineWidth)
+                        .opacity(rowFocus != nil ? 1 : 0)
+                        .animation(.easeOut(duration: 0.2), value: rowFocus != nil)
+                }
+                .contentShape(Rectangle())
+                .focusable()
+                .focused($rowFocus, equals: .box)
+                .onTapGesture { onPlay(viewModel.meta, episode) }
+                // ONE menu, content depends on the episode (not swapped
+                // modifiers — that would rebuild the box and drop focus).
+                .contextMenu { episodeMenu(episode) }
+            rowSentinel(.right, enabled: count > 0, width: 1)
+        }
+        .padding(.leading, -20)
+    }
+
+    @ViewBuilder
+    private func rowSentinel(_ slot: RowSlot, enabled: Bool, width: CGFloat) -> some View {
+        if enabled {
+            Color.clear
+                .frame(width: width, height: Spotlight.rowHeight)
+                .focusable()
+                .focused($rowFocus, equals: slot)
+        } else {
+            Color.clear.frame(width: width, height: Spotlight.rowHeight)
+        }
+    }
+
+    @ViewBuilder
+    private func episodeMenu(_ episode: MetaVideo) -> some View {
+        let season = episode.season ?? 0
+        if autoLinkOn {
+            Button { onPlayManually(viewModel.meta, episode) } label: {
+                Label("Play Manually", systemImage: "list.and.film")
+            }
+        }
+        Button { toggleWatched(episode, season: season) } label: {
+            Label(isWatched(episode, season: season) ? "Mark as Unwatched" : "Mark as Watched",
+                  systemImage: isWatched(episode, season: season) ? "eye.slash" : "checkmark.circle")
+        }
+        Button { markSeasonWatched(season) } label: {
+            Label(season == 0 ? "Mark Specials Watched" : "Mark Season \(season) Watched",
+                  systemImage: "checkmark.circle.fill")
+        }
+    }
+
+    /// Under the row, for the episode in the box: "S1:E4 · Title", then air
+    /// date / rating / time left, then the synopsis. Crossfades per step.
+    private func episodeInfo(_ episode: MetaVideo) -> some View {
+        let season = episode.season ?? 0
+        let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
+        // (The episode number and title are on the card.)
+        var segments: [String] = []
+        if let airs = episode.airCountdownText {
+            segments.append(airs)
+        } else if let date = DateFormat.releaseDate(extra?.airDate ?? episode.released) {
+            segments.append(date)
+        }
+        if let length = episodeLength(episode, extra: extra) { segments.append(length) }
+        if let rating = extra?.rating { segments.append(String(format: "★ %.1f", rating)) }
+        if isWatched(episode, season: season) {
+            segments.append("Watched")
+        } else if let progress = progressStore.progress(for: episode.id),
+                  progress.fraction > 0.02, progress.fraction < 0.95,
+                  let left = progress.remainingTimeText {
+            segments.append("\(left) left")
+        }
+        return VStack(alignment: .leading, spacing: 12) {
+            if !segments.isEmpty {
+                MetaLine(segments: segments)
+            }
+            if let overview = episode.overview, !overview.isEmpty {
+                Text(overview)
+                    .font(FusionType.bodyText(theme.font))
+                    .foregroundStyle(theme.palette.textSecondary)
+                    .lineLimit(Spotlight.episodeDescriptionLines)
+                    .frame(maxWidth: Spotlight.episodeDescriptionWidth, alignment: .leading)
+            }
+        }
+        .id(episode.id)
+        .transition(.opacity.animation(Spotlight.textFade))
+    }
+    
+    private func stepEpisode(by delta: Int) {
+        let list = rowEpisodes
+        guard !list.isEmpty, !episodeWrapping else { return }
+        pressEpisodeChevron(delta)
+        let next = currentIndex + delta
+        // The row's ends: resistance, then back (the series doesn't loop).
+        guard list.indices.contains(next) else { bounceEpisodes(delta); return }
+        let crossesSeam = list[currentIndex].season != list[next].season
+        if crossesSeam {
+            // Across a season seam: Home's heavy step — the cards resist (and
+            // the seam card is pressed), then the row slides on past it.
+            episodeWrapping = true
+            withAnimation(Spotlight.wrapPress) {
+                episodeNudge = -CGFloat(delta) * Spotlight.wrapNudge
+                seasonSeamPressed = true
+            }
+            Task {
+                try? await Task.sleep(for: Spotlight.wrapHold)
+                withAnimation(.smooth(duration: 0.25)) { seasonSeamPressed = false }
+                withAnimation(Spotlight.wrapSlide) {
+                    episodeNudge = 0
+                    episodeIndex = next
+                }
+                seasonStep = delta > 0 ? 1 : -1
+                withAnimation(.smooth(duration: 0.3)) { syncSeasonToCurrent() }
+                try? await Task.sleep(for: .seconds(0.3))
+                episodeWrapping = false
+            }
+        } else {
+            withAnimation(Spotlight.slide) { episodeIndex = next }
+            syncSeasonToCurrent()
+        }
+        // Crossing into a season whose ratings / air dates / stills aren't
+        // loaded yet: fetch them a few episodes ahead of the boundary.
+        for offset in [1, 3] where list.indices.contains(next + offset) {
+            if let s = list[next + offset].season { Task { await viewModel.loadSeason(s) } }
+        }
+    }
+
+    /// The end of the episode row: the cards give, then spring back.
+    private func bounceEpisodes(_ delta: Int) {
+        episodeWrapping = true
+        withAnimation(Spotlight.wrapPress) { episodeNudge = -CGFloat(delta) * Spotlight.wrapNudge }
+        Task {
+            try? await Task.sleep(for: Spotlight.wrapHold)
+            withAnimation(Spotlight.endBounce) { episodeNudge = 0 }
+            try? await Task.sleep(for: .seconds(0.15))
+            episodeWrapping = false
+        }
+    }
+
+    /// The pressed direction's ‹ ›: a quick press and release.
+    private func pressEpisodeChevron(_ delta: Int) {
+        let side = delta > 0 ? 1 : -1
+        withAnimation(.easeOut(duration: 0.08)) { episodePressedChevron = side }
+        Task {
+            try? await Task.sleep(for: .milliseconds(120))
+            withAnimation(.smooth(duration: 0.25)) {
+                if episodePressedChevron == side { episodePressedChevron = 0 }
+            }
+        }
+    }
+
+    /// Episode length: TMDB's runtime for the episode, else the length the
+    /// player measured if you've started it, else the show's usual runtime.
+    private func episodeLength(_ episode: MetaVideo, extra: TMDBService.EpisodeExtra?) -> String? {
+        var minutes = extra?.runtime ?? 0
+        if minutes == 0, let duration = progressStore.progress(for: episode.id)?.durationSeconds,
+           duration.isFinite, duration > 60 {
+            minutes = Int((duration / 60).rounded())
+        }
+        if minutes > 0 {
+            return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+        }
+        return viewModel.meta.runtimeFormatted
+    }
+
+    private func seasonName(_ season: Int) -> String {
+        season == 0 ? "Specials" : "Season \(season)"
+    }
+
+    /// The season selector follows the episode in the box.
+    private func syncSeasonToCurrent() {
+        guard let season = currentEpisode?.season,
+              viewModel.selectedSeason != season else { return }
+        viewModel.selectedSeason = season
+    }
+
+    /// The selector: jump the row to that season's first episode.
+    private func jumpToSeason(_ season: Int) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            episodeIndex = rowEpisodes.firstIndex { $0.season == season } ?? 0
+        }
+        viewModel.selectedSeason = season
+    }
+
+    /// Mark every AIRED episode of a season watched (unaired ones would be
+    /// pushed to Trakt/SIMKL as real plays and wreck the new-episode badge).
+    private func markSeasonWatched(_ season: Int) {
+        for episode in viewModel.episodes(season: season) where episode.hasAired && !watched.isWatched(
+            contentID: viewModel.meta.id, season: episode.season ?? season, episode: episode.episode
+        ) {
+            watched.mark(meta: viewModel.meta, video: episode)
         }
     }
 
@@ -1363,28 +1928,14 @@ struct DetailView: View {
     private var castSection: some View {
         let people = viewModel.crew + viewModel.cast
         if layout.detailShowCast, !people.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                // The trailer lives only in the action row above; the cast
-                // header is just a title (removed the duplicate trailer tab).
-                RowHeader(title: "Creator and Cast")
-
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: OrivioSpacing.lg) {
-                        ForEach(people) { member in
-                            Button {
-                                onSelectPerson(member.id, member.name)
-                            } label: {
-                                CastChip(member: member)
-                            }
-                            .buttonStyle(PlainCardButtonStyle())
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.md)
+            moreSection("Cast & Crew") {
+                SlidingFocusRow(items: people, itemSize: CGSize(width: 160, height: 160),
+                                rowHeight: 250, focusCorner: 80,
+                                onSelect: { onSelectPerson($0.id, $0.name) },
+                                onFocus: { if $0 { page = .more } }) { member, focused in
+                    PersonCard(member: member, focused: focused)
                 }
-                .scrollClipDisabled()
             }
-            .focusSection()
         }
     }
 
@@ -1394,26 +1945,7 @@ struct DetailView: View {
     private var collectionSection: some View {
         if layout.detailShowCollection, let collection = viewModel.collection,
            !viewModel.collectionParts.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                RowHeader(title: collection.name)
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: OrivioSpacing.lg) {
-                        ForEach(viewModel.collectionParts) { item in
-                            Button {
-                                onSelectItem(item)
-                            } label: {
-                                PosterCard(item: item)
-                            }
-                            .mediaCardButtonStyle()
-                            .posterHoldMenu(item) { onSelectItem(item) }
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.lg)
-                }
-                .scrollClipDisabled()
-            }
-            .focusSection()
+            moreSection(collection.name) { posterRow(viewModel.collectionParts) }
         }
     }
 
@@ -1422,26 +1954,7 @@ struct DetailView: View {
     @ViewBuilder
     private var moreLikeThisSection: some View {
         if layout.detailShowMoreLikeThis, !viewModel.moreLikeThis.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                RowHeader(title: "More Like This")
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: OrivioSpacing.lg) {
-                        ForEach(viewModel.moreLikeThis) { item in
-                            Button {
-                                onSelectItem(item)
-                            } label: {
-                                PosterCard(item: item)
-                            }
-                            .mediaCardButtonStyle()
-                            .posterHoldMenu(item) { onSelectItem(item) }
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.lg)
-                }
-                .scrollClipDisabled()
-            }
-            .focusSection()
+            moreSection("More Like This") { posterRow(viewModel.moreLikeThis) }
         }
     }
 
@@ -1450,25 +1963,33 @@ struct DetailView: View {
     @ViewBuilder
     private var companiesSection: some View {
         if layout.detailShowProduction, !viewModel.companies.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                RowHeader(title: "Production")
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: OrivioSpacing.lg) {
-                        ForEach(viewModel.companies) { company in
-                            Button {
-                                onSelectCompany(company.id, company.name)
-                            } label: {
-                                CompanyLogo(company: company)
-                            }
-                            .buttonStyle(PlainCardButtonStyle())
-                        }
-                    }
-                    .padding(.horizontal, OrivioSpacing.huge)
-                    .padding(.vertical, OrivioSpacing.md)
+            moreSection("Production") {
+                SlidingFocusRow(items: viewModel.companies, itemSize: CGSize(width: 220, height: 110),
+                                rowHeight: 110, focusCorner: 14,
+                                onSelect: { onSelectCompany($0.id, $0.name) },
+                                onFocus: { if $0 { page = .more } }) { company, focused in
+                    CompanyPlate(company: company, focused: focused)
                 }
-                .scrollClipDisabled()
             }
-            .focusSection()
+        }
+    }
+
+    /// A More-page section: its title, then its row.
+    private func moreSection<Content: View>(_ title: String,
+                                            @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
+            DetailRowHeader(title: title)
+            content()
+                .padding(.leading, Spotlight.screenInset)
+        }
+    }
+
+    /// Titles as portrait posters on the sliding row (Home's look).
+    private func posterRow(_ items: [MetaItem]) -> some View {
+        SlidingFocusRow(items: items, itemSize: CGSize(width: 200, height: 300), rowHeight: 300,
+                        onSelect: { onSelectItem($0) },
+                        onFocus: { if $0 { page = .more } }) { item, focused in
+            MorePoster(item: item, focused: focused)
         }
     }
 
@@ -1478,14 +1999,14 @@ struct DetailView: View {
     private var commentsSection: some View {
         if layout.detailShowComments, !viewModel.comments.isEmpty {
             VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                RowHeader(title: "Comments")
+                DetailRowHeader(title: "Comments")
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: OrivioSpacing.lg) {
                         ForEach(viewModel.comments) { comment in
-                            CommentCard(comment: comment)
+                            CommentCard(comment: comment, onFocus: { page = .more })
                         }
                     }
-                    .padding(.horizontal, OrivioSpacing.huge)
+                    .padding(.horizontal, Spotlight.screenInset)
                     .padding(.vertical, OrivioSpacing.md)
                 }
                 .scrollClipDisabled()
@@ -1522,10 +2043,18 @@ private struct EpisodeCell: View {
     /// Present only while an auto-select feature is armed: the hold menu's
     /// "Play Manually" escape hatch to the full source list for THIS episode.
     var onPlayManually: (() -> Void)?
+    /// Called when this episode's button GAINS focus. `.focused(...)` on the
+    /// whole cell never fires (the cell is a VStack, only the Button inside
+    /// is focusable), so the row learns about focus through this instead.
+    var onFocus: () -> Void = {}
+    /// Lets the page put focus on THIS episode programmatically.
+    let episodeID: String
+    let focusBinding: FocusState<String?>.Binding
 
     /// Focus mirrored out of the button: a sibling caption cannot read
     /// `\.isFocused`, which only resolves inside the focusable view.
     @State private var focused = false
+    @State private var rawFocused = false
 
     private static let cardWidth: CGFloat = 400
 
@@ -1546,7 +2075,7 @@ private struct EpisodeCell: View {
                     blurImage: blurImage,
                     showsCaption: false
                 )
-                .onFocusChange { focused = $0 }
+                .onFocusChange { rawFocused = $0; if $0 { onFocus() } }
             }
             // The same focus treatment every other card in the app gets — the
             // native platter, or a scale lift when "Card wiggle & lift" is off.
@@ -1556,7 +2085,8 @@ private struct EpisodeCell: View {
             // With the defaults that left a focused episode with no ring, no
             // platter and no lift — only the caption brightening — so you could
             // not tell which episode you were on.
-            .mediaCardButtonStyle()
+            .buttonStyle(DelayedLiftCardButtonStyle())
+            .focused(focusBinding, equals: episodeID)
             // Hold Select on an episode to flip its watched state without
             // opening it — and, when auto-select is armed, to reach the manual
             // source list (a plain press auto-picks a link).
@@ -1580,7 +2110,11 @@ private struct EpisodeCell: View {
                 subtitleBehavior: .readableOnFocus,
                 isFocused: focused,
                 lowered: focused
-            )
+            ).task(id: rawFocused) {
+                guard rawFocused else { focused = false; return }
+                try? await Task.sleep(for: episodeLiftDelay)
+                if !Task.isCancelled { focused = true }
+            }
         }
     }
 }
@@ -1649,11 +2183,166 @@ struct CompanyLogo: View {
     }
 }
 
+// MARK: - The More page's rows
+
+/// Home's motion language, compact: ONE focus position at the row's start
+/// that never moves — the items slide under it on Left/Right (the previous
+/// one peeking into the margin); at the ends, the resistance nudge. The
+/// focused item keeps its shape: the glass focus rim and a slight lift.
+/// The whole row is the focus target (Up/Down enter it anywhere).
+struct SlidingFocusRow<Item: Identifiable, Card: View>: View {
+    let items: [Item]
+    let itemSize: CGSize
+    /// The row's height (cards with captions are taller than `itemSize`).
+    var rowHeight: CGFloat
+    var spacing: CGFloat = 28
+    /// The focus rim's corner radius (half the width: a circle).
+    var focusCorner: CGFloat = Spotlight.cornerRadius
+    let onSelect: (Item) -> Void
+    var onFocus: (Bool) -> Void = { _ in }
+    @ViewBuilder let card: (Item, _ focused: Bool) -> Card
+
+    @State private var index = 0
+    @State private var nudge: CGFloat = 0
+    @State private var busy = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let slot = itemSize.width + spacing
+        let first = max(index - 2, 0)
+        let last = min(index + 9, items.count - 1)
+        ZStack(alignment: .topLeading) {
+            if !items.isEmpty {
+                // The cards: they slide UNDER the box (the current one is
+                // hidden beneath it, the previous one comes out on the left
+                // and peeks) — and they alone give at the ends.
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(first...max(first, last)), id: \.self) { k in
+                        card(items[k], false)
+                            .frame(width: itemSize.width, alignment: .top)
+                            .offset(x: CGFloat(k - index) * slot)
+                            .opacity(k < index - 1 || k == index ? 0 : 1)
+                    }
+                }
+                .offset(x: nudge)
+
+                // The box: STATIONARY at the focus position. Its item
+                // crossfades in place (the neighbours mounted invisibly);
+                // the focus rim is part of it, so it never leaves its item.
+                ZStack(alignment: .top) {
+                    ForEach(Array(max(index - 1, 0)...min(index + 1, items.count - 1)), id: \.self) { k in
+                        card(items[k], focused && k == index)
+                            .frame(width: itemSize.width, alignment: .top)
+                            .opacity(k == index ? 1 : 0)
+                            .zIndex(k == index ? 1 : 0)
+                    }
+                }
+                .overlay(alignment: .top) {
+                    GlassFocusRim(cornerRadius: focusCorner, lineWidth: Spotlight.outlineWidth)
+                        .frame(width: itemSize.width, height: itemSize.height)
+                        .opacity(focused ? 1 : 0)
+                        .animation(.easeOut(duration: 0.2), value: focused)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .focusable()
+        .focused($focused)
+        .onChange(of: focused) { _, isFocused in onFocus(isFocused) }
+        .onMoveCommand { direction in
+            switch direction {
+            case .left: step(-1)
+            case .right: step(1)
+            default: break
+            }
+        }
+        .onTapGesture { if items.indices.contains(index) { onSelect(items[index]) } }
+    }
+
+    private func step(_ delta: Int) {
+        guard !busy, !items.isEmpty else { return }
+        let next = index + delta
+        guard items.indices.contains(next) else {
+            // The end: resistance, then back.
+            busy = true
+            withAnimation(Spotlight.wrapPress) { nudge = -CGFloat(delta) * Spotlight.wrapNudge * 0.6 }
+            Task {
+                try? await Task.sleep(for: Spotlight.wrapHold)
+                withAnimation(Spotlight.endBounce) { nudge = 0 }
+                try? await Task.sleep(for: .seconds(0.15))
+                busy = false
+            }
+            return
+        }
+        withAnimation(Spotlight.slide) { index = next }
+    }
+}
+
+/// A title on the More page: a portrait poster with the glass rim (the
+/// focus rim and a lift when focused).
+private struct MorePoster: View {
+    let item: MetaItem
+    let focused: Bool
+
+    var body: some View {
+        RemoteImage(url: item.poster ?? item.background, maxDimension: 300)
+            .frame(width: 200, height: 300)
+            .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+            .overlay { GlassRim(cornerRadius: Spotlight.cornerRadius) }
+    }
+}
+
+/// A person: a round portrait with the glass rim, name and role below.
+private struct PersonCard: View {
+    let member: TMDBService.CastMember
+    let focused: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            RemoteImage(url: member.profileURL, maxDimension: 160)
+                .frame(width: 160, height: 160)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Circle())
+                .overlay { GlassRim(cornerRadius: 80) }
+            Text(member.name)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(focused ? AppGlass.text : AppGlass.textMuted)
+                .lineLimit(1)
+            if let role = member.character, !role.isEmpty {
+                Text(role)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(AppGlass.textMuted.opacity(0.8))
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: 180)
+        .animation(.easeOut(duration: 0.2), value: focused)
+    }
+}
+
+/// A production company: its logo on a light plate (logos are mostly dark)
+/// with the glass rim.
+private struct CompanyPlate: View {
+    let company: TMDBService.Company
+    let focused: Bool
+
+    var body: some View {
+        RemoteImage(url: company.logoURL, contentMode: .fit, maxDimension: 180)
+            .frame(width: 180, height: 80)
+            .frame(width: 220, height: 110)
+            .background(Color.white.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay { GlassRim(cornerRadius: 14) }
+    }
+}
+
 /// A single Trakt comment card. Spoilers stay hidden until focused.
 struct CommentCard: View {
     @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let comment: TraktService.Comment
+    var onFocus: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: OrivioSpacing.sm) {
@@ -1694,24 +2383,46 @@ struct CommentCard: View {
         )
         .focusable()
         .focusLift(OrivioFocus.row, isFocused)
+        .onChange(of: isFocused) { _, focused in if focused { onFocus() } }
     }
 }
 
 /// Circular icon button used for the Detail action row (add / watched / trailer),
 /// matching the APK's dark round buttons that fill with the accent on focus.
+/// Whether the action buttons use the SYSTEM's Liquid Glass (tvOS 26+,
+/// on boxes that can afford it) — Apple's material with its native focus
+/// behaviour. Otherwise the app's own chrome is the fallback.
+enum DetailGlass {
+    /// Same rule as every other glass element (see `AppGlass`).
+    static var available: Bool { AppGlass.isReal }
+}
+
+/// A round action button (Library, Watched, Rate, Trailer, Start Over).
+/// One design, no accent colour: "on" (saved / watched / rated) is shown
+/// by the symbol alone — the caller passes its filled variant.
 struct CircleIconButton: View {
     let systemName: String
     var active: Bool = false
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            // Focus must be read INSIDE the button's label — read outside the
-            // Button, `\.isFocused` never turns true and the highlight never
-            // shows (only ancestors' focus reaches the environment).
-            CircleIconLabel(systemName: systemName, active: active)
+        if #available(tvOS 26.0, *), DetailGlass.available {
+            Button(action: action) {
+                Image(systemName: systemName)
+                    .font(.system(size: 24, weight: .semibold))
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+        } else {
+            Button(action: action) {
+                // Focus must be read INSIDE the button's label — read outside
+                // the Button, `\.isFocused` never turns true and the highlight
+                // never shows (only ancestors' focus reaches the environment).
+                CircleIconLabel(systemName: systemName, active: active)
+            }
+            .buttonStyle(PlainCardButtonStyle())
         }
-        .buttonStyle(PlainCardButtonStyle())
     }
 }
 
@@ -1743,9 +2454,9 @@ private struct CircleIconLabel: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 30, weight: .semibold))
+            .font(.system(size: 36, weight: .semibold))
             .foregroundStyle(isFocused || active ? theme.palette.onSecondary : theme.palette.textPrimary)
-            .frame(width: 78, height: 78)
+            .frame(width: detailButtonSize, height: detailButtonSize)
             .background {
                 if isFocused || active {
                     Circle().fill(active && !isFocused
@@ -1755,7 +2466,6 @@ private struct CircleIconLabel: View {
             }
             // Glass circle at rest, matching the rail.
             .liquidGlassIf(!isFocused && !active, in: Circle())
-            .overlay(Circle().strokeBorder(isFocused ? Color.white.opacity(0.95) : .clear, lineWidth: 3))
             .focusLift(OrivioFocus.control, isFocused)
             .onAppear {
                 focusedNow = rawFocused
@@ -1792,16 +2502,26 @@ struct PlayActionButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: "play.fill").font(.system(size: 24, weight: .bold))
-                Text(title).font(FusionType.button(theme.font))
-            }
-            // Keeps the capsule at ~222pt even for "Play" — comfortably past
-            // the threshold the menu needs. See the note above.
-            .frame(minWidth: 150)
+        if #available(tvOS 26.0, *), DetailGlass.available {
+            // The system's Liquid Glass capsule — same material as the
+            // round buttons beside it.
+            Button(action: action) { label.frame(height: 34) }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+        } else {
+            Button(action: action) { label }
+                .buttonStyle(DetailPillButtonStyle())
         }
-        .buttonStyle(DetailPillButtonStyle())
+    }
+
+    private var label: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "play.fill").font(.system(size: 26, weight: .bold))
+            Text(title).font(FusionType.button(theme.font))
+        }
+        // Keeps the capsule at ~222pt even for "Play" — comfortably past
+        // the threshold the menu needs. See the note above.
+        .frame(minWidth: 150)
     }
 }
 
@@ -1816,37 +2536,23 @@ struct DetailPillButtonStyle: ButtonStyle {
         @Environment(\.isFocused) private var isFocused
         let configuration: ButtonStyle.Configuration
 
+        /// The same chrome as the round buttons beside it: Liquid Glass at
+        /// rest, the accent fill + lift on focus. (It used to be a solid
+        /// light pill at rest with a glow on focus — the odd one out.)
         var body: some View {
             configuration.label
-                // The palette's own text colour for its fill — White, Lavender
-                // and Mint are light fills, and white text vanished into them.
-                .foregroundStyle(isFocused ? theme.palette.onSecondary
-                                 : (restsOnGlass ? .white : .black))
+                .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
                 .padding(.horizontal, 36)
-                .padding(.vertical, 16)
-                // White's accent fill is the same white this pill rests on, so
-                // focus needs a resting look that differs from it. It used to
-                // rest on BARE GLASS with `textPrimary` — white label on a
-                // translucent light material, i.e. INVISIBLE, which is the
-                // "white theme: play button text is gone" report. A dark
-                // translucent pill keeps the white label readable on any
-                // backdrop and still leaves the focused white fill distinct.
-                .background(Capsule().fill(isFocused ? theme.palette.secondary
-                                           : (restsOnGlass ? Color.black.opacity(0.5)
-                                                           : Color.white.opacity(0.9))))
-                .overlay(
-                    Capsule().strokeBorder(isFocused ? Color.white.opacity(0.95) : .clear, lineWidth: 4)
-                )
-                .shadow(color: isFocused ? theme.palette.secondary.opacity(0.7) : .black.opacity(0.14),
-                        radius: isFocused ? 26 : 6, y: isFocused ? 12 : 6)
-                .focusLift(OrivioFocus.card, isFocused)
+                .frame(height: detailButtonSize)
+                .background {
+                    if isFocused { Capsule().fill(theme.palette.secondary) }
+                }
+                .liquidGlassIf(!isFocused, in: Capsule())
+                // The round buttons' lift (`.control`), not the bigger card
+                // lift — every control in the row grows by the same amount.
+                .focusLift(OrivioFocus.control, isFocused)
                 .cardPressDip(configuration.isPressed)
         }
-
-        /// White's accent fill is the same white this pill rests on, so on White
-        /// focus changed nothing and the resting pill looked focused beside the
-        /// icon circles. There it rests on glass, the way the circles do.
-        private var restsOnGlass: Bool { theme.palette.id == OrivioThemes.white.id }
     }
 }
 
@@ -1856,61 +2562,58 @@ struct SeasonChip: View {
 
     let season: Int
     let selected: Bool
+    var onFocus: () -> Void = {}
 
+    /// Same family as the Overview buttons: Liquid Glass at rest, accent
+    /// fill + lift on focus. The selected season is the SAME glass, just
+    /// lit a little brighter with bright text — no solid pill, no glow.
     var body: some View {
         Text(season == 0 ? "Specials" : "Season \(season)")
-            .font(.system(size: 23, weight: .semibold))
-            .foregroundStyle(isFocused ? .black
-                             : (selected ? theme.palette.onAccentTint : theme.palette.textSecondary))
-            .padding(.horizontal, OrivioSpacing.lg)
-            .padding(.vertical, OrivioSpacing.sm)
+            .font(.system(size: 26, weight: .semibold))
+            .foregroundStyle(isFocused ? theme.palette.onSecondary
+                             : selected ? theme.palette.textPrimary
+                             : theme.palette.textSecondary)
+            .padding(.horizontal, 30)
+            .frame(height: 64)
             .background {
                 if isFocused {
-                    Capsule(style: .continuous).fill(Color.white.opacity(0.92))
+                    Capsule(style: .continuous).fill(theme.palette.secondary)
                 } else if selected {
-                    Capsule(style: .continuous).fill(theme.palette.secondary.opacity(0.28))
+                    Capsule(style: .continuous).fill(Color.white.opacity(0.16))
                 }
             }
-            .liquidGlassIf(!isFocused && !selected, in: Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(selected && !isFocused ? theme.palette.secondary.opacity(0.8) : .clear,
-                                  lineWidth: 2.5)
-            )
-            .focusLift(OrivioFocus.card, isFocused)
+            .liquidGlassIf(!isFocused, in: Capsule(style: .continuous))
+            .focusLift(OrivioFocus.control, isFocused)
+            .onChange(of: isFocused) { _, focused in if focused { onFocus() } }
     }
 }
 
 /// A compact IMDb parental-guide advisory row: one chip per category, tinted
 /// by severity (mild → amber, moderate → orange, severe → red).
+/// The parental guide as glass chips (the app's glass): the category, and
+/// its severity as a coloured word — a little colour on the page — with a
+/// faint tint of it in the chip. Most severe first.
 private struct ParentalGuideRow: View {
-    @EnvironmentObject private var theme: ThemeManager
     let entries: [ParentalGuideEntry]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.xs) {
-            Text("PARENTAL GUIDE")
-                .font(.system(size: 17, weight: .heavy))
-                .foregroundStyle(theme.palette.textTertiary)
-            HStack(spacing: OrivioSpacing.sm) {
-                ForEach(entries.sorted { $0.severity.rank > $1.severity.rank }) { entry in
-                    HStack(spacing: 6) {
-                        Text(entry.label)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(theme.palette.textPrimary)
-                        Text(entry.severity.display)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(tint(entry.severity))
-                    }
-                    .padding(.horizontal, OrivioSpacing.md)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule().fill(tint(entry.severity).opacity(0.16))
-                    )
+        HStack(spacing: OrivioSpacing.sm) {
+            ForEach(entries.sorted { $0.severity.rank > $1.severity.rank }) { entry in
+                HStack(spacing: 10) {
+                    Text(entry.label)
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(AppGlass.text)
+                    Text(entry.severity.display)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(tint(entry.severity))
                 }
+                .padding(.horizontal, 16)
+                .frame(height: 38)
+                .background(Capsule().fill(tint(entry.severity).opacity(0.14)))
+                .glassSurface(in: Capsule())
+                .overlay { GlassRim(cornerRadius: 19) }
             }
         }
-        .padding(.top, 2)
     }
 
     private func tint(_ s: ParentalSeverity) -> Color {
@@ -2116,5 +2819,102 @@ private struct RatingPickerOverlay: View {
         }
         .onExitCommand { onCancel() }
         .onAppear { focus = current ?? 8 }
+    }
+}
+
+/// Like the app's FlatCardButtonStyle, but the focus lift waits until the
+/// row has slid the card into the first column.
+struct DelayedLiftCardButtonStyle: ButtonStyle {
+    var delay: Duration = episodeLiftDelay   // match the scroll animation
+
+    func makeBody(configuration: Configuration) -> some View {
+        Chrome(configuration: configuration, delay: delay)
+    }
+
+    private struct Chrome: View {
+        @Environment(\.isFocused) private var isFocused
+        let configuration: ButtonStyle.Configuration
+        let delay: Duration
+        @State private var lifted = false
+
+        var body: some View {
+            configuration.label
+                .focusLift(OrivioFocus.card, lifted, animation: episodeLiftAnimation)
+                .cardPressDip(configuration.isPressed)
+                // Restarts on every focus change; a newer change cancels
+                // the pending lift, so fast presses never lift mid-slide.
+                .task(id: isFocused) {
+                    guard isFocused else { lifted = false; return }
+                    try? await Task.sleep(for: delay)
+                    if !Task.isCancelled { lifted = true }
+                }
+        }
+    }
+}
+
+/// Section title with the page's shared left margin (Home's spotlight
+/// inset) — the app-wide RowHeader uses its own, wider one.
+private struct DetailRowHeader: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(FusionType.moduleHeading(theme.font))
+            .foregroundStyle(theme.palette.textPrimary)
+            .padding(.leading, Spotlight.screenInset)
+    }
+}
+
+/// Episode artwork; the spoiler blur is ABSENT when off (no radius-0 blur
+/// layer to composite while the row slides).
+private struct EpisodeArt: View {
+    let url: String?
+    let blurred: Bool
+
+    var body: some View {
+        if blurred {
+            RemoteImage(url: url, maxDimension: Spotlight.boxWidth).blur(radius: 28)
+        } else {
+            RemoteImage(url: url, maxDimension: Spotlight.boxWidth)
+        }
+    }
+}
+
+/// Small dark capsule on an episode card ("★ 8.6", "Watched", "Airs Friday").
+private struct EpisodeBadge: View {
+    let icon: String
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(tint)
+            Text(text)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(Color.black.opacity(0.55)))
+    }
+}
+
+/// The Home spotlight's progress pill, inset from the card's edges.
+private struct EpisodeProgressPill: View {
+    let fraction: Double
+
+    var body: some View {
+        let width = Spotlight.boxWidth - 2 * Spotlight.progressBarInset
+        let height = Spotlight.continueProgressBarHeight
+        ZStack(alignment: .leading) {
+            Capsule().fill(Spotlight.progressTrack)
+            Capsule().fill(Spotlight.progressFill)
+                .frame(width: max(width * CGFloat(fraction), height))
+        }
+        .frame(width: width, height: height)
+        .padding(.bottom, Spotlight.progressBarBottomInset)
     }
 }

@@ -84,6 +84,7 @@
 		6CDEB9B6423BA3EBC0CC141E /* DetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7735E4954774B5ADF097B9B4 /* DetailView.swift */; };
 		6D396334A11C8F1EB78247E2 /* ScrubThumbnailer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 388B1E00D3FF9FF3C623E607 /* ScrubThumbnailer.swift */; };
 		6FE058967DDA5D9684B9877B /* StremioAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DC63CE64F31D8669EB31F3D /* StremioAPI.swift */; };
+		7100C66676F8CD50C34B144B /* TitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D97FB17F5E5FED45BC6D56 /* TitleBlock.swift */; };
 		744F21A337C17E861B20E766 /* ParentalGuideService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336649B70E24C035EE57A905 /* ParentalGuideService.swift */; };
 		78C5C453DFDA6EE3060F25DF /* TopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4A29D8AF76C72EC59202C8 /* TopShelfProvider.swift */; };
 		78F1D8125F795A3F68715A28 /* LiveTVView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B7AF90208E8326B2293F3E4 /* LiveTVView.swift */; };
@@ -143,6 +144,7 @@
 		E1B642631F0BED2D4C0E7DD4 /* SimklSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E7D17DD079A7F255B25845 /* SimklSyncManager.swift */; };
 		E2500266C7A770F8E0325E9D /* MediaCacheServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD6C94E7133025F68DE22E9 /* MediaCacheServer.swift */; };
 		E71A9C6C7E45666E27367D3C /* DoviConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC88B7827A15F09EC43F4C34 /* DoviConverter.swift */; };
+		E84BD98800A9EDDF2A2EF395 /* HomeSpotlightRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B01870C3E71F77CA95B2F9 /* HomeSpotlightRow.swift */; };
 		E8AE20FDCE91890A04B32626 /* PlaybackDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858C0A4692A535F58D9F6170 /* PlaybackDecision.swift */; };
 		ECC26F9C157AC8420610988D /* RequestCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D116BB391F1350665E457F7 /* RequestCache.swift */; };
 		F366B38A2E5ABDE6FC3B9B24 /* LiveStreamOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E88D00D03AED294885C65EFB /* LiveStreamOptions.swift */; };
@@ -272,6 +274,7 @@
 		9D2952EE61E74C62C1F3FB32 /* PlayerSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerSettingsStore.swift; sourceTree = "<group>"; };
 		9D5D90DE05390256E6F7CD6F /* SimklService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimklService.swift; sourceTree = "<group>"; };
 		9E056E9745C95EAC5F152F2E /* ProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesView.swift; sourceTree = "<group>"; };
+		A1B01870C3E71F77CA95B2F9 /* HomeSpotlightRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeSpotlightRow.swift; sourceTree = "<group>"; };
 		A1B5541ACD04013E9000101D /* OrivioAuthModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrivioAuthModels.swift; sourceTree = "<group>"; };
 		A8DCE70635C3C65E8553BFE1 /* RemoteInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteInput.swift; sourceTree = "<group>"; };
 		AB66131D818E6E4824BC7BAC /* FusionHeroBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionHeroBar.swift; sourceTree = "<group>"; };
@@ -307,6 +310,7 @@
 		E28A3B8B2BEAAE5B89B4B452 /* AddonPhoneAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddonPhoneAddView.swift; sourceTree = "<group>"; };
 		E28E10356B1135B4BFF354D5 /* AddonImportServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddonImportServer.swift; sourceTree = "<group>"; };
 		E2AF54A21166EC2FE7E70FA8 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
+		E3D97FB17F5E5FED45BC6D56 /* TitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleBlock.swift; sourceTree = "<group>"; };
 		E454A36430EAFEAAB2F5A8FE /* ContentFocusRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentFocusRouter.swift; sourceTree = "<group>"; };
 		E57FA38C482F71DE9C65359D /* SettingsTraktView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTraktView.swift; sourceTree = "<group>"; };
 		E5D1FDFE406380313A6DE116 /* DebridService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebridService.swift; sourceTree = "<group>"; };
@@ -367,6 +371,7 @@
 				3FFD250C71CF51B83B80CB8E /* Components.swift */,
 				B535C3DB8581583E6F5290EF /* FPSOverlay.swift */,
 				FC1EFC66403633B0A8EAE4C5 /* OrivioDropdown.swift */,
+				E3D97FB17F5E5FED45BC6D56 /* TitleBlock.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -436,6 +441,7 @@
 				CE32CA36732B1207C3323294 /* EmailSignInView.swift */,
 				AB66131D818E6E4824BC7BAC /* FusionHeroBar.swift */,
 				3F163B74531D7869D14E6E88 /* GlassSidebar.swift */,
+				A1B01870C3E71F77CA95B2F9 /* HomeSpotlightRow.swift */,
 				EB2DF78C140BFE8F2FFA09A3 /* HomeView.swift */,
 				0B1171B30A9B7C0990BFE3CF /* LibraryView.swift */,
 				6B7AF90208E8326B2293F3E4 /* LiveTVView.swift */,
@@ -687,11 +693,11 @@
 						TestTargetID = F3B80386B2196FBD0BA475AC;
 					};
 					8CFB23740ABA933CC89C5B66 = {
-						DevelopmentTeam = CYCSPZ5MTR;
+						DevelopmentTeam = C4KX5GHQ8V;
 						ProvisioningStyle = Automatic;
 					};
 					F3B80386B2196FBD0BA475AC = {
-						DevelopmentTeam = CYCSPZ5MTR;
+						DevelopmentTeam = C4KX5GHQ8V;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -716,8 +722,8 @@
 			projectRoot = "";
 			targets = (
 				F3B80386B2196FBD0BA475AC /* OrivioTV */,
-				256146040EDF5C68CCC7DD0F /* OrivioTVUITests */,
 				8CFB23740ABA933CC89C5B66 /* OrivioTopShelf */,
+				256146040EDF5C68CCC7DD0F /* OrivioTVUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -832,6 +838,7 @@
 				9C21BB9AF284ECF2C59E8CE9 /* GlassSidebar.swift in Sources */,
 				4403742198FE376DC48717CA /* HoldProbe.swift in Sources */,
 				E0BE3820BDB022ACC16AD04D /* HomeCatalogSettingsStore.swift in Sources */,
+				E84BD98800A9EDDF2A2EF395 /* HomeSpotlightRow.swift in Sources */,
 				D987A89C54B10CF806337C0D /* HomeView.swift in Sources */,
 				608E73BB7DCAFADA39450840 /* InfuseInfoPanel.swift in Sources */,
 				5B92169ECD18C125BDB6AE93 /* KeyHandoffServer.swift in Sources */,
@@ -909,6 +916,7 @@
 				8C4912B13F8AE3628D164A69 /* SyncCoordinator.swift in Sources */,
 				07C17A358790D05595353E29 /* TMDBBrowseView.swift in Sources */,
 				27CE46D9A7C1FD8B5464BB84 /* TMDBService.swift in Sources */,
+				7100C66676F8CD50C34B144B /* TitleBlock.swift in Sources */,
 				553EDFBD011EFC07E09B7CDE /* TopShelfExporter.swift in Sources */,
 				3687417307F1722ED1E21E0C /* TorrServerService.swift in Sources */,
 				0E6C0C82F16CC8169BB1BB6E /* TorrentSettingsStore.swift in Sources */,
@@ -970,7 +978,7 @@
 				CODE_SIGN_ENTITLEMENTS = "OrivioTopShelf/OrivioTopShelf-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CYCSPZ5MTR;
+				DEVELOPMENT_TEAM = C4KX5GHQ8V;
 				INFOPLIST_FILE = OrivioTopShelf/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -978,7 +986,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.orivio.tv.appletv.dev.topshelf;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sinan.oriviotv.topshelf;
 				SDKROOT = appletvos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 3;
@@ -1128,7 +1136,7 @@
 				CODE_SIGN_ENTITLEMENTS = OrivioTopShelf/OrivioTopShelf.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CYCSPZ5MTR;
+				DEVELOPMENT_TEAM = C4KX5GHQ8V;
 				INFOPLIST_FILE = OrivioTopShelf/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1136,7 +1144,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.orivio.tv.appletv.dev.topshelf;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sinan.oriviotv.topshelf;
 				SDKROOT = appletvos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 3;
@@ -1151,7 +1159,7 @@
 				CODE_SIGN_ENTITLEMENTS = Config/OrivioTV.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CYCSPZ5MTR;
+				DEVELOPMENT_TEAM = C4KX5GHQ8V;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1163,7 +1171,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.orivio.tv.appletv.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sinan.oriviotv;
 				SDKROOT = appletvos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 3;
@@ -1178,7 +1186,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Config/OrivioTV-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CYCSPZ5MTR;
+				DEVELOPMENT_TEAM = C4KX5GHQ8V;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1190,7 +1198,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 9;
-				PRODUCT_BUNDLE_IDENTIFIER = com.orivio.tv.appletv.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sinan.oriviotv;
 				SDKROOT = appletvos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 3;

@@ -1141,6 +1141,8 @@ struct HomeView: View {
     @ObservedObject private var liveFavorites = LiveChannelFavorites.shared
 
     let onSelect: (MetaItem) -> Void
+    /// The billboard's Select (see `HomeSpotlightView.onSelectFeatured`).
+    var onSelectFeatured: ((MetaItem) -> Void)? = nil
     let onResume: (WatchProgress) -> Void
     var onResumeFromStart: (WatchProgress) -> Void = { _ in }
     /// Opens the source list (StreamsView) so the user picks a stream manually.
@@ -1289,8 +1291,62 @@ struct HomeView: View {
     /// 9s DURING playback, real decode/memory contention on the 2–3 GB boxes.
     @State private var isVisible = true
 
+    /// Continue Watching as a spotlight row, plus the progress entry behind
+    /// each of its titles (so Select can resume exactly where you stopped).
+    private var spotlightContinue: (row: HomeRow, progress: [String: WatchProgress])? {
+        let entries = mergedContinueItems()
+        guard !entries.isEmpty else { return nil }
+        var progress: [String: WatchProgress] = [:]
+        var items: [MetaItem] = []
+        for entry in entries where progress[entry.metaID] == nil {
+            progress[entry.metaID] = entry
+            // Full catalog data when the title is loaded elsewhere on Home.
+            let base = heroItem(from: entry)
+            items.append(MetaItem(
+                id: entry.metaID, type: base.type, name: base.name,
+                poster: base.poster ?? entry.poster,
+                // Episode still (when enabled), else the show backdrop.
+                background: continueImage(entry) ?? base.background,
+                logo: base.logo ?? entry.logo,
+                description: base.description, releaseInfo: base.releaseInfo,
+                imdbRating: base.imdbRating, runtime: base.runtime,
+                genres: base.genres, cast: base.cast, videos: base.videos
+            ))
+        }
+        return (HomeRow(id: HomeSpotlightView.continueRowID,
+                        title: "Continue Watching", items: items),
+                progress)
+    }
+    
+    private var spotlightRows: [HomeRow] {
+         viewModel.entries.compactMap { entry in
+             if case .catalog(let row) = entry, !row.items.isEmpty { return row }
+             return nil
+         }
+     }
     var body: some View {
-        layoutContent
+        Group {
+            if ProcessInfo.processInfo.arguments.contains("-spotlightHome") {
+                let cw = spotlightContinue
+                // Featured: the same titles the original hero rotates through
+                // (the hero catalog from Settings → Layout, backdrops only).
+                let featured = viewModel.spotlightItems(max: 10)
+                let featuredRow = featured.isEmpty || !Spotlight.showFeatured ? [] :
+                    [HomeRow(id: HomeSpotlightView.featuredRowID, title: "Featured", items: featured)]
+                HomeSpotlightView(
+                    rows: featuredRow + (cw.map { [$0.row] } ?? []) + spotlightRows,
+                    onSelect: onSelect,
+                    onSelectFeatured: onSelectFeatured,
+                    onBack: onHomeBack,
+                    continueProgress: cw?.progress ?? [:],
+                    onResume: onResume,
+                    onResumeFromStart: onResumeFromStart,
+                    onPlayManually: onPlayManuallyProgress
+                )
+            } else {
+                layoutContent
+            }
+        }
         .onAppear {
             isVisible = true
             hero.layout = homeCatalogSettings.heroLayout

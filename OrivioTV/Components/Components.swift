@@ -513,13 +513,24 @@ struct RemoteImage: View {
     /// Hard decode cap in PIXELS on the longest side, for full-bleed art that
     /// has no point size to derive from (see `PerformanceProfile.backdropPixelCap`).
     var maxPixels: CGFloat? = nil
+    /// Show the shimmer while loading (and when it fails). Off for LOGOS:
+    /// transparent art over a picture — a dark box behind it looked broken;
+    /// nothing at all until the logo is there reads better.
+    var showsPlaceholder = true
+    /// Shown instead when the image can't be loaded (e.g. a logo → the
+    /// title as text).
+    var fallback: AnyView? = nil
 
     @State private var image: UIImage?
     @State private var shownKey: String?
+    @State private var failed = false
 
     init(url: String?, contentMode: ContentMode = .fill, alignment: Alignment = .center,
-         maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil) {
+         maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil, showsPlaceholder: Bool = true,
+         fallback: AnyView? = nil) {
         self.url = url
+        self.showsPlaceholder = showsPlaceholder
+        self.fallback = fallback
         self.contentMode = contentMode
         self.alignment = alignment
         self.maxDimension = maxDimension
@@ -542,7 +553,9 @@ struct RemoteImage: View {
                     .aspectRatio(contentMode: contentMode)
                     .id(shownKey)
                     .transition(.opacity)
-            } else {
+            } else if failed, let fallback {
+                fallback.transition(.opacity)
+            } else if showsPlaceholder {
                 placeholder
             }
         }
@@ -604,9 +617,11 @@ struct RemoteImage: View {
     private func load(_ value: String?) async {
         guard let value, let parsed = URL(string: value) else {
             show(nil, key: nil, duration: 0.2)
+            failed = value != nil
             return
         }
         if value == shownKey { return }
+        failed = false
         if let cached = ImageCache.shared.image(for: memoryKey(value)) {
             show(cached, key: value, duration: 0.28)
             return
@@ -624,8 +639,11 @@ struct RemoteImage: View {
         // Coalesced: the same poster can appear in two rows at once, or race the
         // prefetch already fetching it, and each of those used to be its own
         // download.
-        guard let data = try? await ImageCache.shared.download(parsed),
-              !Task.isCancelled else { return }
+        guard let data = try? await ImageCache.shared.download(parsed) else {
+            if !Task.isCancelled, image == nil { withAnimation(.easeOut(duration: 0.2)) { failed = true } }
+            return
+        }
+        guard !Task.isCancelled else { return }
         // Decode off the render path (UIKit otherwise decodes lazily on first
         // draw — a scroll hitch per newly visible poster), downsampled to this
         // view's own pixel budget (a poster card must not decode a full-res
@@ -633,7 +651,10 @@ struct RemoteImage: View {
         let budget = pixelBudget
         guard let prepared = await Task.detached(priority: .userInitiated, operation: {
             ImageCache.decodeDownsampled(data, budget: budget)
-        }).value else { return }
+        }).value else {
+            if !Task.isCancelled, image == nil { withAnimation(.easeOut(duration: 0.2)) { failed = true } }
+            return
+        }
         if Task.isCancelled { return }
         ImageCache.shared.insert(prepared, for: value, data: data, memoryKey: memoryKey(value))
         show(prepared, key: value, duration: 0.35)
@@ -1211,6 +1232,101 @@ private struct SpoilerBlur: ViewModifier {
     }
 }
 
+/// The app's ONE glass language — every glass element (top bar, action
+/// buttons, row end cards, …) uses these, so surface, highlight and text
+/// never drift apart:
+/// - `glassSurface`: the material (real Liquid Glass where available);
+/// - `glassHighlight`: the selection / focus marker ON glass — itself glass,
+///   tinted: bright when focused (tvOS focus look, like the system glass
+///   buttons), faint when merely current;
+/// - `AppGlass` text colours: `text` (white), `textMuted` (grey),
+///   `textOnFocus` (dark, on the bright focus highlight).
+enum AppGlass {
+    static let focusTint = Color.white.opacity(0.92)
+    static let currentTint = Color.white.opacity(0.18)
+    static let text = Color.white
+    static let textMuted = Color.white.opacity(0.62)
+    static let textOnFocus = Color.black.opacity(0.85)
+    /// Real Liquid Glass is used (tvOS 26+, boxes that can afford it).
+    static var isReal: Bool {
+        if #available(tvOS 26.0, *) {
+            return !(PerformanceProfile.isLowPower || PerformanceProfile.isMidPower)
+        }
+        return false
+    }
+}
+
+extension View {
+    /// The glass material behind this view, in `shape`. As a BACKGROUND —
+    /// never wrapping focusable content (that hides it from the focus
+    /// engine).
+    func glassSurface<S: Shape>(in shape: S) -> some View {
+        background(Color.clear.liquidGlass(in: shape))
+    }
+}
+
+/// The glass RIM on artwork (posters, cards, the box): the edge catches
+/// light like the edge of a glass pane — bright at the top-left, fading
+/// along the sides, a fainter catch at the bottom-right — while the art
+/// itself stays fully opaque. Static (cheap), unlike a live glass layer.
+struct GlassRim: View {
+    var cornerRadius: CGFloat
+    /// 1 = the standard rim; more for the focused box.
+    var strength: Double = 1
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(
+                LinearGradient(stops: [
+                    .init(color: .white.opacity(0.55 * strength), location: 0),
+                    .init(color: .white.opacity(0.14 * strength), location: 0.3),
+                    .init(color: .white.opacity(0.04 * strength), location: 0.6),
+                    .init(color: .white.opacity(0.22 * strength), location: 1)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: 1.5)
+            .allowsHitTesting(false)
+    }
+}
+
+/// The FOCUS outline on artwork: the glass rim's big sibling — bold and
+/// nearly white all round, with the same light play (brightest top-left, a
+/// catch bottom-right) and a faint glow, so it reads as the same glass
+/// language while clearly marking focus.
+struct GlassFocusRim: View {
+    var cornerRadius: CGFloat
+    var lineWidth: CGFloat = 4
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .strokeBorder(
+                LinearGradient(stops: [
+                    .init(color: .white, location: 0),
+                    .init(color: .white.opacity(0.8), location: 0.35),
+                    .init(color: .white.opacity(0.68), location: 0.65),
+                    .init(color: .white.opacity(0.92), location: 1)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: lineWidth)
+            .shadow(color: .white.opacity(0.3), radius: 6)
+            .allowsHitTesting(false)
+    }
+}
+
+/// The selection / focus marker on glass (see `AppGlass`).
+struct GlassHighlight<S: Shape>: View {
+    let focused: Bool
+    let shape: S
+
+    var body: some View {
+        if #available(tvOS 26.0, *), AppGlass.isReal {
+            Color.clear.glassEffect(
+                .regular.tint(focused ? AppGlass.focusTint : AppGlass.currentTint), in: shape)
+        } else {
+            shape.fill(focused ? AppGlass.focusTint : AppGlass.currentTint)
+        }
+    }
+}
+
 /// Liquid Glass on tvOS 26, translucent material earlier — the one frosted
 /// treatment every glass surface in the app goes through (rail, filter pills,
 /// search bar, detail icon circles, season chips).
@@ -1656,7 +1772,8 @@ struct MDBListRatingsRow: View {
                         .foregroundStyle(theme.palette.textPrimary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(theme.palette.secondary.opacity(0.22),
+                        // (Neutral — no accent colour, like the rest.)
+                        .background(Color.white.opacity(0.16),
                                     in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     Text(entry.text)
                         .font(.system(size: 20, weight: .semibold))
@@ -1718,6 +1835,50 @@ struct LibrarySection<Content: View>: View {
 }
 
 // MARK: - Hero gradients (ported from Orivio's ModernHeroGradientLayer)
+
+/// THE dark layer over artwork, the same on every screen that puts text
+/// over a picture (Home's rows and billboard, the Detail page): neutral
+/// black, tuned for the hardest case — text on a photo.
+/// - left: carries the titles, meta lines, descriptions (bottom-left);
+/// - bottom: the "▾" hints and the preview row;
+/// - top: just enough for the top navigation over bright art.
+/// Only the artwork beneath it changes from screen to screen.
+enum StageScrimStyle {
+    /// Darkness at the left edge, and how far across it reaches (share of
+    /// the width).
+    static let left: Double = 0.8
+    static let leftReach: CGFloat = 0.6
+    /// Darkness at the bottom edge, and where (from the top) it begins.
+    static let bottom: Double = 0.85
+    static let bottomStart: CGFloat = 0.45
+    /// Darkness at the top edge, and how far down it reaches.
+    static let top: Double = 0.5
+    static let topReach: CGFloat = 0.22
+}
+
+struct StageScrim: View {
+    var body: some View {
+        let s = StageScrimStyle.self
+        ZStack {
+            LinearGradient(stops: [
+                .init(color: .black.opacity(s.left), location: 0),
+                .init(color: .black.opacity(s.left * 0.8), location: s.leftReach * 0.3),
+                .init(color: .black.opacity(s.left * 0.45), location: s.leftReach * 0.6),
+                .init(color: .clear, location: s.leftReach)
+            ], startPoint: .leading, endPoint: .trailing)
+            LinearGradient(stops: [
+                .init(color: .clear, location: s.bottomStart),
+                .init(color: .black.opacity(s.bottom * 0.45), location: (s.bottomStart + 1) / 2),
+                .init(color: .black.opacity(s.bottom), location: 1)
+            ], startPoint: .top, endPoint: .bottom)
+            LinearGradient(stops: [
+                .init(color: .black.opacity(s.top), location: 0),
+                .init(color: .clear, location: s.topReach)
+            ], startPoint: .top, endPoint: .bottom)
+        }
+        .allowsHitTesting(false)
+    }
+}
 
 struct HeroGradient: View {
     let background: Color
