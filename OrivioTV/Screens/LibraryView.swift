@@ -182,7 +182,7 @@ struct LibraryView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(height: 40)
-                .accessibilityLabel("Orivio")
+                .accessibilityLabel("Cue")
         }
         .padding(.horizontal, OrivioSpacing.huge)
     }

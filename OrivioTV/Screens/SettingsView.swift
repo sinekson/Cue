@@ -1948,7 +1948,7 @@ private struct AddonExportView: View {
                 Text("Add-on Setup")
                     .font(FusionType.pageTitle(theme.font))
                     .foregroundStyle(theme.palette.textPrimary)
-                Text("Scan with your phone — one manifest URL per line. Paste them into any Orivio install to restore your add-ons.")
+                Text("Scan with your phone — one manifest URL per line. Paste them into any Cue install to restore your add-ons.")
                     .font(FusionType.bodyText(theme.font))
                     .foregroundStyle(theme.palette.textSecondary)
                     .multilineTextAlignment(.center)

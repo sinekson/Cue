@@ -58,7 +58,8 @@ targets:
     info:
       path: Config/Info.plist
       properties:
-        CFBundleDisplayName: "Orivio TV"
+        # The name on the Home Screen (the fork's own; internal names stay).
+        CFBundleDisplayName: "Cue"
         # tvOS apps omit this by default, but Sideloadly's iOS-derived IPA
         # validator (Cydia Impactor lineage) rejects a bundle without it as
         # "not a valid iOS app". Harmless on tvOS (ignored); the binary stays a
@@ -244,7 +245,7 @@ targets:
     info:
       path: OrivioTopShelf/Info.plist
       properties:
-        CFBundleDisplayName: OrivioTV
+        CFBundleDisplayName: Cue
         # From the build setting, not a literal: the app's own version keys
         # were hardcoded here once and went stale silently.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
