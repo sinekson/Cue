@@ -1757,29 +1757,116 @@ struct RatingBadge: View {
     }
 }
 
-/// A row of MDBList source ratings (IMDb, TMDB, RT, Metacritic, …), each a
-/// small labeled chip. Mirrors the Android hero `MDBListRatingsRow`.
+/// A row of MDBList source ratings (IMDb, TMDB, RT, Metacritic, …), each
+/// the source's own icon and its score — colour here is information (which
+/// source), the one place the app uses brand colour. A source without an
+/// icon (MyAnimeList) gets a small chip in its colours instead.
+/// Icons: from NuvioTVOS (GPL-3.0, like this app).
 struct MDBListRatingsRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let entries: [MDBListRatingEntry]
 
+    static let iconHeight: CGFloat = 34
+
+    /// The row's entries: MDBList's, or — when it has none (off, no key,
+    /// nothing yet) — the catalog's own IMDb score, so a rating still shows.
+    static func entries(_ ratings: MDBListRatings?, settings: MDBListSettings,
+                        imdbFallback: String?) -> [MDBListRatingEntry] {
+        let entries = ratings?.entries(settings: settings) ?? []
+        if entries.isEmpty, let imdb = imdbFallback, !imdb.isEmpty {
+            return [MDBListRatingEntry(provider: .imdb, text: imdb)]
+        }
+        return entries
+    }
+
     var body: some View {
-        HStack(spacing: OrivioSpacing.md) {
+        HStack(spacing: 26) {
             ForEach(entries) { entry in
-                HStack(spacing: 6) {
-                    Text(entry.provider.label)
-                        .font(.system(size: 15, weight: .heavy))
-                        .foregroundStyle(theme.palette.textPrimary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        // (Neutral — no accent colour, like the rest.)
-                        .background(Color.white.opacity(0.16),
-                                    in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                HStack(spacing: 9) {
+                    if let icon = entry.provider.iconAsset {
+                        Image(icon)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: Self.iconHeight)
+                    } else {
+                        label(entry)
+                    }
                     Text(entry.text)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(theme.palette.textSecondary)
+                        .font(.system(size: 26))
+                        .foregroundStyle(Color.white.opacity(0.62))
                 }
             }
+        }
+    }
+
+    private func label(_ entry: MDBListRatingEntry) -> some View {
+        let style = entry.provider.badgeStyle(score: Double(entry.text))
+        return Text(entry.provider.label)
+            .font(.system(size: 15, weight: .heavy))
+            .foregroundStyle(style.text)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(style.fill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+}
+
+/// A rating source's badge colours, after its own branding.
+struct RatingBadgeStyle {
+    let fill: AnyShapeStyle
+    let text: Color
+}
+
+extension MDBListProvider {
+    /// The source's icon in the asset catalog (nil: none — a text chip).
+    var iconAsset: String? {
+        switch self {
+        case .imdb: return "rating_imdb"
+        case .tmdb: return "rating_tmdb"
+        case .trakt: return "rating_trakt"
+        case .letterboxd: return "rating_letterboxd"
+        case .tomatoes: return "rating_rotten_tomatoes"
+        case .audience: return "rating_audience_score"
+        case .metacritic: return "rating_metacritic"
+        case .myanimelist: return nil
+        }
+    }
+
+    func badgeStyle(score: Double?) -> RatingBadgeStyle {
+        func rgb(_ hex: UInt32) -> Color {
+            Color(red: Double((hex >> 16) & 0xFF) / 255,
+                  green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255)
+        }
+        switch self {
+        case .imdb:
+            return .init(fill: AnyShapeStyle(OrivioPrimitives.imdb), text: .black)
+        case .trakt:
+            return .init(fill: AnyShapeStyle(rgb(0xED1C24)), text: .white)
+        case .tmdb:
+            // TMDB's green-to-blue gradient, its navy for the text.
+            return .init(fill: AnyShapeStyle(LinearGradient(
+                colors: [rgb(0x90CEA1), rgb(0x01B4E4)],
+                startPoint: .leading, endPoint: .trailing)), text: rgb(0x0D253F))
+        case .letterboxd:
+            // Letterboxd's orange → green → blue.
+            return .init(fill: AnyShapeStyle(LinearGradient(
+                colors: [rgb(0xFF8000), rgb(0x00E054), rgb(0x40BCF4)],
+                startPoint: .leading, endPoint: .trailing)), text: .black)
+        case .tomatoes:
+            return .init(fill: AnyShapeStyle(rgb(0xFA320A)), text: .white)
+        case .audience:
+            return .init(fill: AnyShapeStyle(rgb(0xFFB600)), text: .black)
+        case .myanimelist:
+            // MyAnimeList's blue, white text.
+            return .init(fill: AnyShapeStyle(rgb(0x2E51A2)), text: .white)
+        case .metacritic:
+            // Metacritic's own scale: green 61+, yellow 40–60, red below.
+            let colour: Color = switch score ?? 0 {
+            case 61...: rgb(0x66CC33)
+            case 40..<61: rgb(0xFFCC33)
+            default: rgb(0xFF0000)
+            }
+            return .init(fill: AnyShapeStyle(colour), text: .black)
         }
     }
 }

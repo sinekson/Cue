@@ -31,16 +31,10 @@ final class TopShelfProvider: TVTopShelfContentProvider {
         completionHandler(Self.content())
     }
 
-    /// Crunchyroll layout: Continue Watching first — its most recent title as
-    /// a wide 16:9 card, the rest as portrait posters — then the Library as
-    /// portrait posters. Either may be empty; with both empty there's no
-    /// shelf at all.
-    ///
-    /// `mixShapesInOneSection`: true puts the wide card and the posters in
-    /// ONE "Continue Watching" section. If tvOS draws mixed shapes badly on
-    /// your box, set it to false: the wide card then gets its own section
-    /// and the remaining Continue Watching posters follow in an untitled one.
-    private static let mixShapesInOneSection = true
+    /// Continue Watching first — every title as a wide 16:9 card (the
+    /// episode still with its progress, as the app renders it) — then the
+    /// Library as portrait posters. Either may be empty; with both empty
+    /// there's no shelf at all.
     private static func content() -> TVTopShelfContent? {
         // Written by the app beside the snapshots — see TopShelfExporter.
         let scheme = AppGroupResolver.sharedFile("topshelf-scheme.txt")
@@ -52,26 +46,19 @@ final class TopShelfProvider: TVTopShelfContentProvider {
 
         let continueEntries = load("topshelf.json")
         if !continueEntries.isEmpty {
-            let items = continueEntries.enumerated().map { index, entry -> TVTopShelfSectionedItem in
+            let items = continueEntries.map { entry -> TVTopShelfSectionedItem in
                 // The app pre-renders these cards (art + progress pill), so
                 // the image already has the right shape and its own bar.
-                let item = makeItem(entry, scheme: scheme, shape: index == 0 ? .hdtv : .poster)
+                let item = makeItem(entry, scheme: scheme, shape: .hdtv)
                 // Just the episode title (the movie's name for a movie).
                 item.title = entry.caption ?? entry.title
                 // Only when the app couldn't render a card: system bar.
                 if let progress = entry.progress { item.playbackProgress = progress }
                 return item
             }
-            if mixShapesInOneSection || items.count == 1 {
-                let section = TVTopShelfItemCollection(items: items)
-                section.title = "Continue Watching"
-                sections.append(section)
-            } else {
-                let wide = TVTopShelfItemCollection(items: [items[0]])
-                wide.title = "Continue Watching"
-                sections.append(wide)
-                sections.append(TVTopShelfItemCollection(items: Array(items.dropFirst())))
-            }
+            let section = TVTopShelfItemCollection(items: items)
+            section.title = "Continue Watching"
+            sections.append(section)
         }
 
         let libraryEntries = load("topshelf-library.json")

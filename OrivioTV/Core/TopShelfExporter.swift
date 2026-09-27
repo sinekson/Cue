@@ -41,6 +41,10 @@ enum TopShelfExporter {
         /// still in full resolution (see `EpisodeStill`).
         var season: Int? = nil
         var episode: Int? = nil
+        /// "40m left", drawn into the card beside the bar (as on Home).
+        /// Optional so older snapshots still decode (the extension ignores
+        /// it — it's only for the app's renderer).
+        var timeLeft: String? = nil
     }
 
     /// Build the export entries on the caller's (main) side — cheap — so the
@@ -78,7 +82,8 @@ enum TopShelfExporter {
                     ?? sharper(p.episodeThumbnail ?? p.poster, size: "original"),
                 posterURL: sharper(p.poster ?? p.background, size: "w780"),
                 season: p.season,
-                episode: p.episode
+                episode: p.episode,
+                timeLeft: p.remainingTimeText.map { "\($0) left" }
             )
         }
     }
@@ -202,24 +207,25 @@ private actor TopShelfWriter {
         guard sequence > lastSequence else { return }
         lastSequence = sequence
         // Continue Watching cards are rendered by the app (art + progress
-        // pill baked in): the FIRST as a landscape card from the backdrop,
-        // the rest as portrait posters. tvOS's own progress bar sits flush on
-        // the card's bottom edge and can't be moved, so it isn't used.
+        // pill baked in): ALL as landscape cards — the episode still, else
+        // the backdrop. tvOS's own progress bar sits flush on the card's
+        // bottom edge and can't be moved, so it isn't used.
         var rendered = entries
         var keep: Set<String> = []
         for index in rendered.indices {
             let entry = rendered[index]
-            let landscape = index == 0
-            // The wide card shows the EPISODE — its TMDB still in full
+            // The card shows the EPISODE — its TMDB still in full
             // resolution, the same image the app's Continue Watching uses.
             var wideSource = entry.backdropURL
-            if landscape, let still = await EpisodeStill.url(
+            if let still = await EpisodeStill.url(
                 metaID: entry.id, type: entry.type, season: entry.season, episode: entry.episode) {
                 wideSource = still
             }
-            guard let source = landscape ? wideSource : entry.posterURL,
+            guard let source = wideSource ?? entry.posterURL,
                   let card = await TopShelfCardRenderer.card(
-                      from: source, landscape: landscape, progress: entry.progress ?? 0)
+                      from: source, landscape: true, progress: entry.progress ?? 0,
+                      episode: entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } },
+                      timeLeft: entry.timeLeft)
             else { continue }   // render failed: keep the remote art + system bar
             keep.insert(card.lastPathComponent)
             rendered[index] = TopShelfExporter.Entry(
@@ -228,7 +234,7 @@ private actor TopShelfWriter {
                 progress: nil,   // baked into the image instead
                 caption: entry.caption,
                 backdropURL: entry.backdropURL, posterURL: entry.posterURL,
-                season: entry.season, episode: entry.episode)
+                season: entry.season, episode: entry.episode, timeLeft: entry.timeLeft)
         }
         // A newer snapshot arrived while this one was rendering: it wins.
         guard sequence == lastSequence else { return }
@@ -254,13 +260,17 @@ enum TopShelfCardRenderer {
     static let portraitSize = CGSize(width: 600, height: 900)
     private static let prefix = "shelf-card-"
 
-    static func card(from source: String, landscape: Bool, progress: Double) async -> URL? {
+    static func card(from source: String, landscape: Bool, progress: Double,
+                     episode: String? = nil, timeLeft: String? = nil) async -> URL? {
         // 5% steps; anything started shows at least one step.
         let clamped = min(max(progress, 0), 1)
         let bucket = clamped > 0 ? max(Int((clamped * 20).rounded()), 1) : 0
-        let digest = SHA256.hash(data: Data(source.utf8))
+        // The drawn text is part of the card's identity too (a new name for
+        // new text — tvOS caches shelf images by URL).
+        let key = "\(source)|\(episode ?? "")|\(timeLeft ?? "")"
+        let digest = SHA256.hash(data: Data(key.utf8))
             .prefix(8).map { String(format: "%02x", $0) }.joined()
-        let name = "\(prefix)v2-\(digest)-\(landscape ? "l" : "p")-\(bucket).jpg"
+        let name = "\(prefix)v4-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0.02 ? "" : "n").jpg"
         guard let file = AppGroupResolver.sharedFile(name) else { return nil }
         if FileManager.default.fileExists(atPath: file.path) { return file }
 
@@ -272,7 +282,8 @@ enum TopShelfCardRenderer {
         let size = landscape ? landscapeSize : portraitSize
         guard let data,
               let image = ImageCache.decodeDownsampled(data, budget: max(size.width, size.height)),
-              let jpeg = render(image, size: size, progress: Double(bucket) / 20)
+              let jpeg = render(image, size: size, progress: Double(bucket) / 20,
+                                started: clamped > 0.02, episode: episode, timeLeft: timeLeft)
         else { return nil }
         do {
             try jpeg.write(to: file, options: .atomic)
@@ -282,7 +293,22 @@ enum TopShelfCardRenderer {
         }
     }
 
-    private static func render(_ image: UIImage, size: CGSize, progress: Double) -> Data? {
+    /// The Home Continue Watching card's state line, in the Home card's
+    /// proportions (746×420pt there): "S1:E1 ▬▬▬░░ 40m left", or — not
+    /// started — "S1:E1 … Up Next" with no bar.
+    private enum Line {
+        static let inset: CGFloat = 28 / 746.7      // of the width
+        static let bottom: CGFloat = 22 / 420       // of the height
+        static let barHeight: CGFloat = 10 / 420
+        static let textSize: CGFloat = 22 / 420
+        static let gap: CGFloat = 14 / 746.7
+        static let footStart: CGFloat = 0.4
+        static let footOpacity: CGFloat = 0.7
+    }
+
+    /// `started`: Home's rule (over 2%) — the bar; else "Up Next".
+    private static func render(_ image: UIImage, size: CGSize, progress: Double, started: Bool,
+                               episode: String?, timeLeft: String?) -> Data? {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -294,34 +320,66 @@ enum TopShelfCardRenderer {
             image.draw(in: CGRect(x: (size.width - drawn.width) / 2,
                                   y: (size.height - drawn.height) / 2,
                                   width: drawn.width, height: drawn.height))
-            // EVERY Continue Watching card gets the pill — an "up next"
-            // episode (nothing watched yet) just shows the empty track.
 
-            // Soft shade along the bottom so the pill reads on bright art.
+            // The dark foot, as on Home, so the line reads on bright art.
             let cg = ctx.cgContext
             let colors = [UIColor.black.withAlphaComponent(0).cgColor,
-                          UIColor.black.withAlphaComponent(0.3).cgColor] as CFArray
+                          UIColor.black.withAlphaComponent(Line.footOpacity).cgColor] as CFArray
             if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                                          colors: colors, locations: [0, 1]) {
                 cg.drawLinearGradient(gradient,
-                                      start: CGPoint(x: 0, y: size.height * 0.72),
+                                      start: CGPoint(x: 0, y: size.height * Line.footStart),
                                       end: CGPoint(x: 0, y: size.height), options: [])
             }
 
-            // The pill: inset from the left/right AND bottom edges.
-            let inset = size.width * 0.06
-            let height = max(size.height * 0.022, 10)
-            let bottom = size.height * 0.065
-            let track = CGRect(x: inset, y: size.height - bottom - height,
-                               width: size.width - 2 * inset, height: height)
-            UIColor.white.withAlphaComponent(0.35).setFill()
-            UIBezierPath(roundedRect: track, cornerRadius: height / 2).fill()
-            var fill = track
-            if progress > 0 {
-                fill.size.width = max(track.width * progress, height)
-                UIColor.white.setFill()
-                UIBezierPath(roundedRect: fill, cornerRadius: height / 2).fill()
+            let inset = size.width * Line.inset
+            let barHeight = max(size.height * Line.barHeight, 8)
+            let gap = size.width * Line.gap
+            let centerY = size.height - size.height * Line.bottom - barHeight / 2
+            let shadow = NSShadow()
+            shadow.shadowColor = UIColor.black.withAlphaComponent(0.6)
+            shadow.shadowBlurRadius = size.height * 0.014
+            shadow.shadowOffset = CGSize(width: 0, height: 2)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: size.height * Line.textSize, weight: .semibold),
+                .foregroundColor: UIColor.white,
+                .shadow: shadow
+            ]
+            /// Draws `text` with its left edge at `x`, centred on the line;
+            /// returns its width.
+            @discardableResult
+            func draw(_ text: String, x: CGFloat) -> CGFloat {
+                let string = NSAttributedString(string: text, attributes: attributes)
+                let textSize = string.size()
+                string.draw(at: CGPoint(x: x, y: centerY - textSize.height / 2))
+                return textSize.width
             }
+
+            var x = inset
+            guard started else {
+                // Not started: "S1:E1 … Up Next" (episode left, status
+                // right — as on Home), no bar.
+                if let episode { draw(episode, x: x) }
+                let status = "Up Next"
+                let width = NSAttributedString(string: status, attributes: attributes).size().width
+                draw(status, x: size.width - inset - width)
+                return
+            }
+            if let episode { x += draw(episode, x: x) + gap }
+            var barEnd = size.width - inset
+            if let timeLeft {
+                let width = NSAttributedString(string: timeLeft, attributes: attributes).size().width
+                draw(timeLeft, x: barEnd - width)
+                barEnd -= width + gap
+            }
+            let track = CGRect(x: x, y: centerY - barHeight / 2,
+                               width: max(barEnd - x, barHeight), height: barHeight)
+            UIColor.white.withAlphaComponent(0.3).setFill()
+            UIBezierPath(roundedRect: track, cornerRadius: barHeight / 2).fill()
+            var fill = track
+            fill.size.width = max(track.width * progress, barHeight)
+            UIColor.white.setFill()
+            UIBezierPath(roundedRect: fill, cornerRadius: barHeight / 2).fill()
         }
         return rendered.jpegData(compressionQuality: 0.92)
     }

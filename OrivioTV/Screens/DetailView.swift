@@ -14,8 +14,6 @@ let episodeLiftAnimation: Animation = .easeOut(duration: 0.12)  // the grow itse
 
 /// The page-to-page scroll: quick start, long gentle finish.
 let detailPageScroll: Animation = .timingCurve(0.15, 0.85, 0.25, 1, duration: 0.65)
-/// How much the backdrop is darkened on the Episodes and More pages.
-let detailDimmedBackdrop: Double = 0.6
 
 enum DetailPage: Hashable { case overview, episodes, more }
 
@@ -72,6 +70,8 @@ final class DetailViewModel: ObservableObject {
     @Published var director: String?
     @Published var country: String?
     @Published var language: String?
+    /// The title block's TMDB extras (creator line, status, runtime, …).
+    @Published var facts: TMDBService.TitleFacts?
     @Published var releaseDate: String?
     @Published var contentRating: String?
     @Published var parentalGuide: [ParentalGuideEntry] = []
@@ -217,11 +217,10 @@ final class DetailViewModel: ObservableObject {
             guard let self else { return }
             await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
             self.comments = await commentsTask.value
-            self.mdbRatings = await ratingsTask.value
-            // Content advisories (IMDb parents guide) once the id is canonical tt.
-            if parentalGuideEnabled, self.meta.id.hasPrefix("tt") {
-                self.parentalGuide = await ParentalGuideService.guide(imdbID: self.meta.id)
-            }
+            // A failed load never replaces ratings handed over from the
+            // billboard (the row would shrink to the fallback and back).
+            let ratings = await ratingsTask.value
+            if ratings != nil || self.mdbRatings == nil { self.mdbRatings = ratings }
         }
     }
 
@@ -252,6 +251,11 @@ final class DetailViewModel: ObservableObject {
             language = detail.language
         }
         contentRating = detail.contentRating
+        // The toggles gate the facts the same way as the sections.
+        var facts = detail.facts
+        if !tmdb.useCredits { facts.creatorLine = nil }
+        if !tmdb.useDetails { facts.country = nil; facts.language = nil }
+        self.facts = facts
         if tmdb.useReleaseDates { releaseDate = detail.releaseDate }
         if tmdb.useMoreLikeThis { moreLikeThis = detail.moreLikeThis.deduplicatedByID() }
         if tmdb.useProductions { companies = detail.companies }
@@ -268,17 +272,7 @@ final class DetailViewModel: ObservableObject {
 
     /// Fetch MDBList source ratings, resolving a tmdb id to imdb first if needed.
     private func loadMDBRatings(settings: MDBListSettings) async -> MDBListRatings? {
-        guard settings.isConfigured else { return nil }
-        let imdbID: String?
-        if meta.id.hasPrefix("tt") {
-            imdbID = meta.id
-        } else if let (tid, isMovie) = await TMDBService.resolveTMDBID(from: meta.id, type: meta.type) {
-            imdbID = await TMDBService.imdbID(tmdbID: tid, isMovie: isMovie)
-        } else {
-            imdbID = nil
-        }
-        guard let imdbID else { return nil }
-        return await MDBListService.ratings(imdbID: imdbID, type: meta.type, settings: settings)
+        await MDBListService.ratings(for: meta, settings: settings)
     }
 
     /// Whether to fetch per-episode TMDB extras (ratings / air dates). Set from
@@ -303,36 +297,6 @@ final class DetailViewModel: ObservableObject {
     }
 }
 
-private extension View {
-    /// Adds the hold-Select menu to the Play button ONLY while an auto-select
-    /// feature is armed (Play Manually / Play in Infuse); with both off, Play
-    /// already opens the source list, so there is no menu at all.
-    @ViewBuilder
-    func playManuallyMenu(enabled: Bool,
-                          action: @escaping () -> Void,
-                          infuse: (() -> Void)? = nil) -> some View {
-        if enabled {
-            contextMenu {
-                // Marks that tvOS actually asked for this menu's content, so a
-                // "hold does nothing" report can be split into "the press
-                // never became a long-press" vs "the menu built and failed to
-                // present" without guessing. Costs nothing when the hold probe
-                // is off.
-                let _ = HoldProbe.log("MENU BUILT — detail Play")
-                Button(action: action) {
-                    Label("Play Manually", systemImage: "list.and.film")
-                }
-                if let infuse {
-                    Button(action: infuse) {
-                        Label("Play in Infuse", systemImage: "arrow.up.forward.app.fill")
-                    }
-                }
-            }
-        } else {
-            self
-        }
-    }
-}
 
 struct DetailView: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -361,7 +325,7 @@ struct DetailView: View {
     @State private var activeTrailer: TMDBService.Trailer?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, startOver, library, watched, rate, trailer, more
+        case play, library, trailer
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -371,6 +335,16 @@ struct DetailView: View {
     /// `.defaultFocus` on the scroll view in `body` is a different thing —
     /// it only decides the page's OPENING focus, not directional moves.)
     @FocusState private var actionFocus: ActionControl?
+    /// The button row as DRAWN: the one that is a pill (the focused one —
+    /// or, focus elsewhere, the last focused), and whether it's focused
+    /// (white). Both follow focus after `DetailActionButton.paintDelay`, so
+    /// a one-frame visit (a vertical move lands on a circle before the
+    /// row's redirect puts focus on Play) never paints.
+    @State private var pillAction: ActionControl = .play
+    @State private var litAction: ActionControl?
+    /// The widest title (all the row's titles, measured) — every pill is
+    /// this wide, so the row's edges never move.
+    @State private var maxTitleWidth: CGFloat = 0
     /// The episode that currently holds focus, reported by `EpisodeCell`'s
     /// `onFocus` callback. Drives the "focused episode stays in the first
     /// column, the row slides" scroll in `episodesSection`.
@@ -381,6 +355,28 @@ struct DetailView: View {
     /// Which page holds focus — drives the page scroll, the backdrop
     /// darkening and the trailer (Overview only).
     @State private var page: DetailPage = .overview
+    /// Opened from Home's billboard: this page plays its half of the swap
+    /// in, and Back plays it out and returns (see `ModeSwap`).
+    @State private var fromBillboard: Bool
+    private let onReturnToBillboard: (() -> Void)?
+    /// Opened from a catalog box: the title block fades in with the buttons
+    /// (the box had none), and out with them on Back.
+    @State private var fromBox: Bool
+    /// From a box: the scrim arrives half-way (the growing box took it that
+    /// far) and finishes with the page's parts; Back takes it half-way back.
+    @State private var scrim: Double
+    /// The billboard's season count ("3 Seasons") when opened from there.
+    /// State, not a plain property: SwiftUI re-creates this view while the
+    /// page is up, and only the FIRST creation still sees the handoff.
+    @State private var billboardSeriesSize: String?
+    /// The backdrop's depth, 0…1 (see `ModeSwap.depthHandover`): from the
+    /// billboard it arrives part-way (Home began it) and finishes with the
+    /// buttons; leaving, it goes part-way back and Home finishes it.
+    @State private var depth: CGFloat
+    /// This page's own parts (buttons, the hint) are in.
+    @State private var swappedIn: Bool
+    /// The More-page row that has focus; each one scrolls to the same spot.
+    @State private var moreRow: MoreRow?
     /// The season row opens on the Play target's season, once.
     @State private var seasonAutoPicked = false
 
@@ -409,7 +405,6 @@ struct DetailView: View {
     @State private var pendingSeriesPlay: PendingPlay?
     @State private var showRatingPicker = false
     /// The ⋯ button's choices (rate, watched, start over, play manually).
-    @State private var showMoreActions = false
     /// Trailer playing silently in the backdrop after the idle delay.
     @State private var backdropPlayer: AVPlayer?
     @State private var showBackdropTrailer = false
@@ -448,6 +443,11 @@ struct DetailView: View {
     /// long before the first frame — full-screen used to fade the chrome out
     /// over the static backdrop, then eat the next press to come back.
     @State private var backdropTrailerPlaying = false
+    /// Up / Back in trailer mode: the page is back, the trailer runs on
+    /// muted (see `TrailerMode`).
+    @State private var trailerRevealed = false
+    /// The trailer's sound took the audio session (given back on teardown).
+    @State private var trailerAudioActive = false
     @State private var backdropStatusObserver: NSKeyValueObservation?
     /// Watches the ITEM, not the player — see `startBackdropTrailerIfEnabled`.
     @State private var backdropItemObserver: NSKeyValueObservation?
@@ -461,9 +461,31 @@ struct DetailView: View {
         onPlayFromBeginning: @escaping (MetaItem, MetaVideo?) -> Void = { _, _ in },
         onSelectItem: @escaping (MetaItem) -> Void = { _ in },
         onSelectPerson: @escaping (Int, String) -> Void = { _, _ in },
-        onSelectCompany: @escaping (Int, String) -> Void = { _, _ in }
+        onSelectCompany: @escaping (Int, String) -> Void = { _, _ in },
+        onReturnToBillboard: (() -> Void)? = nil
     ) {
-        _viewModel = StateObject(wrappedValue: DetailViewModel(item: item))
+        let fromBillboard = MainActor.assumeIsolated { ModeSwap.shared.billboardItemID == item.id }
+        let model = DetailViewModel(item: item)
+        if fromBillboard {
+            // Start with exactly what the billboard showed — nothing in the
+            // title block may change as the page takes over.
+            MainActor.assumeIsolated {
+                model.mdbRatings = ModeSwap.shared.billboardRatings
+                model.facts = ModeSwap.shared.billboardFacts
+            }
+        }
+        _viewModel = StateObject(wrappedValue: model)
+        _fromBillboard = State(initialValue: fromBillboard)
+        let fromBox = fromBillboard && MainActor.assumeIsolated { ModeSwap.shared.arrivedFromBox }
+        _fromBox = State(initialValue: fromBox)
+        _scrim = State(initialValue: fromBox ? ModeSwap.boxScrimHandover : 1)
+        _depth = State(initialValue: fromBox ? ModeSwap.boxDepthHandover
+                       : fromBillboard ? ModeSwap.depthHandover : 1)
+        _billboardSeriesSize = State(initialValue: fromBillboard
+            ? MainActor.assumeIsolated { ModeSwap.shared.billboardSeriesSize } : nil)
+        _swappedIn = State(initialValue: !fromBillboard)
+
+        self.onReturnToBillboard = onReturnToBillboard
         self.onPlay = onPlay
         self.onPlayManually = onPlayManually
         self.onPlayInInfuse = onPlayInInfuse
@@ -492,7 +514,7 @@ struct DetailView: View {
                 ScrollViewReader { pageProxy in
                     ScrollView(.vertical) {
                         VStack(alignment: .leading, spacing: 0) {
-                            overviewPage(height: geo.size.height)
+                            overviewPage(size: geo.size)
                                 .id(DetailPage.overview)
                             if viewModel.meta.isSeries {
                                 episodesPage(size: geo.size)
@@ -505,9 +527,26 @@ struct DetailView: View {
                         }
                     }
                     .scrollClipDisabled()
+                    // Only OUR scrolls move the page (pages, More rows). Left
+                    // to it, the focus engine scrolls too — just enough to
+                    // show the focused view — and the two fought.
+                    .scrollDisabled(true)
+                    // Between the More page's rows: the same fast-then-slow
+                    // scroll, bringing each row to the spot the first one has.
+                    .onChange(of: moreRow) { _, row in
+                        guard let row else { return }
+                        withAnimation(detailPageScroll) { pageProxy.scrollTo(row, anchor: .top) }
+                        // As for pages: win over the focus engine's own scroll.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(60))
+                            guard moreRow == row else { return }
+                            withAnimation(detailPageScroll) { pageProxy.scrollTo(row, anchor: .top) }
+                        }
+                    }
                     // Focus entered another page: bring that page's top to
-                    // the top of the screen. (Within More, scrolling is free.)
+                    // the top of the screen.
                     .onChange(of: page) { _, newPage in
+                        if newPage != .more { moreRow = nil }
                         withAnimation(detailPageScroll) {
                             pageProxy.scrollTo(newPage, anchor: .top)
                         }
@@ -674,6 +713,33 @@ struct DetailView: View {
             await startBackdropTrailerIfEnabled()
         }
         .onDisappear { teardownBackdropTrailer() }
+        .onAppear {
+            guard fromBillboard else { return }
+            // Consumed: a title opened from here again is a normal push.
+            ModeSwap.shared.billboardItemID = nil
+            ModeSwap.shared.arrivedFromBox = false
+            withAnimation(ModeSwap.in) {
+                swappedIn = true
+                depth = 1
+                scrim = 1
+            }
+        }
+        // Back, when opened from the billboard: from a lower page first up
+        // to the overview; from the overview, this page's half of the swap
+        // out, then Home plays the rest.
+        // (In trailer mode Back first only brings the page back.)
+        .onExitCommand(perform: trailerMode ? { revealTrailerPage() }
+                       : fromBillboard && onReturnToBillboard != nil ? { backToBillboard() } : nil)
+        // Trailer mode starts only while Play HOLDS focus: moving off it
+        // (right to the other buttons, down to Episodes) stops the trailer;
+        // back on Play the countdown starts over.
+        .onChange(of: actionFocus) { _, new in
+            if new != .play, backdropPlayer != nil { teardownBackdropTrailer() }
+        }
+        .onChange(of: trailerMode) { _, on in
+            // A bare AVPlayerLayer doesn't hold off the screensaver.
+            UIApplication.shared.isIdleTimerDisabled = on
+        }
         // The player just handed its picture to the PiP window and dismissed
         // onto this page: a trailer already rolling underneath must go, for
         // the same reasons the auto-start above declines to begin one.
@@ -692,9 +758,6 @@ struct DetailView: View {
             TrailerPlayerView(trailer: trailer,
                               alternates: viewModel.trailers.map(\.youtubeKey))
                 .environmentObject(theme)
-        }
-        .confirmationDialog(viewModel.meta.name, isPresented: $showMoreActions) {
-            moreActions
         }
         .fullScreenCover(isPresented: $showRatingPicker) {
             RatingPickerOverlay(
@@ -719,6 +782,8 @@ struct DetailView: View {
                             maxPixels: PerformanceProfile.backdropPixelCap)
                     .allowsHitTesting(false)
                     .frame(width: geo.size.width, height: geo.size.height)
+                    // Depth: the page leans in a little (see `ModeSwap.depth…`).
+                    .scaleEffect(ModeSwap.depthScale(depth))
                 // MOUNTED ALWAYS, revealed by opacity — never inserted into
                 // the tree while the page is on screen. Inserting a
                 // UIViewRepresentable makes the focus engine re-resolve (the
@@ -733,13 +798,19 @@ struct DetailView: View {
                     .frame(width: geo.size.width, height: geo.size.height)
                     .allowsHitTesting(false)
                     .opacity(showBackdropTrailer ? 1 : 0)
+                    .scaleEffect(ModeSwap.depthScale(depth))
                 // The shared scrim (same as Home's).
                 StageScrim()
-                    .opacity(trailerFullscreen ? 0 : 1)
+                    .opacity(trailerFullscreen ? 0 : trailerMode ? TrailerMode.scrimOpacity : scrim)
+                    .animation(TrailerMode.fade, value: trailerMode)
                 // Episodes / More: the same backdrop, darkened so cards and
                 // text stay readable. It never scrolls.
+                // One darkness for the whole page — overview, Episodes and
+                // More alike (it no longer changes as you scroll): the depth
+                // step, which comes in with the swap from the billboard. A
+                // trailer having the screen lifts it.
                 Color.black
-                    .opacity(page == .overview ? 0 : detailDimmedBackdrop)
+                    .opacity(trailerMode ? 0 : ModeSwap.depthDim(depth))
                     .animation(.easeInOut(duration: 0.45), value: page)
                     .allowsHitTesting(false)
             }
@@ -750,19 +821,21 @@ struct DetailView: View {
     /// Changes when the delay setting or the first trailer changes, so the
     /// timed `.task` restarts appropriately.
     private var autoTrailerKey: String {
-        "\(playerSettings.settings.autoPlayTrailerSeconds)#\(viewModel.trailers.first?.youtubeKey ?? "")#\(page == .overview)"
+        "\(viewModel.trailers.first?.youtubeKey ?? "")#\(page == .overview)#\(actionFocus == .play)"
     }
 
     private func startBackdropTrailerIfEnabled() async {
-        let delay = playerSettings.settings.autoPlayTrailerSeconds
+        // Off for now (see `TrailerMode.enabled`).
+        guard TrailerMode.enabled else { return }
+        let delay = TrailerMode.delay
         // Reduce Motion keeps the still backdrop. An auto-starting, looping
         // trailer is unrequested motion by definition, and it escalates itself
         // to full screen a few seconds later — a large positional transition
         // the viewer never asked for and the setting's copy never mentions.
         guard !perf.reduceMotion else { return }
         // Overview page only; returning to it starts the trailer again.
-        guard page == .overview else { return }
-        guard delay > 0, !viewModel.trailers.isEmpty else { return }
+        guard page == .overview, actionFocus == .play else { return }
+        guard !viewModel.trailers.isEmpty else { return }
         // EVERY trailer the title has, best first — not just the top one. A
         // geo-restricted first pick (routine when the connection leaves the
         // house through a VPN exit in another country) used to be the end of
@@ -773,7 +846,7 @@ struct DetailView: View {
         // serializing it behind the delay made the trailer feel like forever.
         async let resolved = TrailerResolver.backdropItem(candidates: candidates)
         try? await Task.sleep(for: .seconds(delay))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, actionFocus == .play else { return }
         // The title is playing in the Picture in Picture window (the player
         // dismissed onto this page): a second decoder and a full-screen
         // trailer that grabs and then drops the audio session would stall it.
@@ -791,10 +864,9 @@ struct DetailView: View {
         // its observers, item, audio session and fullscreen state.
         teardownBackdropTrailer()
         let player = AVPlayer(playerItem: item)
-        // Silent hero preview (Netflix-style). Muting also means we don't need
-        // an active audio session, which on tvOS can otherwise stall a raw
-        // AVPlayer's playback entirely.
-        player.isMuted = true
+        // With sound (trailer mode) — which needs a live audio session, or a
+        // raw AVPlayer on tvOS stays silent (or stalls).
+        setTrailerSound(true, on: player)
         // Play ONCE and give the backdrop art back, rather than restarting
         // forever. `.none` rather than `.pause` so the player holds its last
         // frame at the end instead of resetting — that held frame is what
@@ -910,6 +982,28 @@ struct DetailView: View {
         }
     }
 
+    /// The trailer has the screen: playing, and not brought back by Up /
+    /// Back (see `TrailerMode`). Only then does anything vanish.
+    private var trailerMode: Bool { backdropTrailerPlaying && !trailerRevealed && page == .overview }
+
+    /// Up / Back in trailer mode: the page comes back, the trailer runs on
+    /// muted.
+    private func revealTrailerPage() {
+        withAnimation(TrailerMode.fade) { trailerRevealed = true }
+        if let backdropPlayer { setTrailerSound(false, on: backdropPlayer) }
+    }
+
+    private func setTrailerSound(_ sound: Bool, on player: AVPlayer) {
+        if sound, !PiPHandoff.shared.isActive {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            trailerAudioActive = true
+            player.isMuted = false
+        } else {
+            player.isMuted = true
+        }
+    }
+
     private func teardownBackdropTrailer() {
         // A fade still in flight is answered by whatever called this — the page
         // leaving, a new trailer arming, PiP taking over — so drop it rather
@@ -923,6 +1017,14 @@ struct DetailView: View {
             }
         }
         trailerFullscreen = false
+        trailerRevealed = false
+        if trailerAudioActive {
+            trailerAudioActive = false
+            if !PiPHandoff.shared.isActive {
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            }
+        }
+        UIApplication.shared.isIdleTimerDisabled = false
         backdropStatusObserver?.invalidate()
         backdropStatusObserver = nil
         backdropItemObserver?.invalidate()
@@ -946,14 +1048,18 @@ struct DetailView: View {
     /// A page's hint, placed at a fixed height and shown ONLY while its own
     /// page is the current one — otherwise the next page's "▴ …" peeked in
     /// at the edge of this one (and this one's "▾ …" at the edge of that).
-    private func hint(_ title: String?, up: Bool, on owner: DetailPage, y: CGFloat) -> some View {
+    private func hint(_ title: String?, up: Bool, on owner: DetailPage, y: CGFloat,
+                      swapOut: Bool = false) -> some View {
         Group {
             if let title {
                 // The shared signpost (same as Home's billboard); steps
                 // aside on the overview while the trailer plays.
                 SectionHint.place(
                     SectionHint(title: title, up: up,
-                                hidden: owner == .overview && backdropTrailerPlaying))
+                                hidden: false)
+                        .offset(y: swapOut ? -ModeSwap.lift : 0)
+                        .opacity(swapOut ? 0 : 1)
+                        .animation(swapOut ? ModeSwap.fadeOut : ModeSwap.fadeIn, value: swapOut))
             }
         }
         .padding(.top, y)
@@ -964,35 +1070,34 @@ struct DetailView: View {
     /// Overview: the title block (logo, meta, description) exactly where
     /// Home's billboard shows it — see `TitleBlock` — and below it the
     /// buttons and the rest, in the space kept free for them.
-    private func overviewPage(height: CGFloat) -> some View {
-        // Laid out from the logo (`TitleBlock`): its bottom on the vertical
-        // centre, the meta line, ratings and buttons below at fixed
-        // distances. (The billboard is laid out the same.)
+    private func overviewPage(size: CGSize) -> some View {
+        let height = size.height
+        // The title block (`TitleBlock`): every part at a fixed spot, the
+        // buttons in its button row. (The billboard is laid out the same.)
         return ZStack(alignment: .topLeading) {
-            TitleBlockView(logo: viewModel.meta.logo, name: viewModel.meta.name,
-                           metaSegments: overviewMetaSegments,
-                           description: viewModel.meta.description,
-                           ratings: ratingsBadges,
-                           descriptionHidden: backdropTrailerPlaying)
+            TitleBlockView(item: viewModel.meta, facts: viewModel.facts,
+                           // From the billboard: its season count, so the
+                           // meta line doesn't redraw as the page takes over.
+                           seriesSize: billboardSeriesSize,
+                           textHidden: trailerMode,
+                           showsLogo: !trailerMode,
+                           ratings: ratingsBadges)
+                // From a box: fades in with the buttons (it wasn't there).
+                .opacity(fromBox && !swappedIn ? 0 : 1)
                 .padding(.leading, Spotlight.screenInset)
-                .frame(height: TitleBlock.bottomY(screenHeight: height), alignment: .bottomLeading)
+                .padding(.top, TitleBlock.topY(screenHeight: height))
             headerExtras
+                // Each button grows out of a dot (`DotGrow`, per button).
                 .frame(height: TitleBlock.buttonHeight)
-                .padding(.top, TitleBlock.extrasY(screenHeight: height))
-            // The parental guide, top-left — at the height of the other
-            // sections' "▴" hints (steps aside for the trailer with the text).
-            if !viewModel.parentalGuide.isEmpty {
-                ParentalGuideRow(entries: viewModel.parentalGuide)
-                    .padding(.leading, Spotlight.screenInset)
-                    .padding(.top, TitleBlock.topHintY)
-                    .opacity(backdropTrailerPlaying ? 0 : 1)
-                    .animation(.easeInOut(duration: 0.4), value: backdropTrailerPlaying)
-            }
+                .padding(.top, TitleBlock.buttonsY(screenHeight: height))
         }
         .frame(height: height, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
             hint(viewModel.meta.isSeries ? "Episodes" : morePageTitle,
-                 up: false, on: .overview, y: TitleBlock.hintY(screenHeight: height))
+                 up: false, on: .overview, y: TitleBlock.hintY(screenHeight: height),
+                 // Comes down into place from a little above (Home's went
+                 // down off the screen) — see `ModeSwap`.
+                 swapOut: !swappedIn)
         }
     }
 
@@ -1001,13 +1106,9 @@ struct DetailView: View {
     private func episodesPage(size: CGSize) -> some View {
         let height = size.height
         return VStack(alignment: .leading, spacing: 0) {
-            Text("Episodes")
-                .font(.system(size: 56, weight: .bold))
-                .foregroundStyle(theme.palette.textPrimary)
-                .lineLimit(1)
-                .padding(.leading, Spotlight.screenInset)
+            // No big "Episodes" title — the "▴ Overview" hint above and the
+            // season selector say where you are.
             episodesSection(width: size.width)
-                .padding(.top, 12)
             Spacer(minLength: 0)
         }
         .padding(.top, Spotlight.topPadding + Spotlight.labelHeight + 24)
@@ -1020,7 +1121,8 @@ struct DetailView: View {
         }
     }
 
-    /// More: every remaining section, scrolling freely below the hint.
+    /// More: every remaining section; each row, when focused, scrolls to
+    /// the spot below the hint (`moreRowTop`).
     private func morePage(height: CGFloat) -> some View {
         // What you most likely want next first: something similar, the
         // rest of the collection, then who made it, then the footers.
@@ -1031,13 +1133,26 @@ struct DetailView: View {
             companiesSection
             commentsSection
         }
-        .padding(.top, Spotlight.topPadding + Spotlight.labelHeight + 24)
-        .padding(.bottom, Spotlight.topPadding)
+        .padding(.top, Self.moreRowTop)
+        // Room below the last row, so every row — the last one too — can
+        // scroll up to the same spot. (A short More page couldn't scroll at
+        // all, and the rows' scrolls fought the page's end.)
+        .padding(.bottom, height - Self.moreRowTop)
         .frame(minHeight: height, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
             hint(viewModel.meta.isSeries ? "Episodes" : "Overview",
                  up: true, on: .more, y: TitleBlock.topHintY)
         }
+    }
+
+    /// Where a focused More row's title sits: the first row's place, below
+    /// the hint.
+    private static let moreRowTop = Spotlight.topPadding + Spotlight.labelHeight + 24
+
+    /// Focus reached a More row: the page is More, and that row scrolls in.
+    private func focusMoreRow(_ row: MoreRow) {
+        page = .more
+        moreRow = row
     }
 
     /// Name of the More page, after its first section that actually has
@@ -1075,38 +1190,30 @@ struct DetailView: View {
             .padding(.leading, Spotlight.screenInset)
     }
 
-    /// The ⋯ menu: the rarer actions, off the button row.
-    @ViewBuilder
-    private var moreActions: some View {
-        let meta = viewModel.meta
-        let target: MetaVideo? = meta.isSeries ? seriesPlayTarget : nil
-        let resumable = meta.isSeries ? (target.map(episodeInProgress) ?? false)
-                                      : playButtonTitle == "Resume"
-        if resumable {
-            Button("Start Over") { onPlayFromBeginning(meta, target) }
+
+    private func backToBillboard() {
+        guard page == .overview else {
+            actionFocus = .play
+            return
         }
-        Button(ratings.rating(for: meta.id) != nil ? "Change Rating" : "Rate") {
-            showRatingPicker = true
+        guard swappedIn else { return }
+        withAnimation(ModeSwap.out) { swappedIn = false }
+        // The depth goes part-way back; Home (same image) finishes it.
+        withAnimation(ModeSwap.depthLeaving) {
+            depth = fromBox ? ModeSwap.boxDepthHandover : 1 - ModeSwap.depthHandover
+            // (From a box: the scrim part-way back — Home finishes.)
+            if fromBox { scrim = ModeSwap.boxScrimHandover }
         }
-        if !meta.isSeries {
-            Button(watched.isWatched(meta) ? "Mark as Unwatched" : "Mark as Watched") {
-                let wasWatched = watched.isWatched(meta)
-                watched.toggleMovie(meta)
-                ToastCenter.shared.show(wasWatched ? "Marked Unwatched" : "Marked Watched",
-                                        icon: "eye.fill")
-            }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(ModeSwap.handoverDelay))
+            onReturnToBillboard?()
         }
-        if !meta.isSeries || target != nil {
-            Button("Choose Source") { onPlayManually(meta, target) }
-            Button("Play in Infuse") { onPlayInInfuse(meta, target) }
-        }
-        Button("Cancel", role: .cancel) {}
     }
 
-    /// The MDBList ratings for the title block's ratings row (nil = none).
+    /// The title block's ratings row (nil = none).
     private var ratingsBadges: AnyView? {
-        guard let mdbRatings = viewModel.mdbRatings else { return nil }
-        let entries = mdbRatings.entries(settings: mdblist.settings)
+        let entries = MDBListRatingsRow.entries(viewModel.mdbRatings, settings: mdblist.settings,
+                                                imdbFallback: viewModel.meta.imdbRating)
         return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(entries: entries))
     }
 
@@ -1115,83 +1222,97 @@ struct DetailView: View {
     /// instead of the focus engine skipping a row.
     private var actionRow: some View {
             HStack(spacing: OrivioSpacing.md) {
-                if viewModel.meta.isSeries {
-                    // The Play button is present from the FIRST frame, even
-                    // before the episode list has loaded and `seriesPlayTarget`
-                    // can say which episode it starts. It used to be wrapped in
-                    // `if let target = seriesPlayTarget`, so a series page
-                    // opened with no Play button at all: focus settled on the
-                    // synopsis or a circle icon, then Play appeared a moment
-                    // later and the entry redirect yanked focus across the row
-                    // — the visible jump. Pressing it early is not lost either:
-                    // `pendingSeriesPlay` fires it as soon as the target lands.
-                    let target = seriesPlayTarget
-                    PlayActionButton(title: target.map(seriesPlayTitle) ?? "Play") {
-                        if let target {
-                            onPlay(viewModel.meta, target)
-                        } else {
-                            pendingSeriesPlay = .auto
-                        }
+                // Play is present from the FIRST frame, even before the
+                // episode list has loaded and `seriesPlayTarget` can say
+                // which episode it starts (a page without it let focus
+                // settle elsewhere, then jumped). Pressing it early is not
+                // lost: `pendingSeriesPlay` fires once the target lands.
+                //
+                // ONE pill at a time, always `pillWidth` wide, the others
+                // circles: the group's edges never move — only where the
+                // pill is inside it.
+                let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
+                DetailActionButton(
+                    icon: "play.fill", title: playTitle(target),
+                    isPill: pillAction == .play, lit: litAction == .play, pillWidth: pillWidth,
+                    action: {
+                        if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
+                        else { onPlay(viewModel.meta, target) }
+                    },
+                    // Hold Select: straight to the source list.
+                    onHold: {
+                        if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .manual }
+                        else { onPlayManually(viewModel.meta, target) }
                     }
-                    .focused($actionFocus, equals: .play)
-                    // Auto Link Selector on: hold Play to pick a source
-                    // manually instead of auto-playing the best match.
-                    .playManuallyMenu(
-                        enabled: autoLinkOn,
-                        action: {
-                            if let target { onPlayManually(viewModel.meta, target) }
-                            else { pendingSeriesPlay = .manual }
-                        },
-                        infuse: {
-                            if let target { onPlayInInfuse(viewModel.meta, target) }
-                            else { pendingSeriesPlay = .infuse }
-                        }
-                    )
-                } else {
-                    PlayActionButton(title: playButtonTitle) {
-                        onPlay(viewModel.meta, nil)
-                    }
-                    .focused($actionFocus, equals: .play)
-                    .playManuallyMenu(
-                        enabled: autoLinkOn,
-                        action: { onPlayManually(viewModel.meta, nil) },
-                        infuse: { onPlayInInfuse(viewModel.meta, nil) }
-                    )
+                )
+                .focused($actionFocus, equals: .play)
+                .modifier(DotGrow(shown: swappedIn))
+                // Trailer mode: Up (nothing above) brings the page back.
+                .onMoveCommand { direction in
+                    if direction == .up, trailerMode { revealTrailerPage() }
                 }
-                // The secondary icons are one focus section, so a vertical
-                // move into the row resolves against the section as a unit
-                // instead of picking whichever circle's centre happens to be
-                // nearest. tvOS chooses a Down/Up target by horizontal CENTRE
-                // distance, and from the synopsis (centre ~564) or an episode
-                // card (centre ~344) a bare circle always beat Play at x=64 —
-                // so focus visibly landed on an icon before the row's redirect
-                // pulled it back. That flash is the "jump".
-                // Play, then: Trailer, My List, ⋯ (everything rarer —
-                // rate, watched, start over, play manually).
+                // The other two are one focus section, so a vertical move
+                // into the row resolves against the section as a unit
+                // instead of picking whichever circle's centre is nearest
+                // (tvOS picks a Down/Up target by horizontal CENTRE distance;
+                // a bare circle used to beat Play and flash focus there
+                // before the row's redirect pulled it back).
                 HStack(spacing: OrivioSpacing.md) {
-                if layout.detailPageTrailerButtonEnabled, let trailer = viewModel.trailers.first {
-                    CircleIconButton(systemName: "play.rectangle.fill", active: false) {
-                        activeTrailer = trailer
-                    }
+                    let saved = library.contains(viewModel.meta)
+                    DetailActionButton(
+                        icon: saved ? "checkmark" : "plus",
+                        title: saved ? "In Library" : "Add to Library",
+                        isPill: pillAction == .library, lit: litAction == .library, pillWidth: pillWidth,
+                        // No toast: the button itself says it ("In Library").
+                        action: { library.toggle(viewModel.meta) }
+                    )
+                    .focused($actionFocus, equals: .library)
+                    .modifier(DotGrow(shown: swappedIn))
+                    // Always there (the row never changes shape): without a
+                    // trailer it says so.
+                    DetailActionButton(
+                        icon: "play.rectangle.fill", title: "Watch Trailer",
+                        isPill: pillAction == .trailer, lit: litAction == .trailer, pillWidth: pillWidth,
+                        action: {
+                            if let trailer = viewModel.trailers.first { activeTrailer = trailer }
+                            else { ToastCenter.shared.show("No trailer for this title", icon: "film") }
+                        }
+                    )
                     .focused($actionFocus, equals: .trailer)
+                    .modifier(DotGrow(shown: swappedIn))
                 }
-                CircleIconButton(
-                    systemName: library.contains(viewModel.meta) ? "checkmark" : "plus",
-                    active: library.contains(viewModel.meta)
-                ) {
-                    let wasSaved = library.contains(viewModel.meta)
-                    library.toggle(viewModel.meta)
-                    ToastCenter.shared.show(wasSaved ? "Removed from Library" : "Added to Library",
-                                            icon: wasSaved ? "bookmark.slash" : "checkmark")
-                }
-                .focused($actionFocus, equals: .library)
-                CircleIconButton(systemName: "ellipsis", active: false) {
-                    showMoreActions = true
-                }
-                .focused($actionFocus, equals: .more)
-                }
+                // Trailer mode: only Play stays (press it to play).
+                .opacity(trailerMode ? 0 : 1)
+                .animation(TrailerMode.fade, value: trailerMode)
                 .focusSection()
                 Spacer(minLength: 0)
+            }
+            .animation(DetailActionButton.open, value: pillAction)
+            .animation(DetailActionButton.open, value: litAction)
+            // Every title the row can show, measured once (hidden): the pill
+            // width is the widest.
+            .background {
+                ZStack {
+                    ForEach(rowTitles, id: \.self) { title in
+                        DetailActionButton.titleText(title)
+                            .background {
+                                GeometryReader { proxy in
+                                    Color.clear.preference(key: MaxWidthKey.self, value: proxy.size.width)
+                                }
+                            }
+                    }
+                }
+                .hidden()
+            }
+            .onPreferenceChange(MaxWidthKey.self) { maxTitleWidth = $0 }
+            .onChange(of: actionFocus) { _, new in
+                guard let new else { litAction = nil; return }
+                Task { @MainActor in
+                    try? await Task.sleep(for: DetailActionButton.paintDelay)
+                    guard actionFocus == new else { return }
+                    pillAction = new
+                    litAction = new
+                }
             }
             .padding(.top, OrivioSpacing.xs)
             // Full-width focus section: the buttons stay left-aligned, but the
@@ -1246,19 +1367,6 @@ struct DetailView: View {
                     }
                 }
             }
-    }
-
-    /// The same meta line as Home's (see `TitleBlock.metaSegments`).
-    private var overviewMetaSegments: [String] {
-        TitleBlock.metaSegments(for: viewModel.meta)
-    }
-
-    private var secondaryMetaSegments: [String] {
-        var segments: [String] = []
-        if let runtime = viewModel.meta.runtimeFormatted { segments.append(runtime) }
-        if let country = viewModel.country { segments.append(country) }
-        if let language = viewModel.language { segments.append(language) }
-        return segments
     }
 
     private var playButtonTitle: String {
@@ -1330,11 +1438,24 @@ struct DetailView: View {
         return !isWatched && !inProgress
     }
 
+    /// The Play button's label on a show: just the episode ("S1:E1") — the
+    /// ▶ says play; resume or not, it continues where you are.
     private func seriesPlayTitle(_ episode: MetaVideo) -> String {
-        let inProgress = progressStore.progress(for: episode.id).map { $0.fraction > 0.02 } ?? false
-        let sxe = "S\(episode.season ?? 1):E\(episode.episode ?? 1)"
-        return "\(inProgress ? "Resume" : "Play") \(sxe)"
+        "S\(episode.season ?? 1):E\(episode.episode ?? 1)"
     }
+
+    /// Play's title: "Play", on a show "Play S1:E1".
+    private func playTitle(_ target: MetaVideo?) -> String {
+        target.map { "Play \(seriesPlayTitle($0))" } ?? "Play"
+    }
+
+    /// Every title the row can show (for the pill width).
+    private var rowTitles: [String] {
+        [playTitle(viewModel.meta.isSeries ? seriesPlayTarget : nil),
+         "Add to Library", "In Library", "Watch Trailer"]
+    }
+
+    private var pillWidth: CGFloat { DetailActionButton.pillWidth(title: maxTitleWidth) }
 
     // MARK: - Episode row
 
@@ -1609,8 +1730,6 @@ struct DetailView: View {
     }
 
     /// Brightness of the text on the episode cards.
-    private static let cardNumberOpacity: Double = 0.78
-    private static let cardTitleOpacity: Double = 0.92
 
     private func episodeCard(_ episode: MetaVideo, startsSeason: Bool) -> some View {
         let season = episode.season ?? 0
@@ -1623,55 +1742,74 @@ struct DetailView: View {
         let progress = progressStore.progress(for: episode.id)?.fraction ?? 0
         let isDone = isWatched(episode, season: season)
 
-        return ZStack(alignment: .topLeading) {
+        return ZStack(alignment: .bottomLeading) {
             EpisodeArt(url: image, blurred: shouldBlurEpisode(episode, season: season))
                 .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
-
-            // Soft shade at the bottom for the number and title.
-            LinearGradient(colors: [.clear, .black.opacity(0.7)],
-                           startPoint: .center, endPoint: .bottom)
-
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                if isDone {
-                    EpisodeBadge(icon: "checkmark", text: "Watched", tint: .white)
-                } else if let airs = episode.airCountdownText {
-                    EpisodeBadge(icon: "calendar", text: airs, tint: .white)
-                }
-            }
-            .padding(18)
-
-            VStack(alignment: .leading, spacing: 4) {
-                // Softer than pure white — pure white on the artwork read
-                // too bright next to the rest of the page's text.
-                // The episode's number small and plain; its TITLE is the
-                // headline.
-                Text(episode.episode.map { "Episode \($0)" } ?? "Episode")
-                    .font(.system(size: 25, weight: .medium))
-                    .foregroundStyle(.white.opacity(Self.cardNumberOpacity))
-                if let title = episode.title, !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundStyle(.white.opacity(Self.cardTitleOpacity))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                }
-            }
-            .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
-            .padding(.horizontal, 28)
-            // Above the progress pill when there is one.
-            .padding(.bottom, progress > 0.02 && progress < 0.95
-                     ? Spotlight.progressBarBottomInset + Spotlight.continueProgressBarHeight + 16
-                     : 26)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-
-            if progress > 0.02, progress < 0.95 {
-                EpisodeProgressPill(fraction: progress)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            }
+            // The same dark foot as Continue Watching's cards.
+            LinearGradient(colors: [.clear, .black.opacity(Spotlight.continueFootOpacity)],
+                           startPoint: Spotlight.continueFootStart, endPoint: .bottom)
+            // The card's STATE, one line — Continue Watching's (its identity,
+            // the title, is under the box).
+            episodeState(episode, progress: progress, watched: isDone)
+                .padding(.horizontal, Spotlight.progressBarInset)
+                .padding(.bottom, Spotlight.progressBarBottomInset)
         }
         .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
         .clipShape(shape)
+    }
+
+    /// An episode card's state line, like Continue Watching's: the episode
+    /// on the left, its status / time on the right — "S1:E4 ▬▬▬░░ 20m
+    /// left" in progress; else "S1:E4 … ✓ Watched" / "… Airs Fri" / "… 45m".
+    @ViewBuilder
+    private func episodeState(_ episode: MetaVideo, progress: Double, watched: Bool) -> some View {
+        let number = "S\(episode.season ?? 0):E\(episode.episode ?? 0)"
+        let inProgress = !watched && progress > 0.02 && progress < 0.95
+        HStack(spacing: Spotlight.continueStateGap) {
+            stateText(number)
+            if inProgress {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Spotlight.progressTrack)
+                        Capsule().fill(Spotlight.progressFill)
+                            .frame(width: max(proxy.size.width * progress,
+                                              Spotlight.continueProgressBarHeight))
+                    }
+                    .frame(height: Spotlight.continueProgressBarHeight)
+                    .frame(maxHeight: .infinity)
+                }
+                .frame(height: Spotlight.continueProgressBarHeight)
+                if let left = progressStore.progress(for: episode.id)?.remainingTimeText {
+                    stateText("\(left) left")
+                }
+            } else {
+                // Left: which episode; right: its status / time — the same
+                // spot as "20m left" in progress.
+                Spacer(minLength: 0)
+                if watched {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark").font(.system(size: 18, weight: .bold))
+                        stateText("Watched")
+                    }
+                    .foregroundStyle(AppGlass.text)
+                } else if let airs = episode.airCountdownText {
+                    stateText(airs)
+                } else {
+                    let season = episode.season ?? 0
+                    let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
+                    if let length = episodeLength(episode, extra: extra) { stateText(length) }
+                }
+            }
+        }
+    }
+
+    private func stateText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Spotlight.continueStateSize, weight: .semibold))
+            .foregroundStyle(AppGlass.text)
+            .shadow(color: .black.opacity(0.6), radius: 6, y: 1)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     /// The stationary spot: outline, the focusable box, its side targets.
@@ -1734,28 +1872,15 @@ struct DetailView: View {
     /// Under the row, for the episode in the box: "S1:E4 · Title", then air
     /// date / rating / time left, then the synopsis. Crossfades per step.
     private func episodeInfo(_ episode: MetaVideo) -> some View {
-        let season = episode.season ?? 0
-        let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
-        // (The episode number and title are on the card.)
-        var segments: [String] = []
-        if let airs = episode.airCountdownText {
-            segments.append(airs)
-        } else if let date = DateFormat.releaseDate(extra?.airDate ?? episode.released) {
-            segments.append(date)
-        }
-        if let length = episodeLength(episode, extra: extra) { segments.append(length) }
-        if let rating = extra?.rating { segments.append(String(format: "★ %.1f", rating)) }
-        if isWatched(episode, season: season) {
-            segments.append("Watched")
-        } else if let progress = progressStore.progress(for: episode.id),
-                  progress.fraction > 0.02, progress.fraction < 0.95,
-                  let left = progress.remainingTimeText {
-            segments.append("\(left) left")
-        }
-        return VStack(alignment: .leading, spacing: 12) {
-            if !segments.isEmpty {
-                MetaLine(segments: segments)
-            }
+        // Its identity: the title, then the synopsis. (Which episode, how
+        // long / how far / watched / when it airs: in the card. No air date
+        // for past episodes, no rating — it hints at the "big" ones.)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(episode.title.flatMap { $0.isEmpty ? nil : $0 }
+                 ?? episode.episode.map { "Episode \($0)" } ?? "Episode")
+                .font(FusionType.bodyText(theme.font))
+                .foregroundStyle(theme.palette.textPrimary)
+                .lineLimit(1)
             if let overview = episode.overview, !overview.isEmpty {
                 Text(overview)
                     .font(FusionType.bodyText(theme.font))
@@ -1928,11 +2053,11 @@ struct DetailView: View {
     private var castSection: some View {
         let people = viewModel.crew + viewModel.cast
         if layout.detailShowCast, !people.isEmpty {
-            moreSection("Cast & Crew") {
+            moreSection("Cast & Crew", row: .cast) {
                 SlidingFocusRow(items: people, itemSize: CGSize(width: 160, height: 160),
                                 rowHeight: 250, focusCorner: 80,
                                 onSelect: { onSelectPerson($0.id, $0.name) },
-                                onFocus: { if $0 { page = .more } }) { member, focused in
+                                onFocus: { if $0 { focusMoreRow(.cast) } }) { member, focused in
                     PersonCard(member: member, focused: focused)
                 }
             }
@@ -1945,7 +2070,9 @@ struct DetailView: View {
     private var collectionSection: some View {
         if layout.detailShowCollection, let collection = viewModel.collection,
            !viewModel.collectionParts.isEmpty {
-            moreSection(collection.name) { posterRow(viewModel.collectionParts) }
+            moreSection(collection.name, row: .collection) {
+                posterRow(viewModel.collectionParts, row: .collection)
+            }
         }
     }
 
@@ -1954,7 +2081,9 @@ struct DetailView: View {
     @ViewBuilder
     private var moreLikeThisSection: some View {
         if layout.detailShowMoreLikeThis, !viewModel.moreLikeThis.isEmpty {
-            moreSection("More Like This") { posterRow(viewModel.moreLikeThis) }
+            moreSection("More Like This", row: .moreLikeThis) {
+                posterRow(viewModel.moreLikeThis, row: .moreLikeThis)
+            }
         }
     }
 
@@ -1963,11 +2092,11 @@ struct DetailView: View {
     @ViewBuilder
     private var companiesSection: some View {
         if layout.detailShowProduction, !viewModel.companies.isEmpty {
-            moreSection("Production") {
+            moreSection("Production", row: .companies) {
                 SlidingFocusRow(items: viewModel.companies, itemSize: CGSize(width: 220, height: 110),
                                 rowHeight: 110, focusCorner: 14,
                                 onSelect: { onSelectCompany($0.id, $0.name) },
-                                onFocus: { if $0 { page = .more } }) { company, focused in
+                                onFocus: { if $0 { focusMoreRow(.companies) } }) { company, focused in
                     CompanyPlate(company: company, focused: focused)
                 }
             }
@@ -1975,21 +2104,42 @@ struct DetailView: View {
     }
 
     /// A More-page section: its title, then its row.
-    private func moreSection<Content: View>(_ title: String,
+    private func moreSection<Content: View>(_ title: String, row: MoreRow,
                                             @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
             DetailRowHeader(title: title)
             content()
                 .padding(.leading, Spotlight.screenInset)
         }
+        .modifier(MoreRowAnchor(row: row, top: Self.moreRowTop))
     }
 
     /// Titles as portrait posters on the sliding row (Home's look).
-    private func posterRow(_ items: [MetaItem]) -> some View {
+    private func posterRow(_ items: [MetaItem], row: MoreRow) -> some View {
         SlidingFocusRow(items: items, itemSize: CGSize(width: 200, height: 300), rowHeight: 300,
                         onSelect: { onSelectItem($0) },
-                        onFocus: { if $0 { page = .more } }) { item, focused in
+                        onFocus: { if $0 { focusMoreRow(row) } },
+                        menu: { AnyView(posterMenu($0)) }) { item, focused in
             MorePoster(item: item, focused: focused)
+        }
+    }
+
+    /// Hold Select on a More poster: Home's poster menu (Details, Library,
+    /// Watched for movies).
+    @ViewBuilder
+    private func posterMenu(_ item: MetaItem) -> some View {
+        Button { onSelectItem(item) } label: {
+            Label("Go to Details", systemImage: "info.circle")
+        }
+        Button { library.toggle(item) } label: {
+            Label(library.contains(item) ? "Remove from Library" : "Add to Library",
+                  systemImage: library.contains(item) ? "bookmark.slash" : "bookmark")
+        }
+        if !item.isSeries {
+            Button { watched.toggleMovie(item) } label: {
+                Label(watched.isWatched(item) ? "Mark as Unwatched" : "Mark as Watched",
+                      systemImage: watched.isWatched(item) ? "eye.slash" : "checkmark.circle")
+            }
         }
     }
 
@@ -2003,14 +2153,17 @@ struct DetailView: View {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: OrivioSpacing.lg) {
                         ForEach(viewModel.comments) { comment in
-                            CommentCard(comment: comment, onFocus: { page = .more })
+                            CommentCard(comment: comment, onFocus: { focusMoreRow(.comments) })
                         }
                     }
                     .padding(.horizontal, Spotlight.screenInset)
                     .padding(.vertical, OrivioSpacing.md)
                 }
                 .scrollClipDisabled()
+                // The page's scrollDisabled reaches in here; this row scrolls.
+                .scrollDisabled(false)
             }
+            .modifier(MoreRowAnchor(row: .comments, top: Self.moreRowTop))
             .focusSection()
         }
     }
@@ -2119,71 +2272,27 @@ private struct EpisodeCell: View {
     }
 }
 
-/// Circular cast headshot with name + character, focusable and clickable
-/// through to the actor's filmography.
-struct CastChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @Environment(\.isFocused) private var isFocused
-
-    let member: TMDBService.CastMember
-
-    var body: some View {
-        VStack(spacing: OrivioSpacing.sm) {
-            RemoteImage(url: member.profileURL, maxDimension: 150)
-                .frame(width: 150, height: 150)
-                .background(theme.palette.backgroundCard)
-                .clipShape(Circle())
-                .overlay(
-                    Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 4)
-                )
-                // Resting shadow rides the Card Shadows switch: every chip in the
-                // cast row paid a radius-8 offscreen blur per scroll frame even
-                // unfocused — a whole row of them is real cost on the A8 tier,
-                // where the switch defaults off. Focused-only otherwise-shaped
-                // identically.
-                .shadow(color: perf.settings.cardShadows
-                            ? .black.opacity(isFocused ? 0.6 : 0.3) : .clear,
-                        radius: perf.settings.cardShadows ? (isFocused ? 18 : 8) : 0, y: 6)
-
-            Text(member.name)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(isFocused ? theme.palette.textPrimary : theme.palette.textSecondary)
-                .lineLimit(1)
-            if let character = member.character, !character.isEmpty {
-                Text(character)
-                    .font(.system(size: 17))
-                    .foregroundStyle(theme.palette.textTertiary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 170)
-        .focusLift(OrivioFocus.card, isFocused)
-    }
-}
-
-/// A production-company logo tile on a light plate (TMDB logos are usually
-/// transparent white/dark art that needs a neutral background to read).
-struct CompanyLogo: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let company: TMDBService.Company
-
-    var body: some View {
-        RemoteImage(url: company.logoURL, contentMode: .fit, maxDimension: 180)
-            .frame(width: 180, height: 90)
-            .padding(.horizontal, OrivioSpacing.md)
-            .background(Color.white.opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 4)
-            )
-            .focusLift(OrivioFocus.card, isFocused)
-    }
-}
-
 // MARK: - The More page's rows
+
+/// The More page's rows, as scroll targets.
+enum MoreRow: Hashable { case moreLikeThis, collection, cast, companies, comments }
+
+/// The scroll target of a More row: an invisible strip standing `top`
+/// ABOVE the row, so scrolling it to the top puts the row's title where
+/// the first row's is (below the hint) — every row lands in one place.
+private struct MoreRowAnchor: ViewModifier {
+    let row: MoreRow
+    let top: CGFloat
+
+    func body(content: Content) -> some View {
+        content.background(alignment: .top) {
+            Color.clear
+                .frame(height: top)
+                .alignmentGuide(.top) { $0[.bottom] }
+                .id(row)
+        }
+    }
+}
 
 /// Home's motion language, compact: ONE focus position at the row's start
 /// that never moves — the items slide under it on Left/Right (the previous
@@ -2200,6 +2309,8 @@ struct SlidingFocusRow<Item: Identifiable, Card: View>: View {
     var focusCorner: CGFloat = Spotlight.cornerRadius
     let onSelect: (Item) -> Void
     var onFocus: (Bool) -> Void = { _ in }
+    /// The hold-Select menu for the current item (nil: none).
+    var menu: ((Item) -> AnyView)? = nil
     @ViewBuilder let card: (Item, _ focused: Bool) -> Card
 
     @State private var index = 0
@@ -2258,6 +2369,11 @@ struct SlidingFocusRow<Item: Identifiable, Card: View>: View {
             }
         }
         .onTapGesture { if items.indices.contains(index) { onSelect(items[index]) } }
+        // On the row itself — the focused view; tvOS won't present a menu
+        // from a view that isn't. Its content follows `index`.
+        .contextMenu {
+            if let menu, items.indices.contains(index) { menu(items[index]) }
+        }
     }
 
     private func step(_ delta: Int) {
@@ -2393,137 +2509,169 @@ struct CommentCard: View {
 /// on boxes that can afford it) — Apple's material with its native focus
 /// behaviour. Otherwise the app's own chrome is the fallback.
 enum DetailGlass {
-    /// Same rule as every other glass element (see `AppGlass`).
-    static var available: Bool { AppGlass.isReal }
+    /// The buttons in Liquid Glass at all. Off: the plain style — a light
+    /// translucent fill with the glass rim at rest, white with dark content
+    /// on focus. (Glass flickered as the buttons faded in on the billboard
+    /// ⇄ Details swap: it renders differently below full opacity.)
+    static let buttonsUseGlass = false
+    /// The SYSTEM glass buttons — same rule as every other glass element
+    /// (see `AppGlass`), when glass is on at all.
+    static var available: Bool { buttonsUseGlass && AppGlass.isReal }
 }
 
-/// A round action button (Library, Watched, Rate, Trailer, Start Over).
-/// One design, no accent colour: "on" (saved / watched / rated) is shown
-/// by the symbol alone — the caller passes its filled variant.
-struct CircleIconButton: View {
-    let systemName: String
-    var active: Bool = false
-    let action: () -> Void
-
-    var body: some View {
-        if #available(tvOS 26.0, *), DetailGlass.available {
-            Button(action: action) {
-                Image(systemName: systemName)
-                    .font(.system(size: 24, weight: .semibold))
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+extension View {
+    /// The Detail buttons' own chrome (not the system glass style): glass
+    /// at rest when `DetailGlass.buttonsUseGlass`, else the plain fill with
+    /// the rim; the focused fill is drawn by the caller.
+    @ViewBuilder
+    func detailButtonRest<S: Shape>(_ atRest: Bool, in shape: S, rimCorner: CGFloat) -> some View {
+        if DetailGlass.buttonsUseGlass {
+            liquidGlassIf(atRest, in: shape)
         } else {
-            Button(action: action) {
-                // Focus must be read INSIDE the button's label — read outside
-                // the Button, `\.isFocused` never turns true and the highlight
-                // never shows (only ancestors' focus reaches the environment).
-                CircleIconLabel(systemName: systemName, active: active)
-            }
-            .buttonStyle(PlainCardButtonStyle())
+            background { if atRest { shape.fill(Color.white.opacity(0.16)) } }
+                .overlay { if atRest { GlassRim(cornerRadius: rimCorner) } }
         }
     }
 }
 
-private struct CircleIconLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var rawFocused
-    let systemName: String
-    let active: Bool
 
-    /// Real focus, mirrored into state so the debounce below can re-read it.
-    @State private var focusedNow = false
-    /// Focus as DRAWN — real focus that has survived `paintDelay`.
-    @State private var painted = false
 
-    /// A vertical move into the action row lands on one of these icons before
-    /// the row's redirect puts focus on Play: tvOS resolves such a move by
-    /// horizontal centre distance and an icon's centre always beats Play's at
-    /// x=64. The move itself can't be vetoed — SwiftUI reports focus after the
-    /// engine has committed it — so the icon simply doesn't draw the highlight
-    /// until it has held focus for three frames. A correction takes about one,
-    /// so the visit never reaches the screen; a real Left/Right move onto an
-    /// icon is 50ms behind, well inside the focus animation that follows.
-    /// (Driving this off the row's @FocusState instead does NOT work:
-    /// @FocusState updates a beat AFTER the focus system, so the icon has
-    /// already painted by the time the row knows anything moved.)
-    private static let paintDelay = Duration.milliseconds(50)
 
-    private var isFocused: Bool { painted }
+/// A Detail button's arrival from the billboard: it appears as a small dot
+/// and swells into its shape with a liquid spring (a little overshoot),
+/// left to right; leaving, it shrinks back into a dot and goes. Plain
+/// buttons only — glass flickers under a changing opacity.
+struct DotGrow: ViewModifier {
+    let shown: Bool
 
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 36, weight: .semibold))
-            .foregroundStyle(isFocused || active ? theme.palette.onSecondary : theme.palette.textPrimary)
-            .frame(width: detailButtonSize, height: detailButtonSize)
-            .background {
-                if isFocused || active {
-                    Circle().fill(active && !isFocused
-                                  ? theme.palette.secondary.opacity(0.85)
-                                  : theme.palette.secondary)
-                }
-            }
-            // Glass circle at rest, matching the rail.
-            .liquidGlassIf(!isFocused && !active, in: Circle())
-            .focusLift(OrivioFocus.control, isFocused)
-            .onAppear {
-                focusedNow = rawFocused
-                painted = rawFocused
-            }
-            .onChange(of: rawFocused) { _, focused in
-                focusedNow = focused
-                guard focused else { painted = false; return }
-                Task { @MainActor in
-                    try? await Task.sleep(for: Self.paintDelay)
-                    if focusedNow { painted = true }
-                }
-            }
+    static let dotScale: CGFloat = 0.14
+    /// One spring for all — they grow together, at the same pace.
+    static let grow: Animation = .spring(response: 0.42, dampingFraction: 0.62)
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(shown ? 1 : Self.dotScale)
+            .animation(shown ? Self.grow : ModeSwap.out, value: shown)
+            .opacity(shown ? 1 : 0)
+            .animation(shown ? ModeSwap.fadeIn : ModeSwap.fadeOut, value: shown)
     }
 }
 
-/// Primary Play/Resume pill — the SAME chrome as the home hero's button
-/// (white pill at rest, accent fill + white ring + accent glow on focus), so
-/// the app's main action reads identically everywhere.
-///
-/// The label carries a MINIMUM WIDTH, and that is load-bearing, not cosmetic:
-/// **tvOS silently declines to present a `.contextMenu` on a focused view
-/// that is too narrow.** A show's pill reads "Play S1:E1" (214pt) and its
-/// hold menu opened; a movie's reads "Play" or "Resume" (152pt) and holding
-/// it did nothing at all — no error, no log, the interaction simply never
-/// fired. That is the whole of the "hold menu works on shows but not movies"
-/// report. Verified both ways in the simulator with
-/// `FocusTour.testDetailPlayHold*`: widening the label alone turns the movie
-/// case from no-menu to menu, with no other change.
-struct PlayActionButton: View {
-    @EnvironmentObject private var theme: ThemeManager
-
+/// A Detail button: a circle with its icon, or — the row's one pill —
+/// `pillWidth` wide with its title too (white while focused). The row
+/// decides which is the pill; every pill is equally wide, so the row's
+/// edges never move. Plain, not glass (see `DetailGlass`). `onHold`:
+/// holding Select for half a second runs it instead of the action (a press
+/// that became a hold never also taps).
+struct DetailActionButton: View {
+    let icon: String
     let title: String
+    let isPill: Bool
+    let lit: Bool
+    let pillWidth: CGFloat
     let action: () -> Void
+    var onHold: (() -> Void)? = nil
+
+    @State private var didHold = false
+    /// This title's own width, measured — its room animates 0 → this as
+    /// one number (the icon + title pair stays centred in the pill).
+    @State private var ownTitleWidth: CGFloat = 0
+
+    static let paintDelay = Duration.milliseconds(50)
+    /// Opening / closing: one calm curve, no bounce.
+    static let open: Animation = .easeInOut(duration: 0.24)
+    static let iconBox: CGFloat = 30
+    static let inset: CGFloat = (detailButtonSize - iconBox) / 2
+    static let titleGap: CGFloat = 12
+
+    static func titleText(_ title: String) -> some View {
+        Text(title).font(.system(size: 26, weight: .semibold)).lineLimit(1).fixedSize()
+    }
+
+    static func pillWidth(title: CGFloat) -> CGFloat {
+        inset + iconBox + titleGap + title + inset
+    }
 
     var body: some View {
-        if #available(tvOS 26.0, *), DetailGlass.available {
-            // The system's Liquid Glass capsule — same material as the
-            // round buttons beside it.
-            Button(action: action) { label.frame(height: 34) }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.capsule)
-        } else {
-            Button(action: action) { label }
-                .buttonStyle(DetailPillButtonStyle())
+        Button {
+            if didHold { didHold = false; return }
+            action()
+        } label: {
+            HStack(spacing: isPill ? Self.titleGap : 0) {
+                Image(systemName: icon)
+                    .font(.system(size: 28, weight: .semibold))
+                    .frame(width: Self.iconBox)
+                // Its room opens with the pill (0 → its width), centred —
+                // one motion, nothing hanging outside.
+                Self.titleText(title)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { ownTitleWidth = proxy.size.width }
+                                .onChange(of: proxy.size.width) { _, w in ownTitleWidth = w }
+                        }
+                    }
+                    .frame(width: isPill ? ownTitleWidth : 0, alignment: .leading)
+                    .clipped()
+                    .opacity(isPill ? 1 : 0)
+            }
+            .foregroundStyle(lit ? AppGlass.textOnFocus : AppGlass.text)
+            .frame(width: isPill ? pillWidth : detailButtonSize, height: detailButtonSize)
+            .clipShape(Capsule())
+            .background { Capsule().fill(lit ? Color.white : Color.white.opacity(0.16)) }
+            .overlay { if !lit { GlassRim(cornerRadius: detailButtonSize / 2) } }
         }
-    }
-
-    private var label: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "play.fill").font(.system(size: 26, weight: .bold))
-            Text(title).font(FusionType.button(theme.font))
-        }
-        // Keeps the capsule at ~222pt even for "Play" — comfortably past
-        // the threshold the menu needs. See the note above.
-        .frame(minWidth: 150)
+        .buttonStyle(DetailHoldButtonStyle(onHold: onHold, didHold: $didHold))
     }
 }
+
+private struct MaxWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Watches the press; still down after `holdAfter` → the hold. (After
+/// NuvioTVOS's Play button — no context menu, so no minimum width either.)
+private struct DetailHoldButtonStyle: ButtonStyle {
+    let onHold: (() -> Void)?
+    @Binding var didHold: Bool
+
+    static let holdAfter: Duration = .milliseconds(500)
+
+    func makeBody(configuration: Configuration) -> some View {
+        HoldWatcher(configuration: configuration, onHold: onHold, didHold: $didHold)
+    }
+
+    private struct HoldWatcher: View {
+        let configuration: ButtonStyle.Configuration
+        let onHold: (() -> Void)?
+        @Binding var didHold: Bool
+        @State private var holdTask: Task<Void, Never>?
+
+        var body: some View {
+            configuration.label
+                .cardPressDip(configuration.isPressed)
+                .onChange(of: configuration.isPressed) { _, pressed in
+                    holdTask?.cancel()
+                    holdTask = nil
+                    guard pressed, let onHold else { return }
+                    holdTask = Task { @MainActor in
+                        try? await Task.sleep(for: DetailHoldButtonStyle.holdAfter)
+                        guard !Task.isCancelled else { return }
+                        didHold = true
+                        onHold()
+                        // A release that never arrives must not eat the
+                        // next real tap.
+                        try? await Task.sleep(for: .seconds(1))
+                        didHold = false
+                    }
+                }
+        }
+    }
+}
+
 
 /// The hero pill chrome, shared by the detail page's primary action.
 struct DetailPillButtonStyle: ButtonStyle {
@@ -2540,14 +2688,16 @@ struct DetailPillButtonStyle: ButtonStyle {
         /// rest, the accent fill + lift on focus. (It used to be a solid
         /// light pill at rest with a glow on focus — the odd one out.)
         var body: some View {
+            let plain = !DetailGlass.buttonsUseGlass
             configuration.label
-                .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
+                .foregroundStyle(isFocused ? (plain ? AppGlass.textOnFocus : theme.palette.onSecondary)
+                                 : theme.palette.textPrimary)
                 .padding(.horizontal, 36)
                 .frame(height: detailButtonSize)
                 .background {
-                    if isFocused { Capsule().fill(theme.palette.secondary) }
+                    if isFocused { Capsule().fill(plain ? Color.white : theme.palette.secondary) }
                 }
-                .liquidGlassIf(!isFocused, in: Capsule())
+                .detailButtonRest(!isFocused, in: Capsule(), rimCorner: detailButtonSize / 2)
                 // The round buttons' lift (`.control`), not the bigger card
                 // lift — every control in the row grows by the same amount.
                 .focusLift(OrivioFocus.control, isFocused)
@@ -2556,74 +2706,6 @@ struct DetailPillButtonStyle: ButtonStyle {
     }
 }
 
-struct SeasonChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-
-    let season: Int
-    let selected: Bool
-    var onFocus: () -> Void = {}
-
-    /// Same family as the Overview buttons: Liquid Glass at rest, accent
-    /// fill + lift on focus. The selected season is the SAME glass, just
-    /// lit a little brighter with bright text — no solid pill, no glow.
-    var body: some View {
-        Text(season == 0 ? "Specials" : "Season \(season)")
-            .font(.system(size: 26, weight: .semibold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary
-                             : selected ? theme.palette.textPrimary
-                             : theme.palette.textSecondary)
-            .padding(.horizontal, 30)
-            .frame(height: 64)
-            .background {
-                if isFocused {
-                    Capsule(style: .continuous).fill(theme.palette.secondary)
-                } else if selected {
-                    Capsule(style: .continuous).fill(Color.white.opacity(0.16))
-                }
-            }
-            .liquidGlassIf(!isFocused, in: Capsule(style: .continuous))
-            .focusLift(OrivioFocus.control, isFocused)
-            .onChange(of: isFocused) { _, focused in if focused { onFocus() } }
-    }
-}
-
-/// A compact IMDb parental-guide advisory row: one chip per category, tinted
-/// by severity (mild → amber, moderate → orange, severe → red).
-/// The parental guide as glass chips (the app's glass): the category, and
-/// its severity as a coloured word — a little colour on the page — with a
-/// faint tint of it in the chip. Most severe first.
-private struct ParentalGuideRow: View {
-    let entries: [ParentalGuideEntry]
-
-    var body: some View {
-        HStack(spacing: OrivioSpacing.sm) {
-            ForEach(entries.sorted { $0.severity.rank > $1.severity.rank }) { entry in
-                HStack(spacing: 10) {
-                    Text(entry.label)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(AppGlass.text)
-                    Text(entry.severity.display)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(tint(entry.severity))
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 38)
-                .background(Capsule().fill(tint(entry.severity).opacity(0.14)))
-                .glassSurface(in: Capsule())
-                .overlay { GlassRim(cornerRadius: 19) }
-            }
-        }
-    }
-
-    private func tint(_ s: ParentalSeverity) -> Color {
-        switch s {
-        case .mild: return OrivioPrimitives.warning
-        case .moderate: return OrivioPrimitives.amber500
-        case .severe: return OrivioPrimitives.error
-        }
-    }
-}
 
 // MARK: - Full description overlay
 
@@ -2881,40 +2963,4 @@ private struct EpisodeArt: View {
     }
 }
 
-/// Small dark capsule on an episode card ("★ 8.6", "Watched", "Airs Friday").
-private struct EpisodeBadge: View {
-    let icon: String
-    let text: String
-    let tint: Color
 
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(tint)
-            Text(text)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(.white)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(Color.black.opacity(0.55)))
-    }
-}
-
-/// The Home spotlight's progress pill, inset from the card's edges.
-private struct EpisodeProgressPill: View {
-    let fraction: Double
-
-    var body: some View {
-        let width = Spotlight.boxWidth - 2 * Spotlight.progressBarInset
-        let height = Spotlight.continueProgressBarHeight
-        ZStack(alignment: .leading) {
-            Capsule().fill(Spotlight.progressTrack)
-            Capsule().fill(Spotlight.progressFill)
-                .frame(width: max(width * CGFloat(fraction), height))
-        }
-        .frame(width: width, height: height)
-        .padding(.bottom, Spotlight.progressBarBottomInset)
-    }
-}

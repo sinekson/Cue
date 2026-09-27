@@ -2346,7 +2346,10 @@ struct HomeView: View {
             durationSeconds: 1,
             streamURL: nil,
             updatedAt: availableAt,
-            newEpisodeCount: newEpisodeCount
+            newEpisodeCount: newEpisodeCount,
+            // Not aired yet (with "Show unaired Next Up" on): when it airs,
+            // for the card's state line.
+            airsAt: episode.hasAired ? nil : (episode.airedDate ?? .distantFuture)
         )
     }
 

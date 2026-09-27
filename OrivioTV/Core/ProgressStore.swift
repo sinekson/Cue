@@ -87,6 +87,13 @@ struct WatchProgress: Codable, Identifiable, Hashable {
     /// Whether to show the new-episode badge at all.
     var hasNewEpisode: Bool { (newEpisodeCount ?? 0) > 0 }
 
+    /// A Next Up episode that hasn't aired yet: when it airs. Set only on
+    /// the rows Home synthesises (never stored or synced), so Continue
+    /// Watching's card says "Airs in 3 days" exactly like the episode row.
+    var airsAt: Date? = nil
+    /// Whether the episode is still to air.
+    var notAiredYet: Bool { airsAt.map { $0 > Date() } ?? false }
+
     var fraction: Double {
         guard durationSeconds > 0 else { return 0 }
         return min(max(positionSeconds / durationSeconds, 0), 1)

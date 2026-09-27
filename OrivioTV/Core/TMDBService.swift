@@ -1076,6 +1076,117 @@ enum TMDBService {
         var language: String?            // spoken/original language, uppercased ISO (e.g. "EN")
         var releaseDate: String?         // ISO date for the localized full-date meta line
         var contentRating: String?        // US certification/rating, e.g. PG-13, R, TV-MA
+        /// The title block's facts (creator line, status, runtime, …).
+        var facts = TitleFacts()
+    }
+
+    /// What the title block (Detail overview and Home's billboard) shows
+    /// beyond the catalog's own fields: "Creator: …", ENDED / ONGOING,
+    /// certification, runtime, country, language.
+    struct TitleFacts: Equatable {
+        var creatorLine: String?
+        var contentRating: String?
+        /// "ENDED" / "ONGOING" — series only.
+        var status: String?
+        /// A movie's runtime, or a series' episode runtime.
+        var runtimeMinutes: Int?
+        var country: String?
+        var language: String?
+
+        /// Series: "Creator: …" (TMDB's creators, else writers, else
+        /// directors). Movies: "Director: …" (else "Writer: …"). Two names
+        /// at most.
+        static func creatorLine(isMovie: Bool, creators: [String],
+                                directors: [String], writers: [String]) -> String? {
+            func line(_ names: [String], _ one: String, _ many: String) -> String? {
+                let unique = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                guard !unique.isEmpty else { return nil }
+                return "\(unique.count > 1 ? many : one): \(unique.prefix(2).joined(separator: ", "))"
+            }
+            if isMovie {
+                return line(directors, "Director", "Directors") ?? line(writers, "Writer", "Writers")
+            }
+            return line(creators, "Creator", "Creator") ?? line(writers, "Creator", "Creator")
+                ?? line(directors, "Creator", "Creator")
+        }
+
+        /// TMDB's series status as the badge's word.
+        static func status(_ raw: String?, isMovie: Bool) -> String? {
+            guard !isMovie, let raw, !raw.isEmpty else { return nil }
+            return ["Ended", "Canceled"].contains(raw) ? "ENDED" : "ONGOING"
+        }
+    }
+
+    private static let factsLock = NSLock()
+    private static var factsCache: [String: TitleFacts] = [:]
+
+    private static func cachedFacts(_ key: String) -> TitleFacts? {
+        factsLock.lock(); defer { factsLock.unlock() }
+        return factsCache[key]
+    }
+    private static func storeFacts(_ facts: TitleFacts, for key: String) {
+        factsLock.lock(); defer { factsLock.unlock() }
+        factsCache[key] = facts
+    }
+
+    /// The title block's facts on their own — for Home's billboard, which
+    /// has no Detail page load behind it. One light request per title
+    /// (credits + certification only), remembered for the session.
+    static func facts(for meta: MetaItem) async -> TitleFacts? {
+        let key = "\(meta.type):\(meta.id):\(preferredLanguage)"
+        if let hit = cachedFacts(key) { return hit }
+        guard hasAPIKey,
+              let (tmdbID, isMovie) = await resolveTMDBID(from: meta.id, type: meta.type) else { return nil }
+        struct Response: Decodable {
+            struct Person: Decodable { let name: String }
+            struct CrewDTO: Decodable { let name: String; let job: String? }
+            struct Credits: Decodable { let crew: [CrewDTO]? }
+            struct CountryDTO: Decodable { let name: String? }
+            struct ReleaseDates: Decodable { let results: [ReleaseCountry]? }
+            struct ReleaseCountry: Decodable { let iso_3166_1: String?; let release_dates: [ReleaseInfo]? }
+            struct ReleaseInfo: Decodable { let certification: String? }
+            struct ContentRatings: Decodable { let results: [TVRating]? }
+            struct TVRating: Decodable { let iso_3166_1: String?; let rating: String? }
+            let created_by: [Person]?
+            let credits: Credits?
+            let status: String?
+            let runtime: Int?
+            let episode_run_time: [Int]?
+            let production_countries: [CountryDTO]?
+            let original_language: String?
+            let release_dates: ReleaseDates?
+            let content_ratings: ContentRatings?
+        }
+        let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
+        guard let body: Response = try? await get(path, query: [
+            "append_to_response": isMovie ? "credits,release_dates" : "credits,content_ratings"
+        ]) else { return nil }
+        let crew = body.credits?.crew ?? []
+        var facts = TitleFacts()
+        facts.creatorLine = TitleFacts.creatorLine(
+            isMovie: isMovie,
+            creators: (body.created_by ?? []).map(\.name),
+            directors: crew.filter { $0.job == "Director" }.map(\.name),
+            writers: crew.filter { ["Writer", "Screenplay"].contains($0.job ?? "") }.map(\.name))
+        facts.status = TitleFacts.status(body.status, isMovie: isMovie)
+        facts.runtimeMinutes = isMovie ? body.runtime : body.episode_run_time?.first
+        facts.country = body.production_countries?.first?.name
+        facts.language = body.original_language?.uppercased()
+        if isMovie {
+            let countries = body.release_dates?.results ?? []
+            let us = countries.first { $0.iso_3166_1 == "US" } ?? countries.first
+            facts.contentRating = us?.release_dates?.compactMap {
+                let c = $0.certification?.trimmingCharacters(in: .whitespaces)
+                return c?.isEmpty == false ? c : nil
+            }.first
+        } else {
+            let rows = body.content_ratings?.results ?? []
+            let rating = (rows.first { $0.iso_3166_1 == "US" } ?? rows.first)?.rating?
+                .trimmingCharacters(in: .whitespaces)
+            facts.contentRating = rating?.isEmpty == false ? rating : nil
+        }
+        storeFacts(facts, for: key)
+        return facts
     }
 
     // Cache imdb→(tmdbID,isMovie) resolutions from /find.
@@ -1175,6 +1286,11 @@ enum TMDBService {
             let videos: Videos?
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
+            struct Person: Decodable { let name: String }
+            let created_by: [Person]?
+            let status: String?
+            let runtime: Int?
+            let episode_run_time: [Int]?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         let appended = isMovie
@@ -1264,6 +1380,17 @@ enum TMDBService {
         detail.contentRating = isMovie
             ? movieCertification(body.release_dates)
             : tvContentRating(body.content_ratings)
+        detail.facts = TitleFacts(
+            creatorLine: TitleFacts.creatorLine(
+                isMovie: isMovie,
+                creators: (body.created_by ?? []).map(\.name),
+                directors: crew.filter { $0.job == "Director" }.map(\.name),
+                writers: crew.filter { ["Writer", "Screenplay"].contains($0.job ?? "") }.map(\.name)),
+            contentRating: detail.contentRating,
+            status: TitleFacts.status(body.status, isMovie: isMovie),
+            runtimeMinutes: isMovie ? body.runtime : body.episode_run_time?.first,
+            country: detail.country,
+            language: detail.language)
         let recoResults = (body.recommendations?.results?.isEmpty == false)
             ? body.recommendations?.results
             : body.similar?.results

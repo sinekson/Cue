@@ -784,6 +784,7 @@ private struct MDBListProviderToggle: View {
                 case .tomatoes: return mdblist.settings.showTomatoes
                 case .audience: return mdblist.settings.showAudience
                 case .metacritic: return mdblist.settings.showMetacritic
+                case .myanimelist: return mdblist.settings.showMyAnimeList
                 }
             },
             set: { newValue in
@@ -795,6 +796,7 @@ private struct MDBListProviderToggle: View {
                 case .tomatoes: mdblist.settings.showTomatoes = newValue
                 case .audience: mdblist.settings.showAudience = newValue
                 case .metacritic: mdblist.settings.showMetacritic = newValue
+                case .myanimelist: mdblist.settings.showMyAnimeList = newValue
                 }
             }
         )

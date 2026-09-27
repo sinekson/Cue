@@ -179,6 +179,7 @@ enum Route: Hashable {
 struct RootView: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var spotlightGate = SpotlightFocusGate.shared
+    @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @ObservedObject private var liveTV = LiveTVSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
@@ -1023,7 +1024,7 @@ struct RootView: View {
             Button(pending.isUpdate ? "Update" : "Install") { confirmAddonInstall(pending) }
             Button("Cancel", role: .cancel) { pendingAddonInstall = nil }
         } message: { pending in
-            Text("\(pending.name)\n\(pending.manifestURL)\n\nThis add-on will be able to supply catalogs, metadata and stream links to Orivio.")
+            Text("\(pending.name)\n\(pending.manifestURL)\n\nThis add-on will be able to supply catalogs, metadata and stream links to Cue.")
         }
         .alert("Can't play this channel",
                isPresented: Binding(get: { liveChannelError != nil },
@@ -1080,6 +1081,12 @@ struct RootView: View {
     /// separate presses on the clickpad are far slower than this), long enough
     /// to cover the tail of ONE swipe on the old remote's touch surface.
     private static let sidebarExitEchoWindow: TimeInterval = 0.3
+
+    /// The top bar is out for the billboard ⇄ Details swap — Home's tab only
+    /// (another tab's bar is never part of it).
+    private var homeChromeOut: Bool {
+        (modeSwap.homeChromeOut || modeSwap.trailerChromeOut) && selectedTab == 0
+    }
 
     private var showSidebar: Bool {
         guard atTabRoot else { return false }
@@ -1241,9 +1248,16 @@ struct RootView: View {
                 GlassSidebar(selected: $selectedTab, focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             position: navPosition)
+                             position: navPosition,
+                             // The billboard ⇄ Details swap: the bar moves
+                             // away (up; the rail: left) — inside the bar,
+                             // on its items (see `GlassSidebar.swapAway`).
+                             swapAway: homeChromeOut)
+                    .opacity(homeChromeOut ? 0 : 1)
+                    .animation(homeChromeOut ? ModeSwap.fadeOut : ModeSwap.fadeIn,
+                               value: homeChromeOut)
                     .focusSection()
-                    .disabled(!sidebarEnabled || spotlightGate.holdsLeft)
+                    .disabled(!sidebarEnabled || spotlightGate.holdsLeft || homeChromeOut)
                     // Back while IN the rail collapses it into content instead
                     // of falling through to the system (which quit the app).
                     .onExitCommand { collapseSidebarFromExit() }
@@ -1364,6 +1378,11 @@ struct RootView: View {
                     .onChange(of: homePath.count) { oldCount, newCount in
                         // Only a pop that lands ON Home matters here.
                         guard newCount < oldCount, newCount == 0 else { return }
+                        // Back from Details opened on the billboard: Home's
+                        // half of the swap, the other way in.
+                        if modeSwap.homeChromeOut {
+                            withAnimation(ModeSwap.in) { modeSwap.homeChromeOut = false }
+                        }
                         lastHomePopAt = Date()
                         // Popping all the way back to Home: keep the rail
                         // non-focusable for a beat so focus lands on a card
@@ -1628,7 +1647,16 @@ struct RootView: View {
                     onPlayFromBeginning: { meta, video in path.wrappedValue.append(Route.streamsFromStart(meta, video)) },
                     onSelectItem: { path.wrappedValue.append(Route.detail($0)) },
                     onSelectPerson: { id, name in path.wrappedValue.append(Route.person(id: id, name: name)) },
-                    onSelectCompany: { id, name in path.wrappedValue.append(Route.tmdbCompany(id: id, name: name)) }
+                    onSelectCompany: { id, name in path.wrappedValue.append(Route.tmdbCompany(id: id, name: name)) },
+                    // Back to the billboard: Details has played its half of
+                    // the swap; Home plays the rest — no system slide.
+                    onReturnToBillboard: {
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
+                        }
+                    }
             )
         case .collection(let collection):
             CollectionView(collection: collection) { path.wrappedValue.append(Route.detail($0)) }

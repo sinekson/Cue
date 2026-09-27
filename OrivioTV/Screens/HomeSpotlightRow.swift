@@ -151,7 +151,23 @@ enum Spotlight {
     /// The same pill, smaller, on posters beside the box (Continue Watching).
     static let posterProgressBarHeight: CGFloat = 6
     static let posterProgressBarInset: CGFloat = 14
+    /// Continue Watching: the time left beside the bar ("38m left"), or
+    /// "Up Next" with no bar — the card's STATE, inside it (its identity,
+    /// name and episode, is under the box).
+    static let continueStateSize: CGFloat = 22
+    static let continueStateGap: CGFloat = 14
+    /// The soft dark foot on Continue Watching cards, so the state reads on
+    /// bright stills.
+    static let continueFootOpacity: Double = 0.7
+    /// Where the foot starts (0 = top of the card).
+    static let continueFootStart: UnitPoint = UnitPoint(x: 0.5, y: 0.4)
+    /// A very slight, constant dimming on the box's artwork — the focused
+    /// title was glaring next to the page, and it's the soft starting point
+    /// of the box → Details darkening.
+    static let boxDim: Double = 0.08
     /// Pill colours.
+    /// (A dark track was tried for bright stills — barely better, and apart
+    /// from the Top Shelf's cards. Kept light.)
     static let progressTrack = Color.white.opacity(0.3)
     static let progressFill = Color.white
 
@@ -170,7 +186,7 @@ enum Spotlight {
     /// Detail page episode info: ends where the box ends (its meta line is
     /// short, so a box-wide column reads clean there), one line longer.
     static var episodeDescriptionWidth: CGFloat { boxWidth }
-    static let episodeDescriptionLines = 4
+    static let episodeDescriptionLines = 2
 
     // Vertical layout (fixed positions — every row puts the box in exactly
     // the same place, which is what lets the rows glide between spots).
@@ -314,70 +330,68 @@ enum Spotlight {
 
 // MARK: - Billboard dots
 
-/// Fixed glass dots (one per title) with a larger glass marker on the
-/// current one. The marker moves LIQUIDLY: its front edge runs ahead to the
-/// new dot (it stretches into a capsule), then the back edge follows and it
-/// rounds off again — across the whole row when it wraps round.
+/// One dot per title, each at a fixed spot. The current one is large and
+/// white; moving on, it shrinks back as the next one grows — in place (no
+/// marker travelling between them, so fast paging never stretches the row).
+/// Liquid touches: the new dot swells with a little overshoot, arrives
+/// stretched the way you paged (as if it had flowed in) and springs round.
 private struct BillboardDots: View {
     let count: Int
     let current: Int
-    /// The billboard has focus: the marker wears the bright focus glass.
+    /// The billboard has focus: the current dot is full white (else dimmer).
     let focused: Bool
 
     static let dot: CGFloat = 12
-    static let marker: CGFloat = 22
+    static let current: CGFloat = 20
+    /// Centre to centre — room for the large one.
     static let pitch: CGFloat = 32
-    /// The front edge's run, and the back edge catching up.
-    static let lead: Animation = .easeOut(duration: 0.12)
-    static let follow: Animation = .smooth(duration: 0.24)
-    static let followDelay: Duration = .milliseconds(60)
+    /// The swell: a spring with a little overshoot.
+    static let change: Animation = .spring(response: 0.34, dampingFraction: 0.58)
+    /// The arrival stretch, springing back.
+    static let settle: Animation = .spring(response: 0.42, dampingFraction: 0.45)
+    static let stretch: CGFloat = 0.45
 
-    /// The marker's two ends, in dot positions.
-    @State private var from: CGFloat = 0
-    @State private var to: CGFloat = 0
-    @State private var settle: Task<Void, Never>?
+    /// The last page's direction (+1 right, -1 left) — at full strength
+    /// right after a step, springing back to 0.
+    @State private var pulse: CGFloat = 0
 
     var body: some View {
-        let lo = min(from, to), hi = max(from, to)
-        let markerX = lo * Self.pitch + (Self.dot - Self.marker) / 2
-        ZStack(alignment: .leading) {
+        HStack(spacing: 0) {
             ForEach(0..<max(count, 0), id: \.self) { k in
-                Circle()
-                    .fill(Color.white.opacity(0.22))
-                    .frame(width: Self.dot, height: Self.dot)
-                    .glassSurface(in: Circle())
-                    .overlay { GlassRim(cornerRadius: Self.dot / 2, strength: 1.2) }
-                    .offset(x: CGFloat(k) * Self.pitch)
+                let isCurrent = k == current
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.22))
+                        .glassSurface(in: Circle())
+                        .overlay { GlassRim(cornerRadius: Self.dot / 2, strength: 1.2) }
+                        .opacity(isCurrent ? 0 : 1)
+                    Circle()
+                        .fill(Color.white.opacity(focused ? 1 : 0.7))
+                        .opacity(isCurrent ? 1 : 0)
+                }
+                .frame(width: isCurrent ? Self.current : Self.dot,
+                       height: isCurrent ? Self.current : Self.dot)
+                // Arrives stretched the way you paged (from the side it came
+                // from), then rounds off.
+                .scaleEffect(x: isCurrent ? 1 + Self.stretch * abs(pulse) : 1,
+                             y: isCurrent ? 1 - Self.stretch * 0.4 * abs(pulse) : 1,
+                             anchor: isCurrent ? (pulse > 0 ? .trailing : .leading) : .center)
+                .frame(width: Self.pitch, height: Self.current)
             }
-            // The marker: a glass capsule spanning its two ends — a circle
-            // when they meet.
-            Color.clear
-                .frame(width: Self.marker + (hi - lo) * Self.pitch, height: Self.marker)
-                .background { GlassHighlight(focused: true, shape: Capsule()).opacity(focused ? 1 : 0) }
-                .glassSurface(in: Capsule())
-                .overlay { GlassRim(cornerRadius: Self.marker / 2) }
-                .offset(x: markerX)
-                .animation(.easeOut(duration: 0.2), value: focused)
         }
-        .frame(width: CGFloat(max(count - 1, 0)) * Self.pitch + Self.dot, alignment: .leading)
+        .animation(Self.change, value: current)
+        .animation(.easeOut(duration: 0.2), value: focused)
+        .onChange(of: current) { old, new in
+            // Wrapping round the ring counts as one step onward.
+            let step: CGFloat = new == old + 1 || (old == count - 1 && new == 0) ? 1 : -1
+            var jolt = Transaction()
+            jolt.disablesAnimations = true
+            withTransaction(jolt) { pulse = step }
+            // Next turn: in the same update the jolt and the settle merged
+            // into one change, and the stretch never showed.
+            DispatchQueue.main.async { withAnimation(Self.settle) { pulse = 0 } }
+        }
         .opacity(count > 1 ? 1 : 0)
-        .onAppear { from = CGFloat(current); to = CGFloat(current) }
-        .onChange(of: current) { _, new in
-            settle?.cancel()
-            // The front edge runs ahead — and the back edge jumps to where
-            // the front was, so the drop is never more than one step long
-            // (fast presses made a caterpillar)…
-            withAnimation(Self.lead) {
-                from = to
-                to = CGFloat(new)
-            }
-            // …the back edge follows.
-            settle = Task { @MainActor in
-                try? await Task.sleep(for: Self.followDelay)
-                guard !Task.isCancelled else { return }
-                withAnimation(Self.follow) { from = CGFloat(new) }
-            }
-        }
         .allowsHitTesting(false)
     }
 }
@@ -480,6 +494,7 @@ struct HomeSpotlightView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var layoutSettings: HomeCatalogSettingsStore
+    @EnvironmentObject private var mdblist: MDBListSettingsStore
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @Environment(\.railIsHidden) private var railIsHidden
     @Environment(\.navigationIsTop) private var navigationIsTop
@@ -516,6 +531,26 @@ struct HomeSpotlightView: View {
     /// True while the box's trailer is actually on screen — the logo steps
     /// aside for it, and comes back when the trailer ends or you move on.
     @State private var trailerPlaying = false
+    /// Up / Back during the billboard's trailer: the page is back, the
+    /// trailer runs on muted (see `TrailerMode`).
+    @State private var trailerRevealed = false
+    /// Details (opened from the billboard) is up / on its way: the
+    /// billboard's own parts are out (see `ModeSwap`).
+    @State private var swappedToDetail = false
+    /// The billboard's backdrop depth, 0…1 (see `ModeSwap.depthHandover`):
+    /// Select starts it part-way (Details finishes); back from Details it
+    /// arrives part-way and eases out of it with Home's parts.
+    @State private var billboardDepth: CGFloat = 0
+    /// Box → Details (see `ModeSwap.boxGrow`): the title whose box artwork
+    /// grows to the full screen, whether it has grown, and the depth it
+    /// carries (like `billboardDepth`). The rest of Home fades meanwhile.
+    @State private var growingBox: MetaItem?
+    @State private var boxGrown = false
+    @State private var boxDepth: CGFloat = 0
+    /// The billboard's MDBList ratings and TMDB facts, per title (fetched
+    /// as it shows).
+    @State private var billboardRatings: [String: MDBListRatings] = [:]
+    @State private var billboardFacts: [String: TMDBService.TitleFacts] = [:]
     /// Continue Watching: full-resolution TMDB episode stills, by title id,
     /// replacing the (often small) still stored with the progress entry.
     @State private var sharpStills: [String: String] = [:]
@@ -693,6 +728,36 @@ struct HomeSpotlightView: View {
         // title in every row. Rows may still be loading, so retry as they
         // arrive until the remembered row is there.
         .onAppear { restorePlace() }
+        // Trailer mode: the top bar goes with the page (and comes back).
+        .onChange(of: trailerMode) { _, on in
+            withAnimation(on ? ModeSwap.out : ModeSwap.in) { ModeSwap.shared.trailerChromeOut = on }
+        }
+        // A trailer ending (or stopped) starts the next one from scratch.
+        .onChange(of: trailerPlaying) { _, playing in
+            if !playing { trailerRevealed = false }
+        }
+        .onDisappear { ModeSwap.shared.trailerChromeOut = false }
+        // Back from Details: RootView brings the top bar back (on the pop)
+        // and the billboard's parts come in with it, in the same animation.
+        .onReceive(ModeSwap.shared.$homeChromeOut) { out in
+            if !out && swappedToDetail { swappedToDetail = false }
+            // Back from Details opened from a box: the backdrop shrinks back
+            // into the box, Home fades back in around it.
+            if !out, growingBox != nil, boxGrown {
+                withAnimation(ModeSwap.boxGrow) {
+                    boxGrown = false
+                    boxDepth = 0
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(ModeSwap.boxGrowDuration))
+                    guard !boxGrown else { return }
+                    growingBox = nil
+                }
+            }
+            if !out && billboardDepth > 0 {
+                withAnimation(ModeSwap.in) { billboardDepth = 0 }
+            }
+        }
         // (Also when a row's titles arrive after the row itself.)
         .onChange(of: rows.map { "\($0.id)#\($0.items.count)" }) { _, _ in restorePlace() }
         .onChange(of: rowIndex) { _, index in
@@ -815,6 +880,7 @@ struct HomeSpotlightView: View {
                 .clipped()
 
             if let row, let item {
+                Group {
                 // The rows — the only things that MOVE on Up/Down.
                 rowStrips(width: rowWidth, spots: spots)
 
@@ -831,6 +897,11 @@ struct HomeSpotlightView: View {
                 focusLayer(row: row, width: rowWidth, box: boxSize(for: row, spots))
                     .placed(x: leadingInset, y: isFeatured(row) ? spots.featuredY : spots.rowY)
                     .transaction(value: isFeatured(row)) { $0.animation = nil }
+                }
+                // Box → Details: everything but the growing box fades —
+                // quickly (scoped: only the opacity is re-timed).
+                .animation(ModeSwap.boxHomeFade) { $0.opacity(boxGrown ? 0 : 1) }
+                growingBoxLayer(spots: spots)
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -893,7 +964,8 @@ struct HomeSpotlightView: View {
                 .frame(width: spots.screen.width, height: spots.screen.height)
                 .offset(x: -leadingInset)
                 // Eased back while the billboard's trailer plays.
-                .opacity(trailerPlaying ? 0.5 : 1)
+                .opacity(trailerMode ? TrailerMode.scrimOpacity : trailerPlaying ? 0.5 : 1)
+                .animation(TrailerMode.fade, value: trailerMode)
                 .animation(.easeInOut(duration: 0.4), value: trailerPlaying)
 
             switch Spotlight.verticalStyle {
@@ -1119,10 +1191,17 @@ struct HomeSpotlightView: View {
             // Full-bleed trailer (a regular row's plays in its box).
             // Only while the billboard IS the focus row: Down stops it.
             SpotlightTrailerLayer(item: item, active: focus != nil && isFocusRow,
-                                  isPlaying: $trailerPlaying)
+                                  isPlaying: $trailerPlaying,
+                                  // The billboard's plays with sound — muted
+                                  // once Up / Back brought the page back.
+                                  sound: !trailerRevealed,
+                                  delay: TrailerMode.delay)
                 .frame(width: size.width, height: size.height)
         }
         .frame(width: size.width, height: size.height)
+        // Back from Details: arrives in its depth, eases out of it.
+        .overlay { Color.black.opacity(ModeSwap.depthDim(billboardDepth)) }
+        .scaleEffect(ModeSwap.depthScale(billboardDepth))
         .clipped()
         .animation(.easeInOut(duration: 0.4), value: trailerPlaying)
     }
@@ -1169,7 +1248,7 @@ struct HomeSpotlightView: View {
                 ForEach(Array(first...max(first, last)), id: \.self) { k in
                     let item = row.items[wrap(k, n)]
                     poster(item,
-                           progress: isContinue ? continueProgress[item.id]?.fraction : nil,
+                           continueEntry: isContinue ? continueProgress[item.id] : nil,
                            landscape: isContinue)
                         .offset(x: x(k))
                         // The previous card peeks (across the gap it's off
@@ -1254,7 +1333,9 @@ struct HomeSpotlightView: View {
 
     private func boxView(_ candidates: [BoxCandidate], open: Bool, closedWidth: CGFloat,
                          outlined: Bool, stretch: CGFloat = 0) -> some View {
+        // (Continue Watching: a softer foot for its state line.)
         let showsScrim = candidates.contains { !$0.isContinue } || Spotlight.continueShowsLogo
+        let showsFoot = !showsScrim && candidates.contains { $0.isContinue }
         return ZStack {
             Color.black
             ForEach(candidates) { candidate in
@@ -1268,12 +1349,17 @@ struct HomeSpotlightView: View {
                     // you stepped.
                     .zIndex(candidate.shown ? 1 : 0)
             }
+            // The constant slight dimming (see `boxDim`).
+            Color.black.opacity(Spotlight.boxDim)
+                .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
             // Dark behind the logo (drawn on the fixed spot). The same for
             // every title, so it's part of the box: it travels with it and
             // never crossfades — and stays under the outline.
-            if showsScrim {
-                LinearGradient(colors: [.clear, .black.opacity(Spotlight.logoScrimOpacity)],
-                               startPoint: .center, endPoint: .bottom)
+            if showsScrim || showsFoot {
+                LinearGradient(colors: [.clear, .black.opacity(showsScrim ? Spotlight.logoScrimOpacity
+                                                                          : Spotlight.continueFootOpacity)],
+                               startPoint: showsScrim ? .center : Spotlight.continueFootStart,
+                               endPoint: .bottom)
                     .frame(width: Spotlight.boxWidth, height: Spotlight.rowHeight)
             }
         }
@@ -1299,10 +1385,9 @@ struct HomeSpotlightView: View {
         .overlay(alignment: .bottom) {
             ZStack {
                 ForEach(candidates) { candidate in
-                    if let fraction = boxProgress(candidate) {
-                        progressBar(fraction, height: Spotlight.continueProgressBarHeight,
-                                    width: (open ? Spotlight.boxWidth : closedWidth)
-                                        - 2 * Spotlight.progressBarInset)
+                    if candidate.isContinue, let entry = continueProgress[candidate.item.id] {
+                        continueState(entry, width: (open ? Spotlight.boxWidth : closedWidth)
+                                          - 2 * Spotlight.progressBarInset)
                             .padding(.bottom, Spotlight.progressBarBottomInset)
                             .opacity(candidate.shown ? 1 : 0)
                     }
@@ -1403,32 +1488,29 @@ struct HomeSpotlightView: View {
     }
 
     /// One card: a portrait poster, or — `landscape` (Continue Watching) —
-    /// the episode still / backdrop with the show's logo on it.
-    private func poster(_ item: MetaItem, progress: Double?, landscape: Bool = false) -> some View {
+    /// the episode still / backdrop with its progress (no logo: the name
+    /// is under the box).
+    private func poster(_ item: MetaItem, continueEntry: WatchProgress?,
+                        landscape: Bool = false) -> some View {
         let width = landscape ? Spotlight.boxWidth : Spotlight.posterWidth
         return ZStack(alignment: .bottomLeading) {
             if landscape {
                 RemoteImage(url: sharpStills[item.id] ?? item.background ?? item.poster,
                             maxDimension: Spotlight.boxWidth)
                     .frame(width: width, height: Spotlight.rowHeight)
-                LinearGradient(colors: [.clear, .black.opacity(Spotlight.logoScrimOpacity)],
-                               startPoint: .center, endPoint: .bottom)
-                logo(for: item)
-                    .padding(Spotlight.logoInset)
-                    .padding(.bottom, progress.map { $0 > 0.02 } == true
-                             ? Spotlight.posterProgressBarHeight + Spotlight.posterProgressBarInset : 0)
+                LinearGradient(colors: [.clear, .black.opacity(Spotlight.continueFootOpacity)],
+                               startPoint: Spotlight.continueFootStart, endPoint: .bottom)
             } else {
                 RemoteImage(url: item.poster ?? item.background, maxDimension: Spotlight.rowHeight)
             }
         }
             .frame(width: width, height: Spotlight.rowHeight)
-            // Continue Watching: how far along each one is. (The box draws
-            // its own, bolder bar.)
+            // Continue Watching: the same state line as the box (the cards
+            // are the box's size) — bar + time left, or "Up Next".
             .overlay(alignment: .bottom) {
-                if let progress, progress > 0.02 {
-                    progressBar(progress, height: Spotlight.posterProgressBarHeight,
-                                width: width - 2 * Spotlight.posterProgressBarInset)
-                        .padding(.bottom, Spotlight.posterProgressBarInset)
+                if let continueEntry {
+                    continueState(continueEntry, width: width - 2 * Spotlight.progressBarInset)
+                        .padding(.bottom, Spotlight.progressBarBottomInset)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
@@ -1490,6 +1572,11 @@ struct HomeSpotlightView: View {
                     // Back is handled on the focused view: mid-row the
                     // sidebar is gated off, so RootView couldn't reach it.
                     .onExitCommand { handleBack() }
+                    // Trailer mode: Up brings the page back (the top bar
+                    // can't take focus meanwhile, so the engine won't move).
+                    .onMoveCommand { direction in
+                        if direction == .up, trailerMode { revealTrailerPage() }
+                    }
                 // (Always: at the end of a row that ends, Right bounces.)
                 sentinel(.right, enabled: !row.items.isEmpty,
                          width: 1, height: box.height)
@@ -1541,38 +1628,70 @@ struct HomeSpotlightView: View {
         BillboardDots(count: row.items.count, current: position(in: row), focused: focus != nil)
     }
 
+    /// The billboard's ratings row (nil = none at all) — the catalog's IMDb
+    /// score until MDBList's arrive, as on the Detail page.
+    private func billboardRatingsRow(_ item: MetaItem) -> AnyView? {
+        let entries = MDBListRatingsRow.entries(billboardRatings[item.id], settings: mdblist.settings,
+                                                imdbFallback: item.imdbRating)
+        return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(entries: entries))
+    }
+
     private func billboardText(_ item: MetaItem, row: HomeRow, screen: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
-            TitleBlockView(logo: item.logo, name: item.name,
-                           metaSegments: metaSegments(for: item),
-                           description: item.description,
-                           descriptionHidden: trailerPlaying)
-                .frame(height: TitleBlock.bottomY(screenHeight: screen.height),
-                       alignment: .bottomLeading)
+            TitleBlockView(item: item, facts: billboardFacts[item.id],
+                           seriesSize: seriesSizeText(item),
+                           textHidden: trailerMode,
+                           showsLogo: !trailerMode,
+                           ratings: billboardRatingsRow(item))
+                .padding(.top, TitleBlock.topY(screenHeight: screen.height))
                 .id(item.id)
+                // What the Detail page loads for the block: the ratings
+                // (cached 30 minutes by the service) and TMDB's facts (for
+                // the session) — so paging back is free.
+                .task(id: item.id) {
+                    async let ratings = billboardRatings[item.id] == nil
+                        ? MDBListService.ratings(for: item, settings: mdblist.settings) : nil
+                    async let facts = billboardFacts[item.id] == nil
+                        ? TMDBService.facts(for: item) : nil
+                    if let ratings = await ratings { billboardRatings[item.id] = ratings }
+                    if let facts = await facts { billboardFacts[item.id] = facts }
+                }
                 .transition(.opacity.animation(Spotlight.textFade))
-            // Where the Detail page has its buttons: the billboard's position
-            // — a small row of its own (see `billboardDots`).
-            if Spotlight.showPositionDots {
-                billboardDots(row)
-                    .frame(height: TitleBlock.buttonHeight)
-                    .padding(.top, TitleBlock.extrasY(screenHeight: screen.height))
-            }
         }
         // The section hint to the row below — the same signpost as on the
         // Detail page, in the same place. Pressed on Down.
         .overlay(alignment: .topLeading) {
             if rows.indices.contains(rowIndex + 1) {
                 SectionHint.place(
-                    SectionHint(title: rows[rowIndex + 1].title, pressed: downPressed,
-                                hidden: trailerPlaying))
+                    // Stays through the trailer: it's navigation.
+                    SectionHint(title: rows[rowIndex + 1].title, pressed: downPressed))
                     .frame(width: screen.width)
                     .offset(x: -Spotlight.screenInset,
                             y: TitleBlock.hintY(screenHeight: screen.height))
+                    // Down and fading; Details' hint comes down in.
+                    .offset(y: swappedToDetail ? ModeSwap.bottomTravel : 0)
+                    .opacity(swappedToDetail ? 0 : 1)
+                    .animation(swappedToDetail ? ModeSwap.fadeOut : ModeSwap.fadeIn,
+                               value: swappedToDetail)
+            }
+        }
+        // The billboard's position: bottom right, on the hint's line — the
+        // navigation cues together (the hint: Down; the dots: Left/Right).
+        .overlay(alignment: .topLeading) {
+            if Spotlight.showPositionDots {
+                billboardDots(row)
+                    .frame(height: SectionHint.size * 1.3)
+                    .padding(.trailing, Spotlight.screenInset)
+                    .frame(width: screen.width, alignment: .trailing)
+                    .offset(x: -Spotlight.screenInset,
+                            y: TitleBlock.hintY(screenHeight: screen.height))
+                    // Down and fading, with the hint.
+                    .offset(y: swappedToDetail ? ModeSwap.bottomTravel : 0)
+                    .opacity(swappedToDetail ? 0 : 1)
             }
         }
         .padding(.leading, Spotlight.screenInset)
-        .animation(.easeInOut(duration: 0.4), value: trailerPlaying)
+        .animation(TrailerMode.fade, value: trailerMode)
         // Content (not stage): steps back while focus is in the top bar.
         .opacity(focus == nil ? unfocusedOpacity : 1)
         .animation(.easeOut(duration: 0.2), value: focus == nil)
@@ -1655,8 +1774,9 @@ struct HomeSpotlightView: View {
         .transition(.opacity.animation(Spotlight.textFade))
     }
 
-    /// Continue Watching: "where was I?" instead of the synopsis —
-    /// name (+ new-episode chip), the episode, and time left / up next.
+    /// Continue Watching: "where was I?" — two lines: the show's name (+ "N
+    /// new"), then the episode's name. S1:E1 and the time left are in the
+    /// card itself.
     private func continueInfo(_ item: MetaItem, _ progress: WatchProgress) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
@@ -1668,17 +1788,18 @@ struct HomeSpotlightView: View {
                     statusChip(chip)
                 }
             }
-            if let season = progress.season, let episode = progress.episode {
-                Text("S\(season):E\(episode)" + (progress.episodeTitle.map { " · \($0)" } ?? ""))
-                    .font(FusionType.bodyText(theme.font))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .lineLimit(1)
+            // The episode's name (a movie: the catalogs' meta line). Which
+            // episode and how far along live IN the card.
+            Group {
+                if progress.season != nil {
+                    Text(progress.episodeTitle ?? "")
+                } else {
+                    Text(metaSegments(for: item).joined(separator: " • "))
+                }
             }
-            Text(progress.fraction < 0.02
-                 ? "Up next"
-                 : (progress.remainingTimeText.map { "\($0) left" } ?? "In progress"))
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(theme.palette.secondary)
+            .font(FusionType.bodyText(theme.font))
+            .foregroundStyle(theme.palette.textSecondary)
+            .lineLimit(1)
         }
         // Long names / episode titles truncate at the box's edge.
         .frame(maxWidth: Spotlight.boxWidth, alignment: .leading)
@@ -1795,7 +1916,8 @@ struct HomeSpotlightView: View {
         } else if !item.isSeries, watched.isWatched(item) {
             chips.append(StatusChip(icon: "checkmark.circle.fill", text: "Watched", accent: false))
         }
-        if library.contains(item) {
+        // Not in Continue Watching: it's about the show, not the episode.
+        if currentProgress == nil, library.contains(item) {
             chips.append(StatusChip(icon: "bookmark.fill", text: "In Library", accent: false))
         }
         return chips
@@ -1817,6 +1939,56 @@ struct HomeSpotlightView: View {
     }
 
     /// tvOS-style pill: grey track, white fill, fully rounded ends.
+    /// A Continue Watching card's state, one line — the episode row's own:
+    /// which episode LEFT, its status RIGHT. "S1:E1 ▬▬▬░░ 38m left"; not
+    /// started "S1:E1 … Up Next"; not aired yet "S1:E1 … Airs in 3 days".
+    /// Every card says where it is, not only the focused one.
+    @ViewBuilder
+    private func continueState(_ entry: WatchProgress, width: CGFloat) -> some View {
+        let episode: Text? = entry.season.flatMap { season in
+            entry.episode.map { Text("S\(season):E\($0)") }
+        }
+        let label = Text(entry.fraction > 0.02
+                         ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress")
+                         : entry.notAiredYet
+                            // The episode row's own wording (one source).
+                            ? MetaVideo.airCountdownText(until: entry.airsAt == .distantFuture
+                                                         ? nil : entry.airsAt)
+                            : "Up Next")
+            .font(.system(size: Spotlight.continueStateSize, weight: .semibold))
+            .foregroundStyle(AppGlass.text)
+            .shadow(color: .black.opacity(0.6), radius: 6, y: 1)
+            .lineLimit(1)
+            .fixedSize()
+        let episodeLabel = episode?
+            .font(.system(size: Spotlight.continueStateSize, weight: .semibold))
+            .foregroundStyle(AppGlass.text)
+            .shadow(color: .black.opacity(0.6), radius: 6, y: 1)
+            .lineLimit(1)
+            .fixedSize()
+        if entry.fraction > 0.02 {
+            HStack(spacing: Spotlight.continueStateGap) {
+                if let episodeLabel { episodeLabel }
+                GeometryReader { proxy in
+                    progressBar(entry.fraction, height: Spotlight.continueProgressBarHeight,
+                                width: proxy.size.width)
+                        .frame(maxHeight: .infinity)
+                }
+                .frame(height: Spotlight.continueProgressBarHeight)
+                label
+            }
+            .frame(width: width)
+        } else {
+            // The episode row's layout: which episode left, its status right.
+            HStack(spacing: Spotlight.continueStateGap) {
+                if let episodeLabel { episodeLabel }
+                Spacer(minLength: 0)
+                label
+            }
+            .frame(width: width)
+        }
+    }
+
     private func progressBar(_ fraction: Double, height: CGFloat, width: CGFloat) -> some View {
         ZStack(alignment: .leading) {
             Capsule().fill(Spotlight.progressTrack)
@@ -1966,10 +2138,125 @@ struct HomeSpotlightView: View {
             onResume(progress)
         } else if let item {
             if let row, isFeatured(row), let onSelectFeatured {
-                onSelectFeatured(item)
+                // Home's half of the swap out, then Details takes over.
+                guard !swappedToDetail else { return }
+                withAnimation(ModeSwap.out) {
+                    swappedToDetail = true
+                    ModeSwap.shared.homeChromeOut = true
+                }
+                // The depth starts on the press — Details takes it on.
+                withAnimation(ModeSwap.depthLeaving) { billboardDepth = ModeSwap.depthHandover }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(ModeSwap.handoverDelay))
+                    ModeSwap.shared.billboardItemID = item.id
+                    ModeSwap.shared.billboardRatings = billboardRatings[item.id]
+                    ModeSwap.shared.billboardFacts = billboardFacts[item.id]
+                    ModeSwap.shared.billboardSeriesSize = seriesSizeText(item)
+                    onSelectFeatured(item)
+                    // Once Details covers Home (next turn, never on screen):
+                    // ready to come back where Details' leaving half will
+                    // leave the depth.
+                    DispatchQueue.main.async {
+                        var still = Transaction()
+                        still.disablesAnimations = true
+                        withTransaction(still) { billboardDepth = 1 - ModeSwap.depthHandover }
+                    }
+                }
             } else {
-                onSelect(item)
+                growBoxIntoDetails(item)
             }
+        }
+    }
+
+    /// Box → Details: the box's artwork grows to the full screen while
+    /// everything else fades and the top bar lifts; then Details (no
+    /// system slide) fades its parts in over that same backdrop. Back runs
+    /// it the other way (see `.onReceive(ModeSwap.shared.$homeChromeOut)`).
+    private func growBoxIntoDetails(_ item: MetaItem) {
+        guard growingBox == nil, let onSelectFeatured else { onSelect(item); return }
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
+            growingBox = item
+            boxGrown = false
+            boxDepth = 0
+        }
+        // Next turn: the copy is on screen at the box's spot, now grow it.
+        DispatchQueue.main.async {
+            withAnimation(ModeSwap.boxGrow) {
+                boxGrown = true
+                boxDepth = ModeSwap.boxDepthHandover
+            }
+            withAnimation(ModeSwap.out) { ModeSwap.shared.homeChromeOut = true }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(ModeSwap.boxGrowDuration))
+            ModeSwap.shared.billboardItemID = item.id
+            ModeSwap.shared.arrivedFromBox = true
+            ModeSwap.shared.billboardRatings = nil
+            ModeSwap.shared.billboardFacts = nil
+            ModeSwap.shared.billboardSeriesSize = nil
+            onSelectFeatured(item)
+            // Behind Details from here: ready to come back where its
+            // leaving half will leave the depth.
+            DispatchQueue.main.async {
+                withTransaction(still) { boxDepth = ModeSwap.boxDepthHandover }
+            }
+        }
+    }
+
+    /// The growing box: at first an exact twin of the box (its artwork,
+    /// its slight dimming, its focus rim), then — the rim fading at once —
+    /// growing to the full screen while the scrim and the depth come in
+    /// EVENLY over the whole grow (on the grow's own fast-start curve they
+    /// all but switched on). At the end exactly Details' backdrop. (The
+    /// box-sized image under the full one, so nothing blinks while the
+    /// sharper one loads.)
+    @ViewBuilder
+    private func growingBoxLayer(spots: Layout) -> some View {
+        if let item = growingBox {
+            // Aimed at the TRUE screen, measured: Home's own area can sit
+            // inset from it, and the copy then landed a few points off
+            // Details' backdrop (which fills the screen) — it shifted at the
+            // switch.
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .global).origin
+                let screen = CGRect(x: -origin.x, y: -origin.y,
+                                    width: UIScreen.main.bounds.width,
+                                    height: UIScreen.main.bounds.height)
+                let box = CGRect(x: leadingInset, y: spots.rowY,
+                                 width: Spotlight.boxWidth, height: Spotlight.rowHeight)
+                let frame = boxGrown ? screen : box
+                // The darkening moves WITH the growth: the same fast-then-
+                // slow (see `ModeSwap.boxScrimHandover`).
+                let shade = ModeSwap.boxGrow
+                ZStack {
+                    RemoteImage(url: item.background ?? item.poster, maxDimension: Spotlight.boxWidth)
+                    RemoteImage(url: item.background ?? item.poster,
+                                maxPixels: PerformanceProfile.backdropPixelCap)
+                    // From the box's slight dimming towards Details' scrim
+                    // (half of it — Details finishes) + the depth. SCOPED
+                    // animations: only the opacity is re-timed, never the
+                    // size (see the design doc's timing trap).
+                    Color.black
+                        .animation(shade) { $0.opacity(boxGrown ? 0 : Spotlight.boxDim) }
+                    StageScrim()
+                        .animation(shade) { $0.opacity(boxGrown ? ModeSwap.boxScrimHandover : 0) }
+                    Color.black
+                        .animation(shade) { $0.opacity(ModeSwap.depthDim(boxDepth)) }
+                }
+                .frame(width: frame.width, height: frame.height)
+                .scaleEffect(ModeSwap.depthScale(boxDepth))
+                .clipShape(RoundedRectangle(cornerRadius: boxGrown ? 0 : Spotlight.cornerRadius,
+                                            style: .continuous))
+                // The box's own rim, gone as soon as it starts to grow.
+                .overlay {
+                    GlassFocusRim(cornerRadius: Spotlight.cornerRadius, lineWidth: Spotlight.outlineWidth)
+                        .animation(.easeOut(duration: 0.12)) { $0.opacity(boxGrown ? 0 : 1) }
+                }
+                .offset(x: frame.minX, y: frame.minY)
+            }
+            .allowsHitTesting(false)
         }
     }
 
@@ -2103,7 +2390,20 @@ struct HomeSpotlightView: View {
         }
     }
 
+    /// The billboard's trailer has the screen (see `TrailerMode`).
+    private var trailerMode: Bool {
+        trailerPlaying && !trailerRevealed
+            && rows.indices.contains(rowIndex) && isFeatured(rows[rowIndex])
+    }
+
+    /// Up / Back in trailer mode: the page comes back, the trailer runs on
+    /// muted.
+    private func revealTrailerPage() {
+        withAnimation(TrailerMode.fade) { trailerRevealed = true }
+    }
+
     private func handleBack() {
+        if trailerMode { revealTrailerPage(); return }
         // Straight to the sidebar from ANY title; the row keeps its position.
         // Lift the sidebar gate FIRST: a focus request into a disabled
         // sidebar is dropped.
@@ -2217,6 +2517,10 @@ private struct SpotlightTrailerLayer: View {
     let active: Bool
     /// Mirrors "trailer visible" out to the spotlight (hides the logo).
     @Binding var isPlaying: Bool
+    /// With sound (the billboard); nil: the Home setting (the rows' boxes).
+    var sound: Bool? = nil
+    /// Rest before it starts.
+    var delay: TimeInterval = Spotlight.trailerDelay
 
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
@@ -2248,6 +2552,10 @@ private struct SpotlightTrailerLayer: View {
             .onChange(of: homeCatalogSettings.heroTrailersEnabled) { _, enabled in
                 if !enabled { teardown() }
             }
+            // Muted / unmuted while it plays (the page coming back mutes it).
+            .onChange(of: sound) { _, _ in
+                if let player { setSound(sound ?? homeCatalogSettings.heroTrailerSound, on: player) }
+            }
             .onReceive(NotificationCenter.default.publisher(
                 for: UIApplication.didBecomeActiveNotification)) { _ in player?.play() }
             // Real playback started from somewhere without leaving Home:
@@ -2263,7 +2571,7 @@ private struct SpotlightTrailerLayer: View {
 
     private func run() async {
         teardown()
-        guard active, let item, item.type != "collection",
+        guard TrailerMode.enabled, active, let item, item.type != "collection",
               homeCatalogSettings.heroTrailersEnabled, !perf.reduceMotion,
               tmdbSettings.settings.isUsable, tmdbSettings.settings.useTrailers else { return }
         let t0 = Date()
@@ -2277,7 +2585,7 @@ private struct SpotlightTrailerLayer: View {
             guard !keys.isEmpty else { return nil }
             return await TrailerResolver.backdropItem(candidates: keys)
         }()
-        try? await Task.sleep(for: .seconds(max(Spotlight.trailerDelay - 0.2, 0)))
+        try? await Task.sleep(for: .seconds(max(delay - 0.2, 0)))
         guard !Task.isCancelled, !PiPHandoff.shared.isActive,
               !OrivioSyncManager.playbackActive else { return }
         guard let resolved = await prepared, !Task.isCancelled,
@@ -2286,7 +2594,7 @@ private struct SpotlightTrailerLayer: View {
         let avItem = resolved.item
         avItem.preferredForwardBufferDuration = 2
         let p = AVPlayer(playerItem: avItem)
-        setSound(homeCatalogSettings.heroTrailerSound, on: p)
+        setSound(sound ?? homeCatalogSettings.heroTrailerSound, on: p)
         // Play once and hold the last frame, which then fades into the art.
         p.actionAtItemEnd = .none
         endToken = NotificationCenter.default.addObserver(
@@ -2315,6 +2623,8 @@ private struct SpotlightTrailerLayer: View {
 
     private func setSound(_ sound: Bool, on player: AVPlayer) {
         if sound, !PiPHandoff.shared.isActive, !OrivioSyncManager.playbackActive {
+            // (Without the category a bare AVPlayer on tvOS can stay silent.)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
             activatedAudio = true
             player.isMuted = false

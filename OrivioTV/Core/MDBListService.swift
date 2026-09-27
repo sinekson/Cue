@@ -14,12 +14,13 @@ struct MDBListSettings: Codable, Equatable {
     var showTomatoes = true
     var showAudience = true
     var showMetacritic = true
+    var showMyAnimeList = true
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case enabled, apiKey, showTrakt, showImdb, showTmdb, showLetterboxd
-        case showTomatoes, showAudience, showMetacritic
+        case showTomatoes, showAudience, showMetacritic, showMyAnimeList
     }
 
     /// Tolerant per-field decode, exactly like `PlayerSettingsStore`: adding a
@@ -38,6 +39,7 @@ struct MDBListSettings: Codable, Equatable {
         showTomatoes = (try? c.decode(Bool.self, forKey: .showTomatoes)) ?? d.showTomatoes
         showAudience = (try? c.decode(Bool.self, forKey: .showAudience)) ?? d.showAudience
         showMetacritic = (try? c.decode(Bool.self, forKey: .showMetacritic)) ?? d.showMetacritic
+        showMyAnimeList = (try? c.decode(Bool.self, forKey: .showMyAnimeList)) ?? d.showMyAnimeList
     }
 
     static let `default` = MDBListSettings()
@@ -74,7 +76,7 @@ final class MDBListSettingsStore: ObservableObject {
 // MARK: - Ratings model
 
 /// Aggregate ratings across sources (0–10 for imdb/tmdb/letterboxd/trakt-ish,
-/// 0–100 percentages for tomatoes/audience/metacritic — MDBList returns them
+/// (and MyAnimeList, 0–10), 0–100 percentages for tomatoes/audience/metacritic — MDBList returns them
 /// pre-scaled per source).
 struct MDBListRatings: Equatable {
     var trakt: Double?
@@ -84,10 +86,11 @@ struct MDBListRatings: Equatable {
     var tomatoes: Double?
     var audience: Double?
     var metacritic: Double?
+    var myanimelist: Double?
 
     var isEmpty: Bool {
         trakt == nil && imdb == nil && tmdb == nil && letterboxd == nil
-            && tomatoes == nil && audience == nil && metacritic == nil
+            && tomatoes == nil && audience == nil && metacritic == nil && myanimelist == nil
     }
 
     /// Ordered, display-ready entries (matches the Android hero ratings row).
@@ -104,6 +107,7 @@ struct MDBListRatings: Equatable {
         add(.tomatoes, tomatoes, settings.showTomatoes)
         add(.audience, audience, settings.showAudience)
         add(.metacritic, metacritic, settings.showMetacritic)
+        add(.myanimelist, myanimelist, settings.showMyAnimeList)
         return out
     }
 }
@@ -115,7 +119,8 @@ struct MDBListRatingEntry: Identifiable, Equatable {
 }
 
 enum MDBListProvider: String, CaseIterable, Identifiable {
-    case trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic
+    // The raw value is MDBList's name for the source in `/rating/…`.
+    case trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic, myanimelist
     var id: String { rawValue }
 
     /// Short badge label shown next to the score.
@@ -128,6 +133,7 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
         case .tomatoes: return "RT"
         case .audience: return "RT🍿"
         case .metacritic: return "MC"
+        case .myanimelist: return "MAL"
         }
     }
 
@@ -140,6 +146,7 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
         case .tomatoes: return "Rotten Tomatoes"
         case .audience: return "RT Audience"
         case .metacritic: return "Metacritic"
+        case .myanimelist: return "MyAnimeList"
         }
     }
 
@@ -147,8 +154,11 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
     /// percentage sources show a whole number (or one decimal if fractional).
     func format(_ rating: Double) -> String {
         switch self {
-        case .imdb, .tmdb, .letterboxd:
+        case .imdb, .letterboxd, .myanimelist:
             return String(format: "%.1f", rating)
+        case .tmdb:
+            // MDBList gives TMDB out of 100: "77", not "77.0".
+            return String(Int(rating.rounded()))
         default:
             return rating.truncatingRemainder(dividingBy: 1) == 0
                 ? String(Int(rating))
@@ -207,6 +217,22 @@ enum MDBListService {
         return (200..<300).contains(http.statusCode)
     }
 
+    /// Ratings for any title: its imdb id directly, or resolved through
+    /// TMDB (for catalogs with other ids). Detail page and billboard alike.
+    static func ratings(for meta: MetaItem, settings: MDBListSettings) async -> MDBListRatings? {
+        guard settings.isConfigured else { return nil }
+        let imdbID: String?
+        if meta.id.hasPrefix("tt") {
+            imdbID = meta.id
+        } else if let (tid, isMovie) = await TMDBService.resolveTMDBID(from: meta.id, type: meta.type) {
+            imdbID = await TMDBService.imdbID(tmdbID: tid, isMovie: isMovie)
+        } else {
+            imdbID = nil
+        }
+        guard let imdbID else { return nil }
+        return await ratings(imdbID: imdbID, type: meta.type, settings: settings)
+    }
+
     /// Fetch all enabled ratings for a title. Needs an imdb `tt…` id.
     static func ratings(imdbID: String, type: String, settings: MDBListSettings) async -> MDBListRatings? {
         guard settings.isConfigured, imdbID.hasPrefix("tt") else { return nil }
@@ -236,7 +262,8 @@ enum MDBListService {
         let ratings = MDBListRatings(
             trakt: values[.trakt], imdb: values[.imdb], tmdb: values[.tmdb],
             letterboxd: values[.letterboxd], tomatoes: values[.tomatoes],
-            audience: values[.audience], metacritic: values[.metacritic]
+            audience: values[.audience], metacritic: values[.metacritic],
+            myanimelist: values[.myanimelist]
         )
         // Only a DEFINITIVE answer is cached. If every provider FAILED
         // (offline, 429), an empty result was cached for 30 minutes and the
@@ -256,6 +283,7 @@ enum MDBListService {
         if s.showTomatoes { out.append(.tomatoes) }
         if s.showAudience { out.append(.audience) }
         if s.showMetacritic { out.append(.metacritic) }
+        if s.showMyAnimeList { out.append(.myanimelist) }
         return out
     }
 

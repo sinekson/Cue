@@ -725,7 +725,13 @@ struct MetaVideo: Codable, Identifiable, Hashable {
     /// app has, so this is what an upcoming episode can honestly say.
     var airCountdownText: String? {
         guard !hasAired else { return nil }
-        guard let date = airedDate else { return "Not aired yet" }
+        return Self.airCountdownText(until: airedDate)
+    }
+
+    /// The countdown's wording — ONE place, so the episode row and Continue
+    /// Watching's Next Up card say it the same way. Nil date: "Not aired yet".
+    static func airCountdownText(until date: Date?) -> String {
+        guard let date else { return "Not aired yet" }
         let calendar = Calendar.current
         let days = calendar.dateComponents(
             [.day],
