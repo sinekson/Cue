@@ -116,13 +116,13 @@ targets:
         # registered here — every archive failed on it. An archive under
         # this id installs as its own app, separate from historical
         # sideloads of the original id.
-        PRODUCT_BUNDLE_IDENTIFIER: com.orivio.tv.appletv.dev
+        PRODUCT_BUNDLE_IDENTIFIER: com.sinan.oriviotv
         # Signing team for device builds, HERE rather than only in the
         # generated pbxproj: Xcode's GUI writes the team into project.pbxproj,
         # where any xcodegen regeneration (or a git checkout of the file)
         # silently drops it — and a device build then dies with "Signing for
         # 'OrivioTV' requires a development team".
-        DEVELOPMENT_TEAM: CYCSPZ5MTR
+        DEVELOPMENT_TEAM: C4KX5GHQ8V
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "3"
@@ -260,8 +260,8 @@ targets:
         # Debug id, and the two MOVE TOGETHER — a per-config override here is
         # only safe as long as it mirrors the app's, which is what a lone
         # override once got wrong (Debug passed, the Release archive failed).
-        PRODUCT_BUNDLE_IDENTIFIER: com.orivio.tv.appletv.dev.topshelf
-        DEVELOPMENT_TEAM: CYCSPZ5MTR
+        PRODUCT_BUNDLE_IDENTIFIER: com.sinan.oriviotv.topshelf
+        DEVELOPMENT_TEAM: C4KX5GHQ8V
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "3"
@@ -301,6 +301,11 @@ schemes:
         - OrivioTVUITests
     run:
       config: Debug
+      # The new Home (HomeSpotlightView) is switched on by this launch
+      # argument (see HomeView.body). Kept HERE so an xcodegen run doesn't
+      # drop it from the generated scheme.
+      commandLineArguments:
+        "-spotlightHome": true
       # KSPlayer's Metal renderer (MetalRender.textures) calls makeTexture and
       # tolerates a nil result via compactMap — fine on device. But the SIMULATOR
       # Debug run enables Metal API Validation, which ASSERTS (SIGABRT) on the
