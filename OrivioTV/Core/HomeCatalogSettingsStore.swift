@@ -149,8 +149,6 @@ struct HomePresentationSnapshot: Codable, Equatable {
     var detailShowMoreLikeThis = true
     /// Details page: Production companies.
     var detailShowProduction = true
-    /// Details page: Trakt comments.
-    var detailShowComments = true
     var showFeaturedBar = true
     /// Legacy. Superseded by `heroLayout`; kept so an older client's blob
     /// round-trips, and so the migration below has something to read.
@@ -195,7 +193,6 @@ extension HomePresentationSnapshot {
         detailShowCollection = (try? c.decode(Bool.self, forKey: .detailShowCollection)) ?? d.detailShowCollection
         detailShowMoreLikeThis = (try? c.decode(Bool.self, forKey: .detailShowMoreLikeThis)) ?? d.detailShowMoreLikeThis
         detailShowProduction = (try? c.decode(Bool.self, forKey: .detailShowProduction)) ?? d.detailShowProduction
-        detailShowComments = (try? c.decode(Bool.self, forKey: .detailShowComments)) ?? d.detailShowComments
         showFeaturedBar = (try? c.decode(Bool.self, forKey: .showFeaturedBar)) ?? d.showFeaturedBar
         pinnedHero = (try? c.decode(Bool.self, forKey: .pinnedHero)) ?? d.pinnedHero
         // MIGRATION: a blob written before Hero Layout existed carries only the
@@ -428,10 +425,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
     /// Settings → Layout → Details Page: show Production companies.
     @Published var detailShowProduction: Bool = true {
         didSet { guard detailShowProduction != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Details Page: show Trakt comments.
-    @Published var detailShowComments: Bool = true {
-        didSet { guard detailShowComments != oldValue else { return }; save(); notifyPresentationChange() }
     }
 
     /// Selectable poster corner radii (points).
@@ -729,7 +722,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         var detailShowCollection: Bool?
         var detailShowMoreLikeThis: Bool?
         var detailShowProduction: Bool?
-        var detailShowComments: Bool?
         var showFeaturedBar: Bool?
         var pinnedHero: Bool?
         var heroLayout: HeroLayout?
@@ -774,7 +766,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             detailShowCollection: detailShowCollection,
             detailShowMoreLikeThis: detailShowMoreLikeThis,
             detailShowProduction: detailShowProduction,
-            detailShowComments: detailShowComments,
             showFeaturedBar: showFeaturedBar,
             pinnedHero: pinnedHero,
             heroLayout: heroLayout,
@@ -812,7 +803,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         detailShowCollection = d.detailShowCollection
         detailShowMoreLikeThis = d.detailShowMoreLikeThis
         detailShowProduction = d.detailShowProduction
-        detailShowComments = d.detailShowComments
         showFeaturedBar = d.showFeaturedBar
         pinnedHero = d.pinnedHero
         heroLayout = d.heroLayout
@@ -848,7 +838,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         detailShowCollection = s.detailShowCollection
         detailShowMoreLikeThis = s.detailShowMoreLikeThis
         detailShowProduction = s.detailShowProduction
-        detailShowComments = s.detailShowComments
         showFeaturedBar = s.showFeaturedBar
         pinnedHero = s.pinnedHero
         heroLayout = s.heroLayout
@@ -912,7 +901,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         detailShowCollection = decoded.detailShowCollection ?? true
         detailShowMoreLikeThis = decoded.detailShowMoreLikeThis ?? true
         detailShowProduction = decoded.detailShowProduction ?? true
-        detailShowComments = decoded.detailShowComments ?? true
         showFeaturedBar = decoded.showFeaturedBar ?? true
         pinnedHero = decoded.pinnedHero ?? false
         // Same migration as the snapshot: a blob from an older build of this
@@ -960,7 +948,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             detailShowCollection: detailShowCollection,
             detailShowMoreLikeThis: detailShowMoreLikeThis,
             detailShowProduction: detailShowProduction,
-            detailShowComments: detailShowComments,
             showFeaturedBar: showFeaturedBar,
             pinnedHero: pinnedHero,
             heroLayout: heroLayout,

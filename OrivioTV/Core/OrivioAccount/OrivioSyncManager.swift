@@ -35,9 +35,6 @@ final class OrivioSyncManager: ObservableObject {
     private let playerSettings: PlayerSettingsStore?
     private let tmdbSettings: TMDBSettingsStore?
     private let themeManager: ThemeManager?
-    private let traktStore: TraktStore?
-    private let simklStore: SimklStore?
-    private let ratingsStore: RatingsStore?
     /// Reads the "Enrich Continue Watching" TMDB setting (the store lives
     /// outside this manager). nil → enrich (default).
     var enrichContinueWatchingEnabled: (() -> Bool)?
@@ -51,7 +48,6 @@ final class OrivioSyncManager: ObservableObject {
     private var pushHomeCatalogTask: Task<Void, Never>?
     private var pushBadgeSettingsTask: Task<Void, Never>?
     private var pushAppPreferencesTask: Task<Void, Never>?
-    private var pushProviderCredentialsTask: Task<Void, Never>?
     private var avatarCatalogCache: [AvatarCatalogItem] = []
     private var wasSignedIn = false
     /// The in-flight full sync (sign-in, launch or profile switch); new full
@@ -108,10 +104,6 @@ final class OrivioSyncManager: ObservableObject {
     /// credentials. The identity change clears these, and the pushes below
     /// refuse to run until the new account has been read.
     private var pulledAddonProfiles: Set<Int> = []
-    /// Non-Trakt `provider_credentials` rows (other clients' debrid keys) as
-    /// last read for each profile from the CURRENT account. Echoed back on
-    /// every credentials push; nil until read, and a push reads first.
-    private var passthroughCredentials: [Int: [[String: Any]]] = [:]
 
     /// A full sync was requested while one was running. It used to be
     /// DROPPED ("sync already running"), so a change made during a run —
@@ -278,8 +270,7 @@ final class OrivioSyncManager: ObservableObject {
         }
         addonsDirty = false
         profilesDirty = false
-        // `collections`, `homeCatalog`, `badges`, `providerCredentials`
-        // and `appPreferences` are now persisted per profile under
+        // `collections`, `homeCatalog`, `badges` and `appPreferences` are now persisted per profile under
         // `orivio.sync.dirty.*` (see `dirtyKey`): the sweep above already drops
         // them for a different account and preserves them for a plain sign-out,
         // so a pending edit still uploads. Nothing to clear here.
@@ -317,43 +308,11 @@ final class OrivioSyncManager: ObservableObject {
     /// Set while the previous account's state is being retired, so the store
     /// callbacks that retirement fires cannot arm a push.
     ///
-    /// Clearing a debrid key or signing out of Trakt calls `onLocalChange`, which
-    /// is wired to `scheduleAppPreferencesPush` / `scheduleProviderCredentialsPush`
-    /// — so retiring account A's credentials armed a push that then uploaded A's
-    /// collections library, theme and settings into account B's profile blob,
-    /// before B had been pulled even once.
-    ///
-    /// Now honoured by EVERY scheduler, not just those two: retiring the
-    /// content stores deletes the previous account's collections, and
+    /// Honoured by EVERY scheduler: retiring the content stores deletes the previous account's collections, and
     /// `CollectionsStore.remove` fires `onLocalChange` — which is wired to the
     /// collections and home-catalog pushes as well, both of which would have
     /// written an emptied blob straight into the new account.
     private var isRetiringAccountState = false
-
-    /// Drop credentials belonging to the PREVIOUS account. Both stores are
-    /// account-synced and both `applyRemote` implementations only ever ADD, so
-    /// without this the next `pushProviderCredentials` uploads the previous
-    /// user's Trakt tokens and debrid API keys into the new user's account.
-    /// Safe against wiping the new account's server rows: that push skips an
-    /// empty credential set entirely.
-    private func resetAccountScopedCredentials() {
-        isRetiringAccountState = true
-        defer { isRetiringAccountState = false }
-        // EVERY profile's Trakt login, not just the active scope: with
-        // per-profile Trakt on, `signOut()` cleared one `.pN` slot and the
-        // others were reloaded by the next profile switch and pushed into the
-        // new account's provider credentials.
-        traktStore?.signOut()
-        traktStore?.forgetAllProfiles()
-        // SIMKL logins never reach the account's credential table, but they
-        // mark the same user boundary: without this the next user keeps
-        // scrobbling into the previous user's SIMKL history.
-        simklStore?.signOut()
-        simklStore?.forgetAllProfiles()
-        // Ratings are pushed to whichever Trakt/SIMKL account is connected —
-        // the previous user's stars must not follow the next user there.
-        ratingsStore?.clearAllProfiles()
-    }
 
     /// Drop the PREVIOUS account's per-profile content: Continue Watching,
     /// saved library, watched history, collections and the home-catalog layout,
@@ -446,7 +405,6 @@ final class OrivioSyncManager: ObservableObject {
         // and wipe that profile's rows on the server before its pull landed.
         pulledLibraryProfiles.removeAll()
         pulledAddonProfiles.removeAll()
-        passthroughCredentials.removeAll()
 
         NSLog("[OrivioSync] reset per-profile content stores for the previous account")
         OrivioSyncDiagnostics.record(
@@ -473,12 +431,8 @@ final class OrivioSyncManager: ObservableObject {
         NSLog("[OrivioSync] a different account signed in — retiring the previous account's sync state")
         OrivioSyncDiagnostics.record(
             .info, area: "Orivio",
-            "A different account signed in; cleared the previous account's sync state and provider credentials."
+            "A different account signed in; cleared the previous account's sync state."
         )
-        // Credentials FIRST, then the bookkeeping: the reset fires store
-        // callbacks, and clearing the dirty flags afterwards is what guarantees
-        // none of them survives as a pending upload into the new account.
-        resetAccountScopedCredentials()
         // The per-profile CONTENT, before the bookkeeping reset below: this
         // step can set dirty flags and drop removal tombstones of its own, and
         // clearing the bookkeeping afterwards is what guarantees none of them
@@ -508,7 +462,6 @@ final class OrivioSyncManager: ObservableObject {
         pushHomeCatalogTask?.cancel()
         pushBadgeSettingsTask?.cancel()
         pushAppPreferencesTask?.cancel()
-        pushProviderCredentialsTask?.cancel()
         lastPushedAppPrefs = nil
     }
 
@@ -556,11 +509,6 @@ final class OrivioSyncManager: ObservableObject {
         static let pullHomeCatalogSettings = "sync_pull_home_catalog_settings"
         static let pushProfileSettingsBlob = "sync_push_profile_settings_blob"
         static let pullProfileSettingsBlob = "sync_pull_profile_settings_blob"
-        // Dedicated tables the Android app uses — synced alongside (dual-write)
-        // the tvOS-preferences blob so debrid keys / Trakt logins flow
-        // between the Apple TV and the phone, not just tvOS↔tvOS.
-        static let pushProviderCredentials = "sync_push_provider_credentials"
-        static let pullProviderCredentials = "sync_pull_provider_credentials"
     }
 
     /// Platform tag the Android TV app uses for the profile-settings blob —
@@ -586,13 +534,9 @@ final class OrivioSyncManager: ObservableObject {
         streamBadges: StreamBadgeStore? = nil,
         playerSettings: PlayerSettingsStore? = nil,
         tmdbSettings: TMDBSettingsStore? = nil,
-        themeManager: ThemeManager? = nil,
-        traktStore: TraktStore? = nil,
-        simklStore: SimklStore? = nil,
-        ratingsStore: RatingsStore? = nil
+        themeManager: ThemeManager? = nil
     ) {
         self.account = account
-        self.ratingsStore = ratingsStore
         self.addonManager = addonManager
         self.progressStore = progressStore
         self.libraryStore = libraryStore
@@ -604,8 +548,6 @@ final class OrivioSyncManager: ObservableObject {
         self.playerSettings = playerSettings
         self.tmdbSettings = tmdbSettings
         self.themeManager = themeManager
-        self.traktStore = traktStore
-        self.simklStore = simklStore
 
         // Sync whenever we transition into a signed-in state.
         account.$authState
@@ -670,8 +612,6 @@ final class OrivioSyncManager: ObservableObject {
         // App preferences (player / TMDB / theme) share one own-feature blob.
         playerSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         tmdbSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
-        // Trakt tokens live only in the dedicated provider_credentials table.
-        traktStore?.onLocalChange = { [weak self] in self?.scheduleProviderCredentialsPush() }
         homeCatalogSettings.onPresentationChange = { [weak self] in self?.scheduleAppPreferencesPush() }
 
         // Authed operations the profile UI needs (require the access token).
@@ -1128,9 +1068,6 @@ final class OrivioSyncManager: ObservableObject {
             if firstFullSync || appPreferencesDirty || libraryGrewDuringSync {
                 await pushAppPreferences(profile: runProfile)
             }
-            if firstFullSync || providerCredentialsDirty {
-                await pushProviderCredentials(profile: runProfile)  // dual-write to the Android table
-            }
             completedFullSyncProfiles.insert(runProfile)
             NSLog("[OrivioSync] syncNow finished ok in %.1fs (%@)",
                   Date().timeIntervalSince(started), firstFullSync ? "first full cycle" : "incremental")
@@ -1208,8 +1145,8 @@ final class OrivioSyncManager: ObservableObject {
         try await pullWatchedItems(profile: profile)
     }
 
-    /// Collections, the home layout, badges, the app-preferences blob,
-    /// and provider credentials. These stay in ONE chain: the
+    /// Collections, the home layout, badges and the app-preferences blob.
+    /// These stay in ONE chain: the
     /// preferences blob carries the collections library and the layout reads
     /// it, so their order matters — but nothing in here touches the content
     /// stores, so the whole chain runs beside them.
@@ -1247,8 +1184,6 @@ final class OrivioSyncManager: ObservableObject {
         await pullBadgeSettingsIfDue(profile: profile)   // best-effort; badge chips are cosmetic
         if appPreferencesDirty { await pushAppPreferences(profile: profile) }
         await pullAppPreferences(profile: profile)  // player/TMDB/theme prefs + collections
-        if providerCredentialsDirty { await pushProviderCredentials(profile: profile) }
-        await pullProviderCredentials(profile: profile)  // debrid keys + Trakt (Android table)
     }
 
     /// Run independent chains at once and wait for ALL of them. One chain
@@ -1296,9 +1231,6 @@ final class OrivioSyncManager: ObservableObject {
         collectionsStore.setProfile(pid)
         homeCatalogSettings.setProfile(pid)
         rescopePerProfileStores(pid)
-        // Only rescopes when per-profile Trakt accounts are on; otherwise the
-        // login stays device-wide.
-        traktStore?.setProfile(pid)
     }
 
     /// The stores split per profile in the upstream-parity pass: add-ons
@@ -2814,7 +2746,6 @@ final class OrivioSyncManager: ObservableObject {
         collectionsStore.setProfile(id)
         homeCatalogSettings.setProfile(id)
         rescopePerProfileStores(id)
-        traktStore?.setProfile(id)
         guard account.accessToken != nil else { return }
         // Serialize behind any in-flight full sync (e.g. picking a profile at
         // the gate while the sign-in sync is still running) so two cycles can't
@@ -2863,10 +2794,6 @@ final class OrivioSyncManager: ObservableObject {
     private var badgeSettingsDirty: Bool {
         get { isDirty("badges", profile: pid) }
         set { setDirty("badges", profile: pid, newValue) }
-    }
-    private var providerCredentialsDirty: Bool {
-        get { isDirty("providerCredentials", profile: pid) }
-        set { setDirty("providerCredentials", profile: pid, newValue) }
     }
 
     private func scheduleCollectionsPush() {
@@ -3648,115 +3575,6 @@ final class OrivioSyncManager: ObservableObject {
                 setDirty("appPreferences", profile: profile, false)
             }
         }
-    }
-
-    // MARK: - Provider credentials (Trakt) — Android table
-
-    private func scheduleProviderCredentialsPush() {
-        guard !isRetiringAccountState else { return }
-        providerCredentialsDirty = true
-        pushProviderCredentialsTask?.cancel()
-        pushProviderCredentialsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            await self.pushProviderCredentials(profile: self.pid)
-        }
-    }
-
-    /// Push the Trakt login into the shared `provider_credentials` table. Each
-    /// row is `{provider, credential_json, updated_at}`; `p_credentials`
-    /// carries them.
-    private func pushProviderCredentials(profile: Int) async {
-        guard account.accessToken != nil, pid == profile else { return }
-        // This app no longer uses debrid, but other Nuvio clients keep their
-        // debrid keys in this same table. Read it first so those rows can be
-        // sent back untouched — whether the RPC replaces or merges, a push
-        // from here must never drop them.
-        if passthroughCredentials[profile] == nil {
-            await pullProviderCredentials(profile: profile)
-            guard pid == profile, passthroughCredentials[profile] != nil else { return }
-        }
-        let now = ISO8601DateFormatter().string(from: Date())
-        var credentials: [[String: Any]] = passthroughCredentials[profile] ?? []
-
-        if let traktStore, let access = traktStore.accessToken, let refresh = traktStore.refreshToken {
-            var json: [String: Any] = ["access_token": access, "refresh_token": refresh]
-            if let username = traktStore.username { json["username"] = username }
-            credentials.append(["provider": "trakt", "credential_json": json, "updated_at": now])
-        }
-
-        guard !credentials.isEmpty else { return }
-        let body: [String: Any] = [
-            "p_credentials": credentials,
-            "p_profile_id": profile,
-            "p_origin_client_id": clientID
-        ]
-        // Only once the account actually has them. Clearing unconditionally
-        // meant a single failed POST (Wi-Fi blip, 502) dropped the debrid key
-        // or Trakt login for good: with the tail push now gated on this flag,
-        // nothing ever retried it.
-        if (try? await authedPost(RPC.url(RPC.pushProviderCredentials), body: body)) != nil {
-            setDirty("providerCredentials", profile: profile, false)
-        }
-    }
-
-    /// Pull provider credentials and apply them. Tolerant: `credential_json` may
-    /// arrive as an object or a JSON string, and inner keys may be snake- or
-    /// camel-case — so debrid keys and Trakt logins added on the phone show up
-    /// here regardless of exactly how that client serialized them.
-    private func pullProviderCredentials(profile: Int) async {
-        guard account.accessToken != nil, pid == profile else { return }
-        guard let data = try? await authedPost(
-            RPC.url(RPC.pullProviderCredentials), body: ["p_profile_id": profile]
-        ) else { return }
-        // Trakt logins can be per-profile (TraktStore.setProfile), so these
-        // rows must not be applied to a store that has since re-scoped.
-        guard pid == profile else { return }
-        // Rows may arrive as an array or (some PostgREST configs) a bare object.
-        let parsed = try? JSONSerialization.jsonObject(with: data)
-        let rows: [[String: Any]]
-        if let array = parsed as? [[String: Any]] { rows = array }
-        else if let single = parsed as? [String: Any] { rows = [single] }
-        else { return }
-
-        var passthrough: [[String: Any]] = []
-        for row in rows {
-            guard let provider = (row["provider"] as? String)?.lowercased() else { continue }
-            let json = Self.credentialJSON(from: row["credential_json"])
-            #if DEBUG
-            NSLog("[OrivioSync] provider_credentials '%@' keys: %@", provider,
-                  json.keys.sorted().joined(separator: ","))
-            #endif
-            if provider == "trakt" {
-                let access = Self.anyString(json["access_token"] ?? json["accessToken"])
-                let refresh = Self.anyString(json["refresh_token"] ?? json["refreshToken"])
-                let username = Self.anyString(json["username"] ?? json["user"])
-                traktStore?.applyRemote(access: access, refresh: refresh, username: username)
-            } else {
-                // Another client's credential (debrid keys and the like):
-                // kept verbatim so our pushes carry it back unchanged.
-                var kept: [String: Any] = ["provider": provider, "credential_json": json]
-                if let updated = row["updated_at"] { kept["updated_at"] = updated }
-                passthrough.append(kept)
-            }
-        }
-        passthroughCredentials[profile] = passthrough
-    }
-
-    /// `credential_json` tolerated as a nested object OR a JSON-encoded string.
-    private static func credentialJSON(from value: Any?) -> [String: Any] {
-        if let dict = value as? [String: Any] { return dict }
-        if let text = value as? String, let data = text.data(using: .utf8),
-           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return dict
-        }
-        return [:]
-    }
-
-    private static func anyString(_ value: Any?) -> String? {
-        if let s = value as? String { return s }
-        if let n = value as? NSNumber { return n.stringValue }
-        return nil
     }
 
     /// A profile marked "use primary add-ons" —

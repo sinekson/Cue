@@ -25,21 +25,12 @@ struct PlayerScreen: View {
     /// the root view can re-present the same request when it ends.
     private let request: PlaybackRequest
 
-    /// The playing item changed WITHIN this session — auto-advance, or a pick
-    /// from the in-player episode list. The host needs this because the player
-    /// advances episodes inside the SAME full-screen cover without replacing
-    /// the `PlaybackRequest`, so nothing the host observes changes: Trakt only
-    /// ever scrobbled the FIRST episode of a binge, and the closing `stop` was
-    /// addressed to that episode too.
-    let onNowPlayingChanged: ((MetaItem, MetaVideo?) -> Void)?
-
     init(
         request: PlaybackRequest,
         addonManager: AddonManager,
         progressStore: ProgressStore,
         playerSettings: PlayerSettings = .default,
         allowUnairedNextUp: Bool = true,
-        onNowPlayingChanged: ((MetaItem, MetaVideo?) -> Void)? = nil,
         dismiss: @escaping () -> Void
     ) {
         // Coming back from Picture in Picture re-presents the cover for a
@@ -59,7 +50,6 @@ struct PlayerScreen: View {
         }
         self.request = request
         self.dismiss = dismiss
-        self.onNowPlayingChanged = onNowPlayingChanged
     }
 
     var body: some View {
@@ -404,15 +394,7 @@ struct PlayerScreen: View {
                 guard let viewModel else { return }
                 watched.mark(meta: viewModel.meta, video: episode)
             }
-            // Tell the host each time the playing item changes inside this
-            // session, so the Trakt scrobble stops the finished episode and
-            // starts the new one (see `onNowPlayingChanged` above). The view
-            // model invokes it on the main actor once the new episode's
-            // metadata is in place.
-            if let onNowPlayingChanged {
-                viewModel.onNowPlayingChanged = onNowPlayingChanged
-                viewModel.autoLinkPrefs = profiles.activeAutoLink
-            }
+            viewModel.autoLinkPrefs = profiles.activeAutoLink
         }
         .task { await runDemoTourIfRequested() }
     }

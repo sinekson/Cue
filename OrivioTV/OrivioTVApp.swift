@@ -66,12 +66,9 @@ struct OrivioTVApp: App {
     @StateObject private var homeCatalogSettings = HomeCatalogSettingsStore()
     @StateObject private var tmdbSettings = TMDBSettingsStore()
     @StateObject private var mdblistSettings = MDBListSettingsStore()
-    @StateObject private var trakt = TraktStore()
-    @StateObject private var simkl = SimklStore()
     @StateObject private var stremioAccount = StremioAccountStore()
     @StateObject private var playerSettings = PlayerSettingsStore()
     @StateObject private var streamBadges = StreamBadgeStore()
-    @StateObject private var ratings = RatingsStore()
 
     var body: some Scene {
         WindowGroup {
@@ -88,12 +85,9 @@ struct OrivioTVApp: App {
                 .environmentObject(homeCatalogSettings)
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
-                .environmentObject(trakt)
-                .environmentObject(simkl)
                 .environmentObject(stremioAccount)
                 .environmentObject(playerSettings)
                 .environmentObject(streamBadges)
-                .environmentObject(ratings)
                 // Classic is hard-dark (the original look). The Apple TV theme
                 // honors its Appearance setting — light, dark, or nil to
                 // follow the TV's own system appearance.
@@ -169,13 +163,10 @@ struct RootView: View {
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
-    @EnvironmentObject private var trakt: TraktStore
-    @EnvironmentObject private var simkl: SimklStore
     @EnvironmentObject private var stremioAccount: StremioAccountStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var ratings: RatingsStore
     @Environment(\.scenePhase) private var scenePhase
 
     // One navigation stack per tab (tvOS expects TabView at the top level with
@@ -219,8 +210,6 @@ struct RootView: View {
     }
 
     @State private var sync: OrivioSyncManager?
-    @State private var traktSync: TraktSyncManager?
-    @State private var simklSync: SimklSyncManager?
     /// Held only by -addonServerProbe; nil in normal runs.
     @State private var devAddonServer: AddonImportServer?
     @State private var stremioSync: StremioSyncManager?
@@ -284,13 +273,8 @@ struct RootView: View {
             .task {
                 if sync == nil {
                     // Finishing a title records it in watched history.
-                    progressStore.onFinished = { [weak watched, finishedThisSession] meta, video in
+                    progressStore.onFinished = { [weak watched] meta, video in
                         watched?.mark(meta: meta, video: video, fromPlayback: true)
-                        // Remember it for the stop scrobble: the row this fires
-                        // for has just been DELETED from the progress store.
-                        finishedThisSession.keys.insert(
-                            ProgressStore.key(metaID: meta.id, video: video)
-                        )
                     }
                     // A synced row for an episode finished AFTER that row was
                     // written is a stale copy; no merge may restore it (see
@@ -315,38 +299,23 @@ struct RootView: View {
                         streamBadges: streamBadges,
                         playerSettings: playerSettings,
                         tmdbSettings: tmdbSettings,
-                        themeManager: theme,
-                        traktStore: trakt,
-                        simklStore: simkl,
-                        ratingsStore: ratings
+                        themeManager: theme
                     )
                     sync = orivioSync
                     orivioSync.enrichContinueWatchingEnabled = { [tmdbSettings] in
                         tmdbSettings.settings.enrichContinueWatching
                     }
-                    // Trakt two-way sync (history / watched badges + Continue
-                    // Watching). Separate opt-in destination from the account.
-                    // Trakt scoping must survive being signed out of Orivio:
-                    // the sync manager owns profile scoping for every other
-                    // store, but it only runs while signed in.
-                    // Ratings are per-profile for the same reason Trakt is: a
-                    // profile with its own Trakt account must not push another
-                    // profile's ratings into it. SIMKL rides the same
-                    // per-profile switch as Trakt (one setting, both services).
                     // Everything personal rescopes on a switch, even when
                     // signed out of Orivio (the sync manager only runs while
-                    // signed in): trackers, add-ons (honouring the
+                    // signed in): add-ons (honouring the
                     // profile's use-primary fallbacks), player
                     // settings, TMDB, theme, badges — upstream Nuvio's
                     // per-profile boundary, ported wholesale.
-                    profiles.onSwitchLocal = { [weak trakt, weak simkl, weak ratings, weak addonManager,
+                    profiles.onSwitchLocal = { [weak addonManager,
                                                 weak playerSettings,
                                                 weak tmdbSettings, weak streamBadges,
                                                 weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
-                        trakt?.setProfile(id)
-                        simkl?.setProfile(id)
-                        ratings?.setProfile(id)
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
@@ -369,12 +338,10 @@ struct RootView: View {
                     progressStore.refreshTopShelf()
                     NSLog("[TopShelf] app group %@ → %@", AppGroupResolver.identifier,
                           AppGroupResolver.sharedFile("topshelf.json")?.path ?? "UNAVAILABLE")
-                    profiles.onProfileDeleted = { [weak trakt, weak simkl, weak addonManager,
+                    profiles.onProfileDeleted = { [weak addonManager,
                                                    weak playerSettings,
                                                    weak tmdbSettings, weak streamBadges,
                                                    weak orivioSync] id in
-                        trakt?.forgetProfile(id)
-                        simkl?.forgetProfile(id)
                         addonManager?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
@@ -382,21 +349,6 @@ struct RootView: View {
                         orivioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
                     }
-                    traktSync = TraktSyncManager(
-                        trakt: trakt, watched: watched, progress: progressStore,
-                        library: library, ratings: ratings, addonManager: addonManager
-                    )
-                    // Constructed AFTER the Trakt manager, and safely so: the
-                    // store hooks both subscribe to are lists, so this appends
-                    // rather than replacing Trakt's subscriptions. It takes the
-                    // progress store to SEED Continue Watching from SIMKL's
-                    // "watching" list; SIMKL has no playback-position API, so
-                    // nothing flows the other way (see syncContinueWatching).
-                    simklSync = SimklSyncManager(
-                        simkl: simkl, watched: watched, library: library,
-                        ratings: ratings, addonManager: addonManager,
-                        progress: progressStore
-                    )
                     let stremioManager = StremioSyncManager(
                         stremio: stremioAccount,
                         addonManager: addonManager,
@@ -416,17 +368,12 @@ struct RootView: View {
                     // reach twice.
                     // Coming back from Picture in Picture: re-present the
                     // cover for the session PiPHandoff kept alive.
-                    PiPHandoff.shared.present = { [pipRestored] request in
-                        // Flag it as a RESTORE before the cover flips back on,
-                        // so the scrobble lifecycle doesn't read a session that
-                        // never stopped playing as a fresh start (see
-                        // PiPRestoredRequest).
-                        pipRestored.id = request.id
+                    PiPHandoff.shared.present = { request in
                         playback = request
                     }
                     let coordinator = SyncCoordinator.shared
                     coordinator.observe(watched: watched, library: library,
-                                        ratings: ratings, progress: progressStore)
+                                        progress: progressStore)
                     coordinator.addDestination("Orivio") { [weak orivioSync] in
                         Task { @MainActor in
                             // A change made from inside the player (mark
@@ -439,21 +386,6 @@ struct RootView: View {
                                 await orivioSync?.syncNow()
                             }
                         }
-                    }
-                    // NOT forced: the per-item hooks (pushMark etc.) already
-                    // delivered the change itself — this pass is pure
-                    // reconciliation, and `force: true` bypassed the managers'
-                    // own throttles, so a single "mark watched" pulled the
-                    // FULL Trakt watched history (thousands of per-episode
-                    // rows, transformed on the main actor) while the user was
-                    // still navigating the page. With the throttle honored a
-                    // burst reconciles once; the 5-min periodic tick remains
-                    // the backstop.
-                    coordinator.addDestination("Trakt") { [weak traktSyncRef = traktSync] in
-                        traktSyncRef?.syncNow(force: false)
-                    }
-                    coordinator.addDestination("SIMKL") { [weak simklSyncRef = simklSync] in
-                        simklSyncRef?.syncNow(force: false)
                     }
                     coordinator.addDestination("Stremio") { [weak stremioManager] in
                         stremioManager?.syncNow(reason: "Local change")
@@ -482,7 +414,7 @@ struct RootView: View {
                     AppProbe.life("root appeared — tab=\(Self.tabName(selectedTab))")
                     // Skipped in the demo modes so the screen isn't covered.
                     let args = ProcessInfo.processInfo.arguments
-                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-traktQRDemo", "-simklQRDemo", "-accountDemo", "-settingsTabDemo"]
+                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-accountDemo", "-settingsTabDemo"]
                     let demoMode = demoArgs.contains { args.contains($0) }
                     // -welcomeDemo forces it regardless of the completed flag
                     // or an already-restored session, which is the only way to
@@ -575,65 +507,14 @@ struct RootView: View {
                             NSLog("[OrivioSearch] probe written")
                         }
                     }
-                    // Dev: dump the SIMKL request bodies (see debugEnvelope).
-                    if args.contains("-simklEnvelopeReport") {
-                        let now = Date(timeIntervalSince1970: 1_700_000_000)
-                        let history: [SimklService.SyncItem] = [
-                            .init(imdb: "tt0111161", type: "movie", title: "The Shawshank Redemption", watchedAt: now),
-                            .init(imdb: "tt0903747", type: "series", title: "Breaking Bad", season: 1, episode: 1, watchedAt: now),
-                            .init(imdb: "tt0903747", type: "series", season: 1, episode: 2, watchedAt: now),
-                            .init(imdb: "tt0903747", type: "series", season: 2, episode: 1, watchedAt: now),
-                            .init(tmdb: 1396, type: "series", title: "Tmdb Only", season: 1, episode: 1, watchedAt: now),
-                            .init(type: "movie", title: "No IDs — must be dropped"),
-                        ]
-                        let rated: [SimklService.SyncItem] = [
-                            .init(imdb: "tt0111161", type: "movie", title: "Shawshank", rating: 9),
-                        ]
-                        let watchlist: [SimklService.SyncItem] = [
-                            .init(imdb: "tt0468569", type: "movie", title: "The Dark Knight"),
-                        ]
-                        let report = "HISTORY\n" + SimklService.debugEnvelope(history)
-                            + "\n\nRATINGS\n" + SimklService.debugEnvelope(rated, includeRating: true)
-                            + "\n\nWATCHLIST\n" + SimklService.debugEnvelope(watchlist, listTarget: "plantowatch")
-                        UserDefaults.standard.set(report, forKey: "dev.simklEnvelope")
-                    }
-                    // Dev: report what Trakt resolves to for the ACTIVE profile,
-                    // after sync has had a chance to interfere. Reading the raw
-                    // defaults keys can't answer this — the answer depends on
-                    // which scope the store chose.
-                    if args.contains("-traktReport") {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                            let report = "profile=\(profiles.activeProfileID)"
-                                + " perProfile=\(trakt.perProfileAccounts)"
-                                + " signedIn=\(trakt.isSignedIn)"
-                                + " user=\(trakt.username ?? "-")"
-                            UserDefaults.standard.set(report, forKey: "dev.traktReport")
-                        }
-                    }
                     // Dev: remove a title from Continue Watching through the
-                    // same call the hold menu makes, so the fan-out to Orivio,
-                    // Trakt and Stremio can be exercised without the tvOS UI.
+                    // same call the hold menu makes, so the fan-out to Orivio
+                    // and Stremio can be exercised without the tvOS UI.
                     if let meta = args.first(where: { $0.hasPrefix("-removeCW:") })?
                         .replacingOccurrences(of: "-removeCW:", with: ""), !meta.isEmpty {
-                        progressStore.removeShow(metaID: meta, notifyTrakt: true)
+                        progressStore.removeShow(metaID: meta, notifySync: true)
                     }
-                    // Dev: flip per-profile accounts and/or switch profile, the
-                    // same calls Settings and the profile gate make. The switch
-                    // covers Trakt AND SIMKL, exactly as the Settings toggle does.
-                    if args.contains("-traktPerProfile") {
-                        trakt.perProfileAccounts = true
-                        simkl.perProfileAccounts = true
-                    }
-                    if args.contains("-traktShared") {
-                        trakt.perProfileAccounts = false
-                        simkl.perProfileAccounts = false
-                    }
-                    if let f = args.first(where: { $0.hasPrefix("-traktForget:") })?
-                        .replacingOccurrences(of: "-traktForget:", with: ""), let id = Int(f) {
-                        // Same path a profile deletion takes.
-                        trakt.forgetProfile(id)
-                        simkl.forgetProfile(id)
-                    }
+                    // Dev: switch profile, the same call the profile gate makes.
                     if let p = args.first(where: { $0.hasPrefix("-profile:") })?
                         .replacingOccurrences(of: "-profile:", with: ""), let id = Int(p) {
                         profiles.setActive(id)
@@ -681,16 +562,6 @@ struct RootView: View {
                             progressStore.importEntries(stamped)
                             await orivioSync?.pushThisDevice()
                             NSLog("[OrivioSync] -restoreProgress: imported %d rows", stamped.count)
-                        }
-                    }
-                    // Dev/recovery: clear Trakt's continue-watching list on
-                    // launch (same path as the Settings → Trakt button).
-                    if args.contains("-clearTraktPlayback") {
-                        Task { @MainActor [weak traktSyncRef = traktSync] in
-                            try? await Task.sleep(nanoseconds: 6_000_000_000)
-                            let removed = await traktSyncRef?.clearTraktContinueWatching()
-                            NSLog("[OrivioTrakt] -clearTraktPlayback removed=%@",
-                                  removed.map(String.init) ?? "nil (fetch failed)")
                         }
                     }
                     if args.contains("-clearWatchHistory") {
@@ -746,7 +617,6 @@ struct RootView: View {
                     // Stands down on its own while that sync is armed, so the
                     // two can't pull progress and library at the same time.
                     sync?.refreshContinueWatching()
-                    traktSync?.syncNow()
                     stremioSync?.syncNow(reason: "Foreground Stremio sync")
                     // An add-on left as a stub — its manifest fetch answered
                     // during a wake, before the network was really back — has
@@ -863,34 +733,6 @@ struct RootView: View {
                 ZStack { theme.palette.background.ignoresSafeArea(); AccountView() }
             )
         }
-        if ProcessInfo.processInfo.arguments.contains("-simklQRDemo") {
-            return AnyView(
-                ZStack {
-                    theme.palette.background.ignoresSafeArea()
-                    SimklConnectPage(
-                        code: SimklDeviceCode(userCode: "AB12CD34",
-                                              verificationURL: "https://simkl.com/pin",
-                                              interval: 5, expiresIn: 600),
-                        expiresAt: Date().addingTimeInterval(600)
-                    )
-                }
-                .environmentObject(theme)
-            )
-        }
-        if ProcessInfo.processInfo.arguments.contains("-traktQRDemo") {
-            return AnyView(
-                ZStack {
-                    theme.palette.background.ignoresSafeArea()
-                    TraktConnectPage(
-                        code: TraktDeviceCode(deviceCode: "d", userCode: "AB12CD34",
-                                              verificationURL: "https://trakt.tv/activate",
-                                              interval: 5, expiresIn: 600),
-                        expiresAt: Date().addingTimeInterval(600)
-                    )
-                }
-                .environmentObject(theme)
-            )
-        }
         return AnyView(mainContent)
     }
 
@@ -920,20 +762,12 @@ struct RootView: View {
                 addonManager: addonManager,
                 progressStore: progressStore,
                 playerSettings: playerSettings.settings,
-                allowUnairedNextUp: homeCatalogSettings.showUnairedNextUp,
-                // Auto-advance / in-player episode pick: the cover and its
-                // PlaybackRequest never change, so `onChange(of: playback?.id)`
-                // below can't see it. Without this only episode one of a binge
-                // was ever scrobbled.
-                onNowPlayingChanged: { meta, video in
-                    scrobbleNowPlayingChanged(meta, video)
-                }
+                allowUnairedNextUp: homeCatalogSettings.showUnairedNextUp
             ) {
                 // Just dismiss the cover; the auto-play pop runs in onDismiss.
                 playback = nil
             }
         }
-        .onChange(of: playback?.id) { _, _ in scrobbleForPlaybackChange() }
         // Deep-link add-on install confirmation. A tvOS alert is fully
         // focusable and remote-navigable, and Cancel carries the `.cancel`
         // role so a Menu press is a REFUSAL — the safe default for a prompt
@@ -1574,151 +1408,6 @@ struct RootView: View {
                     resumePosition: fromStart ? nil : progress?.positionSeconds
                 ))
             }
-        }
-    }
-
-    /// Trakt scrobble on the playback lifecycle: `start` when a title begins,
-    /// `stop` with the last known progress when it ends. Best-effort and
-    /// gated on sign-in + the scrobble toggle; only tt… ids scrobble.
-    @State private var scrobblingItem: (meta: MetaItem, video: MetaVideo?)?
-
-    /// Progress keys that crossed the "finished" threshold during playback.
-    ///
-    /// `ProgressStore.update` DELETES the row at >=95%, so by the time the player
-    /// dismisses and the stop scrobble runs there is nothing left to read a final
-    /// fraction from. It reported 0% — and Trakt reads a stop under 80% as a
-    /// PAUSE, so every title the viewer actually finished landed back on their
-    /// account as a 0% in-progress row (which "Sync Continue Watching" then
-    /// pulled straight back into the Continue Watching row).
-    ///
-    /// A reference box rather than a plain `Set` because the store's `onFinished`
-    /// callback is installed once and has to write somewhere the view can read.
-    final class FinishedKeys { var keys: Set<String> = [] }
-    @State private var finishedThisSession = FinishedKeys()
-
-    /// The `PlaybackRequest` id Picture in Picture has just put back on screen.
-    ///
-    /// A handoff dismisses this cover and a restore re-presents the SAME
-    /// request, so `onChange(of: playback?.id)` sees the id go nil and come
-    /// back — indistinguishable from the viewer starting the title afresh.
-    /// That is how a restore came to report a `start` at the position the
-    /// session ORIGINALLY resumed from (0% for a film played from the top)
-    /// while the engine had been playing continuously for an hour.
-    /// `PiPHandoff.isActive` cannot answer this side: the re-presented screen
-    /// releases the park from `PlayerScreen.init`, before this handler runs.
-    ///
-    /// A reference box for the same reason as `FinishedKeys` above: it is
-    /// written by the `present` closure PiPHandoff holds and read from the
-    /// change handler, with no view update guaranteed to sit between the two.
-    final class PiPRestoredRequest { var id: UUID? }
-    @State private var pipRestored = PiPRestoredRequest()
-
-    private func scrobbleForPlaybackChange() {
-        guard trakt.isSignedIn, trakt.scrobbleEnabled, let token = trakt.accessToken else {
-            scrobblingItem = nil
-            return
-        }
-        if let request = playback {
-            // Coming back from Picture in Picture: this cover is being
-            // re-presented for a session that never stopped, so there is
-            // nothing to start — and `resumePosition` is where that session
-            // BEGAN, so starting from it threw the account's progress back to
-            // the top of the film while the engine was an hour in. The item is
-            // still in `scrobblingItem` (the handoff left it there) and, if the
-            // session auto-advanced inside the PiP window, it is the episode
-            // actually playing rather than the one this request names.
-            if pipRestored.id == request.id {
-                pipRestored.id = nil
-                return
-            }
-            // Playback started.
-            startScrobble(meta: request.meta, video: request.video,
-                          resumePosition: request.resumePosition, token: token)
-        } else if let item = scrobblingItem {
-            // The handoff INTO Picture in Picture dismisses this cover while
-            // the engine plays on in the system's small window (PlayerScreen's
-            // onWillStart: begin() then dismiss()), so this nil is the UI
-            // leaving, not playback ending. A stop here reported the title as
-            // paused mid-film every time the viewer popped it out — Trakt reads
-            // a stop under 80% as a pause. The session's real stop follows when
-            // the restored cover is dismissed for good.
-            if PiPHandoff.shared.isActive { return }
-            // Playback ended — report final progress.
-            scrobblingItem = nil
-            stopScrobble(item, token: token)
-        }
-    }
-
-    /// The playing item changed WITHIN one player session — auto-advance to the
-    /// next episode, or a pick from the in-player episode list.
-    ///
-    /// The player advances inside the SAME `fullScreenCover` and never replaces
-    /// the `PlaybackRequest`, so `onChange(of: playback?.id)` never fires: every
-    /// episode after the first got no `start`, and the eventual `stop` was
-    /// addressed to episode ONE — a whole binge landed on Trakt as one episode
-    /// watched and the rest untouched. Treat it as end-of-previous +
-    /// start-of-next, reusing the same bookkeeping as the cover-level lifecycle.
-    private func scrobbleNowPlayingChanged(_ meta: MetaItem, _ video: MetaVideo?) {
-        guard trakt.isSignedIn, trakt.scrobbleEnabled, let token = trakt.accessToken else {
-            scrobblingItem = nil
-            return
-        }
-        // Same item (a reload / source switch re-announcing the current
-        // episode): re-sending start/stop would double-count it.
-        if let current = scrobblingItem,
-           current.meta.id == meta.id,
-           current.video?.id == video?.id {
-            return
-        }
-        if let previous = scrobblingItem {
-            scrobblingItem = nil
-            stopScrobble(previous, token: token)
-        }
-        // No resume position: an auto-advanced episode starts at zero, and a
-        // pick from the episode list has already had its own resume applied by
-        // the player itself.
-        startScrobble(meta: meta, video: video, resumePosition: nil, token: token)
-    }
-
-    private func startScrobble(meta: MetaItem, video: MetaVideo?,
-                               resumePosition: Double?, token: String) {
-        scrobblingItem = (meta, video)
-        let startKey = ProgressStore.key(metaID: meta.id, video: video)
-        // A re-watch starts fresh: last session's "finished" must not make
-        // this one report 100% if the viewer bails out after five minutes.
-        finishedThisSession.keys.remove(startKey)
-        let fraction = resumePosition.flatMap { pos -> Double? in
-            guard let duration = progressStore.progress(for: startKey)?.durationSeconds, duration > 0 else { return nil }
-            return pos / duration * 100
-        } ?? 0
-        Task {
-            await TraktService.scrobble(
-                action: .start, imdbID: meta.id, type: meta.type,
-                season: video?.season, episode: video?.episode,
-                progress: fraction, accessToken: token
-            )
-        }
-    }
-
-    private func stopScrobble(_ item: (meta: MetaItem, video: MetaVideo?), token: String) {
-        let key = ProgressStore.key(metaID: item.meta.id, video: item.video)
-        // A live row wins; otherwise a row that vanished because it FINISHED
-        // reports complete, and one that never existed reports 0.
-        let fraction: Double
-        if let live = progressStore.progress(for: key)?.fraction {
-            fraction = live * 100
-        } else if finishedThisSession.keys.contains(key) {
-            fraction = 100
-        } else {
-            fraction = 0
-        }
-        finishedThisSession.keys.remove(key)
-        Task {
-            await TraktService.scrobble(
-                action: .stop, imdbID: item.meta.id, type: item.meta.type,
-                season: item.video?.season, episode: item.video?.episode,
-                progress: fraction, accessToken: token
-            )
         }
     }
 

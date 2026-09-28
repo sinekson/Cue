@@ -2235,7 +2235,7 @@ struct HomeSpotlightView: View {
             Button { onResumeFromStart(progress) } label: {
                 Label("Start Over", systemImage: "gobackward")
             }
-            Button { progressStore.removeShow(metaID: progress.metaID, notifyTrakt: true) } label: {
+            Button { progressStore.removeShow(metaID: progress.metaID, notifySync: true) } label: {
                 Label("Remove from Continue Watching", systemImage: "xmark")
             }
         } else if let item {

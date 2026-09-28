@@ -146,7 +146,7 @@ struct ContinueHoldMenu: ViewModifier {
             // The wording and the ✗ glyph carry the meaning instead.
             Button {
                 // Remove the whole show (all episodes), like Netflix/Hulu.
-                progressStore.removeShow(metaID: progress.metaID, notifyTrakt: true)
+                progressStore.removeShow(metaID: progress.metaID, notifySync: true)
             } label: {
                 Label("Remove from Continue Watching", systemImage: "xmark")
             }

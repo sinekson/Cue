@@ -9,7 +9,6 @@ struct AccountView: View {
     @EnvironmentObject private var progress: ProgressStore
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var stremio: StremioAccountStore
-    @EnvironmentObject private var trakt: TraktStore
 
     private enum AccountFocus: Hashable {
         case orivioSignIn
@@ -384,7 +383,7 @@ struct AccountView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Removes every Continue Watching and watched item from this device and your account, and stops Trakt from re-importing anything watched before now. This cannot be undone.")
+                Text("Removes every Continue Watching and watched item from this device and your account. This cannot be undone.")
             }
 
             if let syncStatus {
@@ -685,7 +684,6 @@ struct AccountView: View {
                 AccountSyncStatusRow(title: "Continue Watching", value: "\(progress.continueWatching.count) active", systemImage: "play.rectangle")
                 AccountSyncStatusRow(title: "Watched", value: "\(watched.items.count) marked", systemImage: "checkmark.seal")
                 AccountSyncStatusRow(title: "Stremio", value: stremio.isSignedIn ? (stremio.email ?? "Connected") : "Not connected", systemImage: "link")
-                AccountSyncStatusRow(title: "Trakt", value: trakt.isSignedIn ? (trakt.username ?? "Connected") : "Not connected", systemImage: "checkmark.seal.fill")
                 AccountSyncStatusRow(title: "Pending Queue", value: pendingQueueLabel, systemImage: "tray.and.arrow.up")
                 AccountSyncStatusRow(title: "Last Error", value: sync?.lastSyncError ?? "None", systemImage: "exclamationmark.triangle")
             }
@@ -717,7 +715,7 @@ struct AccountView: View {
             } label: {
                 SettingsActionRow(
                     title: checkingProviders ? "Checking Providers" : "Run Provider Check",
-                    subtitle: providerStatus ?? "Check add-on manifests, plugin repositories, Trakt and debrid setup",
+                    subtitle: providerStatus ?? "Check that every add-on's manifest answers",
                     leadingIcon: "waveform.path.ecg"
                 )
             }
@@ -939,9 +937,7 @@ struct AccountView: View {
         }.count
         let addonSlow = addonResults.filter { $0.status == .slow }.count
 
-        let traktStatus = trakt.isSignedIn ? "Trakt connected" : "Trakt off"
-
-        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow · \(traktStatus)"
+        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow"
         OrivioSyncDiagnostics.record(.info, area: "Health", providerStatus ?? "Provider check finished.")
         syncLog = OrivioSyncDiagnostics.entries()
     }

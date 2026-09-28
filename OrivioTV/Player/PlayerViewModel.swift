@@ -1389,19 +1389,6 @@ final class PlayerViewModel: ObservableObject {
 
     var onDismiss: (() -> Void)?
 
-    /// Fired when the playing item changes WITHIN a session (auto-advance, or
-    /// the in-player episode list), so the host can re-scrobble.
-    ///
-    /// Scrobbling is driven off a change of the PlaybackRequest identity, and a
-    /// binge never replaces that request: the player advances episodes inside
-    /// the same full-screen cover. So only the first episode was ever scrobbled
-    /// — episodes two onward got no start and no stop, and the eventual stop was
-    /// addressed to episode one. This is the notification the host needs to keep
-    /// up. It fires ONLY for in-session changes: the host already scrobbles the
-    /// first item when the cover opens, and firing on the initial load would
-    /// double-count it.
-    var onNowPlayingChanged: ((MetaItem, MetaVideo?) -> Void)?
-
     /// The active profile's Auto Link Selector settings, handed in by
     /// `PlayerScreen` (they live on `ProfileStore`, which the view model has no
     /// route to on its own).
@@ -9539,15 +9526,6 @@ final class PlayerViewModel: ObservableObject {
                 if let first = panelEntries.first { currentEntry = first }
                 overlay = .sources
             }
-            // The now-playing item has CHANGED inside this session — tell the
-            // host so it can stop scrobbling the previous episode and start
-            // this one. Last, deliberately: the host reads `currentVideo`,
-            // `currentEntry` and the resume state off this view model, so it
-            // must not be called before every one of them is the new episode's.
-            // Every caller of `play(episode:)` is mid-session (auto-advance,
-            // Up Next, the episode panel), so this can never double-count the
-            // start the host already scrobbled when the cover opened.
-            onNowPlayingChanged?(meta, currentVideo)
         }
     }
 

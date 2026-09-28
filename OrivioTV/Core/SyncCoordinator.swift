@@ -83,12 +83,11 @@ final class SyncCoordinator {
 
     /// Subscribe to every local change that should force a full sync.
     ///
-    /// These are the same hook lists the Trakt and SIMKL managers use, which is
-    /// why they are lists: this adds one more observer rather than displacing
-    /// either of them. Remote merges set `suppressChange` in the stores, so a
+    /// The stores' hook lists (lists, so more than one observer can listen).
+    /// Remote merges set `suppressChange` in the stores, so a
     /// PULL cannot fire these and spin the coordinator in a loop.
     func observe(watched: WatchedStore, library: LibraryStore,
-                 ratings: RatingsStore, progress: ProgressStore) {
+                 progress: ProgressStore) {
         watched.onTrackerMark.append { [weak self] _ in
             self?.requestFullSync("watched")
         }
@@ -100,12 +99,6 @@ final class SyncCoordinator {
         }
         library.onTrackerRemove.append { [weak self] _ in
             self?.requestFullSync("library remove")
-        }
-        ratings.onTrackerRate.append { [weak self] _, _, _ in
-            self?.requestFullSync("rating")
-        }
-        ratings.onTrackerUnrate.append { [weak self] _, _ in
-            self?.requestFullSync("rating cleared")
         }
         progress.onTrackerProgressRemove.append { [weak self] _ in
             self?.requestFullSync("continue watching removed")

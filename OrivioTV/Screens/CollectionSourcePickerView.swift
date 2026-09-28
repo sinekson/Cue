@@ -7,7 +7,6 @@ import SwiftUI
 struct CollectionSourcePickerView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var trakt: TraktStore
     let onAdd: (CollectionSourceDTO) -> Void
     let onDone: () -> Void
 
@@ -26,8 +25,8 @@ struct CollectionSourcePickerView: View {
     /// bar because TMDB covers every source type a collection can hold.
     private var connectionWarning: String? {
         if tab == .trakt {
-            return trakt.isSignedIn ? nil
-                : "Sign in to Trakt in Settings → Trakt for a list added here to show anything."
+            return TraktService.isConfigured ? nil
+                : "Trakt lists need a Trakt client id in Secrets.swift."
         }
         return tmdbSettings.isEnabled ? nil
             : "Add your TMDB API key in Settings → Integrations → TMDB for a source added here to show anything."

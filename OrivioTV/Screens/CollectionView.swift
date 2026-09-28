@@ -472,7 +472,6 @@ struct CollectionView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var trakt: TraktStore
     @ObservedObject private var perfSettings = PerformanceSettingsStore.shared
     @EnvironmentObject private var layoutSettings: HomeCatalogSettingsStore
 
@@ -694,7 +693,7 @@ struct CollectionView: View {
                     addonManager: addonManager,
                     addons: addonManager.addons,
                     providers: CollectionProviders(tmdb: tmdbSettings.isEnabled,
-                                                   trakt: trakt.isSignedIn),
+                                                   trakt: TraktService.isConfigured),
                     tmdbLanguage: tmdbSettings.settings.language,
                     maxTmdbPages: 3,
                     hideUnreleased: layoutSettings.hideUnreleasedContent
@@ -988,7 +987,7 @@ struct CollectionView: View {
 
     private func loadAll() async {
         isLoading = true
-        let providers = CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: trakt.isSignedIn)
+        let providers = CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: TraktService.isConfigured)
         let tmdbLanguage = tmdbSettings.settings.language
         let manager = addonManager
         let addons = addonManager.addons

@@ -1435,11 +1435,11 @@ final class ProgressStore: ObservableObject {
     /// from Continue Watching" works on Netflix/Hulu. Deleting just the visible
     /// episode would leave the show's other episodes behind, so the card would
     /// immediately reappear with a different episode.
-    /// `notifyTrakt` must be passed ONLY from an explicit user action ("Remove
-    /// from Continue Watching") — it deletes the title's playback rows on the
-    /// user's Trakt account, which no internal cleanup/migration should do.
-    func removeShow(metaID: String, notifyTrakt: Bool = false) {
-        AppProbe.data("cw removeShow \(metaID) trakt=\(notifyTrakt.probe)")
+    /// `notifySync` must be passed ONLY from an explicit user action ("Remove
+    /// from Continue Watching") — it kicks a full sync of the removal, which
+    /// no internal cleanup/migration should do.
+    func removeShow(metaID: String, notifySync: Bool = false) {
+        AppProbe.data("cw removeShow \(metaID) notify=\(notifySync.probe)")
         // Suppress the Next Up suggestion too, even when there is nothing
         // stored to delete. A Next Up card is synthesised from watched history
         // and has no progress row, so this method used to bail immediately and
@@ -1457,7 +1457,7 @@ final class ProgressStore: ObservableObject {
         guard !removedKeys.isEmpty else {
             if !suppressChange {
                 onRemove?([metaID])
-                if notifyTrakt { for hook in onTrackerProgressRemove { hook(metaID) } }
+                if notifySync { for hook in onTrackerProgressRemove { hook(metaID) } }
                 onStremioClearProgress?(metaID)
                 onLocalUpdate?()
             }
@@ -1472,7 +1472,7 @@ final class ProgressStore: ObservableObject {
         save()
         if !suppressChange {
             onRemove?(accountDeleteKeys(for: removedRows))
-            if notifyTrakt { for hook in onTrackerProgressRemove { hook(metaID) } }
+            if notifySync { for hook in onTrackerProgressRemove { hook(metaID) } }
             onStremioClearProgress?(metaID)
             onLocalUpdate?()
         }

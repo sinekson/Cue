@@ -201,11 +201,6 @@ struct LayoutSettingsDetail: View {
                     subtitle: "The studios and production companies behind the title.",
                     isOn: $settings.detailShowProduction
                 )
-                SettingsToggleCard(
-                    title: "Comments",
-                    subtitle: "Viewer comments from Trakt.",
-                    isOn: $settings.detailShowComments
-                )
             }
 
             SettingsGroupCard(title: "Continue Watching", subtitle: "How the resume row behaves") {
@@ -696,10 +691,9 @@ struct CollectionsSettingsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var trakt: TraktStore
 
     private var providers: CollectionProviders {
-        CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: trakt.isSignedIn)
+        CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: TraktService.isConfigured)
     }
 
     @State private var editing: OrivioCollection?

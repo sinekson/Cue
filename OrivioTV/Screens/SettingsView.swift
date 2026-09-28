@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Settings categories, each a pushed pane on the Settings screen.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case account, layout, contentDiscovery, integration, playback, performance, trakt, about
+    case account, layout, contentDiscovery, integration, playback, performance, about
 
     var id: String { rawValue }
 
@@ -14,7 +14,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .integration: return "Integrations"
         case .playback: return "Playback"
         case .performance: return "Performance"
-        case .trakt: return "Trakt & SIMKL"
         case .about: return "About"
         }
     }
@@ -27,7 +26,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .integration: return "Manage available integrations"
         case .playback: return "Auto-play and next-episode behavior"
         case .performance: return "Turn effects off for a faster UI on older Apple TVs"
-        case .trakt: return "Scrobble and sync your watch history, or connect SIMKL"
         case .about: return "App information, updates, and legal links"
         }
     }
@@ -41,7 +39,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .integration: return "link"
         case .playback: return "play.fill"
         case .performance: return "speedometer"
-        case .trakt: return "checkmark.seal.fill"
         case .about: return "info.circle.fill"
         }
     }
@@ -59,7 +56,6 @@ struct SettingsCategoryPane: View {
         case .integration:       IntegrationsDetail()
         case .playback:          PlaybackSettingsDetail()
         case .performance:       PerformanceSettingsDetail()
-        case .trakt:             TraktDetail()
         case .about:             AboutDetail()
         }
     }
@@ -391,7 +387,6 @@ struct AccountSettingsDetail: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var watchedStore: WatchedStore
-    @EnvironmentObject private var trakt: TraktStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
@@ -453,7 +448,6 @@ struct AccountSettingsDetail: View {
             .environmentObject(progressStore)
             .environmentObject(watchedStore)
             .environmentObject(stremio)
-            .environmentObject(trakt)
             .onExitCommand { showAccount = false }
         }
         .fullScreenCover(isPresented: $showProfiles) {

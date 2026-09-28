@@ -64,7 +64,6 @@ final class DetailViewModel: ObservableObject {
     @Published var collectionParts: [MetaItem] = []
     @Published var companies: [TMDBService.Company] = []
     @Published var trailers: [TMDBService.Trailer] = []
-    @Published var comments: [TraktService.Comment] = []
     @Published var mdbRatings: MDBListRatings?
     @Published var crew: [TMDBService.CastMember] = []
     @Published var director: String?
@@ -137,13 +136,12 @@ final class DetailViewModel: ObservableObject {
                 genres: meta.genres, cast: meta.cast, videos: meta.videos
             )
         }
-        // Kick off TMDB enrichment + Trakt comments in parallel with the meta fetch.
+        // Kick off TMDB enrichment in parallel with the meta fetch.
         // No key, no enrichment: TMDB now runs on the viewer's own key, and
         // without one every one of these requests is a guaranteed 401.
         let enrichTask = TMDBService.hasAPIKey
             ? Task { await TMDBService.detail(imdbID: meta.id, type: meta.type) }
             : nil
-        let commentsTask = Task { await TraktService.comments(imdbID: meta.id, type: meta.type) }
         let ratingsTask = Task { await loadMDBRatings(settings: mdbSettings) }
 
         // Ask every meta add-on that could serve this id, not just the first.
@@ -188,7 +186,7 @@ final class DetailViewModel: ObservableObject {
         }
         if let season = selectedSeason { await loadSeason(season) }
         // Episodes are ready now — stop blocking the episode section (gated on
-        // `isLoading`) behind Trakt comments / MDBList ratings
+        // `isLoading`) behind TMDB / MDBList ratings
         // below. Those are unrelated to episodes and can each be slow
         // themselves; a meta addon that aggregates several sources per request
         // (e.g. AIOMetadata) was already the slow part of this load, and
@@ -202,7 +200,6 @@ final class DetailViewModel: ObservableObject {
         // to orphan all three.)
         if Task.isCancelled {
             enrichTask?.cancel()
-            commentsTask.cancel()
             ratingsTask.cancel()
             return
         }
@@ -215,7 +212,6 @@ final class DetailViewModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
-            self.comments = await commentsTask.value
             // A failed load never replaces ratings handed over from the
             // billboard (the row would shrink to the fallback and back).
             let ratings = await ratingsTask.value
@@ -303,7 +299,6 @@ struct DetailView: View {
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var watched: WatchedStore
-    @EnvironmentObject private var ratings: RatingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var layout: HomeCatalogSettingsStore
@@ -400,7 +395,6 @@ struct DetailView: View {
     /// replayed against the real episode the moment it resolves.
     private enum PendingPlay { case auto, manual }
     @State private var pendingSeriesPlay: PendingPlay?
-    @State private var showRatingPicker = false
     /// The ⋯ button's choices (rate, watched, start over, play manually).
     /// Trailer playing silently in the backdrop after the idle delay.
     @State private var backdropPlayer: AVPlayer?
@@ -604,14 +598,14 @@ struct DetailView: View {
         // Full screen is still reachable on demand from the trailer button.
         .task(id: "\(backdropTrailerPlaying)#\(interactionCount)#\(trailerFullscreen)") {
             guard backdropTrailerPlaying, !trailerFullscreen, !fullscreenCooldown,
-                  activeTrailer == nil, !showRatingPicker,
+                  activeTrailer == nil,
                   teaserFocused, actionFocus == nil else { return }
             // A real rest, not a reading pause: the first press after the
             // chrome fades only brings it back, so this must never fire while
             // someone is still deciding.
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled, backdropTrailerPlaying, !trailerFullscreen,
-                  !fullscreenCooldown, activeTrailer == nil, !showRatingPicker,
+                  !fullscreenCooldown, activeTrailer == nil,
                   teaserFocused, actionFocus == nil,
                   !PiPHandoff.shared.isActive else { return }
             // Un-muting needs a live audio session — the muted backdrop
@@ -752,17 +746,6 @@ struct DetailView: View {
             TrailerPlayerView(trailer: trailer,
                               alternates: viewModel.trailers.map(\.youtubeKey))
                 .environmentObject(theme)
-        }
-        .fullScreenCover(isPresented: $showRatingPicker) {
-            RatingPickerOverlay(
-                title: viewModel.meta.name,
-                current: ratings.rating(for: viewModel.meta.id)
-            ) { newRating in
-                ratings.setRating(newRating, for: viewModel.meta.id, type: viewModel.meta.type)
-                showRatingPicker = false
-                ToastCenter.shared.show("Rating Saved", icon: "star.fill")
-            } onCancel: { showRatingPicker = false }
-            .environmentObject(theme)
         }
     }
 
@@ -1125,7 +1108,6 @@ struct DetailView: View {
             collectionSection
             castSection
             companiesSection
-            commentsSection
         }
         .padding(.top, Self.moreRowTop)
         // Room below the last row, so every row — the last one too — can
@@ -1154,13 +1136,12 @@ struct DetailView: View {
     /// Nil = no More page at all.
     private var morePageTitle: String? {
         // One name for the whole section (similar titles, collection, cast,
-        // production, comments) — whenever any of it has content.
+        // production) — whenever any of it has content.
         let hasAny = (layout.detailShowMoreLikeThis && !viewModel.moreLikeThis.isEmpty)
             || (layout.detailShowCollection && viewModel.collection != nil
                 && !viewModel.collectionParts.isEmpty)
             || (layout.detailShowCast && !(viewModel.crew + viewModel.cast).isEmpty)
             || (layout.detailShowProduction && !viewModel.companies.isEmpty)
-            || (layout.detailShowComments && !viewModel.comments.isEmpty)
         return hasAny ? "More" : nil
     }
 
@@ -2136,31 +2117,6 @@ struct DetailView: View {
             }
         }
     }
-
-    // MARK: - Comments (Trakt)
-
-    @ViewBuilder
-    private var commentsSection: some View {
-        if layout.detailShowComments, !viewModel.comments.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                DetailRowHeader(title: "Comments")
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: OrivioSpacing.lg) {
-                        ForEach(viewModel.comments) { comment in
-                            CommentCard(comment: comment, onFocus: { focusMoreRow(.comments) })
-                        }
-                    }
-                    .padding(.horizontal, Spotlight.screenInset)
-                    .padding(.vertical, OrivioSpacing.md)
-                }
-                .scrollClipDisabled()
-                // The page's scrollDisabled reaches in here; this row scrolls.
-                .scrollDisabled(false)
-            }
-            .modifier(MoreRowAnchor(row: .comments, top: Self.moreRowTop))
-            .focusSection()
-        }
-    }
 }
 
 /// A button style with NO chrome at all — used by the full-screen trailer's
@@ -2269,7 +2225,7 @@ private struct EpisodeCell: View {
 // MARK: - The More page's rows
 
 /// The More page's rows, as scroll targets.
-enum MoreRow: Hashable { case moreLikeThis, collection, cast, companies, comments }
+enum MoreRow: Hashable { case moreLikeThis, collection, cast, companies }
 
 /// The scroll target of a More row: an invisible strip standing `top`
 /// ABOVE the row, so scrolling it to the top puts the row's title where
@@ -2447,58 +2403,6 @@ private struct CompanyPlate: View {
     }
 }
 
-/// A single Trakt comment card. Spoilers stay hidden until focused.
-struct CommentCard: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let comment: TraktService.Comment
-    var onFocus: () -> Void = {}
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.sm) {
-            HStack(spacing: OrivioSpacing.sm) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundStyle(theme.palette.textTertiary)
-                Text(comment.user)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                Spacer(minLength: 0)
-                HStack(spacing: 4) {
-                    Image(systemName: "heart.fill").font(.system(size: 14))
-                    Text("\(comment.likes)").font(.system(size: 17, weight: .semibold))
-                }
-                .foregroundStyle(theme.palette.textTertiary)
-            }
-            if comment.spoiler && !isFocused {
-                Text("Spoiler — focus to reveal")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(theme.palette.secondary)
-            } else {
-                Text(comment.text)
-                    .font(.system(size: 19))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .lineLimit(6)
-            }
-        }
-        .padding(OrivioSpacing.lg)
-        .frame(width: 460, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .fill(isFocused ? theme.palette.focusBackground : Color.white.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
-        )
-        .focusable()
-        .focusLift(OrivioFocus.row, isFocused)
-        .onChange(of: isFocused) { _, focused in if focused { onFocus() } }
-    }
-}
-
-/// Circular icon button used for the Detail action row (add / watched / trailer),
-/// matching the APK's dark round buttons that fill with the accent on focus.
 /// Whether the action buttons use the SYSTEM's Liquid Glass (tvOS 26+,
 /// on boxes that can afford it) — Apple's material with its native focus
 /// behaviour. Otherwise the app's own chrome is the fallback.
@@ -2821,80 +2725,6 @@ private struct DescriptionOverlay: View {
         }
         .onExitCommand { onClose() }
         .onPlayPauseCommand { onClose() }
-    }
-}
-
-/// A 1–10 Trakt-style rating picker: a row of ten number buttons plus Clear.
-/// tvOS-focusable, dismisses on selection.
-private struct RatingPickerOverlay: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let title: String
-    let current: Int?
-    let onRate: (Int?) -> Void
-    let onCancel: () -> Void
-    @FocusState private var focus: Int?
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.7).ignoresSafeArea()
-                .onTapGesture { onCancel() }
-            VStack(spacing: OrivioSpacing.xl) {
-                Text("Rate")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                Text(title)
-                    .font(.system(size: 24))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .lineLimit(1)
-
-                HStack(spacing: OrivioSpacing.md) {
-                    ForEach(1...10, id: \.self) { n in
-                        Button { onRate(n) } label: {
-                            Text("\(n)")
-                                .font(.system(size: 30, weight: .heavy))
-                                .foregroundStyle(current == n ? theme.palette.onSecondary : theme.palette.textPrimary)
-                                .frame(width: 74, height: 90)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(current == n ? theme.palette.secondary : theme.palette.backgroundElevated)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .strokeBorder(focus == n ? theme.palette.secondary : .clear, lineWidth: 4)
-                                )
-                                .focusLift(OrivioFocus.control, focus == n)
-                        }
-                        .buttonStyle(.plain)
-                        .focused($focus, equals: n)
-                    }
-                }
-                .animation(.easeOut(duration: 0.12), value: focus)
-
-                if current != nil {
-                    Button { onRate(nil) } label: {
-                        Text("Clear rating")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(OrivioPrimitives.error)
-                            .padding(.horizontal, 28).padding(.vertical, 12)
-                            .background(Capsule().fill(theme.palette.backgroundElevated))
-                            .overlay(Capsule().strokeBorder(focus == 0 ? OrivioPrimitives.error : .clear, lineWidth: 4))
-                    }
-                    .buttonStyle(.plain)
-                    .focused($focus, equals: 0)
-                }
-
-                Text("Press Menu to cancel")
-                    .font(.system(size: 18))
-                    .foregroundStyle(theme.palette.textTertiary)
-            }
-            .padding(OrivioSpacing.huge)
-            .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(theme.palette.background)
-            )
-        }
-        .onExitCommand { onCancel() }
-        .onAppear { focus = current ?? 8 }
     }
 }
 

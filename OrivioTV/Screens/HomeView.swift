@@ -1026,13 +1026,12 @@ struct HomeView: View {
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var trakt: TraktStore
 
     /// The services collections can resolve from right now (see
     /// `CollectionProviders`). Collection rows always render; this only tells
     /// the loader what a collection opened from them will be able to fill.
     private var collectionProviders: CollectionProviders {
-        CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: trakt.isSignedIn)
+        CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: TraktService.isConfigured)
     }
     // Owned by RootView so it PERSISTS across tab switches. If it were a local
     // @StateObject, switching away and back would rebuild HomeView with a fresh
