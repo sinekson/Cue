@@ -695,8 +695,6 @@ final class OrivioSyncManager: ObservableObject {
             self?.schedulePluginsPush()
         }
         torrentSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
-        // Live TV favourites / home-pinned channels ride the same blob.
-        LiveChannelFavorites.shared.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         // Trakt tokens live only in the dedicated provider_credentials table.
         traktStore?.onLocalChange = { [weak self] in self?.scheduleProviderCredentialsPush() }
         homeCatalogSettings.onPresentationChange = { [weak self] in self?.scheduleAppPreferencesPush() }
@@ -1344,10 +1342,6 @@ final class OrivioSyncManager: ObservableObject {
         tmdbSettings?.setProfile(id)
         themeManager?.setProfile(id)
         streamBadges?.setProfile(id)
-        // Was missing: favorites relied solely on the app-level profile
-        // closure, so any rescope driven from HERE applied one profile's
-        // account blob into another profile's favourites store.
-        LiveChannelFavorites.shared.setProfile(id)
     }
 
     // MARK: - Addons
@@ -3491,9 +3485,6 @@ final class OrivioSyncManager: ObservableObject {
         /// Container-local only, this let any other install of the app flood
         /// the account with the full Trakt history the user had cleared.
         var watchHistoryClearedAt: Date?
-        /// Live TV channels this profile favourited, and which of them are
-        /// pinned to Home. Optional for backward-compat.
-        var liveChannels: [FavoriteChannel]?
     }
 
     /// Set when a local app-pref-backed change (collections included) is waiting
@@ -3641,9 +3632,6 @@ final class OrivioSyncManager: ObservableObject {
                 profile: Set(snapshot.hiddenFolderIDs ?? []),
                 global: Set(snapshot.globalHiddenFolderIDs ?? []))
         }
-        if let liveChannels = snapshot.liveChannels {
-            LiveChannelFavorites.shared.applyRemote(liveChannels)
-        }
     }
 
     /// READ-MERGE-WRITE: fetch the blob, replace only our own feature key, push
@@ -3668,8 +3656,7 @@ final class OrivioSyncManager: ObservableObject {
             hiddenFolderIDs: collectionsStore.hiddenFolderIDsForSync,
             globalHiddenFolderIDs: collectionsStore.globalHiddenFolderIDsForSync,
             globalHiddenCollectionIDs: collectionsStore.globalHiddenCollectionIDsForSync,
-            watchHistoryClearedAt: WatchHistoryClearState.clearedAt,
-            liveChannels: LiveChannelFavorites.shared.snapshot
+            watchHistoryClearedAt: WatchHistoryClearState.clearedAt
         )
         guard let json = await Self.encodeAppPreferences(snapshot) else { return }
         // syncNow flushes a dirty push BEFORE the pulls and pushes again at the

@@ -837,45 +837,6 @@ private struct RailClearingLeading: ViewModifier {
     }
 }
 
-/// A pinned Live TV channel on the home screen: its logo on a plate, sized to
-/// match the poster rows around it rather than the wider Live TV tiles.
-private struct HomeLiveChannelCard: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let favorite: FavoriteChannel
-
-    private let width: CGFloat = 260
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.sm) {
-            ZStack {
-                theme.palette.backgroundCard
-                if let logo = favorite.logo {
-                    RemoteImage(url: logo, contentMode: .fit, maxDimension: width)
-                        .padding(OrivioSpacing.md)
-                } else {
-                    Image(systemName: "tv")
-                        .font(.system(size: 40))
-                        .foregroundStyle(theme.palette.textTertiary)
-                }
-            }
-            .frame(width: width, height: width * 9 / 16)
-            .clipShape(RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
-            )
-
-            Text(favorite.name)
-                .font(.system(size: 20, weight: .medium))
-                .lineLimit(1)
-                .foregroundStyle(isFocused ? theme.palette.textPrimary : theme.palette.textSecondary)
-                .frame(width: width, alignment: .leading)
-        }
-        .focusLift(OrivioFocus.card, isFocused)
-    }
-}
-
 /// The live billboard title, updated as focus moves across cards. Kept separate
 /// from HomeViewModel and owned by HomeView WITHOUT observation, so its frequent
 /// animated changes re-render only the billboard subviews — not the poster rows.
@@ -1138,7 +1099,6 @@ struct HomeView: View {
     // focus falls back to the sidebar, which reopened the panel.
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @ObservedObject private var liveFavorites = LiveChannelFavorites.shared
 
     let onSelect: (MetaItem) -> Void
     /// The billboard's Select (see `HomeSpotlightView.onSelectFeatured`).
@@ -1152,8 +1112,6 @@ struct HomeView: View {
     /// "tv"-typed rows, dropped season/episode) before opening the picker.
     var onPlayManuallyProgress: (WatchProgress) -> Void = { _ in }
     let onOpenCollection: (OrivioCollection) -> Void
-    /// A channel pinned to Home from the Live TV tab's hold menu.
-    var onPlayChannel: (LiveChannel) -> Void = { _ in }
     var onSeeAll: (InstalledAddon, ManifestCatalog, String) -> Void = { _, _, _ in }
     /// Fires when the first load attempt finishes (success or error), so the
     /// root can re-enable the sidebar only once content exists to hold focus.
@@ -1788,11 +1746,6 @@ struct HomeView: View {
             }
         }
 
-        // Channels pinned from Live TV (hold a channel → Favorite → Add to
-        // Home Page). Below Continue Watching and below the Featured window,
-        // which is where they were asked for.
-        liveChannelsRow
-
         // Collections render by viewMode:
         // • ROWS      → each collection is its OWN row of folder buttons; a
         //               folder button opens that folder's discover page.
@@ -1833,38 +1786,6 @@ struct HomeView: View {
                         onBackAtStart: onHomeBack
                     )
                 }
-            }
-        }
-    }
-
-    /// Live TV channels the viewer pinned to Home. Drawn from the stored
-    /// favourites, so this needs neither the Live TV tab to have been visited
-    /// nor the IPTV playlist to be loaded.
-    @ViewBuilder
-    private var liveChannelsRow: some View {
-        let pinned = liveFavorites.homeChannels
-        if !pinned.isEmpty {
-            VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-                RowHeader(title: "Live Channels")
-                    .padding(.leading, OrivioSpacing.sm)
-                ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: OrivioSpacing.lg) {
-                        ForEach(pinned) { favorite in
-                            Button { onPlayChannel(LiveChannel(favorite)) } label: {
-                                HomeLiveChannelCard(favorite: favorite)
-                                    // No hand-off handler — the note keeps the
-                                    // router honest so leaving the rail from
-                                    // here falls back to the engine instead of
-                                    // teleporting to the last ROUTED row.
-                                    .onFocusChange { if $0 { ContentFocusRouter.shared.noteFocused(row: "live") } }
-                            }
-                            .buttonStyle(PlainCardButtonStyle())
-                            .channelHoldMenu(favorite)
-                        }
-                    }
-                    .padding(.vertical, OrivioSpacing.lg)
-                }
-                .scrollClipDisabled()
             }
         }
     }
@@ -3101,9 +3022,8 @@ private struct HeroTrailerLayer: View {
         // Backgrounding pauses the muted player for good; resume on return.
         .onReceive(NotificationCenter.default.publisher(
             for: UIApplication.didBecomeActiveNotification)) { _ in player?.play() }
-        // A pinned Live TV channel starts the real player straight FROM Home,
-        // with no push to fire `onDisappear` — don't keep a second decoder
-        // looping behind the movie.
+        // Playback can start straight FROM Home, with no push to fire
+        // `onDisappear` — don't keep a second decoder looping behind the movie.
         // A `.task` gated on `player`, not a timer publisher: the old
         // `.onReceive(Timer.publish…)` built a fresh publisher on every body
         // evaluation (this layer re-renders on every settled hero change), so

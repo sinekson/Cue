@@ -897,14 +897,9 @@ struct ContentDiscoveryDetail: View {
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
-    @ObservedObject private var liveTV = LiveTVSettingsStore.shared
     @State private var showAddons = false
     @State private var badgeURLInput = ""
     @State private var badgeImporting = false
-    @State private var iptvURLInput = ""
-    @State private var iptvImporting = false
-    @State private var iptvStatus: String?
-    @State private var showIPTVPhoneAdd = false
 
     var body: some View {
         DetailScaffold(title: SettingsCategory.contentDiscovery.title, subtitle: SettingsCategory.contentDiscovery.subtitle) {
@@ -932,38 +927,6 @@ struct ContentDiscoveryDetail: View {
                     ]
                 ) { homeCatalogSettings.autoRefreshMinutes = Int($0) ?? 0 }
             }
-            SettingsGroupCard(title: "Live TV", subtitle: "The Live TV tab, and where its channels come from") {
-                SettingsToggleCard(
-                    title: "Live TV tab",
-                    subtitle: "Show the Live TV tab in the sidebar. Off: it's hidden until you turn this back on.",
-                    isOn: $liveTV.enabled
-                )
-
-                if liveTV.enabled {
-                    iptvPlaylistControls
-
-                    // Location/language are paths into iptv-org's playlist
-                    // tree — meaningless against a custom playlist, so they
-                    // hide rather than sit there doing nothing.
-                    if !liveTV.usesCustomPlaylist {
-                        OrivioDropdown(
-                            title: "Location",
-                            subtitle: "Load channels for this country. All countries = the full global list.",
-                            icon: "globe",
-                            selection: liveTV.countryCode,
-                            options: LiveTVSettingsStore.countries.map { OrivioDropdownOption($0.code, $0.name) }
-                        ) { liveTV.countryCode = $0 }
-
-                        OrivioDropdown(
-                            title: "Preferred language",
-                            subtitle: "Only show channels in this language, wherever they're from. Location is used only when no language is set.",
-                            icon: "character.bubble",
-                            selection: liveTV.languageCode,
-                            options: LiveTVSettingsStore.languages.map { OrivioDropdownOption($0.code, $0.name) }
-                        ) { liveTV.languageCode = $0 }
-                    }
-                }
-            }
             SettingsGroupCard(title: "Badges", subtitle: "Badge packs from Badger (nintle.github.io/Badger) shown on source rows") {
                 badgeControls
             }
@@ -978,96 +941,6 @@ struct ContentDiscoveryDetail: View {
             .environmentObject(collections)
             .environmentObject(homeCatalogSettings)
             .onExitCommand { showAddons = false }
-        }
-    }
-
-    /// Custom IPTV playlist: paste an M3U/M3U8 URL, validate it by actually
-    /// fetching and parsing it (a URL that yields zero channels is refused —
-    /// storing it would just blank the Live TV tab), then it REPLACES the
-    /// built-in iptv-org list until removed. Same shape as the badge import
-    /// below.
-    @ViewBuilder
-    private var iptvPlaylistControls: some View {
-        if liveTV.usesCustomPlaylist {
-            HStack(spacing: OrivioSpacing.md) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(theme.palette.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Custom playlist active")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(theme.palette.textPrimary)
-                    Text(liveTV.customPlaylistURL)
-                        .font(.system(size: 17))
-                        .foregroundStyle(theme.palette.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Button("Remove") {
-                    liveTV.customPlaylistURL = ""
-                    iptvStatus = nil
-                }
-                .font(.system(size: 22, weight: .semibold))
-            }
-            .padding(.vertical, 4)
-            Text("Live TV shows the channels from your playlist instead of the built-in list. Remove it to bring the built-in list back.")
-                .font(.system(size: 18))
-                .foregroundStyle(theme.palette.textTertiary)
-        } else {
-            // Playlist URLs are long; the QR page (the add-ons phone-paste
-            // server, re-worded) is the comfortable way in. The field below
-            // stays for short URLs and boxes with no phone handy.
-            Button { showIPTVPhoneAdd = true } label: {
-                SettingsActionRow(
-                    title: "Add from Phone",
-                    subtitle: "Scan a QR code and paste your playlist URL from your phone's browser",
-                    leadingIcon: "qrcode"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-            .fullScreenCover(isPresented: $showIPTVPhoneAdd) {
-                IPTVPhoneAddView { showIPTVPhoneAdd = false }
-                    .environmentObject(theme)
-            }
-
-            HStack(spacing: OrivioSpacing.md) {
-                TextField("Custom M3U playlist URL", text: $iptvURLInput)
-                    .font(.system(size: 22))
-                Button {
-                    guard !iptvImporting else { return }
-                    var url = iptvURLInput.trimmingCharacters(in: .whitespaces)
-                    guard !url.isEmpty else { return }
-                    if !url.contains("://") { url = "https://" + url }
-                    iptvImporting = true
-                    iptvStatus = nil
-                    Task {
-                        let channels = await M3UService.channels(from: url)
-                        if channels.isEmpty {
-                            iptvStatus = "No channels found at that URL — check it points to an M3U/M3U8 playlist."
-                        } else {
-                            liveTV.customPlaylistURL = url
-                            iptvStatus = nil
-                            iptvURLInput = ""
-                        }
-                        iptvImporting = false
-                    }
-                } label: {
-                    if iptvImporting {
-                        ProgressView()
-                    } else {
-                        Text("Add")
-                            .font(.system(size: 22, weight: .semibold))
-                    }
-                }
-            }
-            if let iptvStatus {
-                Text(iptvStatus)
-                    .font(.system(size: 19))
-                    .foregroundStyle(theme.palette.textSecondary)
-            }
-            Text("Paste the URL of your own IPTV playlist (M3U/M3U8) to use it instead of the built-in channel list. The location and language filters below apply only to the built-in list.")
-                .font(.system(size: 18))
-                .foregroundStyle(theme.palette.textTertiary)
         }
     }
 

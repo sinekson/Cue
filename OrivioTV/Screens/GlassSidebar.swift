@@ -1,25 +1,21 @@
 import SwiftUI
 
-/// The primary sidebar destinations. `liveTV` is declared LAST so its raw
-/// value (4) is stable and doesn't renumber `settings` (3) — the app keys tab
-/// state off these ints in many places. For display it sits ABOVE Settings via
-/// `sidebarOrder`.
+/// The primary sidebar destinations. The app keys tab state off these raw
+/// ints in many places, so don't renumber them.
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, search, library, settings, liveTV
+    case home, search, library, settings
     var id: Int { rawValue }
 
-    /// Order the navigation renders in (Live TV before Settings, despite raw
-    /// value).
-    static let sidebarOrder: [AppTab] = [.home, .library, .search, .liveTV, .settings]
+    /// Order the navigation renders in.
+    static let sidebarOrder: [AppTab] = [.home, .library, .search, .settings]
     /// The top navigation: the search icon first, left of Home.
-    static let topBarOrder: [AppTab] = [.search, .home, .library, .liveTV, .settings]
+    static let topBarOrder: [AppTab] = [.search, .home, .library, .settings]
 
     var label: String {
         switch self {
         case .home: return "Home"
         case .search: return "Search"
         case .library: return "Library"
-        case .liveTV: return "Live TV"
         case .settings: return "Settings"
         }
     }
@@ -29,7 +25,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .home: return "house.fill"
         case .search: return "magnifyingglass"
         case .library: return "bookmark.fill"
-        case .liveTV: return "tv.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -43,7 +38,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
 struct GlassSidebar: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var profiles: ProfileStore
-    @ObservedObject private var liveTV = LiveTVSettingsStore.shared
     @Binding var selected: Int
     var focusBinding: FocusState<Int?>.Binding
     var onProfileTap: () -> Void = {}
@@ -105,7 +99,7 @@ struct GlassSidebar: View {
     /// the page underneath follows as you browse the tabs. Select on a tab
     /// (or Down) goes into its content.
     private var horizontalBody: some View {
-        let tabs = AppTab.topBarOrder.filter { $0 != .liveTV || liveTV.enabled }
+        let tabs = AppTab.topBarOrder
         let navFocused = focusBinding.wrappedValue != nil
         // The highlighted item: the focused one (a tab or the profile, -1)
         // while the navigation has focus, else the current tab.
@@ -249,7 +243,7 @@ struct GlassSidebar: View {
             }
 
             VStack(alignment: .leading, spacing: expanded ? 10 : 24) {
-                ForEach(AppTab.sidebarOrder.filter { $0 != .liveTV || liveTV.enabled }) { tab in
+                ForEach(AppTab.sidebarOrder) { tab in
                     Button {
                         // Fire BEFORE mutating `selected` so the root can still
                         // see which tab we're coming FROM.

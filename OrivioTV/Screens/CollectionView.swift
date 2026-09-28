@@ -859,8 +859,7 @@ struct CollectionView: View {
     }
 
     /// A folder's sources can hand back the same title twice; a repeated id
-    /// inside a `ForEach` crashes the tvOS focus engine (same rule as
-    /// `LiveTVView.uniqueByID`).
+    /// inside a `ForEach` crashes the tvOS focus engine.
     private static func uniqueItems(_ items: [MetaItem]) -> [MetaItem] {
         var seen = Set<String>()
         return items.filter { seen.insert($0.id).inserted }

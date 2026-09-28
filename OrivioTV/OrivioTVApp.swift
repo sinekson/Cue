@@ -173,7 +173,6 @@ struct RootView: View {
     @ObservedObject private var spotlightGate = SpotlightFocusGate.shared
     @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @ObservedObject private var liveTV = LiveTVSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var account: OrivioAccountManager
@@ -201,7 +200,6 @@ struct RootView: View {
     @State private var homePath = NavigationPath()
     @State private var searchPath = NavigationPath()
     @State private var libraryPath = NavigationPath()
-    @State private var liveTVPath = NavigationPath()
     // Persisted here (not inside HomeView) so switching tabs and coming back
     // doesn't rebuild it and re-trigger the catalog load / loading spinner.
     @StateObject private var homeViewModel = HomeViewModel()
@@ -224,11 +222,6 @@ struct RootView: View {
     /// manifest is fetched first (read-only), the add-on is NAMED in a
     /// confirmation, and nothing is written until the viewer presses Install.
     @State private var pendingAddonInstall: PendingAddonInstall?
-    /// Why a Live TV channel couldn't be opened — DRM the box can't decrypt, or
-    /// a YouTube relay that no longer resolves. Shown instead of letting the
-    /// player fail with a generic decode error and burn four source retries on
-    /// something that can never work.
-    @State private var liveChannelError: String?
     /// True while the manifest behind a deep link is being fetched for the
     /// prompt — keeps a second link from queueing a second dialog.
     @State private var addonInstallInFlight = false
@@ -283,17 +276,6 @@ struct RootView: View {
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
-            // If Live TV is turned off while you're on it (or via sync), drop
-            // back to Home so you're not stranded on a now-hidden tab.
-            .onChange(of: liveTV.enabled) { _, enabled in
-                if !enabled && selectedTab == 4 { selectedTab = 0 }
-                // Also drop the tab's stack. Left in place, re-enabling Live TV
-                // later rebuilt the NavigationStack with the old path intact
-                // and reopened whatever pushed screen (a channel's sources)
-                // was up when it was switched off. Pop, don't reset, per the
-                // app's own convention.
-                if !enabled, !liveTVPath.isEmpty { liveTVPath.removeLast(liveTVPath.count) }
-            }
             // Install the hold trace when the setting is switched ON, not only
             // in onAppear: turning "Hold menu probe" on mid-session used to
             // bring up the HUD with nothing to report until the next relaunch.
@@ -394,7 +376,6 @@ struct RootView: View {
                         tmdbSettings?.setProfile(id)
                         theme?.setProfile(id)
                         streamBadges?.setProfile(id)
-                        LiveChannelFavorites.shared.setProfile(id)
                         // Every store just re-pointed at another profile's
                         // data; reconcile the new picture everywhere rather
                         // than waiting for a tick.
@@ -426,7 +407,6 @@ struct RootView: View {
                         tmdbSettings?.forgetProfile(id)
                         theme?.forgetProfile(id)
                         streamBadges?.forgetProfile(id)
-                        LiveChannelFavorites.shared.forgetProfile(id)
                         orivioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
                     }
@@ -530,7 +510,7 @@ struct RootView: View {
                     AppProbe.life("root appeared — tab=\(Self.tabName(selectedTab))")
                     // Skipped in the demo modes so the screen isn't covered.
                     let args = ProcessInfo.processInfo.arguments
-                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo", "-liveTVDemo", "-searchDemo", "-libraryDemo", "-discoverDemo", "-traktQRDemo", "-simklQRDemo", "-accountDemo", "-settingsTabDemo"]
+                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-traktQRDemo", "-simklQRDemo", "-accountDemo", "-settingsTabDemo"]
                     let demoMode = demoArgs.contains { args.contains($0) }
                     // -welcomeDemo forces it regardless of the completed flag
                     // or an already-restored session, which is the only way to
@@ -544,7 +524,6 @@ struct RootView: View {
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
                     if args.contains("-settingsTabDemo") { selectedTab = 3 }
-                    if args.contains("-liveTVDemo") { selectedTab = 4 }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
                     if args.contains("-discoverDemo") {
@@ -1017,13 +996,6 @@ struct RootView: View {
         } message: { pending in
             Text("\(pending.name)\n\(pending.manifestURL)\n\nThis add-on will be able to supply catalogs, metadata and stream links to Cue.")
         }
-        .alert("Can't play this channel",
-               isPresented: Binding(get: { liveChannelError != nil },
-                                    set: { if !$0 { liveChannelError = nil } })) {
-            Button("OK", role: .cancel) { liveChannelError = nil }
-        } message: {
-            Text(liveChannelError ?? "")
-        }
         // Feed the resolved system scheme to the theme so `.system` appearance
         // under the Apple TV theme can pick the matching palette.
         .onAppear { theme.systemIsDark = colorScheme == .dark }
@@ -1038,7 +1010,6 @@ struct RootView: View {
         case 0: return homePath.isEmpty
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
-        case 4: return liveTVPath.isEmpty
         default: return true   // Settings keeps the rail
         }
     }
@@ -1350,12 +1321,6 @@ struct RootView: View {
                     .onExitCommand { focusSidebar(3) }
                     .probeScreen("Settings")
             }
-        case 4:
-            NavigationStack(path: $liveTVPath) {
-                liveTVRoot
-                    .onExitCommand { focusSidebar(4) }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: $liveTVPath) }
-            }
         default:
             NavigationStack(path: $homePath) {
                 homeRoot
@@ -1392,7 +1357,6 @@ struct RootView: View {
         case 1: return "Search"
         case 2: return "Library"
         case 3: return "Settings"
-        case 4: return "Live TV"
         default: return "Home"
         }
     }
@@ -1562,12 +1526,6 @@ struct RootView: View {
             onPlayManually: { meta, video in playManually(meta, video) },
             onPlayManuallyProgress: { playManuallyFromProgress($0) },
             onOpenCollection: { homePath.append(Route.collection($0)) },
-            // A pinned channel plays exactly as it would from the Live TV tab:
-            // an M3U channel straight away, an add-on channel via the picker.
-            onPlayChannel: { channel in
-                if channel.directURL != nil { playLiveChannel(channel) }
-                else if let meta = channel.meta { homePath.append(Route.streams(meta, nil)) }
-            },
             onSeeAll: { addon, catalog, title in
                 homePath.append(Route.catalogSeeAll(addon: addon, catalog: catalog, title: title))
             },
@@ -1603,14 +1561,6 @@ struct RootView: View {
             onBackAtRoot: { focusSidebar(2) }
         )
         .probeScreen("Library")
-    }
-
-    private var liveTVRoot: some View {
-        LiveTVView(
-            onSelectChannel: { channel in liveTVPath.append(Route.streams(channel, nil)) },
-            onPlayDirect: { channel in playLiveChannel(channel) }
-        )
-        .probeScreen("Live TV")
     }
 
     /// Shared navigation destinations. `path` is the binding for whichever
@@ -1891,59 +1841,6 @@ struct RootView: View {
     /// the stream straight to the chosen player (Infuse etc.) instead of
     /// opening Orivio's own player; if the chosen app was uninstalled, any
     /// other installed one is used; none installed → play internally.
-    /// Play a direct Live TV channel (M3U): wrap its URL in a one-off stream and
-    /// go straight to the player — no source picker, no debrid.
-    private func playLiveChannel(_ channel: LiveChannel) {
-        guard let rawURL = channel.directURL else { return }
-        // A `|Header=Value` suffix can reach here on a channel that came from
-        // somewhere other than the playlist parser (a favourite stored by an
-        // older build, an add-on). Splitting again is idempotent.
-        let split = LiveStreamClassifier.splitPipedOptions(rawURL)
-        var options = channel.options
-        options.merge(split.options)
-
-        // Say WHY an encrypted channel can't play. Handing a DRM-protected
-        // manifest to the player produces a generic decode failure and four
-        // pointless source retries; tvOS gives third-party apps no Widevine or
-        // PlayReady CDM at all, so this can only ever fail.
-        if let reason = options.unsupportedDRMReason {
-            liveChannelError = reason
-            return
-        }
-
-        Task { @MainActor in
-            var playURL = split.url
-            // YouTube links are pages, not media. Community playlists are full
-            // of 24/7 relays published as ordinary watch/live URLs, and handing
-            // one straight to a player fetches HTML.
-            if LiveStreamClassifier.isYouTube(playURL) {
-                guard let resolved = await LiveStreamResolver.resolveYouTube(playURL) else {
-                    liveChannelError = "Couldn't open this YouTube channel. YouTube may have "
-                        + "ended the broadcast or changed how it serves this video."
-                    return
-                }
-                playURL = resolved.url
-                options.merge(resolved.options)
-            }
-
-            let hints = options.requestHeaders.map {
-                StreamBehaviorHints(proxyHeaders: StreamProxyHeaders(request: $0))
-            }
-            let stream = Stream(name: "Live", title: channel.name, description: nil,
-                                url: playURL, infoHash: nil, behaviorHints: hints)
-            let entry = StreamEntry(addonName: "Live TV", stream: stream)
-            let meta = MetaItem(id: channel.id, type: "tv", name: channel.name,
-                                poster: channel.logo, background: channel.logo, logo: channel.logo)
-            startPlayback(PlaybackRequest(
-                meta: meta, video: nil, entry: entry, allEntries: [entry], resumePosition: nil,
-                // RTMP/RTSP/UDP and DASH cannot be opened by AVPlayer at all,
-                // so the engine preference must not be honoured for them —
-                // with Native selected the channel would simply fail.
-                forceDemuxer: LiveStreamClassifier.kind(for: playURL, options: options) == .demuxer
-            ))
-        }
-    }
-
     /// Pop the source page off the active tab's stack after an Auto Link
     /// Selector auto-play, so backing out of the player returns to the title
     /// page. Safe here because the player has fully closed by now. The player
@@ -1975,7 +1872,6 @@ struct RootView: View {
         case 0: if !homePath.isEmpty { homePath.removeLast() }
         case 1: if !searchPath.isEmpty { searchPath.removeLast() }
         case 2: if !libraryPath.isEmpty { libraryPath.removeLast() }
-        case 4: if !liveTVPath.isEmpty { liveTVPath.removeLast() }
         default: break
         }
     }
@@ -2288,7 +2184,6 @@ struct RootView: View {
             switch selectedTab {
             case 1: if !searchPath.isEmpty { searchPath.removeLast(searchPath.count) }
             case 2: if !libraryPath.isEmpty { libraryPath.removeLast(libraryPath.count) }
-            case 4: if !liveTVPath.isEmpty { liveTVPath.removeLast(liveTVPath.count) }
             default: break
             }
             if !homePath.isEmpty { homePath.removeLast(homePath.count) }

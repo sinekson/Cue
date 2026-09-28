@@ -45,8 +45,8 @@ final class AddonImportServer: ObservableObject {
 
     /// Page copy, with the add-on flow's wording as the default. The server
     /// is deliberately generic — anything pasted goes through `onInstall` —
-    /// so other paste-from-phone flows (the custom IPTV playlist) reuse it by
-    /// swapping these before `start()`.
+    /// so other paste-from-phone flows can reuse it by swapping these before
+    /// `start()`.
     var pageTitle = "Add add-ons"
     var pagePrompt = "Paste one manifest URL, or a whole Add-on Setup export — one URL per line. Scanning the Export Add-on Setup QR from another Orivio gives you exactly that list."
     var pagePlaceholder = "https://…/manifest.json"
