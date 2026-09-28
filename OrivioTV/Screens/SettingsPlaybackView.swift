@@ -147,8 +147,6 @@ struct PlaybackSettingsDetail: View {
                 )
             }
 
-            // Advanced-only cards (hidden in Essential experience mode).
-            if theme.experienceMode.isAdvanced {
             SettingsGroupCard(title: "Auto-play source", subtitle: "Skip the Sources page and start playing on its own") {
                 PlaybackToggleRow(
                     icon: "play.circle.fill",
@@ -305,7 +303,6 @@ struct PlaybackSettingsDetail: View {
                     options: AudioOutputMode.allCases.map { OrivioDropdownOption($0.rawValue, $0.label) }
                 ) { store.settings.audioOutputMode = AudioOutputMode(rawValue: $0) ?? .auto }
             }
-            } // end advanced-only cards
 
             SettingsGroupCard(title: "Subtitles", subtitle: "How captions look and when they turn on") {
                 PlaybackToggleRow(

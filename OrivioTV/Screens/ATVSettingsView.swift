@@ -11,12 +11,9 @@ struct ATVSettingsView: View {
     var onOpenProfiles: () -> Void = {}
 
     /// Categories that get a plain pushed row, in tvOS-Settings-ish order.
-    /// Appearance/Themes are handled by the dedicated section up top.
+    /// Account has its own section up top.
     private var generalCategories: [SettingsCategory] {
-        let hidden: Set<SettingsCategory> = [.appearance, .account]
-        return SettingsCategory.allCases.filter {
-            !hidden.contains($0) && (theme.experienceMode.isAdvanced || !$0.isAdvanced)
-        }
+        SettingsCategory.allCases.filter { $0 != .account }
     }
 
     var body: some View {
@@ -26,13 +23,6 @@ struct ATVSettingsView: View {
                     .font(FusionType.pageTitle(theme.font))
                     .foregroundStyle(theme.palette.textPrimary)
                     .padding(.top, OrivioSpacing.xl)
-
-                ATVSettingsSection(title: "Appearance") {
-                    NavigationLink(value: SettingsCategory.appearance) {
-                        ATVRowLabel(title: "Appearance", value: theme.palette.displayName)
-                    }
-                    .buttonStyle(ATVRowButtonStyle())
-                }
 
                 ATVSettingsSection(title: "Users & Accounts") {
                     NavigationLink(value: SettingsCategory.account) {

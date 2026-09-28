@@ -670,7 +670,6 @@ final class OrivioSyncManager: ObservableObject {
         // App preferences (player / TMDB / theme) share one own-feature blob.
         playerSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         tmdbSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
-        themeManager?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         // Trakt tokens live only in the dedicated provider_credentials table.
         traktStore?.onLocalChange = { [weak self] in self?.scheduleProviderCredentialsPush() }
         homeCatalogSettings.onPresentationChange = { [weak self] in self?.scheduleAppPreferencesPush() }
@@ -1308,7 +1307,6 @@ final class OrivioSyncManager: ObservableObject {
         addonManager.setProfile(addonPID(for: id))
         playerSettings?.setProfile(id)
         tmdbSettings?.setProfile(id)
-        themeManager?.setProfile(id)
         streamBadges?.setProfile(id)
     }
 
@@ -3558,7 +3556,6 @@ final class OrivioSyncManager: ObservableObject {
         lastPushedAppPrefs = nil
         playerSettings.applyRemote(snapshot.player)
         tmdbSettings.applyRemote(snapshot.tmdb)
-        themeManager.applyRemote(snapshot.theme)
         WatchHistoryClearState.adopt(snapshot.watchHistoryClearedAt)
         if let home = snapshot.home { homeCatalogSettings.applyRemotePresentation(home) }
         if let collections = snapshot.collections, !collectionsDirty {

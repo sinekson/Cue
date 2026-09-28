@@ -177,7 +177,6 @@ struct RootView: View {
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var ratings: RatingsStore
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.colorScheme) private var colorScheme
 
     // One navigation stack per tab (tvOS expects TabView at the top level with
     // an independent NavigationStack inside each tab; a shared stack under one
@@ -342,7 +341,7 @@ struct RootView: View {
                     // per-profile boundary, ported wholesale.
                     profiles.onSwitchLocal = { [weak trakt, weak simkl, weak ratings, weak addonManager,
                                                 weak playerSettings,
-                                                weak tmdbSettings, weak theme, weak streamBadges,
+                                                weak tmdbSettings, weak streamBadges,
                                                 weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
                         trakt?.setProfile(id)
@@ -351,7 +350,6 @@ struct RootView: View {
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
-                        theme?.setProfile(id)
                         streamBadges?.setProfile(id)
                         // Every store just re-pointed at another profile's
                         // data; reconcile the new picture everywhere rather
@@ -373,14 +371,13 @@ struct RootView: View {
                           AppGroupResolver.sharedFile("topshelf.json")?.path ?? "UNAVAILABLE")
                     profiles.onProfileDeleted = { [weak trakt, weak simkl, weak addonManager,
                                                    weak playerSettings,
-                                                   weak tmdbSettings, weak theme, weak streamBadges,
+                                                   weak tmdbSettings, weak streamBadges,
                                                    weak orivioSync] id in
                         trakt?.forgetProfile(id)
                         simkl?.forgetProfile(id)
                         addonManager?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
-                        theme?.forgetProfile(id)
                         streamBadges?.forgetProfile(id)
                         orivioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
@@ -838,14 +835,6 @@ struct RootView: View {
     }
 
     private var content: some View {
-        // Dev-only: `-settingsDemo` renders Settings full-screen (no sidebar) so
-        // the settings chrome can be screenshotted cleanly in the sim.
-        if ProcessInfo.processInfo.arguments.contains("-settingsDemo") {
-            return AnyView(
-                SettingsView()
-                    .background(theme.palette.background.ignoresSafeArea())
-            )
-        }
         // Dev-only: open a detail page directly, so the page's opening focus
         // and the hold-Select menu on Play can be driven from a UI test
         // without navigating through Home. `-detailSeries` renders a show
@@ -962,10 +951,6 @@ struct RootView: View {
         } message: { pending in
             Text("\(pending.name)\n\(pending.manifestURL)\n\nThis add-on will be able to supply catalogs, metadata and stream links to Cue.")
         }
-        // Feed the resolved system scheme to the theme so `.system` appearance
-        // under the Apple TV theme can pick the matching palette.
-        .onAppear { theme.systemIsDark = colorScheme == .dark }
-        .onChange(of: colorScheme) { _, scheme in theme.systemIsDark = scheme == .dark }
     }
 
     /// Whether the current tab is at its root (no pushed screen). When a

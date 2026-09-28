@@ -128,194 +128,28 @@ enum AppFont: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-/// How much of the settings surface to expose (mirrors Android's
-/// ExperienceMode). Essential hides the most technical options.
-enum ExperienceMode: String, CaseIterable, Identifiable, Codable {
-    case essential, advanced
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .essential: return "Essential"
-        case .advanced: return "Advanced"
-        }
-    }
-    var summary: String {
-        switch self {
-        case .essential: return "A simpler settings screen with just the everyday options"
-        case .advanced: return "Every option, including engine, OSD and tuning controls"
-        }
-    }
-    var isAdvanced: Bool { self == .advanced }
-}
-
-/// Settings-screen presentation style (mirrors Android's SettingsUiStyle).
-/// Drives the corner radius of settings rows/cards.
-enum SettingsUiStyle: String, CaseIterable, Identifiable, Codable {
-    case classic, zen, horizon
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .classic: return "Classic"
-        case .zen: return "Zen"
-        case .horizon: return "Horizon"
-        }
-    }
-    var summary: String {
-        switch self {
-        case .classic: return "Soft rounded cards"
-        case .zen: return "Pill-shaped rows"
-        case .horizon: return "Sharp, squared edges"
-        }
-    }
-    /// Corner radius for settings rows in this style.
-    var rowRadius: CGFloat {
-        switch self {
-        case .classic: return 12
-        case .zen: return 28
-        case .horizon: return 2
-        }
-    }
-    /// Corner radius for the larger settings group cards.
-    var cardRadius: CGFloat {
-        switch self {
-        case .classic: return 18
-        case .zen: return 34
-        case .horizon: return 2
-        }
-    }
-}
-
-/// The synced slice of the theme. `paletteID` and `amoled` are fixed now but
-/// kept so the blob keeps its shape; fields older builds wrote (app theme,
-/// appearance, per-axis looks) are ignored on decode.
+/// The synced slice of the theme. Every field is fixed now but still written
+/// so the blob keeps its shape; fields older builds wrote are ignored.
 struct ThemeSnapshot: Codable, Equatable {
     var paletteID: String
     var amoled: Bool
     var font: AppFont
-    /// Default advanced so existing users keep the full settings surface.
-    var experienceMode: ExperienceMode = .advanced
-    var settingsUiStyle: SettingsUiStyle = .classic
 }
 
+/// The app's single look. Nothing here is configurable any more — one
+/// palette, the system font, always dark — but screens read it from the
+/// environment, so it stays one object.
 @MainActor
 final class ThemeManager: ObservableObject {
-    /// App-wide font family (applied at the root with `.fontDesign`).
-    @Published var font: AppFont {
-        didSet {
-            UserDefaults.standard.set(font.rawValue, forKey: scoped(Self.fontKey))
-            if !applyingRemote { onLocalChange?() }
-        }
-    }
-    /// Settings-surface complexity (Essential hides advanced options).
-    @Published var experienceMode: ExperienceMode {
-        didSet {
-            UserDefaults.standard.set(experienceMode.rawValue, forKey: scoped(Self.experienceKey))
-            if !applyingRemote { onLocalChange?() }
-        }
-    }
-    /// Settings-screen presentation style (row/card shape).
-    @Published var settingsUiStyle: SettingsUiStyle {
-        didSet {
-            UserDefaults.standard.set(settingsUiStyle.rawValue, forKey: scoped(Self.settingsStyleKey))
-            if !applyingRemote { onLocalChange?() }
-        }
-    }
-    /// The system's resolved scheme, fed in by the root view. Defaults dark.
-    @Published var systemIsDark = true
-
-    /// Corner radius for settings rows under the current style.
-    var settingsRowRadius: CGFloat { settingsUiStyle.rowRadius }
-    /// Corner radius for the larger settings group cards under the current style.
-    var settingsCardRadius: CGFloat { settingsUiStyle.cardRadius }
-
-    /// Fired on a local (user-driven) theme change so the sync manager pushes it.
-    var onLocalChange: (() -> Void)?
-    private var applyingRemote = false
-
-    private static let fontKey = "orivio.theme.font"
-    private static let experienceKey = "orivio.theme.experience"
-    private static let settingsStyleKey = "orivio.theme.settingsstyle"
-
-    /// Theme is PER PROFILE (upstream scopes `theme_settings` per profile —
-    /// each family member keeps their own accent, font, and settings style).
-    /// The legacy device-wide keys go to the PRIMARY profile; other profiles
-    /// start at the shipped look (Trakt-switch semantics).
-    private(set) var profileID: Int
-
-    /// Separate-vs-shared switch (Trakt-style). Shared = one look for the
-    /// whole device, the pre-split behaviour.
-    static let feature = "theme"
-    var perProfileEnabled: Bool { ProfileScopedDefaults.isSeparate(Self.feature) }
-
-    func setPerProfile(_ on: Bool) {
-        guard on != perProfileEnabled else { return }
-        ProfileScopedDefaults.setSeparate(Self.feature, on)
-        reloadAppearance()
-    }
-
-    private func scoped(_ base: String) -> String {
-        ProfileScopedDefaults.writeKey(base, feature: Self.feature, profileID)
-    }
-
-    init() {
-        let pid = ProfileScopedDefaults.activeProfileID
-        profileID = pid
-        let feature = Self.feature
-        font = AppFont(rawValue: ProfileScopedDefaults.string(Self.fontKey, feature: feature, pid) ?? "") ?? .system
-        experienceMode = ExperienceMode(rawValue: ProfileScopedDefaults.string(Self.experienceKey, feature: feature, pid) ?? "") ?? .advanced
-        settingsUiStyle = SettingsUiStyle(rawValue: ProfileScopedDefaults.string(Self.settingsStyleKey, feature: feature, pid) ?? "") ?? .classic
-    }
-
-    /// Point the manager at a profile — the whole look swaps with it.
-    func setProfile(_ id: Int) {
-        guard id != profileID else { return }
-        profileID = id
-        reloadAppearance()
-    }
-
-    /// Re-read every appearance value for the current profile + mode.
-    private func reloadAppearance() {
-        applyingRemote = true
-        defer { applyingRemote = false }
-        let feature = Self.feature
-        let id = profileID
-        font = AppFont(rawValue: ProfileScopedDefaults.string(Self.fontKey, feature: feature, id) ?? "") ?? .system
-        experienceMode = ExperienceMode(rawValue: ProfileScopedDefaults.string(Self.experienceKey, feature: feature, id) ?? "") ?? .advanced
-        settingsUiStyle = SettingsUiStyle(rawValue: ProfileScopedDefaults.string(Self.settingsStyleKey, feature: feature, id) ?? "") ?? .classic
-    }
-
-    /// Forget a deleted profile's theme so a recycled id starts from the seed.
-    func forgetProfile(_ id: Int) {
-        ProfileScopedDefaults.forget(
-            [Self.fontKey, Self.experienceKey, Self.settingsStyleKey],
-            profile: id
-        )
-        if id == profileID { reloadAppearance() }
-    }
-
-    /// Current theme as a syncable snapshot. The palette and AMOLED fields are
-    /// fixed (one palette, never AMOLED) but still written so the blob keeps
-    /// its shape; the retired per-theme axes stay nil.
-    var snapshot: ThemeSnapshot {
-        ThemeSnapshot(
-            paletteID: OrivioThemes.white.id, amoled: false, font: font,
-            experienceMode: experienceMode, settingsUiStyle: settingsUiStyle
-        )
-    }
-
-    /// Apply a snapshot pulled from the account without echoing it back up.
-    /// Palette, AMOLED and theme/variant fields are ignored — the app has
-    /// exactly one look now.
-    func applyRemote(_ s: ThemeSnapshot) {
-        applyingRemote = true
-        font = s.font
-        experienceMode = s.experienceMode
-        settingsUiStyle = s.settingsUiStyle
-        applyingRemote = false
-    }
-
+    /// App-wide font family.
+    var font: AppFont { .system }
     /// Root-level font design applied app-wide.
     var rootFontDesign: Font.Design { font.design }
+
+    /// Corner radius for settings rows.
+    var settingsRowRadius: CGFloat { 12 }
+    /// Corner radius for the larger settings group cards.
+    var settingsCardRadius: CGFloat { 18 }
 
     /// The app renders dark, always.
     var preferredColorScheme: ColorScheme? { .dark }
@@ -327,10 +161,11 @@ final class ThemeManager: ObservableObject {
     /// graphite, so the hero band ends without a seam.
     var stageBlend: Color { ATVStage.blend }
 
-    // NOTE: `effectiveFocusGlow` and `ThemePalette.focusGlow` were removed.
-    // `focusGlow` was only ever written by the never-called `ATVPalettes.adapt`,
-    // so it was always `.clear` and every `.shadow(color: effectiveFocusGlow)`
-    // in the app drew nothing. The no-op shadows went with it.
+    /// Written into the synced preferences blob so it keeps its shape; the
+    /// values are the fixed look, and nothing reads them back.
+    var snapshot: ThemeSnapshot {
+        ThemeSnapshot(paletteID: OrivioThemes.white.id, amoled: false, font: font)
+    }
 }
 
 /// Spacing scale ported from Orivio's SpacingTokens.

@@ -1,22 +1,14 @@
 import SwiftUI
 
-/// Settings categories shown in the left rail. Order, titles, icons and
-/// subtitles match the Android app's `SettingsSectionSpec` list exactly.
-/// (The APK's mode-gated Experience/Advanced/Debug sections aren't ported —
-/// those are unbuilt features.) The APK folds add-ons, catalogs and
-/// collections into one "Content & Discovery" section.
+/// Settings categories, each a pushed pane on the Settings screen.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    // Matches the live APK rail (Essential mode): no Account/Profiles (those
-    // live on the sidebar profile avatar). Only categories whose settings are
-    // actually wired up are shown — no stub panes.
-    case account, appearance, layout, contentDiscovery, integration, playback, performance, trakt, about
+    case account, layout, contentDiscovery, integration, playback, performance, trakt, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .account: return "Account"
-        case .appearance: return "Appearance"
         case .layout: return "Layout"
         case .contentDiscovery: return "Content & Discovery"
         case .integration: return "Integrations"
@@ -30,7 +22,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .account: return "Orivio account and profiles"
-        case .appearance: return "Theme, accent color, and font"
         case .layout: return "Home structure and poster styles"
         case .contentDiscovery: return "Add-ons, catalogs, and collections"
         case .integration: return "Manage available integrations"
@@ -45,7 +36,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .account: return "person.crop.circle.fill"
-        case .appearance: return "paintpalette.fill"
         case .layout: return "square.grid.2x2.fill"
         case .contentDiscovery: return "safari.fill"
         case .integration: return "link"
@@ -56,146 +46,14 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Categories hidden from the rail in Essential experience mode.
-    var isAdvanced: Bool { false }
-
-    /// Shorter label for the narrow rail (the detail header still uses `title`).
-    var railTitle: String {
-        switch self {
-        case .contentDiscovery: return "Content"
-        default: return title
-        }
-    }
 }
 
-struct SettingsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var profiles: ProfileStore
-    @EnvironmentObject private var account: OrivioAccountManager
-    @EnvironmentObject private var trakt: TraktStore
-    @FocusState private var railFocus: SettingsCategory?
-    /// True while focus is inside the rail; used to tell the entry event apart
-    /// from in-rail moves (entry snaps to `selected` instead of previewing).
-    @State private var inRail = false
-
-    // Dev: the settings demo opens on Layout (a content-rich, scrollable pane)
-    // so the workspace card + grouped cards + fit can be screenshot-verified.
-    @State private var selected: SettingsCategory = {
-        let args = ProcessInfo.processInfo.arguments
-        if args.contains("-paneAccount") { return .account }
-        if args.contains("-paneTrakt") { return .trakt }
-        if args.contains("-paneLayout") { return .layout }
-        if args.contains("-paneContent") { return .contentDiscovery }
-        if args.contains("-paneIntegration") { return .integration }
-        if args.contains("-panePlayback") { return .playback }
-        if args.contains("-panePerformance") { return .performance }
-        if args.contains("-paneAbout") { return .about }
-        return .appearance
-    }()
-
-    // Matches the APK's default "Classic" settings: everything sits inside a
-    // rounded "workspace" card (inset from the screen edges, faint border) with
-    // a vertical rail of tall pill buttons on the LEFT and the detail pane on
-    // the RIGHT. Focusing a rail pill live-previews its detail (as the APK
-    // does); both regions are focus sections so Right enters the detail and
-    // Left returns to the rail without locking up.
-    /// Rail categories, minus advanced ones when Essential mode is on.
-    private var visibleCategories: [SettingsCategory] {
-        SettingsCategory.allCases.filter { theme.experienceMode.isAdvanced || !$0.isAdvanced }
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: OrivioSpacing.xl) {
-            rail
-            detail
-                // Fill the pane instead of capping at 900 — the old cap left
-                // the right ~40% empty and forced descriptions to truncate.
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .focusSection()
-        }
-        // Essential mode may hide the category you're viewing — fall back.
-        .onChange(of: theme.experienceMode) { _, _ in
-            if !visibleCategories.contains(selected) { selected = .appearance }
-        }
-        .padding(OrivioSpacing.lg)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The APK "workspace" card: rounded (28dp), BackgroundElevated fill,
-        // hairline border, inset from the screen edges on near-black. Content is
-        // CLIPPED to the card so scrolled detail rows never spill outside it.
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(theme.palette.backgroundElevated)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(OrivioPrimitives.neutral750, lineWidth: 1)
-        )
-        .padding(.horizontal, OrivioSpacing.xxl)
-        .padding(.vertical, OrivioSpacing.xl)
-        .background(ATVBackground())
-    }
-
-    // MARK: - Vertical rail (Classic — tall pills)
-
-    private var rail: some View {
-        // 220dp rail, pills vertically centered (matches the APK's
-        // spacedBy(10, CenterVertically)). 10 categories fit at 56dp each.
-        VStack(spacing: OrivioSpacing.sm) {
-            ForEach(visibleCategories) { category in
-                Button {
-                    selected = category
-                } label: {
-                    SettingsRailButton(category: category, selected: selected == category)
-                }
-                .buttonStyle(PlainCardButtonStyle())
-                .focused($railFocus, equals: category)
-                // Live-preview: focusing a pill shows its detail (APK behavior)
-                // — EXCEPT on the entry event. tvOS enters the rail at the
-                // geometrically nearest pill; snapping back to `selected` there
-                // keeps the pane you were on. Later moves preview normally.
-                .onFocusChange { focused in
-                    guard focused else { return }
-                    if inRail {
-                        selected = category
-                    } else {
-                        inRail = true
-                        if category != selected { railFocus = selected }
-                    }
-                }
-            }
-        }
-        .frame(width: 300)
-        .frame(maxHeight: .infinity, alignment: .center)
-        .focusSection()
-        // Entering the rail lands on the pane you're viewing, not a stale row.
-        .defaultFocus($railFocus, selected)
-        .onChange(of: railFocus) { _, newValue in
-            if newValue == nil { inRail = false }
-        }
-    }
-
-    // MARK: - Detail
-
-    private var detail: some View {
-        SettingsCategoryPane(category: selected)
-    }
-}
-
-/// The detail pane for one settings category.
-///
-/// Every settings shell renders the SAME panes — Classic's two-pane rail, the
-/// Apple TV list, Stremio, Max and Hulu. This is the single switch they all go
-/// through, so adding or retiring a category is one edit, not five (each shell
-/// keeps its own chrome around this).
 struct SettingsCategoryPane: View {
     let category: SettingsCategory
 
     var body: some View {
         switch category {
         case .account:           AccountSettingsDetail()
-        case .appearance:        AppearanceDetail()
         case .layout:            LayoutSettingsDetail()
         case .contentDiscovery:  ContentDiscoveryDetail()
         case .integration:       IntegrationsDetail()
@@ -204,60 +62,6 @@ struct SettingsCategoryPane: View {
         case .trakt:             TraktDetail()
         case .about:             AboutDetail()
         }
-    }
-}
-
-// MARK: - Rail button (Classic — icon + title + chevron, pill highlight)
-
-private struct SettingsRailButton: View {
-    @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let category: SettingsCategory
-    let selected: Bool
-
-    private var active: Bool { isFocused || selected }
-
-    // Selected pill = solid accent fill with dark text (a real "you are here"
-    // marker); focused-but-not-selected = accent ring on a faint fill; idle =
-    // fully transparent so the rail reads as a clean list, not a stack of boxes.
-    private var textColor: Color {
-        if selected { return theme.palette.onSecondary }
-        return isFocused ? theme.palette.textPrimary : theme.palette.textSecondary
-    }
-
-    var body: some View {
-        HStack(spacing: OrivioSpacing.sm) {
-            Image(systemName: category.icon)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(textColor)
-                .frame(width: 24)
-            Text(category.railTitle)
-                .font(.system(size: 21, weight: active ? .bold : .medium))
-                .foregroundStyle(textColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Spacer(minLength: OrivioSpacing.xs)
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 58)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    selected ? theme.palette.secondary
-                    : (isFocused ? theme.palette.backgroundCard.opacity(0.6) : Color.clear)
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(
-                    isFocused && !selected ? theme.palette.focusRing : .clear,
-                    lineWidth: 3
-                )
-        )
-        .animation(perf.motion(FusionFocus.liftAnimation), value: isFocused)
-        .animation(perf.motion(FusionMotion.focusMove), value: selected)
     }
 }
 
@@ -463,89 +267,6 @@ struct DetailScaffold<Content: View>: View {
     }
 }
 
-// MARK: - Appearance detail
-
-/// Settings → Appearance: font, settings style, and how much of settings to
-/// expose. The colours are fixed — there is one neutral palette.
-struct AppearanceDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
-
-    var body: some View {
-        DetailScaffold(title: SettingsCategory.appearance.title, subtitle: SettingsCategory.appearance.subtitle) {
-            SettingsGroupCard(title: "Font", subtitle: "Typeface used across the app") {
-                HStack(spacing: OrivioSpacing.md) {
-                    ForEach(AppFont.allCases) { font in
-                        Button { theme.font = font } label: {
-                            SelectableChip(title: font.displayName, selected: theme.font == font)
-                                .fontDesign(font.design)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                }
-            }
-
-            SettingsGroupCard(title: "Experience Mode", subtitle: theme.experienceMode.summary) {
-                HStack(spacing: OrivioSpacing.md) {
-                    ForEach(ExperienceMode.allCases) { mode in
-                        Button { theme.experienceMode = mode } label: {
-                            SelectableChip(title: mode.displayName, selected: theme.experienceMode == mode)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                }
-                Text("Essential hides the Plugins section and the advanced Playback cards (auto-play source, player engine, on-screen display and audio).")
-                    .font(.system(size: 17))
-                    .foregroundStyle(theme.palette.textTertiary)
-            }
-
-            SettingsGroupCard(title: "Settings Style", subtitle: theme.settingsUiStyle.summary) {
-                HStack(spacing: OrivioSpacing.md) {
-                    ForEach(SettingsUiStyle.allCases) { style in
-                        Button { theme.settingsUiStyle = style } label: {
-                            SelectableChip(title: style.displayName, selected: theme.settingsUiStyle == style)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                }
-                Text("Reshapes settings cards and rows — Classic rounded, Zen pill, Horizon squared.")
-                    .font(.system(size: 17))
-                    .foregroundStyle(theme.palette.textTertiary)
-            }
-        }
-    }
-
-}
-
-/// Reusable focus-aware selection chip (accent fill on focus, readable in
-/// every state) — used by the theme font picker and other inline selectors.
-struct SelectableChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let selected: Bool
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary : (selected ? theme.palette.onAccentTint : theme.palette.textSecondary))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, OrivioSpacing.md)
-            .background(
-                RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                    .fill(isFocused ? theme.palette.secondary
-                          : (selected ? theme.palette.secondary.opacity(0.28) : theme.palette.backgroundCard.opacity(0.85)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : (selected ? theme.palette.secondary : .clear),
-                                  lineWidth: isFocused ? 4 : 2)
-            )
-            .focusLift(OrivioFocus.card, isFocused)
-    }
-}
-
-/// A pill switch matching the APK's toggle (dark when off, accent when on,
-/// with a sliding white knob).
 struct OrivioSwitch: View {
     @EnvironmentObject private var theme: ThemeManager
     let isOn: Bool
@@ -778,14 +499,6 @@ struct AccountSettingsDetail: View {
             isOn: Binding(
                 get: { tmdbSettings.perProfileEnabled },
                 set: { tmdbSettings.setPerProfile($0) }
-            )
-        )
-        SettingsToggleCard(
-            title: "Theme & appearance",
-            subtitle: "Each profile keeps its own accent, font and settings style",
-            isOn: Binding(
-                get: { theme.perProfileEnabled },
-                set: { theme.setPerProfile($0) }
             )
         )
         SettingsToggleCard(
