@@ -2097,7 +2097,11 @@ struct HomeSpotlightView: View {
         if let progress = currentProgress {
             onResume(progress)
         } else if let item {
-            if let row, isFeatured(row), let onSelectFeatured {
+            if item.type == "collection" {
+                // A collection or folder card: no Details to grow into —
+                // the host opens the collection browser.
+                onSelect(item)
+            } else if let row, isFeatured(row), let onSelectFeatured {
                 // Home's half of the swap out, then Details takes over.
                 guard !swappedToDetail else { return }
                 withAnimation(ModeSwap.out) {

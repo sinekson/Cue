@@ -1216,12 +1216,76 @@ struct HomeView: View {
                 progress)
     }
     
+    /// Catalog rows plus collections, in the order Settings → Layout gives
+    /// them. Collections are a first cut: plain rows whose cards stand for
+    /// folders (a ROWS collection gets its own row of folders) or for whole
+    /// collections (every other collection shares one "Collections" row, at
+    /// the first one's slot). Selecting a card opens the folder or collection
+    /// browser — see `selectSpotlight`.
     private var spotlightRows: [HomeRow] {
-         viewModel.entries.compactMap { entry in
-             if case .catalog(let row) = entry, !row.items.isEmpty { return row }
-             return nil
-         }
-     }
+        var rows: [HomeRow] = []
+        var sharedRowAdded = false
+        for entry in viewModel.entries {
+            switch entry {
+            case .catalog(let row):
+                if !row.items.isEmpty { rows.append(row) }
+            case .collection(let collection):
+                if collection.viewMode == "ROWS" {
+                    let items = collection.folders.map { Self.spotlightItem(for: $0, in: collection) }
+                    guard !items.isEmpty else { continue }
+                    let key = HomeCatalogSettingsStore.collectionKey(collection.id)
+                    rows.append(HomeRow(id: Self.collectionItemPrefix + collection.id,
+                                        title: homeCatalogSettings.customTitle(for: key) ?? collection.title,
+                                        items: items))
+                } else if !sharedRowAdded {
+                    sharedRowAdded = true
+                    rows.append(HomeRow(id: Self.collectionItemPrefix + "shared",
+                                        title: "Collections",
+                                        items: viewModel.sharedCollections.map(Self.spotlightItem(for:))))
+                }
+            }
+        }
+        return rows
+    }
+
+    /// Marks a spotlight card that stands for a collection or folder, not a
+    /// title. The rest of the id is looked up again in `selectSpotlight`.
+    private static let collectionItemPrefix = "cue-collection:"
+
+    private static func spotlightItem(for collection: OrivioCollection) -> MetaItem {
+        let cover = collection.folders.first?.tileCoverImageUrl
+        let backdrop = collection.backdropImageUrl?.isEmpty == false ? collection.backdropImageUrl : cover
+        return MetaItem(id: collectionItemPrefix + collection.id, type: "collection",
+                        name: collection.title, poster: cover, background: backdrop)
+    }
+
+    private static func spotlightItem(for folder: OrivioCollectionFolder,
+                                      in collection: OrivioCollection) -> MetaItem {
+        let backdrop = folder.heroBackdropUrl?.isEmpty == false ? folder.heroBackdropUrl
+            : (collection.backdropImageUrl?.isEmpty == false ? collection.backdropImageUrl
+               : folder.tileCoverImageUrl)
+        return MetaItem(id: collectionItemPrefix + collection.id + "\u{1F}" + folder.id,
+                        type: "collection", name: folder.title,
+                        poster: folder.tileCoverImageUrl, background: backdrop,
+                        logo: folder.titleLogoUrl)
+    }
+
+    /// A spotlight card was selected: a collection/folder card opens its
+    /// browser, anything else is a title.
+    private func selectSpotlight(_ item: MetaItem) {
+        guard item.id.hasPrefix(Self.collectionItemPrefix) else { onSelect(item); return }
+        let parts = item.id.dropFirst(Self.collectionItemPrefix.count)
+            .split(separator: "\u{1F}", maxSplits: 1).map(String.init)
+        for entry in viewModel.entries {
+            guard case .collection(let collection) = entry, collection.id == parts.first else { continue }
+            if parts.count == 2, let folder = collection.folders.first(where: { $0.id == parts[1] }) {
+                onOpenCollection(HomeViewModel.folderCollection(folder, in: collection))
+            } else {
+                onOpenCollection(collection)
+            }
+            return
+        }
+    }
     var body: some View {
         Group {
             if ProcessInfo.processInfo.arguments.contains("-spotlightHome") {
@@ -1233,7 +1297,7 @@ struct HomeView: View {
                     [HomeRow(id: HomeSpotlightView.featuredRowID, title: "Featured", items: featured)]
                 HomeSpotlightView(
                     rows: featuredRow + (cw.map { [$0.row] } ?? []) + spotlightRows,
-                    onSelect: onSelect,
+                    onSelect: selectSpotlight,
                     onSelectFeatured: onSelectFeatured,
                     onBack: onHomeBack,
                     continueProgress: cw?.progress ?? [:],
