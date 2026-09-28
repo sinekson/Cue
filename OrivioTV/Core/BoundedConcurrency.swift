@@ -65,13 +65,6 @@ enum AddonSweepLimits {
     static var streams: Int {
         PerformanceProfile.isLowPower ? 5 : 8
     }
-    /// Plugin scrapers. Lowest of the lot: each concurrent run stands up its own
-    /// JSContext, which costs orders of magnitude more than an HTTP request.
-    static var plugins: Int {
-        if PerformanceProfile.isLowPower { return 2 }
-        if PerformanceProfile.isMidPower { return 3 }
-        return 4
-    }
     /// Hard ceiling on Home rows regardless of how many catalogs the installed
     /// addons declare. Row layouts build their rows EAGERLY (a non-lazy VStack,
     /// so the LazyHStacks inside keep their scroll position), so an account

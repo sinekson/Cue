@@ -36,7 +36,6 @@ final class OrivioSyncManager: ObservableObject {
     private let tmdbSettings: TMDBSettingsStore?
     private let themeManager: ThemeManager?
     private let debridStore: DebridStore?
-    private let pluginStore: PluginStore?
     private let torrentSettings: TorrentSettingsStore?
     private let traktStore: TraktStore?
     private let simklStore: SimklStore?
@@ -55,7 +54,6 @@ final class OrivioSyncManager: ObservableObject {
     private var pushBadgeSettingsTask: Task<Void, Never>?
     private var pushAppPreferencesTask: Task<Void, Never>?
     private var pushProviderCredentialsTask: Task<Void, Never>?
-    private var pushPluginsTask: Task<Void, Never>?
     private var avatarCatalogCache: [AvatarCatalogItem] = []
     private var wasSignedIn = false
     /// The in-flight full sync (sign-in, launch or profile switch); new full
@@ -103,7 +101,7 @@ final class OrivioSyncManager: ObservableObject {
     /// (cleared) library pushes so a cold start — or a profile whose pull
     /// failed — can't wipe that profile's account library. See pushLibrary.
     private var pulledLibraryProfiles: Set<Int> = []
-    /// Profiles whose add-on and plugin lists have been pulled from the CURRENT
+    /// Profiles whose add-on lists have been pulled from the CURRENT
     /// account at least once this session.
     ///
     /// An add-on's manifest URL routinely embeds the user's own debrid token
@@ -112,7 +110,6 @@ final class OrivioSyncManager: ObservableObject {
     /// credentials. The identity change clears these, and the pushes below
     /// refuse to run until the new account has been read.
     private var pulledAddonProfiles: Set<Int> = []
-    private var pulledPluginProfiles: Set<Int> = []
 
     /// A full sync was requested while one was running. It used to be
     /// DROPPED ("sync already running"), so a change made during a run —
@@ -279,8 +276,8 @@ final class OrivioSyncManager: ObservableObject {
         }
         addonsDirty = false
         profilesDirty = false
-        // `collections`, `homeCatalog`, `badges`, `providerCredentials`,
-        // `plugins` and `appPreferences` are now persisted per profile under
+        // `collections`, `homeCatalog`, `badges`, `providerCredentials`
+        // and `appPreferences` are now persisted per profile under
         // `orivio.sync.dirty.*` (see `dirtyKey`): the sweep above already drops
         // them for a different account and preserves them for a plain sign-out,
         // so a pending edit still uploads. Nothing to clear here.
@@ -436,14 +433,13 @@ final class OrivioSyncManager: ObservableObject {
         // recorded a tombstone for each, which would then suppress the incoming
         // account's collections sharing those ids.
         collectionsStore.clearAll()
-        // Add-ons and plugin repos too. The `pulledAddonProfiles` gate below only
+        // Add-ons too. The `pulledAddonProfiles` gate below only
         // stops a push that runs BEFORE the first pull, and in `syncNow` the pull
         // always comes first — so without this the additive first pull unioned
         // the previous user's add-ons with the new account's, and the replace
         // push at the end of the same run uploaded that union (including manifest
         // URLs carrying the previous user's debrid token) into the new account.
         addonManager.clearAll()
-        pluginStore?.clearAll()
 
         // In-memory proof that a profile's library has been pulled THIS
         // session. It belongs to the account we just left; left set, the new
@@ -451,7 +447,6 @@ final class OrivioSyncManager: ObservableObject {
         // and wipe that profile's rows on the server before its pull landed.
         pulledLibraryProfiles.removeAll()
         pulledAddonProfiles.removeAll()
-        pulledPluginProfiles.removeAll()
 
         NSLog("[OrivioSync] reset per-profile content stores for the previous account")
         OrivioSyncDiagnostics.record(
@@ -514,7 +509,6 @@ final class OrivioSyncManager: ObservableObject {
         pushBadgeSettingsTask?.cancel()
         pushAppPreferencesTask?.cancel()
         pushProviderCredentialsTask?.cancel()
-        pushPluginsTask?.cancel()
         lastPushedAppPrefs = nil
     }
 
@@ -563,9 +557,8 @@ final class OrivioSyncManager: ObservableObject {
         static let pushProfileSettingsBlob = "sync_push_profile_settings_blob"
         static let pullProfileSettingsBlob = "sync_pull_profile_settings_blob"
         // Dedicated tables the Android app uses — synced alongside (dual-write)
-        // the tvOS-preferences blob so plugins / debrid keys / Trakt logins flow
+        // the tvOS-preferences blob so debrid keys / Trakt logins flow
         // between the Apple TV and the phone, not just tvOS↔tvOS.
-        static let pushPlugins = "sync_push_plugins"
         static let pushProviderCredentials = "sync_push_provider_credentials"
         static let pullProviderCredentials = "sync_pull_provider_credentials"
     }
@@ -595,7 +588,6 @@ final class OrivioSyncManager: ObservableObject {
         tmdbSettings: TMDBSettingsStore? = nil,
         themeManager: ThemeManager? = nil,
         debridStore: DebridStore? = nil,
-        pluginStore: PluginStore? = nil,
         torrentSettings: TorrentSettingsStore? = nil,
         traktStore: TraktStore? = nil,
         simklStore: SimklStore? = nil,
@@ -615,7 +607,6 @@ final class OrivioSyncManager: ObservableObject {
         self.tmdbSettings = tmdbSettings
         self.themeManager = themeManager
         self.debridStore = debridStore
-        self.pluginStore = pluginStore
         self.torrentSettings = torrentSettings
         self.traktStore = traktStore
         self.simklStore = simklStore
@@ -684,15 +675,11 @@ final class OrivioSyncManager: ObservableObject {
         playerSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         tmdbSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         themeManager?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
-        // Debrid keys and plugins dual-write: the blob (tvOS↔tvOS) AND the
-        // dedicated Android tables (tvOS↔phone).
+        // Debrid keys dual-write: the blob (tvOS↔tvOS) AND the dedicated
+        // Android table (tvOS↔phone).
         debridStore?.onLocalChange = { [weak self] in
             self?.scheduleAppPreferencesPush()
             self?.scheduleProviderCredentialsPush()
-        }
-        pluginStore?.onLocalChange = { [weak self] in
-            self?.scheduleAppPreferencesPush()
-            self?.schedulePluginsPush()
         }
         torrentSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         // Trakt tokens live only in the dedicated provider_credentials table.
@@ -1156,7 +1143,6 @@ final class OrivioSyncManager: ObservableObject {
             if firstFullSync || providerCredentialsDirty {
                 await pushProviderCredentials(profile: runProfile)  // dual-write to the Android table
             }
-            if firstFullSync || pluginsDirty { try? await pushPlugins(profile: runProfile) }
             completedFullSyncProfiles.insert(runProfile)
             NSLog("[OrivioSync] syncNow finished ok in %.1fs (%@)",
                   Date().timeIntervalSince(started), firstFullSync ? "first full cycle" : "incremental")
@@ -1235,7 +1221,7 @@ final class OrivioSyncManager: ObservableObject {
     }
 
     /// Collections, the home layout, badges, the app-preferences blob,
-    /// provider credentials and plugin repos. These stay in ONE chain: the
+    /// and provider credentials. These stay in ONE chain: the
     /// preferences blob carries the collections library and the layout reads
     /// it, so their order matters — but nothing in here touches the content
     /// stores, so the whole chain runs beside them.
@@ -1275,10 +1261,6 @@ final class OrivioSyncManager: ObservableObject {
         await pullAppPreferences(profile: profile)  // player/TMDB/theme prefs + collections
         if providerCredentialsDirty { await pushProviderCredentials(profile: profile) }
         await pullProviderCredentials(profile: profile)  // debrid keys + Trakt (Android table)
-        // Local repo edits go up before the reconciling pull, or a removal
-        // still inside its debounce is restored and then re-uploaded.
-        if pluginsDirty { try? await pushPlugins(profile: profile) }
-        await pullPlugins(profile: profile)   // plugin repos (Android table)
     }
 
     /// Run independent chains at once and wait for ALL of them. One chain
@@ -1331,12 +1313,11 @@ final class OrivioSyncManager: ObservableObject {
         traktStore?.setProfile(pid)
     }
 
-    /// The stores split per profile in the upstream-parity pass: add-ons and
-    /// plugins (honouring the profile's use-primary fallbacks), debrid logins,
+    /// The stores split per profile in the upstream-parity pass: add-ons
+    /// (honouring the profile's use-primary fallback), debrid logins,
     /// player settings, TMDB settings, theme, badges.
     private func rescopePerProfileStores(_ id: Int) {
         addonManager.setProfile(addonPID(for: id))
-        pluginStore?.setProfile(pluginPID(for: id))
         debridStore?.setProfile(id)
         playerSettings?.setProfile(id)
         tmdbSettings?.setProfile(id)
@@ -3458,8 +3439,6 @@ final class OrivioSyncManager: ObservableObject {
         var home: HomePresentationSnapshot?
         /// Debrid provider keys + preferred. Optional for backward-compat.
         var debrid: DebridStore.DebridSnapshot?
-        /// Installed plugin repository URLs. Optional for backward-compat.
-        var plugins: PluginStore.PluginSyncSnapshot?
         /// P2P / TorrServer settings. Optional for backward-compat.
         var torrent: TorrentSettings?
         /// Custom collections (grouped catalog home rows). Synced HERE (not via
@@ -3600,16 +3579,6 @@ final class OrivioSyncManager: ObservableObject {
         WatchHistoryClearState.adopt(snapshot.watchHistoryClearedAt)
         if let home = snapshot.home { homeCatalogSettings.applyRemotePresentation(home) }
         if let debrid = snapshot.debrid { debridStore?.applyRemote(debrid) }
-        // Awaited, not fired into an unstructured Task: this used to return
-        // while repos were still installing, and `pushPlugins` — which is
-        // replace-semantics — could read a half-applied list and delete the
-        // rest from the account. The dirty guard matches `pullPlugins`: a
-        // snapshot fetched before a local repo edit must not re-install what
-        // the user just removed.
-        if let plugins = snapshot.plugins, let pluginStore, !pluginsDirty {
-            await pluginStore.applyRemote(plugins)
-            guard pid == profile else { return }
-        }
         if let torrent = snapshot.torrent { torrentSettings?.applyRemote(torrent) }
         if let collections = snapshot.collections, !collectionsDirty {
             // Merge rather than replace: another profile's blob may carry packs
@@ -3646,7 +3615,6 @@ final class OrivioSyncManager: ObservableObject {
             theme: themeManager.snapshot,
             home: homeCatalogSettings.presentationSnapshot,
             debrid: debridStore?.snapshot,
-            plugins: pluginStore?.snapshot,
             torrent: torrentSettings?.settings,
             // The shared library (every profile's collections), plus THIS
             // profile's opt-outs. Pushing the visible subset here would delete
@@ -3832,43 +3800,7 @@ final class OrivioSyncManager: ObservableObject {
         return nil
     }
 
-    // MARK: - Plugins — Android table
-
-    /// Set on any local plugin-repo edit, cleared once a push lands. Same role
-    /// as `addonsDirty`: dirty ⇒ push before pulling, so a reconcile can't
-    /// restore a repo the user just removed. Per profile like `addonsDirty`.
-    private var pluginsDirty: Bool {
-        get { isDirty("plugins", profile: pid) }
-        set { setDirty("plugins", profile: pid, newValue) }
-    }
-
-    private func schedulePluginsPush() {
-        // Never while the previous account's state is being retired: the
-        // store callbacks that retirement fires would arm a push of account A's
-        // data into account B. See `isRetiringAccountState`.
-        guard !isRetiringAccountState else { return }
-        pluginsDirty = true
-        pushPluginsTask?.cancel()
-        pushPluginsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            try? await self.pushPlugins(profile: self.pid)
-        }
-    }
-
-    /// The profile whose plugin rows this device reads/writes. Mirrors Android:
-    /// a profile flagged "uses primary plugins" shares profile 1's rows, so a
-    /// push from that profile must not fork its own plugin set.
-    private func pluginPID(for profile: Int) -> Int {
-        // Shared mode (the "Separate plugins per profile" switch is off) is
-        // "every profile uses primary": one list, canonical at profile 1's
-        // rows, so every device sharing the account converges on it.
-        guard ProfileScopedDefaults.isSeparate(PluginStore.feature) else { return 1 }
-        let active = profileStore.allForSync().first { $0.id == profile }
-        return (active?.usesPrimaryPlugins ?? true) ? 1 : profile
-    }
-
-    /// Same fallback for add-ons: a profile marked "use primary add-ons" —
+    /// A profile marked "use primary add-ons" —
     /// or a device with the separate-add-ons switch off entirely — reads and
     /// writes profile 1's list, locally and on the wire (the upstream
     /// semantics of `uses_primary_addons` on the profile row).
@@ -3876,77 +3808,6 @@ final class OrivioSyncManager: ObservableObject {
         guard ProfileScopedDefaults.isSeparate(AddonManager.feature) else { return 1 }
         let active = profileStore.allForSync().first { $0.id == profile }
         return (active?.usesPrimaryAddons ?? true) ? 1 : profile
-    }
-
-    /// Push plugin repos to the dedicated `plugins` table (`sync_push_plugins`),
-    /// mirroring the Android row shape: url/name/enabled/sort_order/repo_type.
-    /// tvOS scrapers are Orivio JS repos → repo_type "ORIVIO_JS".
-    private func pushPlugins(profile: Int) async throws {
-        guard account.accessToken != nil, let pluginStore else { return }
-        try ensureProfile(profile)
-        let repos = pluginStore.repositories
-        // An empty push is how "I removed my last repo" reaches the account —
-        // but only when this device actually made that edit (`pluginsDirty`).
-        // Blanket-skipping empty meant removing the last repo never synced and
-        // the next pull put it straight back; blanket-allowing it would let a
-        // fresh device wipe the account before its first pull.
-        guard !repos.isEmpty || pluginsDirty else { return }
-        // Same reasoning as the add-on push: not before this account's list has
-        // been read, or a switch uploads the previous user's repos.
-        guard pulledPluginProfiles.contains(profile) || pluginsDirty else { return }
-        let entries: [[String: Any]] = repos.enumerated().map { index, repo in
-            [
-                "url": repo.url,
-                "name": repo.name,
-                "enabled": repo.enabled,
-                "sort_order": index,
-                "repo_type": "ORIVIO_JS"
-            ]
-        }
-        let body: [String: Any] = [
-            "p_plugins": entries,
-            "p_profile_id": pluginPID(for: profile),
-            "p_origin_client_id": clientID
-        ]
-        _ = try await authedPost(RPC.url(RPC.pushPlugins), body: body)
-        setDirty("plugins", profile: profile, false)
-        if !repos.isEmpty { setSeeded("plugins", profile: profile) }
-    }
-
-    /// Pull plugin repos via a PostgREST table select (there's no dedicated pull
-    /// RPC — the Android app reads the table directly too). tvOS only needs the
-    /// URLs; PluginStore re-fetches each manifest and installs missing ones.
-    private func pullPlugins(profile: Int) async {
-        guard let userID = account.currentUserID, let pluginStore, pid == profile else { return }
-        let path = "/rest/v1/plugins?user_id=eq.\(userID)&profile_id=eq.\(pluginPID(for: profile))&select=url,repo_type,sort_order,enabled"
-        guard let data = try? await authedGet(path),
-              let rows = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
-        guard pid == profile else { return }
-        pulledPluginProfiles.insert(profile)
-        // Same rule as pullAddons: a snapshot fetched while a local repo edit
-        // awaits its push predates that edit, and applying it re-installs the
-        // repo the user just removed — which the debounced push then uploads
-        // back to the account. Skip; the dirty push goes first next cycle.
-        guard !pluginsDirty else {
-            NSLog("[OrivioSync] pullPlugins: skipped applying — a local repo edit is awaiting its push")
-            return
-        }
-        let urls = rows
-            .filter { ($0["repo_type"] as? String)?.uppercased() != "EXTERNAL_DEX" }  // JS only
-            .filter { ($0["enabled"] as? Bool) ?? true }   // don't install repos disabled elsewhere
-            .compactMap { $0["url"] as? String }
-        let seeded = isSeeded("plugins", profile: profile)
-        if urls.isEmpty {
-            // Only a genuine "removed everywhere" once seeded; otherwise this is
-            // a fresh account and local repos should survive to be pushed up.
-            guard seeded else { return }
-            await pluginStore.applyRemote(PluginStore.PluginSyncSnapshot(repositoryURLs: []),
-                                          reconcile: true)
-            return
-        }
-        await pluginStore.applyRemote(PluginStore.PluginSyncSnapshot(repositoryURLs: urls),
-                                      reconcile: seeded)
-        setSeeded("plugins", profile: profile)
     }
 
     private func authedPost(_ endpoint: String, body: [String: Any]) async throws -> Data {

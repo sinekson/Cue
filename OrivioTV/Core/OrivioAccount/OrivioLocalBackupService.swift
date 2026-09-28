@@ -9,7 +9,6 @@ struct OrivioLocalBackup: Codable {
     let version: Int
     let createdAt: Date
     let addons: [AddonState]
-    let pluginRepositoryURLs: [String]
     let library: [SavedLibraryItem]
     let progress: [WatchProgress]
     let watched: [WatchedItem]
@@ -23,7 +22,6 @@ enum OrivioLocalBackupService {
     @MainActor
     static func exportBackup(
         addonManager: AddonManager,
-        plugins: PluginStore,
         library: LibraryStore,
         progress: ProgressStore,
         watched: WatchedStore
@@ -34,7 +32,6 @@ enum OrivioLocalBackupService {
             addons: addonManager.addons.map {
                 OrivioLocalBackup.AddonState(manifestURL: $0.manifestURL, enabled: $0.enabled)
             },
-            pluginRepositoryURLs: plugins.repositories.map(\.url),
             library: library.allForSync(),
             // streamURL is stripped: a resume link is routinely a debrid
             // "unrestricted" URL or otherwise carries the user's token, and the
@@ -60,7 +57,6 @@ enum OrivioLocalBackupService {
     static func importBackup(
         _ text: String,
         addonManager: AddonManager,
-        plugins: PluginStore,
         library: LibraryStore,
         progress: ProgressStore,
         watched: WatchedStore
@@ -92,12 +88,6 @@ enum OrivioLocalBackupService {
             }
         }
 
-        var pluginInstalled = 0
-        for url in backup.pluginRepositoryURLs {
-            await plugins.addRepository(url)
-            pluginInstalled += 1
-        }
-
         // One merge, not N adds: `add` fires the tracker hooks per item, and
         // each Trakt/SIMKL hook spawned its own health check plus watchlist
         // POST — hundreds of concurrent calls for a big backup, straight into
@@ -113,8 +103,7 @@ enum OrivioLocalBackupService {
             "Imported \(backup.library.count) library items",
             "\(backup.progress.count) progress rows",
             "\(backup.watched.count) watched rows",
-            "\(addonInstalled) add-ons",
-            "\(pluginInstalled) plugin repos"
+            "\(addonInstalled) add-ons"
         ]
         if addonFailed > 0 { parts.append("\(addonFailed) add-ons failed") }
         return parts.joined(separator: " · ")

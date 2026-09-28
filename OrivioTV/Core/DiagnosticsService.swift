@@ -35,13 +35,10 @@ enum DiagnosticsService {
     /// Entries under the cache root that are NOT caches.
     ///
     /// The collections library is the user's own content (a signed-out user has
-    /// no other copy), and the plugin JS bodies have no re-download path once
-    /// removed — `PluginStore.streams()` just returns [] for every scraper until
-    /// the repo is removed and re-added. "Clear cache" used to delete the whole
-    /// tree, so it silently wiped custom collections and disabled every plugin.
+    /// no other copy). "Clear cache" used to delete the whole tree, so it
+    /// silently wiped custom collections.
     private static let protectedEntries: Set<String> = [
-        "collections-library.json",   // CollectionsStore.libraryFileURL
-        "scrapers"                    // PluginStore.jsCache — plugin JS bodies
+        "collections-library.json"    // CollectionsStore.libraryFileURL
     ]
 
     private static func size(of url: URL) -> Int64 {

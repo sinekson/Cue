@@ -9,7 +9,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     // Matches the live APK rail (Essential mode): no Account/Profiles (those
     // live on the sidebar profile avatar). Only categories whose settings are
     // actually wired up are shown — no stub panes.
-    case account, appearance, layout, contentDiscovery, integration, plugins, playback, performance, trakt, about
+    case account, appearance, layout, contentDiscovery, integration, playback, performance, trakt, about
 
     var id: String { rawValue }
 
@@ -20,7 +20,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .layout: return "Layout"
         case .contentDiscovery: return "Content & Discovery"
         case .integration: return "Integrations"
-        case .plugins: return "Plugins"
         case .playback: return "Playback"
         case .performance: return "Performance"
         case .trakt: return "Trakt & SIMKL"
@@ -35,7 +34,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .layout: return "Home structure and poster styles"
         case .contentDiscovery: return "Add-ons, catalogs, and collections"
         case .integration: return "Manage available integrations"
-        case .plugins: return "Scraper repositories and plugins"
         case .playback: return "Auto-play and next-episode behavior"
         case .performance: return "Turn effects off for a faster UI on older Apple TVs"
         case .trakt: return "Scrobble and sync your watch history, or connect SIMKL"
@@ -51,7 +49,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .layout: return "square.grid.2x2.fill"
         case .contentDiscovery: return "safari.fill"
         case .integration: return "link"
-        case .plugins: return "puzzlepiece.extension.fill"
         case .playback: return "play.fill"
         case .performance: return "speedometer"
         case .trakt: return "checkmark.seal.fill"
@@ -60,7 +57,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     }
 
     /// Categories hidden from the rail in Essential experience mode.
-    var isAdvanced: Bool { self == .plugins }
+    var isAdvanced: Bool { false }
 
     /// Shorter label for the narrow rail (the detail header still uses `title`).
     var railTitle: String {
@@ -202,7 +199,6 @@ struct SettingsCategoryPane: View {
         case .layout:            LayoutSettingsDetail()
         case .contentDiscovery:  ContentDiscoveryDetail()
         case .integration:       IntegrationsDetail()
-        case .plugins:           PluginsSettingsDetail()
         case .playback:          PlaybackSettingsDetail()
         case .performance:       PerformanceSettingsDetail()
         case .trakt:             TraktDetail()
@@ -737,7 +733,6 @@ struct AccountSettingsDetail: View {
     @EnvironmentObject private var watchedStore: WatchedStore
     @EnvironmentObject private var trakt: TraktStore
     @EnvironmentObject private var debrid: DebridStore
-    @EnvironmentObject private var plugins: PluginStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
@@ -801,7 +796,6 @@ struct AccountSettingsDetail: View {
             .environmentObject(stremio)
             .environmentObject(trakt)
             .environmentObject(debrid)
-            .environmentObject(plugins)
             .onExitCommand { showAccount = false }
         }
         .fullScreenCover(isPresented: $showProfiles) {
@@ -821,7 +815,7 @@ struct AccountSettingsDetail: View {
         }
     }
 
-    /// One switch per split category. Add-ons/plugins/debrid also resync so
+    /// One switch per split category. Add-ons/debrid also resync so
     /// the account converges on the new scope (shared = profile 1's rows).
     @ViewBuilder
     private var separationToggles: some View {
@@ -831,14 +825,6 @@ struct AccountSettingsDetail: View {
             isOn: Binding(
                 get: { addonManager.perProfileEnabled },
                 set: { addonManager.setPerProfile($0); resyncAfterScopeChange() }
-            )
-        )
-        SettingsToggleCard(
-            title: "Plugins",
-            subtitle: "Each profile keeps its own plugin repositories and scrapers",
-            isOn: Binding(
-                get: { plugins.perProfileEnabled },
-                set: { plugins.setPerProfile($0); resyncAfterScopeChange() }
             )
         )
         SettingsToggleCard(

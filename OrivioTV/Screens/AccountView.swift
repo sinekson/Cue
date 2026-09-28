@@ -11,7 +11,6 @@ struct AccountView: View {
     @EnvironmentObject private var stremio: StremioAccountStore
     @EnvironmentObject private var trakt: TraktStore
     @EnvironmentObject private var debrid: DebridStore
-    @EnvironmentObject private var plugins: PluginStore
 
     private enum AccountFocus: Hashable {
         case orivioSignIn
@@ -305,7 +304,7 @@ struct AccountView: View {
         case .sync:
             return "Run account sync actions and inspect the latest sync state without leaving this page."
         case .backups:
-            return "Export or import a local backup for add-ons, plugins, library, progress, and watched state."
+            return "Export or import a local backup for add-ons, library, progress, and watched state."
         }
     }
 
@@ -417,7 +416,6 @@ struct AccountView: View {
                 AccountPrimaryButton(title: "Export Backup", systemImage: "square.and.arrow.up", filled: false) {
                     backupText = OrivioLocalBackupService.exportBackup(
                         addonManager: addonManager,
-                        plugins: plugins,
                         library: library,
                         progress: progress,
                         watched: watched
@@ -690,7 +688,6 @@ struct AccountView: View {
                 AccountSyncStatusRow(title: "Stremio", value: stremio.isSignedIn ? (stremio.email ?? "Connected") : "Not connected", systemImage: "link")
                 AccountSyncStatusRow(title: "Trakt", value: trakt.isSignedIn ? (trakt.username ?? "Connected") : "Not connected", systemImage: "checkmark.seal.fill")
                 AccountSyncStatusRow(title: "Debrid", value: debridProvidersLabel, systemImage: "key")
-                AccountSyncStatusRow(title: "Plugins", value: "\(plugins.repositories.count) repos, \(plugins.enabledScrapers.count) enabled", systemImage: "shippingbox")
                 AccountSyncStatusRow(title: "Pending Queue", value: pendingQueueLabel, systemImage: "tray.and.arrow.up")
                 AccountSyncStatusRow(title: "Last Error", value: sync?.lastSyncError ?? "None", systemImage: "exclamationmark.triangle")
             }
@@ -949,13 +946,12 @@ struct AccountView: View {
         }.count
         let addonSlow = addonResults.filter { $0.status == .slow }.count
 
-        let pluginFailures = await pluginManifestFailures()
         let traktStatus = trakt.isSignedIn ? "Trakt connected" : "Trakt off"
         let debridStatus = debrid.configuredProviders.isEmpty
             ? "no debrid"
             : "\(debrid.configuredProviders.count) debrid"
 
-        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow · \(pluginFailures) plugin repo failed · \(traktStatus) · \(debridStatus)"
+        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow · \(traktStatus) · \(debridStatus)"
         OrivioSyncDiagnostics.record(.info, area: "Health", providerStatus ?? "Provider check finished.")
         syncLog = OrivioSyncDiagnostics.entries()
     }
@@ -975,24 +971,6 @@ struct AccountView: View {
         }
     }
 
-    private func pluginManifestFailures() async -> Int {
-        var failures = 0
-        for repo in plugins.repositories where repo.enabled {
-            guard let url = URL(string: repo.url) else {
-                failures += 1
-                continue
-            }
-            do {
-                let (_, response) = try await URLSession.shared.data(from: url)
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if !(200..<300).contains(code) { failures += 1 }
-            } catch {
-                failures += 1
-            }
-        }
-        return failures
-    }
-
     private func importBackup() {
         guard !importingBackup else { return }
         importingBackup = true
@@ -1001,7 +979,6 @@ struct AccountView: View {
             let result = await OrivioLocalBackupService.importBackup(
                 backupImportText,
                 addonManager: addonManager,
-                plugins: plugins,
                 library: library,
                 progress: progress,
                 watched: watched

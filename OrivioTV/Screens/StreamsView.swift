@@ -168,48 +168,12 @@ final class StreamsViewModel: ObservableObject {
         Task { await Self.lastLinkCache.store(cached, for: id) }
     }
 
-    /// Merge streams produced by plugin scrapers into the pool (they arrive
-    /// after the addon sweep, so re-curate). Deduped by URL, or by info hash
-    /// for torrent results — a magnet result has no URL, and keying on the
-    /// URL alone silently dropped every one of them.
-    func addPluginStreams(_ entries: [StreamEntry]) {
-        guard !entries.isEmpty else { return }
-        func identity(_ stream: Stream) -> String? {
-            if let url = stream.url { return url }
-            if let hash = stream.infoHash { return "hash:" + hash.lowercased() }
-            return nil
-        }
-        let existing = Set(pool.compactMap { identity($0.stream) })
-        let fresh = entries.filter { entry in
-            // Same admission rule as the addon sweep: playable, a torrent
-            // (which the debrid / TorrServer path can resolve), or external.
-            guard entry.stream.isPlayable || entry.stream.isTorrent || entry.stream.isExternal,
-                  let key = identity(entry.stream) else { return false }
-            return !existing.contains(key)
-        }
-        guard !fresh.isEmpty else { return }
-        pool.append(contentsOf: fresh)
-        rebuildGroups()
-        // Plugin scrapers are part of the early Auto-Link race too. Addon
-        // batches trigger an evaluation as they answer; scraper batches never
-        // did — so on a plugins-only setup (qink and friends: direct links,
-        // no debrid, no stream addons) the selector could only ever act via
-        // the end-of-sweep path, which used to race this very task.
-        if let prefs = autoLinkPrefs { evaluateEarlyAutoLink(prefs) }
-    }
-
     /// Addons whose stream request has returned (either way).
     @Published private(set) var finishedAddonNames: Set<String> = []
     private var sweepStarted = Date()
     /// Set by the view while the Auto Link Selector is armed, so the sweep can
     /// hand back a pick without waiting for every addon.
     var autoLinkPrefs: AutoLinkPreferences?
-    /// Enabled plugin scrapers still being swept — so a PREFERRED addon that
-    /// is actually a scraper (qink and friends) counts as outstanding during
-    /// the patience window instead of the early pick firing an addon link
-    /// past it. Set by the view when the plugin task starts, cleared when it
-    /// finishes either way.
-    var pendingPluginNames: [String] = []
     var onEarlyAutoLink: ((StreamEntry) -> Void)?
     private var earlyPickFired = false
     /// Longest we will hold out for a preferred addon that hasn't answered.
@@ -246,12 +210,10 @@ final class StreamsViewModel: ObservableObject {
         let elapsed = Date().timeIntervalSince(sweepStarted)
 
         /// Whether an addon can still change the answer: it has to be one we
-        /// queried at all (a Stremio addon OR a plugin scraper), and not yet
-        /// returned.
+        /// queried at all, and not yet returned.
         func outstanding(_ name: String) -> Bool {
             let q = name.trimmingCharacters(in: .whitespaces).lowercased()
             guard !q.isEmpty else { return false }
-            if pendingPluginNames.contains(where: { $0.lowercased().contains(q) }) { return true }
             guard queriedAddonNames.contains(where: { $0.lowercased().contains(q) }) else { return false }
             return !finishedAddonNames.contains { $0.lowercased().contains(q) }
         }
@@ -805,7 +767,6 @@ struct StreamsView: View {
     @EnvironmentObject private var debrid: DebridStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
-    @EnvironmentObject private var plugins: PluginStore
     @EnvironmentObject private var torrent: TorrentSettingsStore
     @EnvironmentObject private var profiles: ProfileStore
     @StateObject private var viewModel: StreamsViewModel
@@ -910,7 +871,6 @@ struct StreamsView: View {
     /// isn't enough: the debrid/P2P resolve runs in its OWN unstructured Task
     /// that Back never cancels, so it needs an explicit view-level flag.
     @State private var isGone = false
-    @State private var pluginsSwept = false
     /// The in-flight source sweeps, cancelled when the page pops.
     @State private var sweepTasks: [Task<Void, Never>] = []
 
@@ -1082,11 +1042,11 @@ struct StreamsView: View {
             // Reuse last link: if we still have a fresh remembered source, play
             // it immediately, but keep loading so backing out shows the full
             // list (and the player's failover has alternates).
-            // Both sweeps are UNSTRUCTURED tasks (they must outlive awaits in
-            // this .task) — kept in state so popping the page CANCELS them:
+            // The sweep is an UNSTRUCTURED task (it must outlive awaits in
+            // this .task) — kept in state so popping the page CANCELS it:
             // without that, backing out of a source list left the full addon
-            // sweep + the JS plugin scrapers running to completion, and quick
-            // browsing stacked concurrent full scrapes with no ceiling.
+            // sweep running to completion, and quick browsing stacked
+            // concurrent full scrapes with no ceiling.
             let loadTask = Task {
                 await viewModel.load(
                     addonManager: addonManager,
@@ -1097,31 +1057,6 @@ struct StreamsView: View {
                 )
             }
             sweepTasks.append(loadTask)
-            // Plugin scrapers run alongside the addon sweep (they want a TMDB id).
-            // Once per page: the re-run after the player cover comes down must
-            // not stand the whole JS scraper fleet up again. Held in a local
-            // too — the auto-select decision below must be able to WAIT for it.
-            var pluginTask: Task<Void, Never>?
-            if !plugins.enabledScrapers.isEmpty, !pluginsSwept {
-                viewModel.pendingPluginNames = plugins.enabledScrapers.map(\.name)
-                let task = Task {
-                    // However this sweep ends, the scrapers are no longer
-                    // outstanding for the early pick's patience window.
-                    defer { viewModel.pendingPluginNames = [] }
-                    guard let (tmdbID, isMovie) = await TMDBService.resolveTMDBID(
-                        from: viewModel.meta.id, type: viewModel.meta.type
-                    ) else { return }
-                    let entries = await plugins.streams(
-                        tmdbID: String(tmdbID), mediaType: isMovie ? "movie" : "tv",
-                        season: viewModel.video?.season, episode: viewModel.video?.episode
-                    )
-                    guard !Task.isCancelled, !isGone else { return }
-                    viewModel.addPluginStreams(entries)
-                    pluginsSwept = true
-                }
-                pluginTask = task
-                sweepTasks.append(task)
-            }
             // Reuse-last-link replays the remembered URL — skip it entirely when
             // resuming, since the whole point of a resume is to re-connect fresh.
             if !didAutoAct, !forceManual, !resumeAutoPlay, s.reuseLastLinkEnabled,
@@ -1153,17 +1088,6 @@ struct StreamsView: View {
             }
             await loadTask.value
             // Back-during-load guard (see above): bail before any auto-act.
-            guard !Task.isCancelled, !isGone else { return }
-
-            // Plugin scrapers are sources like any other, but their sweep is a
-            // SEPARATE task the auto-select decision used to race: on a
-            // plugins-only setup (qink and friends — direct links, no debrid,
-            // no stream addons) the addon sweep finished first with nothing,
-            // the pick came up empty, and the loading screen dropped to the
-            // manual list while the scraper was still working. Only reached
-            // when nothing has acted yet — an addon match good enough for the
-            // early pick has already fired and skips this wait entirely.
-            if !didAutoAct, autoSelects { await pluginTask?.value }
             guard !Task.isCancelled, !isGone else { return }
 
             // Resume from Continue Watching: re-scrape done, now auto-play the

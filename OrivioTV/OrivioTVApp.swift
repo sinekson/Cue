@@ -72,7 +72,6 @@ struct OrivioTVApp: App {
     @StateObject private var stremioAccount = StremioAccountStore()
     @StateObject private var playerSettings = PlayerSettingsStore()
     @StateObject private var streamBadges = StreamBadgeStore()
-    @StateObject private var plugins = PluginStore()
     @StateObject private var torrent = TorrentSettingsStore()
     @StateObject private var ratings = RatingsStore()
 
@@ -97,7 +96,6 @@ struct OrivioTVApp: App {
                 .environmentObject(stremioAccount)
                 .environmentObject(playerSettings)
                 .environmentObject(streamBadges)
-                .environmentObject(plugins)
                 .environmentObject(torrent)
                 .environmentObject(ratings)
                 // Classic is hard-dark (the original look). The Apple TV theme
@@ -188,7 +186,6 @@ struct RootView: View {
     @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var debrid: DebridStore
-    @EnvironmentObject private var plugins: PluginStore
     @EnvironmentObject private var torrent: TorrentSettingsStore
     @EnvironmentObject private var ratings: RatingsStore
     @Environment(\.scenePhase) private var scenePhase
@@ -336,7 +333,6 @@ struct RootView: View {
                         tmdbSettings: tmdbSettings,
                         themeManager: theme,
                         debridStore: debrid,
-                        pluginStore: plugins,
                         torrentSettings: torrent,
                         traktStore: trakt,
                         simklStore: simkl,
@@ -357,12 +353,12 @@ struct RootView: View {
                     // per-profile switch as Trakt (one setting, both services).
                     // Everything personal rescopes on a switch, even when
                     // signed out of Orivio (the sync manager only runs while
-                    // signed in): trackers, add-ons/plugins (honouring the
+                    // signed in): trackers, add-ons (honouring the
                     // profile's use-primary fallbacks), debrid logins, player
                     // settings, TMDB, theme, badges — upstream Nuvio's
                     // per-profile boundary, ported wholesale.
                     profiles.onSwitchLocal = { [weak trakt, weak simkl, weak ratings, weak addonManager,
-                                                weak plugins, weak debrid, weak playerSettings,
+                                                weak debrid, weak playerSettings,
                                                 weak tmdbSettings, weak theme, weak streamBadges,
                                                 weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
@@ -370,7 +366,6 @@ struct RootView: View {
                         simkl?.setProfile(id)
                         ratings?.setProfile(id)
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
-                        plugins?.setProfile(flags?.usesPrimaryPlugins == true ? 1 : id)
                         debrid?.setProfile(id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
@@ -395,13 +390,12 @@ struct RootView: View {
                     NSLog("[TopShelf] app group %@ → %@", AppGroupResolver.identifier,
                           AppGroupResolver.sharedFile("topshelf.json")?.path ?? "UNAVAILABLE")
                     profiles.onProfileDeleted = { [weak trakt, weak simkl, weak addonManager,
-                                                   weak plugins, weak debrid, weak playerSettings,
+                                                   weak debrid, weak playerSettings,
                                                    weak tmdbSettings, weak theme, weak streamBadges,
                                                    weak orivioSync] id in
                         trakt?.forgetProfile(id)
                         simkl?.forgetProfile(id)
                         addonManager?.forgetProfile(id)
-                        plugins?.forgetProfile(id)
                         debrid?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
