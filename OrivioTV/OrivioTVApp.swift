@@ -75,7 +75,6 @@ struct OrivioTVApp: App {
     @StateObject private var plugins = PluginStore()
     @StateObject private var torrent = TorrentSettingsStore()
     @StateObject private var ratings = RatingsStore()
-    @StateObject private var mediaServers = MediaServerStore()
 
     var body: some Scene {
         WindowGroup {
@@ -101,7 +100,6 @@ struct OrivioTVApp: App {
                 .environmentObject(plugins)
                 .environmentObject(torrent)
                 .environmentObject(ratings)
-                .environmentObject(mediaServers)
                 // Classic is hard-dark (the original look). The Apple TV theme
                 // honors its Appearance setting — light, dark, or nil to
                 // follow the TV's own system appearance.
@@ -122,7 +120,6 @@ extension Route {
         case .tmdbCompany: return "Studio"
         case .catalogSeeAll: return "See All"
         case .discover: return "Discover"
-        case .mediaServerShow: return "Media Server Show"
         case .streams: return "Sources"
         case .streamsInfuse: return "Sources (Infuse)"
         case .streamsManual: return "Sources (manual)"
@@ -138,7 +135,6 @@ extension Route {
         case .person(_, let name): return name
         case .tmdbCompany(_, let name): return name
         case .catalogSeeAll(_, _, let title): return title
-        case .mediaServerShow(let show): return show.title
         case .streams(let meta, let video),
              .streamsInfuse(let meta, let video),
              .streamsManual(let meta, let video),
@@ -170,8 +166,6 @@ enum Route: Hashable {
     case tmdbCompany(id: Int, name: String)
     case catalogSeeAll(addon: InstalledAddon, catalog: ManifestCatalog, title: String)
     case discover
-    /// A Plex / Jellyfin show's episode list.
-    case mediaServerShow(MediaServerItem)
 }
 
 struct RootView: View {
@@ -195,7 +189,6 @@ struct RootView: View {
     @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var debrid: DebridStore
-    @EnvironmentObject private var mediaServers: MediaServerStore
     @EnvironmentObject private var plugins: PluginStore
     @EnvironmentObject private var torrent: TorrentSettingsStore
     @EnvironmentObject private var ratings: RatingsStore
@@ -1607,8 +1600,6 @@ struct RootView: View {
     private var libraryRoot: some View {
         LibraryView(
             onSelect: { libraryPath.append(Route.detail($0)) },
-            onPlayMediaServer: { startPlayback($0) },
-            onOpenMediaServerShow: { libraryPath.append(Route.mediaServerShow($0)) },
             onBackAtRoot: { focusSidebar(2) }
         )
         .probeScreen("Library")
@@ -1665,8 +1656,6 @@ struct RootView: View {
             CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { path.wrappedValue.append(Route.detail($0)) }
         case .discover:
             DiscoverView { path.wrappedValue.append(Route.detail($0)) }
-        case .mediaServerShow(let show):
-            MediaServerShowView(show: show) { startPlayback($0) }
         case .streams(let meta, let video):
             StreamsView(
                 meta: meta, video: video,
@@ -2413,17 +2402,6 @@ struct RootView: View {
     /// entry so the card doesn't fork into a duplicate under the new key.
     @MainActor
     private func resumeResolved(_ progress: WatchProgress, fromBeginning: Bool) async {
-        // A Plex / Jellyfin item plays again from its server; its id means
-        // nothing to the add-ons the source picker would scrape.
-        if MediaServerKind.kind(ofMetaID: progress.metaID) != nil {
-            if let request = await MediaServerPlayback.resume(progress, store: mediaServers,
-                                                              fromBeginning: fromBeginning) {
-                startPlayback(request)
-            } else {
-                ToastCenter.shared.show("Couldn't reach the media server", icon: "exclamationmark.triangle")
-            }
-            return
-        }
         let (meta, video) = await canonicalResumeIdentity(progress)
         // Resume ALWAYS re-scrapes a fresh link now: a remembered URL from a
         // debrid/Comet-style addon expires, so replaying it "fails to load" and
@@ -2442,12 +2420,6 @@ struct RootView: View {
     /// the picker unrepaired and produced the same empty Sources page the
     /// automatic path was cured of.
     private func playManuallyFromProgress(_ progress: WatchProgress) {
-        // A media-server row has no addon sources to pick between — play it
-        // from its server exactly like a plain resume.
-        if MediaServerKind.kind(ofMetaID: progress.metaID) != nil {
-            resume(progress)
-            return
-        }
         Task { @MainActor in
             let (meta, video) = await canonicalResumeIdentity(progress)
             homePath.append(Route.streamsManual(meta, video))

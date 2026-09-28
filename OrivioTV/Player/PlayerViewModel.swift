@@ -60,10 +60,6 @@ struct PlaybackRequest: Identifiable {
     /// a quality choice but a guaranteed failure. Engine routing is otherwise
     /// decided from the container extension, which those URLs don't have.
     var forceDemuxer: Bool = false
-    /// A library server's episodes (Plex / Jellyfin) don't come from add-ons:
-    /// when set, `play(episode:)` asks this for the episode's own file
-    /// instead of sweeping the stream add-ons for an id they don't know.
-    var directEpisodeResolver: ((MetaVideo) async -> StreamEntry?)? = nil
 }
 
 enum PlayerOverlay: Equatable {
@@ -2949,8 +2945,6 @@ final class PlayerViewModel: ObservableObject {
     /// Mirrors "Show unaired next up" (Settings → Layout). Passed in rather than
     /// read from a store because the player owns no layout-settings dependency.
     private let allowUnairedNextUp: Bool
-    /// See `PlaybackRequest.directEpisodeResolver`.
-    private let directEpisodeResolver: ((MetaVideo) async -> StreamEntry?)?
 
     init(
         request: PlaybackRequest,
@@ -2964,7 +2958,6 @@ final class PlayerViewModel: ObservableObject {
         // own. See ImageCache.dropDecoded().
         ImageCache.shared.dropDecoded()
         self.allowUnairedNextUp = allowUnairedNextUp
-        self.directEpisodeResolver = request.directEpisodeResolver
         self.meta = request.meta
         self.currentVideo = request.video
         self.currentEntry = request.entry
@@ -9499,43 +9492,38 @@ final class PlayerViewModel: ObservableObject {
         Task {
             defer { isSwitchingSource = false }
             var entries: [StreamEntry] = []
-            if let directEpisodeResolver {
-                // A library server's episode: its own file, no add-on sweep.
-                if let entry = await directEpisodeResolver(episode) { entries = [entry] }
+            // Normalize the episode id the SAME way the initial-play path
+            // (StreamsView.effectiveStreamID) does: stream addons speak IMDb
+            // `tt` ids and need the canonical `showId:season:episode` form. The
+            // raw `episode.id` from enriched metadata can be a `tmdb:` id or —
+            // after a Continue-Watching round-trip — a bare show id, neither of
+            // which any addon can resolve, which is why switching episodes from
+            // the in-player list produced no working source.
+            var showID = meta.id
+            if showID.hasPrefix("tmdb:"), let n = Int(showID.dropFirst("tmdb:".count)),
+               let tt = await TMDBService.imdbID(tmdbID: n, isMovie: !meta.isSeries) {
+                showID = tt
+            }
+            let streamID: String
+            if showID.hasPrefix("tt"), let season = episode.season, let ep = episode.episode {
+                streamID = "\(showID):\(season):\(ep)"
             } else {
-                // Normalize the episode id the SAME way the initial-play path
-                // (StreamsView.effectiveStreamID) does: stream addons speak IMDb
-                // `tt` ids and need the canonical `showId:season:episode` form. The
-                // raw `episode.id` from enriched metadata can be a `tmdb:` id or —
-                // after a Continue-Watching round-trip — a bare show id, neither of
-                // which any addon can resolve, which is why switching episodes from
-                // the in-player list produced no working source.
-                var showID = meta.id
-                if showID.hasPrefix("tmdb:"), let n = Int(showID.dropFirst("tmdb:".count)),
-                   let tt = await TMDBService.imdbID(tmdbID: n, isMovie: !meta.isSeries) {
-                    showID = tt
-                }
-                let streamID: String
-                if showID.hasPrefix("tt"), let season = episode.season, let ep = episode.episode {
-                    streamID = "\(showID):\(season):\(ep)"
-                } else {
-                    streamID = episode.id
-                }
-                let addons = addonManager.streamAddons.filter { $0.handles(id: streamID) }
-                // Windowed, for the same reason as the failover sweep above: this
-                // runs while the outgoing episode is still on screen.
-                let mediaType = meta.type
-                let batches = await boundedConcurrentMap(addons, limit: AddonSweepLimits.streams) { addon in
-                    let streams = (try? await StremioAPI.streams(addon: addon, type: mediaType, id: streamID)) ?? []
-                    // Keep cached torrents too when a debrid resolver exists, so
-                    // the Choose-Source list isn't just direct links.
-                    return streams
-                        .filter { $0.isPlayable || (hasResolver && $0.isTorrent) }
-                        .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
-                }
-                for batch in batches {
-                    entries.append(contentsOf: batch)
-                }
+                streamID = episode.id
+            }
+            let addons = addonManager.streamAddons.filter { $0.handles(id: streamID) }
+            // Windowed, for the same reason as the failover sweep above: this
+            // runs while the outgoing episode is still on screen.
+            let mediaType = meta.type
+            let batches = await boundedConcurrentMap(addons, limit: AddonSweepLimits.streams) { addon in
+                let streams = (try? await StremioAPI.streams(addon: addon, type: mediaType, id: streamID)) ?? []
+                // Keep cached torrents too when a debrid resolver exists, so
+                // the Choose-Source list isn't just direct links.
+                return streams
+                    .filter { $0.isPlayable || (hasResolver && $0.isTorrent) }
+                    .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
+            }
+            for batch in batches {
+                entries.append(contentsOf: batch)
             }
             guard !entries.isEmpty else {
                 // Nothing below this point has run yet, so the session is

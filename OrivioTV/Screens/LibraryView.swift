@@ -1,18 +1,9 @@
 import SwiftUI
 
 /// One chip row drives the whole screen: All / Movies / Shows filter the one
-/// unified grid, Plex / Jellyfin (only while that server is connected) swap
-/// to the server's own library.
+/// unified grid.
 private enum LibraryFilter: String, CaseIterable {
-    case all = "All", movies = "Movies", shows = "Shows", plex = "Plex", jellyfin = "Jellyfin"
-
-    var mediaServer: MediaServerKind? {
-        switch self {
-        case .plex: return .plex
-        case .jellyfin: return .jellyfin
-        default: return nil
-        }
-    }
+    case all = "All", movies = "Movies", shows = "Shows"
 }
 
 struct LibraryView: View {
@@ -20,13 +11,8 @@ struct LibraryView: View {
     @EnvironmentObject private var posterLayout: HomeCatalogSettingsStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progressStore: ProgressStore
-    @EnvironmentObject private var mediaServers: MediaServerStore
 
     let onSelect: (MetaItem) -> Void
-    /// Plays a Plex / Jellyfin item straight from the server.
-    var onPlayMediaServer: (PlaybackRequest) -> Void = { _ in }
-    /// Opens a Plex / Jellyfin show's episode list.
-    var onOpenMediaServerShow: (MediaServerItem) -> Void = { _ in }
     /// Back pressed while already at the top of the grid: leave the screen.
     var onBackAtRoot: () -> Void = {}
 
@@ -92,9 +78,7 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
                     header(countLine: countLine(movies: movies.count, shows: shows.count))
                     chipRow
-                    if let kind = filter.mediaServer {
-                        MediaServerPane(kind: kind, onPlay: onPlayMediaServer, onOpenShow: onOpenMediaServerShow)
-                    } else if visibleItems.isEmpty {
+                    if visibleItems.isEmpty {
                         OrivioEmptyState(icon: "bookmark",
                                         title: emptyTitle,
                                         message: "Save titles with the + button on their page and they'll live here.")
@@ -127,18 +111,6 @@ struct LibraryView: View {
             .scrollClipDisabled()
             .onExitCommand { backToTop(proxy, firstID: visibleItems.first?.id) }
             }
-        }
-        // A server tab whose server was disconnected falls back to All.
-        .onChange(of: mediaServers.connected) { _, connected in
-            if let kind = filter.mediaServer, !connected.contains(kind) { filter = .all }
-        }
-    }
-
-    /// The chips on offer: a server tab only while that server is connected.
-    private var filters: [LibraryFilter] {
-        LibraryFilter.allCases.filter { f in
-            guard let kind = f.mediaServer else { return true }
-            return mediaServers.connected.contains(kind)
         }
     }
 
@@ -187,30 +159,27 @@ struct LibraryView: View {
     /// left, the Sort pill on the right.
     private var chipRow: some View {
         HStack(spacing: OrivioSpacing.md) {
-            ForEach(filters, id: \.self) { f in
+            ForEach(LibraryFilter.allCases, id: \.self) { f in
                 Button { filter = f } label: {
                     LibraryChip(title: f.rawValue, selected: filter == f)
                 }
                 .buttonStyle(PlainCardButtonStyle())
             }
             Spacer()
-            if filter.mediaServer == nil {
-                OrivioDropdown(
-                    title: "Sort",
-                    selection: sort,
-                    options: [
-                        OrivioDropdownOption("Added"),
-                        OrivioDropdownOption("Name"),
-                        OrivioDropdownOption("Recently Watched")
-                    ],
-                    triggerWidth: 380
-                ) { sort = $0 }
-            }
+            OrivioDropdown(
+                title: "Sort",
+                selection: sort,
+                options: [
+                    OrivioDropdownOption("Added"),
+                    OrivioDropdownOption("Name"),
+                    OrivioDropdownOption("Recently Watched")
+                ],
+                triggerWidth: 380
+            ) { sort = $0 }
         }
         .padding(.horizontal, OrivioSpacing.huge)
         .focusSection()
     }
-
 }
 
 /// A Liquid Glass filter chip: glass in every state, accent tint + accent ring

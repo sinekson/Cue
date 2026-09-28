@@ -23,7 +23,6 @@
 		1865D13EE2276BA6529A8BD6 /* TraktSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BBE97BCD49F9A7D427F1055 /* TraktSyncManager.swift */; };
 		1A62D4292E890705C6BC22DE /* FusionTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 441964E7109F694AD904E109 /* FusionTokens.swift */; };
 		1D846EC0580C64ECC402D963 /* AddonImportServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E28E10356B1135B4BFF354D5 /* AddonImportServer.swift */; };
-		1DC5BBC5C13FAB6EF3843B91 /* MediaServerConnectViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 328A7468569D53F0F1CA495A /* MediaServerConnectViews.swift */; };
 		1F25E44B5F8F200B508D150E /* DebridService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D1FDFE406380313A6DE116 /* DebridService.swift */; };
 		1FFFA5BA9B53FF1A983248CE /* PlayerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 674ACD2067B15FCDE8CEA330 /* PlayerScreen.swift */; };
 		210817F418796C4E9618A83D /* StremioAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71F10A0E3EDFA7EA1AF9E620 /* StremioAccount.swift */; };
@@ -33,7 +32,6 @@
 		2718E07A8BBFDCC39539D7B6 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B8D36AAB09C6EB95FABD60 /* DiscoverView.swift */; };
 		27CE46D9A7C1FD8B5464BB84 /* TMDBService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4321AB0FDE1C03667ED1CA0 /* TMDBService.swift */; };
 		27DB6D9D90397963ADB4AAAB /* ContentFocusRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E454A36430EAFEAAB2F5A8FE /* ContentFocusRouter.swift */; };
-		28A5918588C99EB16FC0FA1D /* MediaServerLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA00DC8F75C0ECCD1C4D5B49 /* MediaServerLibraryView.swift */; };
 		2D5059420BAF529C1C38CE1A /* VLCEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F5120E3225B5BA6AB1841D1 /* VLCEngine.swift */; };
 		2E17B697B7E59BD21EF420F9 /* PluginRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C12FEB6FE6C3DEAC015459 /* PluginRuntime.swift */; };
 		2EAFF8692EA3E2356EA1710C /* PosterHoldMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92ED5374FAF9F1C754CA6922 /* PosterHoldMenu.swift */; };
@@ -134,7 +132,6 @@
 		CCBB49E63437227A7216DD4A /* QRCode.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8E155979A0BFF594A156758 /* QRCode.swift */; };
 		CDB09260469BE21C29C6E1E5 /* FPSOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B535C3DB8581583E6F5290EF /* FPSOverlay.swift */; };
 		CDE306939F89E77811C3374E /* OrivioConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFF051B946AA2A704F5AE4B /* OrivioConfig.swift */; };
-		D3509BE7AD517334EE082BE0 /* MediaServerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95A00A8B28D59B5162DDD65 /* MediaServerService.swift */; };
 		D987A89C54B10CF806337C0D /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB2DF78C140BFE8F2FFA09A3 /* HomeView.swift */; };
 		D9D8061C2B6CB5DC0404604A /* PlusJakartaSans-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 22997706F55334744C6F3FEE /* PlusJakartaSans-Bold.ttf */; };
 		DC1320A5E78A0A5B4DFF2D35 /* AppGroupResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2D0D7E27B31C1E68A3ED79 /* AppGroupResolver.swift */; };
@@ -202,7 +199,6 @@
 		22997706F55334744C6F3FEE /* PlusJakartaSans-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Bold.ttf"; sourceTree = "<group>"; };
 		2537327216A64303D3DBF603 /* TorrentSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorrentSettingsStore.swift; sourceTree = "<group>"; };
 		29B880EA0D7076A1D666821E /* PluginStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginStore.swift; sourceTree = "<group>"; };
-		328A7468569D53F0F1CA495A /* MediaServerConnectViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServerConnectViews.swift; sourceTree = "<group>"; };
 		336649B70E24C035EE57A905 /* ParentalGuideService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParentalGuideService.swift; sourceTree = "<group>"; };
 		343918D06B3BE0D50D514515 /* OrivioSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrivioSyncManager.swift; sourceTree = "<group>"; };
 		34E7D17DD079A7F255B25845 /* SimklSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimklSyncManager.swift; sourceTree = "<group>"; };
@@ -279,7 +275,6 @@
 		B509A5BB4E7B7EC1D80A28FB /* TorrServerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TorrServerService.swift; sourceTree = "<group>"; };
 		B535C3DB8581583E6F5290EF /* FPSOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FPSOverlay.swift; sourceTree = "<group>"; };
 		B872284504BE4D777519FDCD /* TraktService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TraktService.swift; sourceTree = "<group>"; };
-		B95A00A8B28D59B5162DDD65 /* MediaServerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServerService.swift; sourceTree = "<group>"; };
 		BAF88678B45876C22D86E134 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		BE39333DD1732E18072B31A6 /* LiveStreamResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveStreamResolver.swift; sourceTree = "<group>"; };
 		BE5E11578BD4FB26384437DB /* SettingsLayoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsLayoutView.swift; sourceTree = "<group>"; };
@@ -311,7 +306,6 @@
 		E57FA38C482F71DE9C65359D /* SettingsTraktView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTraktView.swift; sourceTree = "<group>"; };
 		E5D1FDFE406380313A6DE116 /* DebridService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebridService.swift; sourceTree = "<group>"; };
 		E88D00D03AED294885C65EFB /* LiveStreamOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveStreamOptions.swift; sourceTree = "<group>"; };
-		EA00DC8F75C0ECCD1C4D5B49 /* MediaServerLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServerLibraryView.swift; sourceTree = "<group>"; };
 		EB2DF78C140BFE8F2FFA09A3 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		EB7CC5D924D08555D8ACFF24 /* CollectionsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionsStore.swift; sourceTree = "<group>"; };
 		EC13FABB5BF494BFD80C2495 /* ATVTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATVTheme.swift; sourceTree = "<group>"; };
@@ -440,8 +434,6 @@
 				EB2DF78C140BFE8F2FFA09A3 /* HomeView.swift */,
 				0B1171B30A9B7C0990BFE3CF /* LibraryView.swift */,
 				6B7AF90208E8326B2293F3E4 /* LiveTVView.swift */,
-				328A7468569D53F0F1CA495A /* MediaServerConnectViews.swift */,
-				EA00DC8F75C0ECCD1C4D5B49 /* MediaServerLibraryView.swift */,
 				92ED5374FAF9F1C754CA6922 /* PosterHoldMenu.swift */,
 				9E056E9745C95EAC5F152F2E /* ProfilesView.swift */,
 				77A0EDEBE8855BE03D3FF362 /* SearchView.swift */,
@@ -488,7 +480,6 @@
 				9D1CE0249C1AE5940C106667 /* M3UService.swift */,
 				982A17F7BFDAF29112D21D73 /* MDBListService.swift */,
 				8DD6C94E7133025F68DE22E9 /* MediaCacheServer.swift */,
-				B95A00A8B28D59B5162DDD65 /* MediaServerService.swift */,
 				BAF88678B45876C22D86E134 /* Models.swift */,
 				50258073F04AAA26F8BAD73A /* OrivioRenameMigration.swift */,
 				336649B70E24C035EE57A905 /* ParentalGuideService.swift */,
@@ -844,9 +835,6 @@
 				3504FC65DD96F705B019A65C /* M3UService.swift in Sources */,
 				5FD2A7388C94F8762C94E849 /* MDBListService.swift in Sources */,
 				E2500266C7A770F8E0325E9D /* MediaCacheServer.swift in Sources */,
-				1DC5BBC5C13FAB6EF3843B91 /* MediaServerConnectViews.swift in Sources */,
-				28A5918588C99EB16FC0FA1D /* MediaServerLibraryView.swift in Sources */,
-				D3509BE7AD517334EE082BE0 /* MediaServerService.swift in Sources */,
 				54DAC7A4539E88A1AAB64D29 /* Models.swift in Sources */,
 				50A8961ABE0BB7DD02B4543B /* OrivioAccountManager.swift in Sources */,
 				36624F3753542972CBDF42FF /* OrivioAuthModels.swift in Sources */,
