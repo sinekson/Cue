@@ -8192,11 +8192,6 @@ final class PlayerViewModel: ObservableObject {
     /// True while the Sources panel is fetching alternatives in the background.
     @Published private(set) var isLoadingSources = false
 
-    /// Resolves a torrent stream to a direct URL through the configured debrid
-    /// provider. Injected by PlayerScreen (which owns the DebridStore); nil
-    /// when no provider is configured.
-    var torrentResolver: ((Stream) async -> Stream?)?
-
     // MARK: - In-player engine switching
 
     /// Session override picked from the in-player Engine panel; falls back to
@@ -8247,11 +8242,10 @@ final class PlayerViewModel: ObservableObject {
     }
 
     /// Fetch every stream for the current title from the installed stream
-    /// addons. Torrent entries are kept only when a debrid resolver exists.
+    /// addons. Raw torrent entries are dropped: nothing here can resolve them.
     private func fetchAvailableSources(forceRefresh: Bool = false) async -> [StreamEntry] {
         let id = currentVideo?.id ?? meta.id
         let type = meta.type
-        let hasResolver = torrentResolver != nil
         var entries: [StreamEntry] = []
         // Instant path: the Sources page caches the raw source list per title,
         // so an in-player Sources open / failover re-uses it with no sweep.
@@ -8263,7 +8257,7 @@ final class PlayerViewModel: ObservableObject {
            !cached.isEmpty {
             entries = cached
                 .map { StreamEntry(addonName: $0.addonName, stream: $0.stream) }
-                .filter { $0.stream.isPlayable || (hasResolver && $0.stream.isTorrent) }
+                .filter { $0.stream.isPlayable }
         } else {
             let addons = addonManager.streamAddons.filter { $0.handles(id: id) }
             // Windowed. This fires DURING playback (failover / Sources from the
@@ -8274,7 +8268,7 @@ final class PlayerViewModel: ObservableObject {
             let batches = await boundedConcurrentMap(addons, limit: AddonSweepLimits.streams) { addon in
                 let streams = (try? await StremioAPI.streams(addon: addon, type: type, id: id)) ?? []
                 return streams
-                    .filter { $0.isPlayable || (hasResolver && $0.isTorrent) }
+                    .filter { $0.isPlayable }
                     .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
             }
             for batch in batches { entries.append(contentsOf: batch) }
@@ -8810,31 +8804,13 @@ final class PlayerViewModel: ObservableObject {
             // still clears both sets, so a deliberate retry gets it back.
             self.failedSourceIDs.insert(next.id)
             if let u = next.stream.url { self.failedSourceURLs.insert(u) }
-            // Torrent candidate → resolve to a direct link first.
+            // A raw torrent can't play here — skip to the next candidate.
             if next.stream.isTorrent {
-                guard let resolver = self.torrentResolver,
-                      let resolved = await resolver(next.stream) else {
-                    self.failedSourceIDs.insert(next.id)
-                    if let u = next.stream.url { self.failedSourceURLs.insert(u) }
-                    handedOff = true
-                    self.attemptFailoverRetry(afterError: error, continuing: failoverGeneration)
-                    return
-                }
-                // The debrid cache can hand back the SAME dead direct link the
-                // failover just abandoned (the torrent entry itself stays in
-                // allEntries under its magnet URL). Without this check the
-                // chain loops forever: pick torrent → resolve to dead link →
-                // stall → fail → pick the same torrent again.
-                if let u = resolved.url, self.failedSourceURLs.contains(u) {
-                    self.failedSourceIDs.insert(next.id)
-                    if let tu = next.stream.url { self.failedSourceURLs.insert(tu) }
-                    handedOff = true
-                    self.attemptFailoverRetry(afterError: error, continuing: failoverGeneration)
-                    return
-                }
-                next = StreamEntry(addonName: next.addonName, stream: resolved)
+                handedOff = true
+                self.attemptFailoverRetry(afterError: error, continuing: failoverGeneration)
+                return
             }
-            // The scrape / debrid re-resolve above can take many seconds. If the
+            // The scrape above can take many seconds. If the
             // viewer exited during it, stop here — `load()` would otherwise open
             // a fresh stream behind the dismissed player (the same orphaned
             // playback `player(layer:finish:)` guards against up front).
@@ -8986,41 +8962,9 @@ final class PlayerViewModel: ObservableObject {
             overlay = .none
             return
         }
-        // Torrent source mid-playback: resolve through debrid first (this
-        // previously dead-ended with "no playable link").
+        // Raw torrents can't play here (no in-app debrid or P2P).
         if entry.stream.isTorrent {
-            guard let resolver = torrentResolver else {
-                showToast("Add a debrid key in Settings to play torrent sources")
-                return
-            }
-            overlay = .none
-            // The viewer picked this one themselves — say so, rather than
-            // implying the player gave up on something.
-            switchingSourceLabel = "Switching source…"
-            isSwitchingSource = true
-            let resumeAt = resumeTargetForReload
-            let generation = loadGeneration
-            Task { [weak self] in
-                guard let self else { return }
-                defer { self.isSwitchingSource = false }
-                guard let resolved = await resolver(entry.stream) else {
-                    self.showToast("Couldn't resolve this source — try another")
-                    return
-                }
-                // Debrid resolution takes seconds; the viewer may have left, or
-                // a failover or another pick may have loaded something else in
-                // the meantime. Loading now would strand a playing layer behind
-                // the dismissed player, or replace a stream the viewer chose
-                // after this one.
-                guard self.isCurrentLoad(generation) else { return }
-                let direct = StreamEntry(addonName: entry.addonName, stream: resolved)
-                self.currentEntry = direct
-                self.countdownTask?.cancel()
-                self.upNextCountdown = nil
-                self.pendingResume = resumeAt > 10 ? resumeAt : nil
-                self.load(entry: direct)
-                self.runStreamProbe()
-            }
+            showToast("Raw torrent sources can't play — configure debrid in the add-on")
             return
         }
         let resumeAt = resumeTargetForReload
@@ -9488,7 +9432,6 @@ final class PlayerViewModel: ObservableObject {
         // episode's stream loads — see `episodeSwitchTargetID`.
         episodeSwitchTargetID = episode.id
         engineStopForSwitch()
-        let hasResolver = torrentResolver != nil
         Task {
             defer { isSwitchingSource = false }
             var entries: [StreamEntry] = []
@@ -9516,10 +9459,8 @@ final class PlayerViewModel: ObservableObject {
             let mediaType = meta.type
             let batches = await boundedConcurrentMap(addons, limit: AddonSweepLimits.streams) { addon in
                 let streams = (try? await StremioAPI.streams(addon: addon, type: mediaType, id: streamID)) ?? []
-                // Keep cached torrents too when a debrid resolver exists, so
-                // the Choose-Source list isn't just direct links.
                 return streams
-                    .filter { $0.isPlayable || (hasResolver && $0.isTorrent) }
+                    .filter { $0.isPlayable }
                     .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
             }
             for batch in batches {
@@ -9593,44 +9534,6 @@ final class PlayerViewModel: ObservableObject {
                 currentEntry = preferred
                 load(entry: preferred)
                 overlay = .sources
-            } else if !presentSources, let resolver = torrentResolver,
-                      let torrent = panelEntries.first(where: \.stream.isTorrent) {
-                // ONLY TORRENTS, BUT A DEBRID RESOLVER IS CONFIGURED — so there
-                // IS a usable source here and the advance should not be handing
-                // the viewer a picker. Resolving one is what every other path
-                // in this file already does with a torrent candidate: the
-                // viewer's own source switch (`switchSource`) and the failover
-                // ladder both call `torrentResolver` and load the direct link
-                // it returns. Only the auto-advance refused, so an episode
-                // whose sources happened to come back as torrents interrupted a
-                // binge with the source list — "Auto Pick occasionally shows
-                // the source-selection screen between episodes".
-                //
-                // The curated-first torrent, which is exactly the row the
-                // picker below would have pre-selected, so the automatic choice
-                // and the manual default agree.
-                //
-                // Purely a FALLBACK: reached only where the picker was opening
-                // anyway. A directly-playable link still wins whenever one
-                // exists, and with Auto Pick off (`presentSources`) the viewer
-                // still gets the list they asked for.
-                currentEntry = torrent
-                let resolved = await resolver(torrent.stream)
-                // Debrid resolution takes seconds. Re-checked for the same
-                // reason `switchSource` re-checks its load generation: the
-                // viewer may have exited, or a later advance may have moved on
-                // to a different episode, and loading now would strand a stream
-                // behind them.
-                guard !isExiting, currentVideo?.id == episode.id else { return }
-                if let resolved {
-                    let direct = StreamEntry(addonName: torrent.addonName, stream: resolved)
-                    currentEntry = direct
-                    load(entry: direct)
-                } else {
-                    // Couldn't resolve — the picker is the right answer after
-                    // all, which is where this case landed before.
-                    overlay = .sources
-                }
             } else {
                 // Only torrents available and nothing can resolve them (no
                 // debrid key) — go straight to the picker.

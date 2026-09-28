@@ -10,7 +10,6 @@ struct AccountView: View {
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var stremio: StremioAccountStore
     @EnvironmentObject private var trakt: TraktStore
-    @EnvironmentObject private var debrid: DebridStore
 
     private enum AccountFocus: Hashable {
         case orivioSignIn
@@ -687,7 +686,6 @@ struct AccountView: View {
                 AccountSyncStatusRow(title: "Watched", value: "\(watched.items.count) marked", systemImage: "checkmark.seal")
                 AccountSyncStatusRow(title: "Stremio", value: stremio.isSignedIn ? (stremio.email ?? "Connected") : "Not connected", systemImage: "link")
                 AccountSyncStatusRow(title: "Trakt", value: trakt.isSignedIn ? (trakt.username ?? "Connected") : "Not connected", systemImage: "checkmark.seal.fill")
-                AccountSyncStatusRow(title: "Debrid", value: debridProvidersLabel, systemImage: "key")
                 AccountSyncStatusRow(title: "Pending Queue", value: pendingQueueLabel, systemImage: "tray.and.arrow.up")
                 AccountSyncStatusRow(title: "Last Error", value: sync?.lastSyncError ?? "None", systemImage: "exclamationmark.triangle")
             }
@@ -746,11 +744,6 @@ struct AccountView: View {
 
     private var activeProfileName: String {
         profiles.profiles.first { $0.id == profiles.activeProfileID }?.name ?? "Profile \(profiles.activeProfileID)"
-    }
-
-    private var debridProvidersLabel: String {
-        let providers = debrid.configuredProviders.map(\.displayName)
-        return providers.isEmpty ? "None configured" : providers.joined(separator: ", ")
     }
 
     private var pendingQueueLabel: String {
@@ -947,11 +940,8 @@ struct AccountView: View {
         let addonSlow = addonResults.filter { $0.status == .slow }.count
 
         let traktStatus = trakt.isSignedIn ? "Trakt connected" : "Trakt off"
-        let debridStatus = debrid.configuredProviders.isEmpty
-            ? "no debrid"
-            : "\(debrid.configuredProviders.count) debrid"
 
-        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow · \(traktStatus) · \(debridStatus)"
+        providerStatus = "\(addonFailures) addon failed, \(addonSlow) slow · \(traktStatus)"
         OrivioSyncDiagnostics.record(.info, area: "Health", providerStatus ?? "Provider check finished.")
         syncLog = OrivioSyncDiagnostics.entries()
     }

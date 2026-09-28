@@ -3,7 +3,6 @@ import UIKit
 
 struct PlayerScreen: View {
     @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var debrid: DebridStore
     @EnvironmentObject private var watched: WatchedStore
     /// Observed (not the view model's load-time snapshot) so caption style
     /// edits made in the Subtitles panel restyle the captions on screen live.
@@ -413,36 +412,6 @@ struct PlayerScreen: View {
             if let onNowPlayingChanged {
                 viewModel.onNowPlayingChanged = onNowPlayingChanged
                 viewModel.autoLinkPrefs = profiles.activeAutoLink
-            }
-            // Hand the view model a debrid resolver so torrent sources can be
-            // switched to (and failed over to) mid-playback. Tries every
-            // configured provider, preferred first, like the Sources page.
-            if debrid.resolverProvider != nil {
-                // Ask the store per call rather than snapshotting the keys here:
-                // a Real-Debrid token refreshed during a long session would
-                // otherwise leave this closure holding the expired one for the
-                // rest of playback.
-                viewModel.torrentResolver = { [weak viewModel, debrid] stream in
-                    let (result, _) = await DebridService.resolveAcross(
-                        stream: stream,
-                        providers: await debrid.resolversRefreshingIfNeeded(),
-                        season: viewModel?.currentVideo?.season,
-                        episode: viewModel?.currentVideo?.episode,
-                        // Mid-playback source switch / failover: honour the
-                        // addon's file index too, so switching to a season-pack
-                        // source doesn't jump to a different episode.
-                        fileIdx: stream.fileIdx
-                    )
-                    guard case .success(let url, let filename) = result else { return nil }
-                    return Stream(
-                        name: stream.name,
-                        title: filename ?? stream.title,
-                        description: stream.description,
-                        url: url,
-                        infoHash: nil,
-                        behaviorHints: stream.behaviorHints
-                    )
-                }
             }
         }
         .task { await runDemoTourIfRequested() }

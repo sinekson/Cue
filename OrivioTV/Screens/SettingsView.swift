@@ -732,7 +732,6 @@ struct AccountSettingsDetail: View {
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var watchedStore: WatchedStore
     @EnvironmentObject private var trakt: TraktStore
-    @EnvironmentObject private var debrid: DebridStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
@@ -795,7 +794,6 @@ struct AccountSettingsDetail: View {
             .environmentObject(watchedStore)
             .environmentObject(stremio)
             .environmentObject(trakt)
-            .environmentObject(debrid)
             .onExitCommand { showAccount = false }
         }
         .fullScreenCover(isPresented: $showProfiles) {
@@ -815,7 +813,7 @@ struct AccountSettingsDetail: View {
         }
     }
 
-    /// One switch per split category. Add-ons/debrid also resync so
+    /// One switch per split category. Add-ons also resync so
     /// the account converges on the new scope (shared = profile 1's rows).
     @ViewBuilder
     private var separationToggles: some View {
@@ -825,14 +823,6 @@ struct AccountSettingsDetail: View {
             isOn: Binding(
                 get: { addonManager.perProfileEnabled },
                 set: { addonManager.setPerProfile($0); resyncAfterScopeChange() }
-            )
-        )
-        SettingsToggleCard(
-            title: "Debrid logins",
-            subtitle: "Each profile connects its own Real-Debrid / Premiumize / TorBox and picks its own preferred service",
-            isOn: Binding(
-                get: { debrid.perProfileEnabled },
-                set: { debrid.setPerProfile($0); resyncAfterScopeChange() }
             )
         )
         SettingsToggleCard(

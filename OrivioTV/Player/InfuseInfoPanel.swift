@@ -1034,13 +1034,6 @@ struct InfusePickerItem: Identifiable {
     /// sofa, and `" · HDR · Atmos"` buried at the end of a grey subtitle line
     /// is none of that.
     var badges: [StreamBadge] = []
-    /// Debrid-cached torrent — instant play. The single most consequential
-    /// fact about a link and the one this list did not show at all: an
-    /// uncached source streams from a file the provider is still downloading,
-    /// which cannot report a length, so the hybrid cache refuses the session
-    /// and the title buffers its way through with no read-ahead at all.
-    var instant: Bool = false
-    var debridName: String? = nil
     let selected: Bool
     let action: () -> Void
 }
@@ -1064,9 +1057,6 @@ struct InfusePickerSpec {
 struct InfusePickerScreen: View {
     @ObservedObject var viewModel: PlayerViewModel
     @EnvironmentObject private var streamBadges: StreamBadgeStore
-    /// Only for a torrent link's provider chip ("RD", "TB"), matching the
-    /// pre-play list. Injected app-wide, so the player's cover inherits it.
-    @EnvironmentObject private var debrid: DebridStore
     let spec: InfusePickerSpec
     let onClose: () -> Void
     @FocusState private var focus: String?
@@ -1085,8 +1075,6 @@ struct InfusePickerScreen: View {
                     id: entry.id.uuidString, title: entry.displayName,
                     subtitle: detail,
                     badges: streamBadges.badges(for: entry),
-                    instant: entry.stream.isTorrent && entry.isInstant,
-                    debridName: entry.stream.isTorrent ? debrid.resolverProvider?.shortName : nil,
                     selected: entry.id == viewModel.currentEntry.id
                 ) {
                     viewModel.switchSource(entry)
@@ -1172,8 +1160,7 @@ struct InfusePickerScreen: View {
                                 onClose()
                             } label: {
                                 InfusePickerRow(title: item.title, subtitle: item.subtitle,
-                                                badges: item.badges, instant: item.instant,
-                                                debridName: item.debridName,
+                                                badges: item.badges,
                                                 selected: item.selected, width: rowWidth)
                             }
                             .buttonStyle(PlainCardButtonStyle())
@@ -1209,8 +1196,6 @@ private struct InfusePickerRow: View {
     let title: String
     let subtitle: String?
     var badges: [StreamBadge] = []
-    var instant: Bool = false
-    var debridName: String? = nil
     let selected: Bool
     let width: CGFloat
 
@@ -1232,24 +1217,6 @@ private struct InfusePickerRow: View {
                 }
             }
             Spacer(minLength: 0)
-            // Cached-vs-not, the fact that decides whether this link plays now
-            // or buffers its way through. Same chip, same wording and the same
-            // trailing position as the pre-play Sources list, so the two lists
-            // read as one thing rather than two.
-            if instant {
-                MetaBadge(
-                    text: "⚡︎ Cached",
-                    tint: OrivioPrimitives.success.opacity(isFocused ? 0.30 : 0.22),
-                    textColor: OrivioPrimitives.success
-                )
-            }
-            if let debridName {
-                MetaBadge(
-                    text: debridName,
-                    tint: OrivioPrimitives.success.opacity(isFocused ? 0.30 : 0.22),
-                    textColor: OrivioPrimitives.success
-                )
-            }
             if selected {
                 Image(systemName: "checkmark")
                     .font(.system(size: 24, weight: .medium))

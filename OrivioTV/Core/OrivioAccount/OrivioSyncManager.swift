@@ -35,8 +35,6 @@ final class OrivioSyncManager: ObservableObject {
     private let playerSettings: PlayerSettingsStore?
     private let tmdbSettings: TMDBSettingsStore?
     private let themeManager: ThemeManager?
-    private let debridStore: DebridStore?
-    private let torrentSettings: TorrentSettingsStore?
     private let traktStore: TraktStore?
     private let simklStore: SimklStore?
     private let ratingsStore: RatingsStore?
@@ -110,6 +108,10 @@ final class OrivioSyncManager: ObservableObject {
     /// credentials. The identity change clears these, and the pushes below
     /// refuse to run until the new account has been read.
     private var pulledAddonProfiles: Set<Int> = []
+    /// Non-Trakt `provider_credentials` rows (other clients' debrid keys) as
+    /// last read for each profile from the CURRENT account. Echoed back on
+    /// every credentials push; nil until read, and a push reads first.
+    private var passthroughCredentials: [Int: [[String: Any]]] = [:]
 
     /// A full sync was requested while one was running. It used to be
     /// DROPPED ("sync already running"), so a change made during a run —
@@ -351,9 +353,6 @@ final class OrivioSyncManager: ObservableObject {
         // Ratings are pushed to whichever Trakt/SIMKL account is connected —
         // the previous user's stars must not follow the next user there.
         ratingsStore?.clearAllProfiles()
-        // Every profile's debrid logins, not just the active scope — same
-        // reasoning as Trakt's forgetAllProfiles above.
-        debridStore?.forgetAllProfiles()
     }
 
     /// Drop the PREVIOUS account's per-profile content: Continue Watching,
@@ -447,6 +446,7 @@ final class OrivioSyncManager: ObservableObject {
         // and wipe that profile's rows on the server before its pull landed.
         pulledLibraryProfiles.removeAll()
         pulledAddonProfiles.removeAll()
+        passthroughCredentials.removeAll()
 
         NSLog("[OrivioSync] reset per-profile content stores for the previous account")
         OrivioSyncDiagnostics.record(
@@ -587,8 +587,6 @@ final class OrivioSyncManager: ObservableObject {
         playerSettings: PlayerSettingsStore? = nil,
         tmdbSettings: TMDBSettingsStore? = nil,
         themeManager: ThemeManager? = nil,
-        debridStore: DebridStore? = nil,
-        torrentSettings: TorrentSettingsStore? = nil,
         traktStore: TraktStore? = nil,
         simklStore: SimklStore? = nil,
         ratingsStore: RatingsStore? = nil
@@ -606,8 +604,6 @@ final class OrivioSyncManager: ObservableObject {
         self.playerSettings = playerSettings
         self.tmdbSettings = tmdbSettings
         self.themeManager = themeManager
-        self.debridStore = debridStore
-        self.torrentSettings = torrentSettings
         self.traktStore = traktStore
         self.simklStore = simklStore
 
@@ -675,13 +671,6 @@ final class OrivioSyncManager: ObservableObject {
         playerSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         tmdbSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         themeManager?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
-        // Debrid keys dual-write: the blob (tvOS↔tvOS) AND the dedicated
-        // Android table (tvOS↔phone).
-        debridStore?.onLocalChange = { [weak self] in
-            self?.scheduleAppPreferencesPush()
-            self?.scheduleProviderCredentialsPush()
-        }
-        torrentSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         // Trakt tokens live only in the dedicated provider_credentials table.
         traktStore?.onLocalChange = { [weak self] in self?.scheduleProviderCredentialsPush() }
         homeCatalogSettings.onPresentationChange = { [weak self] in self?.scheduleAppPreferencesPush() }
@@ -1314,11 +1303,9 @@ final class OrivioSyncManager: ObservableObject {
     }
 
     /// The stores split per profile in the upstream-parity pass: add-ons
-    /// (honouring the profile's use-primary fallback), debrid logins,
-    /// player settings, TMDB settings, theme, badges.
+    /// (honouring the profile's use-primary fallback), player settings, TMDB settings, theme, badges.
     private func rescopePerProfileStores(_ id: Int) {
         addonManager.setProfile(addonPID(for: id))
-        debridStore?.setProfile(id)
         playerSettings?.setProfile(id)
         tmdbSettings?.setProfile(id)
         themeManager?.setProfile(id)
@@ -3437,10 +3424,6 @@ final class OrivioSyncManager: ObservableObject {
         /// Home/Continue-Watching presentation prefs. Optional so blobs written
         /// before this field decode cleanly.
         var home: HomePresentationSnapshot?
-        /// Debrid provider keys + preferred. Optional for backward-compat.
-        var debrid: DebridStore.DebridSnapshot?
-        /// P2P / TorrServer settings. Optional for backward-compat.
-        var torrent: TorrentSettings?
         /// Custom collections (grouped catalog home rows). Synced HERE (not via
         /// the dedicated sync_*_collections RPCs, which the shared backend
         /// doesn't provide) so they round-trip through the same reliable
@@ -3578,8 +3561,6 @@ final class OrivioSyncManager: ObservableObject {
         themeManager.applyRemote(snapshot.theme)
         WatchHistoryClearState.adopt(snapshot.watchHistoryClearedAt)
         if let home = snapshot.home { homeCatalogSettings.applyRemotePresentation(home) }
-        if let debrid = snapshot.debrid { debridStore?.applyRemote(debrid) }
-        if let torrent = snapshot.torrent { torrentSettings?.applyRemote(torrent) }
         if let collections = snapshot.collections, !collectionsDirty {
             // Merge rather than replace: another profile's blob may carry packs
             // this one has never seen, and the library is account-wide. Dirty-
@@ -3614,8 +3595,6 @@ final class OrivioSyncManager: ObservableObject {
             tmdb: tmdbSettings.settings,
             theme: themeManager.snapshot,
             home: homeCatalogSettings.presentationSnapshot,
-            debrid: debridStore?.snapshot,
-            torrent: torrentSettings?.settings,
             // The shared library (every profile's collections), plus THIS
             // profile's opt-outs. Pushing the visible subset here would delete
             // other profiles' collections from the account.
@@ -3674,13 +3653,7 @@ final class OrivioSyncManager: ObservableObject {
         }
     }
 
-    // MARK: - Provider credentials (debrid keys + Trakt) — Android table
-
-    /// Maps our DebridProvider to the Android provider-credential name. AllDebrid
-    /// isn't a synced provider on Android, so it stays blob-only.
-    private static let debridProviderNames: [(DebridProvider, String)] = [
-        (.realDebrid, "realdebrid"), (.premiumize, "premiumize"), (.torbox, "torbox")
-    ]
+    // MARK: - Provider credentials (Trakt) — Android table
 
     private func scheduleProviderCredentialsPush() {
         guard !isRetiringAccountState else { return }
@@ -3693,27 +3666,21 @@ final class OrivioSyncManager: ObservableObject {
         }
     }
 
-    /// Push debrid API keys and the Trakt login into the shared
-    /// `provider_credentials` table. Each row is
-    /// `{provider, credential_json, updated_at}`; `p_credentials` carries them.
+    /// Push the Trakt login into the shared `provider_credentials` table. Each
+    /// row is `{provider, credential_json, updated_at}`; `p_credentials`
+    /// carries them.
     private func pushProviderCredentials(profile: Int) async {
         guard account.accessToken != nil, pid == profile else { return }
-        let now = ISO8601DateFormatter().string(from: Date())
-        var credentials: [[String: Any]] = []
-
-        if let debridStore {
-            for (provider, name) in Self.debridProviderNames {
-                let key = debridStore.key(for: provider)
-                guard !key.isEmpty else { continue }
-                credentials.append([
-                    "provider": name,
-                    // snake_case matches this backend's convention; the reader is
-                    // tolerant of camelCase in case a client wrote it differently.
-                    "credential_json": ["api_key": key],
-                    "updated_at": now
-                ])
-            }
+        // This app no longer uses debrid, but other Nuvio clients keep their
+        // debrid keys in this same table. Read it first so those rows can be
+        // sent back untouched — whether the RPC replaces or merges, a push
+        // from here must never drop them.
+        if passthroughCredentials[profile] == nil {
+            await pullProviderCredentials(profile: profile)
+            guard pid == profile, passthroughCredentials[profile] != nil else { return }
         }
+        let now = ISO8601DateFormatter().string(from: Date())
+        var credentials: [[String: Any]] = passthroughCredentials[profile] ?? []
 
         if let traktStore, let access = traktStore.accessToken, let refresh = traktStore.refreshToken {
             var json: [String: Any] = ["access_token": access, "refresh_token": refresh]
@@ -3755,10 +3722,7 @@ final class OrivioSyncManager: ObservableObject {
         else if let single = parsed as? [String: Any] { rows = [single] }
         else { return }
 
-        // Collect debrid keys and apply them in ONE guarded applyRemote — calling
-        // setKey directly fired onLocalChange (it isn't the applyingRemote path),
-        // which echoed a credentials push after every pull.
-        var debridKeys: [String: String] = [:]
+        var passthrough: [[String: Any]] = []
         for row in rows {
             guard let provider = (row["provider"] as? String)?.lowercased() else { continue }
             let json = Self.credentialJSON(from: row["credential_json"])
@@ -3771,17 +3735,15 @@ final class OrivioSyncManager: ObservableObject {
                 let refresh = Self.anyString(json["refresh_token"] ?? json["refreshToken"])
                 let username = Self.anyString(json["username"] ?? json["user"])
                 traktStore?.applyRemote(access: access, refresh: refresh, username: username)
-            } else if let match = Self.debridProviderNames.first(where: { $0.1 == provider }) {
-                let key = Self.anyString(
-                    json["api_key"] ?? json["apiKey"] ?? json["apikey"]
-                        ?? json["token"] ?? json["access_token"] ?? json["value"]
-                )
-                if let key, !key.isEmpty { debridKeys[match.0.rawValue] = key }
+            } else {
+                // Another client's credential (debrid keys and the like):
+                // kept verbatim so our pushes carry it back unchanged.
+                var kept: [String: Any] = ["provider": provider, "credential_json": json]
+                if let updated = row["updated_at"] { kept["updated_at"] = updated }
+                passthrough.append(kept)
             }
         }
-        if !debridKeys.isEmpty {
-            debridStore?.applyRemote(DebridStore.DebridSnapshot(keys: debridKeys, preferred: nil))
-        }
+        passthroughCredentials[profile] = passthrough
     }
 
     /// `credential_json` tolerated as a nested object OR a JSON-encoded string.

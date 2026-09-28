@@ -1,17 +1,14 @@
 import SwiftUI
 
-/// Settings → Integrations: the external services Orivio talks to — TMDB,
-/// MDBList, the debrid providers, and a self-hosted TorrServer for P2P.
-/// Trakt and the Orivio/Stremio accounts have their own panes.
+/// Settings → Integrations: the external services Orivio talks to — TMDB
+/// and MDBList. Trakt and the Orivio/Stremio accounts have their own panes.
 struct IntegrationsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var tmdb: TMDBSettingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
-    @EnvironmentObject private var debrid: DebridStore
-    @EnvironmentObject private var torrent: TorrentSettingsStore
     @State private var sheet: IntegrationSheet?
 
-    enum IntegrationSheet: String, Identifiable { case tmdb, mdblist, debrid, p2p; var id: String { rawValue } }
+    enum IntegrationSheet: String, Identifiable { case tmdb, mdblist; var id: String { rawValue } }
 
     var body: some View {
         // APK layout: a single list of drill-in rows, each opening a sub-screen.
@@ -20,8 +17,6 @@ struct IntegrationsDetail: View {
                 // Orivio account moved to Settings → Account.
                 integrationRow(title: "TMDB", subtitle: "Metadata enrichment controls", icon: "film.stack") { sheet = .tmdb }
                 integrationRow(title: "MDBList", subtitle: "External ratings providers", icon: "star.circle.fill") { sheet = .mdblist }
-                integrationRow(title: "Debrid", subtitle: "Cached torrent sources as direct streams", icon: "bolt.horizontal.circle.fill") { sheet = .debrid }
-                integrationRow(title: "P2P (TorrServer)", subtitle: "Stream uncached torrents through your own TorrServer", icon: "point.3.connected.trianglepath.dotted") { sheet = .p2p }
             }
         }
         .fullScreenCover(item: $sheet) { s in
@@ -32,8 +27,6 @@ struct IntegrationsDetail: View {
             .environmentObject(theme)
             .environmentObject(tmdb)
             .environmentObject(mdblist)
-            .environmentObject(debrid)
-            .environmentObject(torrent)
             .onExitCommand { sheet = nil }
         }
     }
@@ -55,14 +48,6 @@ struct IntegrationsDetail: View {
         case .mdblist:
             DetailScaffold(title: "MDBList", subtitle: "External ratings providers") {
                 SettingsGroupCard(title: "") { mdblistSection }
-            }
-        case .debrid:
-            DetailScaffold(title: "Debrid", subtitle: "Cached torrent sources as direct, high-speed streams") {
-                SettingsGroupCard(title: "") { debridSection }
-            }
-        case .p2p:
-            DetailScaffold(title: "P2P (TorrServer)", subtitle: "Stream torrents peer-to-peer via a TorrServer instance") {
-                SettingsGroupCard(title: "") { P2PSection() }
             }
         }
     }
@@ -88,21 +73,6 @@ struct IntegrationsDetail: View {
                 .font(.system(size: 18))
                 .foregroundStyle(theme.palette.textTertiary)
                 .padding(.top, 2)
-        }
-    }
-
-    // MARK: - Debrid
-
-    private var debridSection: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-            ForEach(DebridProvider.allCases) { provider in
-                DebridProviderRow(provider: provider)
-            }
-
-            if debrid.configuredProviders.count > 1 {
-                PreferredProviderRow()
-                    .padding(.top, OrivioSpacing.sm)
-            }
         }
     }
 
@@ -189,314 +159,9 @@ struct IntegrationsDetail: View {
 
 }
 
-// MARK: - Debrid rows
-
-private struct DebridProviderRow: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var debrid: DebridStore
-    let provider: DebridProvider
-
-    @State private var showEditor = false
-
-    private var isConfigured: Bool { !debrid.key(for: provider).isEmpty }
-
-    var body: some View {
-        Button { showEditor = true } label: {
-            HStack(spacing: OrivioSpacing.lg) {
-                Text(provider.shortName)
-                    .font(.system(size: 20, weight: .heavy))
-                    .foregroundStyle(theme.palette.onSecondary)
-                    .frame(width: 54, height: 40)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(isConfigured ? OrivioPrimitives.success : theme.palette.surfaceVariant)
-                    )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(provider.displayName)
-                        .font(.system(size: 25, weight: .medium))
-                        .foregroundStyle(theme.palette.textPrimary)
-                    Text(isConfigured ? "Connected · key set" : "Key from \(provider.keyHint)")
-                        .font(.system(size: 19))
-                        .foregroundStyle(isConfigured ? OrivioPrimitives.success : theme.palette.textSecondary)
-                }
-                Spacer()
-                if debrid.preferred == provider && debrid.configuredProviders.count > 1 {
-                    MetaBadge(text: "PREFERRED", tint: theme.palette.secondary.opacity(0.2), textColor: theme.palette.secondary)
-                }
-                Image(systemName: isConfigured ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.system(size: 26))
-                    .foregroundStyle(isConfigured ? OrivioPrimitives.success : theme.palette.textTertiary)
-            }
-            .integrationRowBackground(theme)
-        }
-        .buttonStyle(PlainCardButtonStyle())
-        .fullScreenCover(isPresented: $showEditor) {
-            DebridKeyEditor(provider: provider) { showEditor = false }
-                .environmentObject(theme)
-                .environmentObject(debrid)
-        }
-    }
-}
-
-private struct PreferredProviderRow: View {
-    @EnvironmentObject private var debrid: DebridStore
-
-    var body: some View {
-        OrivioDropdown(
-            title: "Preferred provider",
-            subtitle: "Used first when a stream is cached on more than one",
-            selection: debrid.preferred?.id ?? "",
-            options: debrid.configuredProviders.map { OrivioDropdownOption($0.id, $0.displayName) }
-        ) { picked in
-            debrid.preferred = DebridProvider.allCases.first { $0.id == picked }
-        }
-    }
-}
-
-private struct DebridKeyEditor: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var debrid: DebridStore
-    let provider: DebridProvider
-    let onDone: () -> Void
-
-    @State private var key = ""
-    @State private var validating = false
-    @State private var status: String?
-    @State private var showQR = false
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            VStack(spacing: OrivioSpacing.xl) {
-                Text("Connect \(provider.displayName)")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
-
-                // QR sign-in — scan on your phone, like the APK. All four
-                // providers support it (RD/PM OAuth device, AD/TB device flows).
-                if provider.supportsQRAuth {
-                    Button { showQR = true } label: {
-                        HStack(spacing: OrivioSpacing.sm) {
-                            Image(systemName: "qrcode")
-                            Text("Sign in with QR")
-                        }
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(theme.palette.onSecondary)
-                        .padding(.horizontal, OrivioSpacing.xl)
-                        .padding(.vertical, OrivioSpacing.md)
-                        .background(Capsule().fill(theme.palette.secondary))
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    Text("or paste an API key from \(provider.keyHint)")
-                        .font(.system(size: 20))
-                        .foregroundStyle(theme.palette.textTertiary)
-                } else {
-                    Text("Get your key at \(provider.keyHint)")
-                        .font(.system(size: 22))
-                        .foregroundStyle(theme.palette.textSecondary)
-                }
-
-                SecureField("Paste API key", text: $key)
-                    .font(.system(size: 24))
-                    .frame(maxWidth: 760)
-
-                if let status {
-                    Text(status)
-                        .font(.system(size: 20))
-                        .foregroundStyle(status.hasPrefix("Valid") ? OrivioPrimitives.success : OrivioPrimitives.error)
-                }
-
-                HStack(spacing: OrivioSpacing.lg) {
-                    Button(action: verifyAndSave) {
-                        if validating { ProgressView().tint(theme.palette.onSecondary) }
-                        else { Text("Verify & Save") }
-                    }
-                    // Not disabled while validating: that disables the button
-                    // you just pressed and drops focus. The action guards.
-                    .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if !debrid.key(for: provider).isEmpty {
-                        Button("Remove", role: .destructive) {
-                            debrid.setKey("", for: provider)
-                            onDone()
-                        }
-                    }
-                    Button("Cancel", role: .cancel, action: onDone)
-                }
-                .font(.system(size: 24, weight: .semibold))
-            }
-            .padding(OrivioSpacing.huge)
-        }
-        .onAppear { key = debrid.key(for: provider) }
-        // Same as Cancel — dismiss without saving.
-        .onExitCommand { onDone() }
-        .fullScreenCover(isPresented: $showQR) {
-            DebridConnectPage(provider: provider) { linked in
-                showQR = false
-                if linked { onDone() }
-            }
-            .environmentObject(theme)
-            .environmentObject(debrid)
-        }
-    }
-
-    private func verifyAndSave() {
-        guard !validating else { return }
-        validating = true
-        status = nil
-        let trimmed = key.trimmingCharacters(in: .whitespaces)
-        Task {
-            let valid = await DebridService.validate(provider: provider, apiKey: trimmed)
-            validating = false
-            if valid {
-                debrid.setKey(trimmed, for: provider)
-                status = "Valid — saved."
-                onDone()
-            } else {
-                status = "Invalid key or network error."
-            }
-        }
-    }
-}
-
-/// Full-screen QR device-login for a debrid provider (Real-Debrid & Premiumize
-/// OAuth device flows, AllDebrid PIN flow, TorBox device flow) — the APK's
-/// scan-to-connect. Menu/Back cancels.
-private struct DebridConnectPage: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var debrid: DebridStore
-    let provider: DebridProvider
-    /// `true` when the account was linked.
-    let onDone: (Bool) -> Void
-
-    @State private var code: DebridDeviceCode?
-    @State private var errorText: String?
-    @State private var expiresAt = Date()
-    @State private var pollTask: Task<Void, Never>?
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            VStack(spacing: OrivioSpacing.xl) {
-                Text("Connect \(provider.displayName)")
-                    .font(.system(size: 48, weight: .heavy))
-                    .foregroundStyle(theme.palette.textPrimary)
-
-                if let code {
-                    Text("Scan the code with your phone, or go to \(code.verificationURL) and enter the code below.")
-                        .font(.system(size: 24))
-                        .foregroundStyle(theme.palette.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 900)
-
-                    QRCodeView(string: code.qrURL, side: 360)
-
-                    Text(code.userCode)
-                        .font(.system(size: 60, weight: .heavy, design: .monospaced))
-                        .tracking(8)
-                        .foregroundStyle(theme.palette.secondary)
-
-                    HStack(spacing: OrivioSpacing.sm) {
-                        ProgressView().tint(theme.palette.secondary)
-                        Text("Waiting for authorization…")
-                            .font(.system(size: 22))
-                            .foregroundStyle(theme.palette.textTertiary)
-                    }
-
-                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                        let seconds = expiresAt.timeIntervalSince(ctx.date)
-                        let remaining = seconds.isFinite ? Int(min(max(seconds, 0), 86_400)) : 0
-                        Text(remaining > 0
-                             ? "Code expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))"
-                             : "Refreshing code…")
-                            .font(.system(size: 20))
-                            .foregroundStyle(theme.palette.textTertiary)
-                    }
-                } else if let errorText {
-                    Text(errorText)
-                        .font(.system(size: 24))
-                        .foregroundStyle(OrivioPrimitives.error)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 900)
-                    Button("Try Again") { Task { await begin() } }
-                        .font(.system(size: 24, weight: .semibold))
-                } else {
-                    ProgressView().tint(theme.palette.secondary)
-                    Text("Starting sign-in…")
-                        .font(.system(size: 22))
-                        .foregroundStyle(theme.palette.textSecondary)
-                }
-
-                Text("Press Menu to cancel")
-                    .font(.system(size: 20))
-                    .foregroundStyle(theme.palette.textTertiary)
-                // The QR / starting states have no focusable view, so the
-                // onExitCommand below could never fire for them.
-                if errorText == nil { FocusAnchor() }
-            }
-            .padding(OrivioSpacing.huge)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .task { await begin() }
-        .onDisappear { pollTask?.cancel() }
-        .onExitCommand { pollTask?.cancel(); onDone(false) }
-    }
-
-    private func begin(renewal: Bool = false) async {
-        // Only cancel when NOT renewing: the renewal call runs INSIDE pollTask
-        // itself, so cancelling here cancelled the very task doing the renewal
-        // — the fresh startDeviceAuth then ran in a cancelled context, its
-        // URLSession threw, and the user got an error instead of a new code.
-        if !renewal { pollTask?.cancel() }
-        errorText = nil
-        code = nil
-        guard let c = await DebridService.startDeviceAuth(provider) else {
-            errorText = "Couldn't start QR sign-in. Check your connection, or paste an API key instead."
-            return
-        }
-        code = c
-        expiresAt = Date().addingTimeInterval(TimeInterval(c.expiresIn))
-        startPolling(c)
-    }
-
-    /// Codes renewed since the screen opened — cap so an abandoned QR screen
-    /// doesn't hit the provider's device-auth endpoint forever.
-    @State private var renewals = 0
-
-    private func startPolling(_ c: DebridDeviceCode) {
-        pollTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(max(c.interval, 3)) * 1_000_000_000)
-                if Task.isCancelled { return }
-                if Date() >= expiresAt {   // expired → fresh code (bounded)
-                    renewals += 1
-                    guard renewals <= 3 else {
-                        errorText = "The QR code expired. Press Back and reopen to try again."
-                        code = nil
-                        return
-                    }
-                    await begin(renewal: true)
-                    return
-                }
-                switch await DebridService.pollDeviceAuth(provider, c) {
-                case .pending:
-                    continue
-                case .success(let s):
-                    debrid.applyDeviceAuth(s, for: provider)
-                    onDone(true)
-                    return
-                case .failed(let msg):
-                    errorText = msg
-                    code = nil
-                    return
-                }
-            }
-        }
-    }
-}
-
 // MARK: - MDBList rows
 
-/// TMDB API key row — the same shape as the MDBList and debrid key rows.
+/// TMDB API key row — the same shape as the MDBList key row.
 private struct TMDBKeyRow: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var tmdb: TMDBSettingsStore
@@ -902,74 +567,5 @@ extension View {
     /// Shared, focus-aware card background for integration rows.
     func integrationRowBackground(_ theme: ThemeManager) -> some View {
         modifier(IntegrationRowBackground())
-    }
-}
-
-/// P2P via a TorrServer instance. tvOS can't run a torrent engine on-device
-/// (no subprocess / no BitTorrent library), so peering is offloaded to a
-/// TorrServer the user runs on their network.
-private struct P2PSection: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var torrent: TorrentSettingsStore
-    @State private var testing = false
-    @State private var testResult: String?
-
-    private var s: Binding<TorrentSettings> {
-        Binding(get: { torrent.settings }, set: { torrent.settings = $0 })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.md) {
-            SettingsToggleCard(
-                title: "Enable P2P",
-                subtitle: "Play torrent sources peer-to-peer through TorrServer when no debrid provider is set",
-                isOn: s.p2pEnabled
-            )
-
-            if torrent.settings.p2pEnabled {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("TorrServer URL")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(theme.palette.textPrimary)
-                    TextField("http://192.168.1.10:8090", text: s.serverURL)
-                        .font(.system(size: 22))
-                    Text("Run TorrServer (github.com/YouROK/TorrServer) on a computer, NAS, or Raspberry Pi on your network, then enter its address here.")
-                        .font(.system(size: 17))
-                        .foregroundStyle(theme.palette.textTertiary)
-                }
-                .padding(.vertical, 4)
-
-                HStack(spacing: OrivioSpacing.md) {
-                    Button {
-                        guard !testing, !torrent.settings.serverURL.isEmpty else { return }
-                        testing = true; testResult = nil
-                        Task {
-                            let ok = await TorrServerService.ping(torrent.settings)
-                            testResult = ok ? "Connected ✓" : "Couldn't reach TorrServer"
-                            testing = false
-                        }
-                    } label: {
-                        if testing { ProgressView() } else { SeeAllLabel(text: "Test connection") }
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    if let testResult {
-                        Text(testResult)
-                            .font(.system(size: 19))
-                            .foregroundStyle(testResult.contains("✓") ? OrivioPrimitives.success : OrivioPrimitives.error)
-                    }
-                }
-
-                SettingsToggleCard(
-                    title: "Hide torrent stats",
-                    subtitle: "Don't show peer / seed counts while streaming",
-                    isOn: s.hideTorrentStats
-                )
-            }
-
-            Text("Apple TV can't run a torrent engine itself, so P2P streams through your TorrServer. Debrid (if configured) is still used first; P2P is the fallback for uncached torrents.")
-                .font(.system(size: 17))
-                .foregroundStyle(theme.palette.textTertiary)
-                .padding(.top, 2)
-        }
     }
 }
