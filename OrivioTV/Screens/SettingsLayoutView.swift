@@ -50,40 +50,7 @@ struct LayoutSettingsDetail: View {
 
     var body: some View {
         DetailScaffold(title: SettingsCategory.layout.title, subtitle: SettingsCategory.layout.subtitle) {
-            SettingsGroupCard(title: "Home Layout", subtitle: "Choose your home screen layout") {
-                HStack(spacing: OrivioSpacing.md) {
-                    ForEach(HomeLayout.allCases) { option in
-                        Button { settings.homeLayout = option } label: {
-                            LayoutPreviewCard(option: option, selected: settings.homeLayout == option)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                }
-
-                if settings.homeLayout == .modern {
-                    SettingsToggleCard(
-                        title: "Landscape Posters",
-                        subtitle: "Switch between portrait and landscape cards for Modern view",
-                        isOn: $settings.landscapePosters
-                    )
-                }
-
-                SettingsToggleCard(
-                    title: "Featured section",
-                    subtitle: "The rotating Featured banner between Continue Watching and your catalog rows. Off removes it from the home screen.",
-                    isOn: $settings.showFeaturedBar
-                )
-
-                OrivioDropdown(
-                    title: "Hero layout",
-                    subtitle: settings.heroLayout.summary,
-                    icon: "rectangle.topthird.inset.filled",
-                    selection: settings.heroLayout.rawValue,
-                    options: HeroLayout.allCases.map {
-                        OrivioDropdownOption($0.rawValue, $0.displayName)
-                    }
-                ) { settings.heroLayout = HeroLayout(rawValue: $0) ?? .hybrid }
-
+            SettingsGroupCard(title: "Home", subtitle: "What the Home screen shows") {
                 OrivioDropdown(
                     title: "Hero source",
                     subtitle: "Which catalog the hero shows. Automatic uses whichever row sits first in your Home order. A catalog you've switched off below — or one ranked too far down to be built — falls back to that first row.",
@@ -93,8 +60,8 @@ struct LayoutSettingsDetail: View {
                 ) { settings.heroCatalogKey = $0 }
 
                 SettingsToggleCard(
-                    title: "Hide the sidebar",
-                    subtitle: "Give the rows the full width of the screen. Press LEFT from the edge of the page (or Menu) to bring the sidebar back; picking a tab hides it again. Settings always keeps its sidebar.",
+                    title: "Hide the top bar",
+                    subtitle: "Keep the navigation off screen until you press UP from the top of the page (or Menu); picking a tab hides it again. Settings always keeps it.",
                     isOn: $settings.autoHideSidebar
                 )
 
@@ -167,16 +134,6 @@ struct LayoutSettingsDetail: View {
                     subtitle: "Append “- Movie” / “- Series” to catalog row headers",
                     isOn: $settings.catalogTypeSuffixEnabled
                 )
-                SettingsToggleCard(
-                    title: "Full release date",
-                    subtitle: "Show the full date on the details page instead of just the year",
-                    isOn: $settings.showFullReleaseDate
-                )
-                SettingsToggleCard(
-                    title: "Trailer button",
-                    subtitle: "Show the Trailer button on the details page",
-                    isOn: $settings.detailPageTrailerButtonEnabled
-                )
             }
 
             SettingsGroupCard(title: "Details Page",
@@ -236,12 +193,6 @@ struct LayoutSettingsDetail: View {
                     title: "Blur unwatched episodes",
                     subtitle: "Spoiler-blur episode thumbnails you haven't watched (focus a card to reveal it)",
                     isOn: $settings.blurUnwatchedEpisodes
-                )
-
-                SettingsToggleCard(
-                    title: "Blur Continue Watching next up",
-                    subtitle: "Spoiler-blur art for barely-started next-up episodes on the home row",
-                    isOn: $settings.blurContinueWatchingNextUp
                 )
             }
 
@@ -453,79 +404,6 @@ struct CatalogOrderSection: View {
                 onCancel: { renamingRow = nil }
             )
             .environmentObject(theme)
-        }
-    }
-}
-
-/// Selectable card for a home layout option (Classic / Modern / Grid).
-/// A visual wireframe preview card for a home layout (Modern / Grid / Classic),
-/// matching the APK's Home Layout picker.
-private struct LayoutPreviewCard: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let option: HomeLayout
-    let selected: Bool
-
-    var body: some View {
-        VStack(spacing: OrivioSpacing.sm) {
-            preview
-                .frame(height: 150)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.4)))
-            HStack(spacing: 6) {
-                if selected {
-                    Image(systemName: "checkmark").font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(theme.palette.secondary)
-                }
-                Text(option.displayName)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
-            }
-        }
-        .padding(OrivioSpacing.md)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .fill(isFocused ? theme.palette.focusBackground : theme.palette.background.opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .strokeBorder(isFocused ? theme.palette.focusRing
-                              : (selected ? theme.palette.secondary : .clear), lineWidth: isFocused ? 4 : 2)
-        )
-    }
-
-    private var bar: Color { theme.palette.textTertiary.opacity(0.5) }
-
-    @ViewBuilder
-    private var preview: some View {
-        switch option {
-        case .modern:
-            VStack(spacing: 6) {
-                RoundedRectangle(cornerRadius: 4).fill(bar).frame(height: 70)
-                HStack(spacing: 6) {
-                    ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: 3).fill(bar).frame(height: 34) }
-                }
-            }
-            .padding(10)
-        case .grid:
-            VStack(spacing: 6) {
-                ForEach(0..<2, id: \.self) { _ in
-                    HStack(spacing: 6) {
-                        ForEach(0..<4, id: \.self) { _ in RoundedRectangle(cornerRadius: 3).fill(bar) }
-                    }
-                }
-            }
-            .padding(10)
-        case .classic:
-            VStack(spacing: 8) {
-                ForEach(0..<3, id: \.self) { _ in
-                    HStack(spacing: 6) {
-                        ForEach(0..<4, id: \.self) { _ in RoundedRectangle(cornerRadius: 3).fill(bar).frame(height: 28) }
-                    }
-                }
-            }
-            .padding(10)
         }
     }
 }
