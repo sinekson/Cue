@@ -122,7 +122,6 @@ extension Route {
         case .tmdbCompany: return "Studio"
         case .catalogSeeAll: return "See All"
         case .discover: return "Discover"
-        case .cloudLibrary: return "Cloud Library"
         case .mediaServerShow: return "Media Server Show"
         case .streams: return "Sources"
         case .streamsInfuse: return "Sources (Infuse)"
@@ -171,7 +170,6 @@ enum Route: Hashable {
     case tmdbCompany(id: Int, name: String)
     case catalogSeeAll(addon: InstalledAddon, catalog: ManifestCatalog, title: String)
     case discover
-    case cloudLibrary
     /// A Plex / Jellyfin show's episode list.
     case mediaServerShow(MediaServerItem)
 }
@@ -1609,7 +1607,6 @@ struct RootView: View {
     private var libraryRoot: some View {
         LibraryView(
             onSelect: { libraryPath.append(Route.detail($0)) },
-            onOpenCloud: { libraryPath.append(Route.cloudLibrary) },
             onPlayMediaServer: { startPlayback($0) },
             onOpenMediaServerShow: { libraryPath.append(Route.mediaServerShow($0)) },
             onBackAtRoot: { focusSidebar(2) }
@@ -1668,13 +1665,6 @@ struct RootView: View {
             CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { path.wrappedValue.append(Route.detail($0)) }
         case .discover:
             DiscoverView { path.wrappedValue.append(Route.detail($0)) }
-        case .cloudLibrary:
-            CloudLibraryView { meta, entry in
-                startPlayback(PlaybackRequest(
-                    meta: meta, video: nil, entry: entry,
-                    allEntries: [entry], resumePosition: nil
-                ))
-            }
         case .mediaServerShow(let show):
             MediaServerShowView(show: show) { startPlayback($0) }
         case .streams(let meta, let video):

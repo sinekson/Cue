@@ -1236,7 +1236,7 @@ struct StreamsView: View {
         // The player cover triggers `onDisappear` on this view too, so the
         // latch below must be RESET on every appearance — without it every
         // selection after backing out of the player was a silent no-op for
-        // the rest of the session (CloudLibraryView carries the same fix).
+        // the rest of the session.
         .onAppear { isGone = false }
         // Back popped this page: block every pending async completion from
         // presenting the player / touching navigation on a torn-down view,

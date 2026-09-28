@@ -2,9 +2,9 @@ import SwiftUI
 
 /// One chip row drives the whole screen: All / Movies / Shows filter the one
 /// unified grid, Plex / Jellyfin (only while that server is connected) swap
-/// to the server's own library, Cloud swaps to the debrid cloud pane.
+/// to the server's own library.
 private enum LibraryFilter: String, CaseIterable {
-    case all = "All", movies = "Movies", shows = "Shows", plex = "Plex", jellyfin = "Jellyfin", cloud = "Cloud"
+    case all = "All", movies = "Movies", shows = "Shows", plex = "Plex", jellyfin = "Jellyfin"
 
     var mediaServer: MediaServerKind? {
         switch self {
@@ -23,8 +23,6 @@ struct LibraryView: View {
     @EnvironmentObject private var mediaServers: MediaServerStore
 
     let onSelect: (MetaItem) -> Void
-    /// Opens the full Cloud Library screen (debrid cloud files).
-    var onOpenCloud: () -> Void = {}
     /// Plays a Plex / Jellyfin item straight from the server.
     var onPlayMediaServer: (PlaybackRequest) -> Void = { _ in }
     /// Opens a Plex / Jellyfin show's episode list.
@@ -94,9 +92,7 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
                     header(countLine: countLine(movies: movies.count, shows: shows.count))
                     chipRow
-                    if filter == .cloud {
-                        cloudPane
-                    } else if let kind = filter.mediaServer {
+                    if let kind = filter.mediaServer {
                         MediaServerPane(kind: kind, onPlay: onPlayMediaServer, onOpenShow: onOpenMediaServerShow)
                     } else if visibleItems.isEmpty {
                         OrivioEmptyState(icon: "bookmark",
@@ -187,7 +183,7 @@ struct LibraryView: View {
         .padding(.horizontal, OrivioSpacing.huge)
     }
 
-    /// One row drives everything: All / Movies / Shows / Cloud chips on the
+    /// One row drives everything: All / Movies / Shows chips on the
     /// left, the Sort pill on the right.
     private var chipRow: some View {
         HStack(spacing: OrivioSpacing.md) {
@@ -198,7 +194,7 @@ struct LibraryView: View {
                 .buttonStyle(PlainCardButtonStyle())
             }
             Spacer()
-            if filter != .cloud, filter.mediaServer == nil {
+            if filter.mediaServer == nil {
                 OrivioDropdown(
                     title: "Sort",
                     selection: sort,
@@ -215,22 +211,6 @@ struct LibraryView: View {
         .focusSection()
     }
 
-    private var cloudPane: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
-            OrivioEmptyState(icon: "externaldrive.connected.to.line.below",
-                            title: "Debrid cloud files",
-                            message: "Browse and play the files already in your Real-Debrid / Premiumize / TorBox / AllDebrid cloud.")
-                .frame(maxWidth: .infinity)
-            // Left-aligned under the chips so focus drops straight down onto it
-            // (a centered button forces a sideways hop).
-            Button(action: onOpenCloud) {
-                SeeAllLabel(text: "Open Cloud Library")
-            }
-            .buttonStyle(PlainCardButtonStyle())
-        }
-        .frame(maxWidth: .infinity, minHeight: 460, alignment: .leading)
-        .padding(.horizontal, OrivioSpacing.huge)
-    }
 }
 
 /// A Liquid Glass filter chip: glass in every state, accent tint + accent ring
