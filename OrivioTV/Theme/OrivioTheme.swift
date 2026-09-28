@@ -93,61 +93,8 @@ struct ThemePalette: Identifiable, Equatable {
     var onAccentTint: Color { hasLightAccent ? onSecondary : textPrimary }
 }
 
+/// The app's single palette: neutral white, no accent colour.
 enum OrivioThemes {
-    static let crimson = ThemePalette(
-        id: "crimson", displayName: "Crimson",
-        secondary: OrivioPrimitives.red500,
-        secondaryVariant: OrivioPrimitives.red600,
-        focusRing: OrivioPrimitives.red300,
-        focusBackground: Color(hex: 0x3D1A1A),
-        backgroundCard: Color(hex: 0x241A1A)
-    )
-    static let ocean = ThemePalette(
-        id: "ocean", displayName: "Ocean",
-        secondary: OrivioPrimitives.blue500,
-        secondaryVariant: OrivioPrimitives.blue700,
-        focusRing: OrivioPrimitives.blue300,
-        focusBackground: Color(hex: 0x1A2D3D),
-        background: Color(hex: 0x0D0D0F),
-        backgroundElevated: Color(hex: 0x1A1A1E),
-        backgroundCard: Color(hex: 0x1A1F24)
-    )
-    static let violet = ThemePalette(
-        id: "violet", displayName: "Violet",
-        secondary: OrivioPrimitives.violet500,
-        secondaryVariant: OrivioPrimitives.violet700,
-        focusRing: OrivioPrimitives.violet300,
-        focusBackground: Color(hex: 0x2D1A3D),
-        background: Color(hex: 0x0D0D0F),
-        backgroundElevated: Color(hex: 0x1A1A1E),
-        backgroundCard: Color(hex: 0x1F1A24)
-    )
-    static let emerald = ThemePalette(
-        id: "emerald", displayName: "Emerald",
-        secondary: OrivioPrimitives.green500,
-        secondaryVariant: OrivioPrimitives.green700,
-        focusRing: OrivioPrimitives.green300,
-        focusBackground: Color(hex: 0x1A3D1E),
-        backgroundCard: Color(hex: 0x1A241A)
-    )
-    static let amber = ThemePalette(
-        id: "amber", displayName: "Amber",
-        secondary: OrivioPrimitives.amber500,
-        secondaryVariant: OrivioPrimitives.amber700,
-        focusRing: OrivioPrimitives.amber300,
-        focusBackground: Color(hex: 0x3D2D1A),
-        background: Color(hex: 0x0F0D0D),
-        backgroundElevated: Color(hex: 0x1E1A1A),
-        backgroundCard: Color(hex: 0x24201A)
-    )
-    static let rose = ThemePalette(
-        id: "rose", displayName: "Rose",
-        secondary: OrivioPrimitives.rose500,
-        secondaryVariant: OrivioPrimitives.rose700,
-        focusRing: OrivioPrimitives.rose300,
-        focusBackground: Color(hex: 0x3D1A2D),
-        backgroundCard: Color(hex: 0x241A1F)
-    )
     static let white = ThemePalette(
         id: "white", displayName: "White",
         secondary: OrivioPrimitives.neutral100,
@@ -157,49 +104,6 @@ enum OrivioThemes {
         focusBackground: Color(hex: 0x303030),
         backgroundCard: OrivioPrimitives.neutral850
     )
-
-    /// Orivio Purple — a deep, electric purple accent (deeper than the softer
-    /// "Violet"), available to every theme like any accent.
-    static let orivioPurple = ThemePalette(
-        id: "purple", displayName: "Orivio Purple",
-        secondary: Color(hex: 0x6D27E8),
-        secondaryVariant: Color(hex: 0x3C137F),
-        focusRing: Color(hex: 0x925DFF),
-        focusBackground: Color(hex: 0x2A1A3D),
-        background: Color(hex: 0x0D0C10),
-        backgroundElevated: Color(hex: 0x1A1920),
-        backgroundCard: Color(hex: 0x201A28)
-    )
-
-    /// Lavender — a soft light-purple accent; needs dark text on its fill
-    /// like White.
-    static let lavender = ThemePalette(
-        id: "lavender", displayName: "Lavender",
-        secondary: Color(hex: 0xB99AFF),
-        secondaryVariant: Color(hex: 0x6D5AA8),
-        onSecondary: Color(hex: 0x15121E),
-        focusRing: Color(hex: 0xD4C1FF),
-        focusBackground: Color(hex: 0x2E2740),
-        backgroundCard: Color(hex: 0x201C2A)
-    )
-
-    /// Mint — the bright Hulu-style neon green accent; needs dark text on its
-    /// fill (like White/Lavender). Pairs especially well with the Streamline theme.
-    static let mint = ThemePalette(
-        id: "mint", displayName: "Mint",
-        secondary: Color(hex: 0x1CE783),
-        secondaryVariant: Color(hex: 0x0FB968),
-        onSecondary: Color(hex: 0x04241A),
-        focusRing: Color(hex: 0x1CE783),
-        focusBackground: Color(hex: 0x0F2A20)
-    )
-
-    // Picker order matches the APK's Color Theme row: White first.
-    static let all: [ThemePalette] = [white, crimson, ocean, violet, orivioPurple, lavender, emerald, mint, amber, rose]
-
-    static func palette(id: String) -> ThemePalette {
-        all.first { $0.id == id } ?? crimson
-    }
 }
 
 /// Light/dark preference for the Apple TV theme (Classic is always dark).
@@ -396,21 +300,6 @@ struct ThemeSnapshot: Codable, Equatable {
 
 @MainActor
 final class ThemeManager: ObservableObject {
-    @Published private var basePalette: ThemePalette {
-        didSet {
-            UserDefaults.standard.set(basePalette.id, forKey: scoped(Self.key))
-            rebuildPalette()
-            if !applyingRemote { onLocalChange?() }
-        }
-    }
-    /// AMOLED mode: force pure-black surfaces.
-    @Published var amoled: Bool {
-        didSet {
-            UserDefaults.standard.set(amoled, forKey: scoped(Self.amoledKey))
-            rebuildPalette()
-            if !applyingRemote { onLocalChange?() }
-        }
-    }
     /// App-wide font family (applied at the root with `.fontDesign`).
     @Published var font: AppFont {
         didSet {
@@ -435,10 +324,6 @@ final class ThemeManager: ObservableObject {
     /// The system's resolved scheme, fed in by the root view. Defaults dark.
     @Published var systemIsDark = true
 
-    /// The adapted palette, cached — rebuilt only when accent/AMOLED change,
-    /// never per read (`theme.palette` is read hundreds of times per frame).
-    private var cachedPalette: ThemePalette = OrivioThemes.palette(id: "violet")
-
     /// Corner radius for settings rows under the current style.
     var settingsRowRadius: CGFloat { settingsUiStyle.rowRadius }
     /// Corner radius for the larger settings group cards under the current style.
@@ -448,8 +333,6 @@ final class ThemeManager: ObservableObject {
     var onLocalChange: (() -> Void)?
     private var applyingRemote = false
 
-    private static let key = "orivio.theme"
-    private static let amoledKey = "orivio.theme.amoled"
     private static let fontKey = "orivio.theme.font"
     private static let experienceKey = "orivio.theme.experience"
     private static let settingsStyleKey = "orivio.theme.settingsstyle"
@@ -479,13 +362,9 @@ final class ThemeManager: ObservableObject {
         let pid = ProfileScopedDefaults.activeProfileID
         profileID = pid
         let feature = Self.feature
-        let saved = ProfileScopedDefaults.string(Self.key, feature: feature, pid) ?? "violet"
-        basePalette = OrivioThemes.palette(id: saved)
-        amoled = ProfileScopedDefaults.bool(Self.amoledKey, feature: feature, pid)
         font = AppFont(rawValue: ProfileScopedDefaults.string(Self.fontKey, feature: feature, pid) ?? "") ?? .system
         experienceMode = ExperienceMode(rawValue: ProfileScopedDefaults.string(Self.experienceKey, feature: feature, pid) ?? "") ?? .advanced
         settingsUiStyle = SettingsUiStyle(rawValue: ProfileScopedDefaults.string(Self.settingsStyleKey, feature: feature, pid) ?? "") ?? .classic
-        rebuildPalette()
     }
 
     /// Point the manager at a profile — the whole look swaps with it.
@@ -501,8 +380,6 @@ final class ThemeManager: ObservableObject {
         defer { applyingRemote = false }
         let feature = Self.feature
         let id = profileID
-        basePalette = OrivioThemes.palette(id: ProfileScopedDefaults.string(Self.key, feature: feature, id) ?? "violet")
-        amoled = ProfileScopedDefaults.bool(Self.amoledKey, feature: feature, id)
         font = AppFont(rawValue: ProfileScopedDefaults.string(Self.fontKey, feature: feature, id) ?? "") ?? .system
         experienceMode = ExperienceMode(rawValue: ProfileScopedDefaults.string(Self.experienceKey, feature: feature, id) ?? "") ?? .advanced
         settingsUiStyle = SettingsUiStyle(rawValue: ProfileScopedDefaults.string(Self.settingsStyleKey, feature: feature, id) ?? "") ?? .classic
@@ -511,28 +388,27 @@ final class ThemeManager: ObservableObject {
     /// Forget a deleted profile's theme so a recycled id starts from the seed.
     func forgetProfile(_ id: Int) {
         ProfileScopedDefaults.forget(
-            [Self.key, Self.amoledKey, Self.fontKey, Self.experienceKey, Self.settingsStyleKey],
+            [Self.fontKey, Self.experienceKey, Self.settingsStyleKey],
             profile: id
         )
         if id == profileID { reloadAppearance() }
     }
 
-    /// Current theme as a syncable snapshot. The retired per-theme axes stay
-    /// nil so older devices simply keep whatever they had.
+    /// Current theme as a syncable snapshot. The palette and AMOLED fields are
+    /// fixed (one palette, never AMOLED) but still written so the blob keeps
+    /// its shape; the retired per-theme axes stay nil.
     var snapshot: ThemeSnapshot {
         ThemeSnapshot(
-            paletteID: basePalette.id, amoled: amoled, font: font,
+            paletteID: OrivioThemes.white.id, amoled: false, font: font,
             experienceMode: experienceMode, settingsUiStyle: settingsUiStyle
         )
     }
 
     /// Apply a snapshot pulled from the account without echoing it back up.
-    /// Theme/variant fields written by older builds are ignored — the app has
+    /// Palette, AMOLED and theme/variant fields are ignored — the app has
     /// exactly one look now.
     func applyRemote(_ s: ThemeSnapshot) {
         applyingRemote = true
-        basePalette = OrivioThemes.palette(id: s.paletteID)
-        amoled = s.amoled
         font = s.font
         experienceMode = s.experienceMode
         settingsUiStyle = s.settingsUiStyle
@@ -546,27 +422,12 @@ final class ThemeManager: ObservableObject {
     var atvIsLight: Bool { false }
     var preferredColorScheme: ColorScheme? { .dark }
 
-    /// The palette used across the app, with the AMOLED override applied.
-    var palette: ThemePalette { cachedPalette }
+    /// The one palette used across the app: neutral, no accent colour.
+    var palette: ThemePalette { OrivioThemes.white }
 
-    private func rebuildPalette() {
-        var p = basePalette
-        if amoled {
-            p.background = OrivioPrimitives.black
-            p.backgroundElevated = Color(hex: 0x0A0A0A)
-        }
-        cachedPalette = p
-    }
-
-    /// Change the accent theme (keeps AMOLED state).
-    func setPalette(_ palette: ThemePalette) { basePalette = palette }
-
-    /// The tone full-bleed hero/backdrop scrims fade toward, tracking the
-    /// stage: graphite normally, the stage's own black in Black Background
-    /// mode. It was 0x08080A — near-black, which matched a stage that still
-    /// had an accent bloom over it. The stage is flat 0x000000 now, so
-    /// anything but the same black leaves a seam where the hero band ends.
-    var stageBlend: Color { amoled ? OrivioPrimitives.black : ATVStage.blend }
+    /// The tone full-bleed hero/backdrop scrims fade toward — the stage's
+    /// graphite, so the hero band ends without a seam.
+    var stageBlend: Color { ATVStage.blend }
 
     // NOTE: `effectiveFocusGlow` and `ThemePalette.focusGlow` were removed.
     // `focusGlow` was only ever written by the never-called `ATVPalettes.adapt`,

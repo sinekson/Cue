@@ -3625,8 +3625,8 @@ private struct ATVHeroPlayButtonStyle: ButtonStyle {
                 .cardPressDip(configuration.isPressed)
         }
 
-        /// Same rule as the detail page's `DetailPillButtonStyle`: White's accent
-        /// fill is the white this pill rests on, so there it rests on glass.
-        private var restsOnGlass: Bool { theme.palette.id == OrivioThemes.white.id }
+        /// The accent fill is the white this pill rests on, so it rests on
+        /// glass (same rule as the detail page's `DetailPillButtonStyle`).
+        private var restsOnGlass: Bool { true }
     }
 }

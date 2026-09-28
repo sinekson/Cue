@@ -1,12 +1,5 @@
 import SwiftUI
 
-// NOTE: `ATVPalettes.adapt` (the Fusion accent + graphite surface/text ramp)
-// and the `FusionAccents` table it read lived here. Nothing ever called adapt —
-// the palette shipped straight from `OrivioThemes` — so the whole ramp, and the
-// `focusGlow` it was the only writer of, were dead. Deleted rather than wired
-// up: switching them on now would change the app's colors and add a focus glow
-// that has never actually been on screen.
-
 extension View {
     /// Liquid Glass when the box runs tvOS 26+, a plain translucent material
     /// on anything older — "liquid glass if the TV accepts it".
@@ -57,35 +50,20 @@ enum ATVStage {
     static let blend = Color(hex: 0x1E2126)
 }
 
-/// Fusion's environmental background (§4.1, §5): a deep graphite wash with a
-/// vignette and a faint accent bloom — "deep rather than flat." In light
-/// appearance it's a soft off-white stage. Sits behind every Fusion screen.
+/// The app's background: a deep graphite wash — a touch lighter at the top,
+/// slightly deeper at the bottom, but staying a medium grey (not sinking to
+/// black). Sits behind every screen.
 struct ATVBackground: View {
     @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
         ZStack {
             theme.palette.background
-            // Black Background mode is PURE black: no depth wash, and no accent
-            // bloom either. The bloom used to stay on at 0.12 — the stage was
-            // black in name but still carried a corner of accent colour, which
-            // is the one thing a black background is chosen to avoid. Nothing
-            // is layered over `palette.background` (0x000000) now.
-            if !theme.amoled {
-                // Gentle grey depth wash — a touch lighter at top, slightly
-                // deeper at the bottom, but staying a medium GREY (not sinking
-                // to black).
-                LinearGradient(
-                    colors: [Color(hex: 0x252931), Color(hex: 0x1B1E24)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .opacity(0.92)
-                // Accent bloom, top-leading — keeps the stage from reading dead.
-                RadialGradient(
-                    colors: [theme.palette.secondary.opacity(0.14), .clear],
-                    center: .topLeading, startRadius: 0, endRadius: 1500
-                )
-            }
+            LinearGradient(
+                colors: [Color(hex: 0x252931), Color(hex: 0x1B1E24)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .opacity(0.92)
         }
         .ignoresSafeArea()
     }

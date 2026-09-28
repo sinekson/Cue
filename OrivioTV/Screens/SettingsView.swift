@@ -465,39 +465,13 @@ struct DetailScaffold<Content: View>: View {
 
 // MARK: - Appearance detail
 
-/// Settings → Appearance: every "how the app looks" control in one pane —
-/// the app theme, the accent palette, AMOLED, font, the independent
-/// detail/profile/player look axes, and how much of settings to expose.
-/// (Was split across an Appearance and a Themes pane; they were the same
-/// subject and the rail listed them twice.)
+/// Settings → Appearance: font, settings style, and how much of settings to
+/// expose. The colours are fixed — there is one neutral palette.
 struct AppearanceDetail: View {
     @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
         DetailScaffold(title: SettingsCategory.appearance.title, subtitle: SettingsCategory.appearance.subtitle) {
-            SettingsGroupCard(title: "Accent Color", subtitle: "The highlight color used across the app") {
-                ScrollView(.horizontal) {
-                    HStack(spacing: OrivioSpacing.md) {
-                        ForEach(OrivioThemes.all) { palette in
-                            Button { theme.setPalette(palette) } label: {
-                                ColorSwatchCard(palette: palette, selected: theme.palette.id == palette.id)
-                            }
-                            .buttonStyle(PlainCardButtonStyle())
-                        }
-                    }
-                    // Breathing room for the focus ring; the scroll stays
-                    // CLIPPED so swatches don't ride over the rest of the pane.
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 6)
-                }
-
-                SettingsToggleCard(
-                    title: "Black Background",
-                    subtitle: "Flat black stage with no wash or accent glow",
-                    isOn: Binding(get: { theme.amoled }, set: { theme.amoled = $0 })
-                )
-            }
-
             SettingsGroupCard(title: "Font", subtitle: "Typeface used across the app") {
                 HStack(spacing: OrivioSpacing.md) {
                     ForEach(AppFont.allCases) { font in
@@ -567,41 +541,6 @@ struct SelectableChip: View {
                                   lineWidth: isFocused ? 4 : 2)
             )
             .focusLift(OrivioFocus.card, isFocused)
-    }
-}
-
-/// A colored accent swatch card (circle + name, check when selected) for the
-/// horizontal Color Theme row.
-private struct ColorSwatchCard: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let palette: ThemePalette
-    let selected: Bool
-
-    var body: some View {
-        VStack(spacing: OrivioSpacing.sm) {
-            ZStack {
-                Circle().fill(palette.secondary).frame(width: 60, height: 60)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(palette.onSecondary)
-                }
-            }
-            Text(palette.displayName)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(theme.palette.textPrimary)
-        }
-        .frame(width: 150, height: 130)
-        .background(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .fill(isFocused ? theme.palette.focusBackground : theme.palette.background.opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
-                .strokeBorder(isFocused ? theme.palette.focusRing
-                              : (selected ? theme.palette.secondary : .clear), lineWidth: isFocused ? 4 : 2)
-        )
     }
 }
 
