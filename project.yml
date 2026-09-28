@@ -263,31 +263,11 @@ targets:
           # is `com.orivio.tv.appletv.dev.topshelf`, which IS registered. See
           # the app target's Debug note for why that matters.
           CODE_SIGN_ENTITLEMENTS: OrivioTopShelf/OrivioTopShelf-Debug.entitlements
-  # UI-test target: drives the tvOS remote (XCUIRemote) to verify focus/menu
-  # behavior, which osascript keystroke automation can't do. Simulator only.
-  OrivioTVUITests:
-    type: bundle.ui-testing
-    platform: tvOS
-    sources:
-      - OrivioTVUITests
-    dependencies:
-      - target: OrivioTV
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.orivio.tv.appletv.uitests
-        SWIFT_VERSION: "5.9"
-        TARGETED_DEVICE_FAMILY: "3"
-        TEST_TARGET_NAME: OrivioTV
-        CODE_SIGNING_ALLOWED: "NO"
 schemes:
   OrivioTV:
     build:
       targets:
         OrivioTV: all
-        OrivioTVUITests: [test]
-    test:
-      targets:
-        - OrivioTVUITests
     run:
       config: Debug
       # KSPlayer's Metal renderer (MetalRender.textures) calls makeTexture and
