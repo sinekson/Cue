@@ -316,8 +316,6 @@ struct DetailView: View {
     let onPlay: (MetaItem, MetaVideo?) -> Void
     /// Open the manual source list, bypassing Auto Link Selector (hold-Play).
     var onPlayManually: (MetaItem, MetaVideo?) -> Void = { _, _ in }
-    /// Resolve the auto-picked link and hand it to Infuse (hold-Play).
-    var onPlayInInfuse: (MetaItem, MetaVideo?) -> Void = { _, _ in }
     let onPlayFromBeginning: (MetaItem, MetaVideo?) -> Void
     var onSelectItem: (MetaItem) -> Void = { _ in }
     var onSelectPerson: (Int, String) -> Void = { _, _ in }
@@ -401,7 +399,7 @@ struct DetailView: View {
     @FocusState private var rowFocus: RowSlot?
     /// How Play was pressed while a series' episode list was still loading —
     /// replayed against the real episode the moment it resolves.
-    private enum PendingPlay { case auto, manual, infuse }
+    private enum PendingPlay { case auto, manual }
     @State private var pendingSeriesPlay: PendingPlay?
     @State private var showRatingPicker = false
     /// The ⋯ button's choices (rate, watched, start over, play manually).
@@ -457,7 +455,6 @@ struct DetailView: View {
         item: MetaItem,
         onPlay: @escaping (MetaItem, MetaVideo?) -> Void,
         onPlayManually: @escaping (MetaItem, MetaVideo?) -> Void = { _, _ in },
-        onPlayInInfuse: @escaping (MetaItem, MetaVideo?) -> Void = { _, _ in },
         onPlayFromBeginning: @escaping (MetaItem, MetaVideo?) -> Void = { _, _ in },
         onSelectItem: @escaping (MetaItem) -> Void = { _ in },
         onSelectPerson: @escaping (Int, String) -> Void = { _, _ in },
@@ -488,7 +485,6 @@ struct DetailView: View {
         self.onReturnToBillboard = onReturnToBillboard
         self.onPlay = onPlay
         self.onPlayManually = onPlayManually
-        self.onPlayInInfuse = onPlayInInfuse
         self.onPlayFromBeginning = onPlayFromBeginning
         self.onSelectItem = onSelectItem
         self.onSelectPerson = onSelectPerson
@@ -674,7 +670,6 @@ struct DetailView: View {
             switch pending {
             case .auto: onPlay(viewModel.meta, target)
             case .manual: onPlayManually(viewModel.meta, target)
-            case .infuse: onPlayInInfuse(viewModel.meta, target)
             }
         }
         // `.defaultFocus($actionFocus, .play)` opens the page on Play, but it

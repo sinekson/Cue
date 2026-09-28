@@ -15,7 +15,6 @@
 		0F7838681EDF605D7922912C /* BoundedConcurrency.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9880B14903A7091693C0A31A /* BoundedConcurrency.swift */; };
 		143DF7E730C604B07EEEFFB4 /* SettingsIntegrationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FE7AEDCC2B8EEB46DDB6D6 /* SettingsIntegrationsView.swift */; };
 		148670B15320178A243421F4 /* AddonManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE28C1498503E382A4AE7BCC /* AddonManager.swift */; };
-		14B3A982CC6B10FCA4BBEA7C /* ExternalPlayers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1481D5DA93138EF519229BD0 /* ExternalPlayers.swift */; };
 		15BB3A05A87E7A5D23708EAE /* OrivioTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AB4D5107485E37B25A95B6D /* OrivioTVApp.swift */; };
 		171123B0BBF6003C1D0FA4F6 /* TraktService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B872284504BE4D777519FDCD /* TraktService.swift */; };
 		1865D13EE2276BA6529A8BD6 /* TraktSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BBE97BCD49F9A7D427F1055 /* TraktSyncManager.swift */; };
@@ -174,7 +173,6 @@
 		119C781EECEF85666AEC01CE /* PlusJakartaSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Regular.ttf"; sourceTree = "<group>"; };
 		13747469D30A1886C0CF47AD /* StreamsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamsView.swift; sourceTree = "<group>"; };
 		141AC85F83DD607D780AFDD5 /* WatchedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchedStore.swift; sourceTree = "<group>"; };
-		1481D5DA93138EF519229BD0 /* ExternalPlayers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalPlayers.swift; sourceTree = "<group>"; };
 		1639EF6E2E535C2EA4F17C0E /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		1A1B62B293C22682A2FAD4A9 /* ScrubberViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberViews.swift; sourceTree = "<group>"; };
 		1CCD83FDFCB862907EFAD688 /* TopShelfExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopShelfExporter.swift; sourceTree = "<group>"; };
@@ -439,7 +437,6 @@
 				E454A36430EAFEAAB2F5A8FE /* ContentFocusRouter.swift */,
 				979CBF8CDEFEA7486B3DAED0 /* DeepLinkService.swift */,
 				8A9D51722BFE9BE21746795F /* DiagnosticsService.swift */,
-				1481D5DA93138EF519229BD0 /* ExternalPlayers.swift */,
 				BED9E0C97DCB4240CADEDF48 /* HoldProbe.swift */,
 				65E0E4F5D1EDBE641A28EA18 /* HomeCatalogSettingsStore.swift */,
 				9D08955441C9D04BF1287261 /* KeyHandoffServer.swift */,
@@ -765,7 +762,6 @@
 				2718E07A8BBFDCC39539D7B6 /* DiscoverView.swift in Sources */,
 				E71A9C6C7E45666E27367D3C /* DoviConverter.swift in Sources */,
 				B74F031353BC40A07C31C1B9 /* EmailSignInView.swift in Sources */,
-				14B3A982CC6B10FCA4BBEA7C /* ExternalPlayers.swift in Sources */,
 				CDB09260469BE21C29C6E1E5 /* FPSOverlay.swift in Sources */,
 				80E93081B334D3626B05D32F /* FusionHeroBar.swift in Sources */,
 				46EE7C8E36D17F83A22607C0 /* FusionPlayerControlsOverlay.swift in Sources */,

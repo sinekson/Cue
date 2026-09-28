@@ -4221,10 +4221,9 @@ final class PlayerViewModel: ObservableObject {
             switch effectiveEngine {
             case .native: needsFFmpeg = false
             case .ffmpeg: needsFFmpeg = true
-            // .vlc returns before reaching here; .external is intercepted at
-            // playback start (OrivioTVApp) — if a session lands here anyway
-            // (e.g. no external app installed), route by container like Auto.
-            case .auto, .vlc, .external: needsFFmpeg = !nativeContainers.contains(ext)
+            // .vlc returns before reaching here; route it by container like
+            // Auto if it ever does.
+            case .auto, .vlc: needsFFmpeg = !nativeContainers.contains(ext)
             }
         }
         KSOptions.firstPlayerType = needsFFmpeg ? KSMEPlayer.self : KSAVPlayer.self

@@ -7,20 +7,13 @@ enum DeepLink: Equatable {
     case meta(type: String, id: String)
     /// Install a Stremio/Orivio addon from its manifest URL.
     case addonInstall(url: String)
-    /// An external player finished and handed playback back to us
-    /// (x-callback-url `x-success`). Infuse returns the url it stopped on and
-    /// the position in seconds; that's what updates Continue Watching.
-    case externalPlaybackFinished(streamURL: String?, position: Double?)
-    /// An external player refused the stream (x-callback-url `x-error`).
-    case externalPlaybackFailed(message: String?)
 }
 
-/// The URL scheme an external player must call back on to reach THIS install.
+/// The URL scheme that reaches THIS install (used by the Top Shelf extension).
 ///
 /// Not `orivio`: that scheme is declared by every build of this app that has
-/// ever been sideloaded onto the box (the user's had three), and tvOS resolves
-/// a shared scheme to whichever one it likes — Infuse's x-success kept opening
-/// NuvioTVOS instead of coming back here. The second URL type in Info.plist is
+/// ever been sideloaded onto the box, and tvOS resolves a shared scheme to
+/// whichever one it likes. The second URL type in Info.plist is
 /// the bundle id, which is unique per install; read it from the Info.plist
 /// rather than from `Bundle.main.bundleIdentifier`, because the SYSTEM
 /// registers what the plist says and a re-signing tool that rewrites the id
@@ -48,10 +41,9 @@ enum DeepLinkService {
             return looksLikeAddonHost(host) ? .addonInstall(url: httpsManifest(from: url)) : nil
         }
         // Both accepted: "orivio" is current, "nuvio" stays valid for links
-        // saved before the rename and for external-player callbacks issued by
-        // an older build that is still mid-handoff.
-        // …and the install-unique callback scheme, which every OUTGOING path
-        // (Infuse x-success, the Top Shelf extension) already uses.
+        // saved before the rename.
+        // …and the install-unique callback scheme, which the Top Shelf
+        // extension uses.
         guard scheme == "orivio" || scheme == "nuvio"
                 || scheme == AppCallbackScheme.value.lowercased() else {
             // A bare https manifest link also installs.
@@ -63,16 +55,6 @@ enum DeepLinkService {
 
         let query = queryParams(url)
         switch host {
-        // x-callback returns from an external player. Matched BEFORE the
-        // catch-all below, which would otherwise try to read them as addon
-        // hosts.
-        case "external-return", "externalreturn", "external-success":
-            return .externalPlaybackFinished(
-                streamURL: firstParam(query, "lastplayedurl", "url"),
-                position: firstParam(query, "position").flatMap(Double.init)
-            )
-        case "external-error", "externalerror":
-            return .externalPlaybackFailed(message: firstParam(query, "errormessage", "message"))
         case "meta":
             if let type = firstParam(query, "type", "mediatype", "media_type"),
                let id = metaID(query) {

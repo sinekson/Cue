@@ -40,15 +40,6 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-		<string>infuse</string>
-		<string>infuse-x-callback</string>
-		<string>vlc-x-callback</string>
-		<string>nplayer-http</string>
-		<string>open-vidhub</string>
-		<string>senplayer</string>
-	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

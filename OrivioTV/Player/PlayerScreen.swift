@@ -706,7 +706,7 @@ struct PlayerScreen: View {
         case .engine:
             InfusePickerScreen(viewModel: viewModel, spec: InfusePickerSpec(
                 title: "Engine",
-                content: .items(PlayerEngine.allCases.filter { $0 != .external }.map { engine in
+                content: .items(PlayerEngine.allCases.map { engine in
                     InfusePickerItem(id: engine.rawValue, title: engine.label,
                                      selected: viewModel.effectiveEngine == engine) {
                         viewModel.switchEngine(engine)

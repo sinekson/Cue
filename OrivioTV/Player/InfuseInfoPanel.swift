@@ -294,7 +294,7 @@ struct InfuseInfoPanel: View {
                 }
                 optionRow("info.engine", label: "Engine", value: viewModel.engineName) {
                     InfusePickerSpec(title: "Engine", content: .items(
-                        PlayerEngine.allCases.filter { $0 != .external }.map { engine in
+                        PlayerEngine.allCases.map { engine in
                             InfusePickerItem(id: engine.rawValue, title: engine.label,
                                              selected: viewModel.effectiveEngine == engine) {
                                 viewModel.switchEngine(engine)

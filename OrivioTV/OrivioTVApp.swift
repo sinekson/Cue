@@ -115,7 +115,6 @@ extension Route {
         case .catalogSeeAll: return "See All"
         case .discover: return "Discover"
         case .streams: return "Sources"
-        case .streamsInfuse: return "Sources (Infuse)"
         case .streamsManual: return "Sources (manual)"
         case .streamsFromStart: return "Sources (from start)"
         case .streamsResume: return "Sources (resume)"
@@ -130,7 +129,6 @@ extension Route {
         case .tmdbCompany(_, let name): return name
         case .catalogSeeAll(_, _, let title): return title
         case .streams(let meta, let video),
-             .streamsInfuse(let meta, let video),
              .streamsManual(let meta, let video),
              .streamsFromStart(let meta, let video),
              .streamsResume(let meta, let video, _):
@@ -146,9 +144,6 @@ enum Route: Hashable {
     /// Source picker forced into manual mode (hold-Play / "Play Manually"):
     /// always shows the list, even when Auto Link Selector is on.
     case streamsManual(MetaItem, MetaVideo?)
-    /// Auto Link Selector resolves the best source as usual, then hands the
-    /// finished URL to Infuse instead of the in-app player (hold-Play).
-    case streamsInfuse(MetaItem, MetaVideo?)
     /// Source picker that plays from 0:00 (the Detail page's Start Over).
     case streamsFromStart(MetaItem, MetaVideo?)
     /// Continue Watching resume: re-scrape fresh sources and auto-play the one
@@ -741,14 +736,6 @@ struct RootView: View {
                 AppProbe.scene = "\(phase)"
                 AppProbe.life("scene → \(phase)")
                 if phase == .active {
-                    // First foreground after an external handoff is the return
-                    // from that app. Players that don't call back (VLC, nPlayer,
-                    // VidHub, SenPlayer) have no deep link, so this marker is
-                    // the only signal; consuming it also keeps a plain later
-                    // foreground from re-triggering the navigation.
-                    if ExternalLaunchMarker.consume() {
-                        returnToHomeFromExternalPlayback()
-                    }
                     // Opening the app syncs the whole account, not just
                     // Continue Watching — add-ons, collections, the layout and
                     // the player/theme settings all change on other devices
@@ -877,7 +864,6 @@ struct RootView: View {
                                        description: "Two imprisoned men bond over a number of years."),
                         onPlay: { _, _ in },
                         onPlayManually: { _, _ in },
-                        onPlayInInfuse: { _, _ in },
                         onPlayFromBeginning: { _, _ in }
                     )
                 }
@@ -1514,7 +1500,6 @@ struct RootView: View {
                     item: item,
                     onPlay: { meta, video in path.wrappedValue.append(Route.streams(meta, video)) },
                     onPlayManually: { meta, video in path.wrappedValue.append(Route.streamsManual(meta, video)) },
-                    onPlayInInfuse: { meta, video in path.wrappedValue.append(Route.streamsInfuse(meta, video)) },
                     onPlayFromBeginning: { meta, video in path.wrappedValue.append(Route.streamsFromStart(meta, video)) },
                     onSelectItem: { path.wrappedValue.append(Route.detail($0)) },
                     onSelectPerson: { id, name in path.wrappedValue.append(Route.person(id: id, name: name)) },
@@ -1555,21 +1540,6 @@ struct RootView: View {
                     allEntries: all,
                     resumePosition: progressStore.progress(for: key)?.positionSeconds
                 ))
-            }
-        case .streamsInfuse(let meta, let video):
-            // Same auto-pick path as .streams — the source still has to be
-            // resolved (a debrid torrent has no playable URL until it is) —
-            // but the finished link is handed off rather than played here.
-            StreamsView(
-                meta: meta, video: video,
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, _ in
-                guard let url = entry.stream.url else { return }
-                // Like the external branch of `startPlayback`: no in-app cover
-                // opens here, so nothing would ever consume a deferred auto-play
-                // pop and it would fire against the wrong screen later.
-                discardPendingAutoPlayPopAroundHandoff()
-                ExternalPlayers.openInInfuse(urlString: url)
             }
         case .streamsManual(let meta, let video):
             StreamsView(meta: meta, video: video, forceManual: true) { entry, all in
@@ -1767,39 +1737,10 @@ struct RootView: View {
         }
     }
 
-    /// Resume from Continue Watching. Items saved on this device carry the
-    /// stream URL and replay directly; items pulled from the account have no
-    /// URL (the backend doesn't store it), so we route to source selection.
-    /// Single entry point for starting playback. External-app engine hands
-    /// the stream straight to the chosen player (Infuse etc.) instead of
-    /// opening Orivio's own player; if the chosen app was uninstalled, any
-    /// other installed one is used; none installed → play internally.
     /// Pop the source page off the active tab's stack after an Auto Link
     /// Selector auto-play, so backing out of the player returns to the title
     /// page. Safe here because the player has fully closed by now. The player
     /// covers the stack while it's up, so the top entry is still the source page.
-    /// Run a deferred auto-play pop now, for the paths that never open the
-    /// in-app player. Deferred by one runloop turn for the same reason the
-    /// player's `onDismiss` defers it: mutating the NavigationStack path while
-    /// the source view's own resolve Task is still unwinding desyncs the stack.
-    private func consumePendingAutoPlayPop() {
-        guard pendingAutoPlayPop else { return }
-        pendingAutoPlayPop = false
-        DispatchQueue.main.async { popActivePathForAutoPlay() }
-    }
-
-    /// The external-handoff variant. `StreamsView` runs its `onSelect` callback
-    /// (which reaches here) BEFORE its `autoDismiss()` arms
-    /// `pendingAutoPlayPop`, so a plain `consumePendingAutoPlayPop()` runs one
-    /// step too early and the pop it exists to prevent is armed immediately
-    /// afterwards — then fires against whatever screen is open the next time an
-    /// in-app player closes. Clear it on the NEXT runloop turn (after the arm)
-    /// and never pop: an external return lands on Home, not a source page.
-    private func discardPendingAutoPlayPopAroundHandoff() {
-        consumePendingAutoPlayPop()
-        DispatchQueue.main.async { pendingAutoPlayPop = false }
-    }
-
     private func popActivePathForAutoPlay() {
         switch selectedTab {
         case 0: if !homePath.isEmpty { homePath.removeLast() }
@@ -1810,28 +1751,6 @@ struct RootView: View {
     }
 
     private func startPlayback(_ request: PlaybackRequest) {
-        if playerSettings.settings.playerEngine == .external,
-           let urlString = request.entry.stream.url {
-            let chosen = ExternalPlayers.player(id: playerSettings.settings.externalPlayerID)
-            let target = (chosen?.isInstalled == true ? chosen : nil) ?? ExternalPlayers.installed.first
-            if let target {
-                // No in-app player cover opens on this path, so nothing will
-                // ever consume a deferred auto-play pop. Left set, it fires
-                // against the WRONG screen the next time any in-app playback
-                // ends, throwing the viewer back one page too far.
-                discardPendingAutoPlayPopAroundHandoff()
-                if playerSettings.settings.externalPlayerForwardSubtitles {
-                    // Fetch a preferred-language subtitle, then hand off (async).
-                    Task {
-                        let sub = await externalSubtitleURL(for: request)
-                        handOff(request, to: target, streamURL: urlString, subtitleURL: sub)
-                    }
-                } else {
-                    handOff(request, to: target, streamURL: urlString)
-                }
-                return
-            }
-        }
         // A session parked in the Picture in Picture window is still decoding
         // and still owns the audio route, and nothing in the app ever ended
         // one — `stop()` had no callers at all. Opening a different title over
@@ -1854,280 +1773,6 @@ struct RootView: View {
         playback = request
     }
 
-    /// Best subtitle URL from the installed subtitle addons for this playback,
-    /// preferring the user's subtitle language. nil when none is found.
-    private func externalSubtitleURL(for request: PlaybackRequest) async -> String? {
-        let providers = addonManager.subtitleAddons
-        guard !providers.isEmpty else { return nil }
-        let id = request.video?.id ?? request.meta.id
-        let type = request.meta.type
-        let preferred = playerSettings.settings.preferredSubtitleLanguage.lowercased()
-        var firstAny: String?
-        for addon in providers {
-            let subs = (try? await StremioAPI.subtitles(addon: addon, type: type, id: id)) ?? []
-            if firstAny == nil { firstAny = subs.first?.url }
-            if !preferred.isEmpty,
-               let match = subs.first(where: {
-                   AudioLanguageMatch.matches(code: $0.lang, label: nil, preferred: preferred)
-               }) {
-                return match.url
-            }
-        }
-        return firstAny
-    }
-
-    /// Hand a playback to an external app with everything its scheme accepts,
-    /// and remember it so the return trip can land back in Continue Watching.
-    private func handOff(
-        _ request: PlaybackRequest, to player: ExternalPlayer,
-        streamURL: String, subtitleURL: String? = nil
-    ) {
-        let duration = externalDuration(meta: request.meta, video: request.video)
-        let resume = request.resumePosition
-            ?? progressStore.progress(for: ProgressStore.key(metaID: request.meta.id, video: request.video))?.positionSeconds
-
-        var item = ExternalPlayerHandoff.Item(streamURL: streamURL)
-        item.subtitleURL = subtitleURL
-        item.filename = externalFilename(meta: request.meta, video: request.video, streamURL: streamURL)
-        if player.acceptsResume, let resume, resume >= 1 { item.resumeSeconds = resume }
-
-        let session = ExternalPlaybackSession.Item(
-            meta: request.meta, video: request.video,
-            streamURL: streamURL, durationSeconds: duration
-        )
-
-        // Optimistic Continue Watching entry, for the players that can't report
-        // anything back: without it, watching in another app leaves no trace at
-        // all here. A player that DOES report (Infuse) overwrites this with the
-        // real position on return — or removes the row outright if it finished.
-        if let duration, duration > 60 {
-            progressStore.update(
-                meta: request.meta, video: request.video, streamURL: streamURL,
-                position: max(resume ?? 0, 1), duration: duration,
-                signature: request.entry.stream.signature(addonName: request.entry.addonName)
-            )
-        }
-
-        guard player.supportsPlaylist,
-              playerSettings.settings.externalPlayerSendPlaylist,
-              request.video != nil
-        else {
-            send([item], sessions: [session], to: player)
-            return
-        }
-        // Resolve the rest of the season in the background and hand the whole
-        // run over as one playlist. Bounded by a deadline: a slow addon sweep
-        // must not hold up the episode the viewer actually pressed play on.
-        Task {
-            let upcoming = await upcomingExternalEpisodes(after: request)
-            send([item] + upcoming.map(\.item),
-                 sessions: [session] + upcoming.map(\.session), to: player)
-        }
-    }
-
-    private func send(
-        _ items: [ExternalPlayerHandoff.Item],
-        sessions: [ExternalPlaybackSession.Item],
-        to player: ExternalPlayer
-    ) {
-        var handoff = ExternalPlayerHandoff(items: items)
-        if player.reportsPosition {
-            // Bare scheme + host: the player APPENDS its own result query.
-            // The scheme is this install's OWN (see AppCallbackScheme) — the
-            // generic `orivio` is claimed by every other sideload of this app
-            // on the box, and the callback was landing in one of those.
-            handoff.successURL = "\(AppCallbackScheme.value)://external-return"
-            handoff.errorURL = "\(AppCallbackScheme.value)://external-error"
-        }
-        ExternalPlaybackSession.begin(ExternalPlaybackSession.Pending(
-            items: sessions, playerID: player.id, playerName: player.name,
-            startedAt: Date()
-        ))
-        player.open(handoff)
-    }
-
-    /// The next few aired, unwatched episodes after the one being handed off,
-    /// each with a playable link picked the way the in-player "next episode"
-    /// picks one (same addon / binge group as the current source first).
-    ///
-    /// Capped hard: every episode costs a full stream sweep across the addons,
-    /// and the whole lot rides in ONE url that the other app has to parse.
-    private func upcomingExternalEpisodes(
-        after request: PlaybackRequest
-    ) async -> [(item: ExternalPlayerHandoff.Item, session: ExternalPlaybackSession.Item)] {
-        guard let current = request.video,
-              let season = current.season, let number = current.episode else { return [] }
-        let episodes = (request.meta.videos ?? [])
-            .filter { video in
-                guard let s = video.season, let e = video.episode else { return false }
-                return video.hasAired && (s > season || (s == season && e > number))
-            }
-            .sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }
-            .prefix(Self.externalPlaylistLimit)
-        guard !episodes.isEmpty else { return [] }
-
-        let deadline = Date().addingTimeInterval(Self.externalPlaylistDeadline)
-        var out: [(item: ExternalPlayerHandoff.Item, session: ExternalPlaybackSession.Item)] = []
-        for episode in episodes {
-            guard Date() < deadline else { break }
-            // Stop at the first gap: a playlist that silently skips an episode
-            // is worse than a shorter one.
-            guard let stream = await externalNextEpisodeStream(
-                meta: request.meta, episode: episode, like: request.entry
-            ), let url = stream.stream.url else { break }
-            var item = ExternalPlayerHandoff.Item(streamURL: url)
-            item.filename = externalFilename(meta: request.meta, video: episode, streamURL: url)
-            out.append((
-                item,
-                ExternalPlaybackSession.Item(
-                    meta: request.meta, video: episode, streamURL: url,
-                    durationSeconds: externalDuration(meta: request.meta, video: episode)
-                )
-            ))
-        }
-        return out
-    }
-
-    private static let externalPlaylistLimit = 5
-    private static let externalPlaylistDeadline: TimeInterval = 8
-
-    /// One playable link for `episode`, chosen like PlayerViewModel's
-    /// next-episode auto-pick: prefer the same binge group, then the same
-    /// addon, then simply the best-ranked playable link. Torrents are skipped
-    /// outright — no external player can take a magnet.
-    private func externalNextEpisodeStream(
-        meta: MetaItem, episode: MetaVideo, like current: StreamEntry
-    ) async -> StreamEntry? {
-        var showID = meta.id
-        if showID.hasPrefix("tmdb:"), let n = Int(showID.dropFirst("tmdb:".count)),
-           let tt = await TMDBService.imdbID(tmdbID: n, isMovie: !meta.isSeries) {
-            showID = tt
-        }
-        let streamID: String
-        if showID.hasPrefix("tt"), let season = episode.season, let number = episode.episode {
-            streamID = "\(showID):\(season):\(number)"
-        } else {
-            streamID = episode.id
-        }
-        let addons = addonManager.streamAddons.filter { $0.handles(id: streamID) }
-        guard !addons.isEmpty else { return nil }
-        var entries: [StreamEntry] = []
-        await withTaskGroup(of: [StreamEntry].self) { group in
-            for addon in addons {
-                group.addTask {
-                    let streams = (try? await StremioAPI.streams(addon: addon, type: meta.type, id: streamID)) ?? []
-                    return streams.filter(\.isPlayable)
-                        .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
-                }
-            }
-            for await batch in group { entries.append(contentsOf: batch) }
-        }
-        guard !entries.isEmpty else { return nil }
-        let curated = SourceSelection.select(entries, perTier: playerSettings.settings.sourcesPerSizeTier)
-        let playable = (curated.isEmpty ? entries : curated).filter(\.stream.isPlayable)
-        let group = current.stream.behaviorHints?.bingeGroup
-        return playable.first { $0.stream.behaviorHints?.bingeGroup == group && group != nil }
-            ?? playable.first { $0.addonName == current.addonName }
-            ?? playable.first
-    }
-
-    /// Duration for an external handoff: what we already recorded for this
-    /// title, else the addon's runtime. Without one, a returned position can't
-    /// be turned into progress at all (and never into "watched").
-    private func externalDuration(meta: MetaItem, video: MetaVideo?) -> Double? {
-        progressStore.progress(for: ProgressStore.key(metaID: meta.id, video: video))?.durationSeconds
-            ?? meta.runtimeSeconds
-    }
-
-    /// A media-style filename for the handoff ("Show.Name.S01E02.mkv"). Infuse
-    /// matches metadata off this, so a title arrives with real artwork instead
-    /// of a raw CDN URL.
-    private func externalFilename(meta: MetaItem, video: MetaVideo?, streamURL: String) -> String? {
-        let name = meta.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return nil }
-        var base = name.replacingOccurrences(of: " ", with: ".")
-        if let video, let season = video.season, let episode = video.episode {
-            base += String(format: ".S%02dE%02d", season, episode)
-        } else if let year = meta.releaseInfo?.prefix(4), Int(year) != nil {
-            base += ".\(year)"
-        }
-        // Keep the real container so the other app doesn't guess wrong.
-        let ext = URL(string: streamURL)?.pathExtension ?? ""
-        return ext.isEmpty ? base : "\(base).\(ext)"
-    }
-
-    /// An external player reported back (x-success). Write the position it
-    /// returned into Continue Watching through the SAME path in-app playback
-    /// uses, so watched-state, Trakt scrobbling and sync all behave identically.
-    private func finishExternalPlayback(streamURL: String?, position: Double?) {
-        guard let pending = ExternalPlaybackSession.pending,
-              let (stopped, completed) = ExternalPlaybackSession.resolveReturn(pending, returnedURL: streamURL)
-        else { return }
-        ExternalPlaybackSession.clear()
-        // Everything ahead of the stopping point played through to the end.
-        for item in completed {
-            guard let duration = item.durationSeconds ?? storedDuration(item), duration > 60 else { continue }
-            progressStore.update(
-                meta: item.meta, video: item.video, streamURL: item.streamURL,
-                position: duration, duration: duration
-            )
-        }
-        guard let position, position > 0,
-              let duration = stopped.durationSeconds ?? storedDuration(stopped), duration > 60
-        else { return }
-        progressStore.update(
-            meta: stopped.meta, video: stopped.video, streamURL: stopped.streamURL,
-            position: position, duration: duration
-        )
-    }
-
-    private func storedDuration(_ item: ExternalPlaybackSession.Item) -> Double? {
-        progressStore.progress(for: ProgressStore.key(metaID: item.meta.id, video: item.video))?.durationSeconds
-    }
-
-    /// Landing spot after an external player. The viewer chose a stream on a
-    /// source (or title) page; when the other app hands the screen back, drop
-    /// the whole pushed stack and show Home instead of leaving them on that
-    /// picker. Only called from a confirmed external return — the callback
-    /// deep link, or the one-shot launch marker on foreground — so ordinary
-    /// playback navigation is untouched.
-    private func returnToHomeFromExternalPlayback() {
-        // A stream is on screen (or about to be): never yank the navigation
-        // stack out from under a live player. The external handoff has no
-        // cover of its own, so this only catches a pathological overlap.
-        guard playback == nil else { return }
-        // Any deferred auto-play pop pointed at the source page this is about
-        // to remove; left set it would later fire against Home.
-        pendingAutoPlayPop = false
-        // DEFERRED, not synchronous. Mutating `selectedTab` and the
-        // NavigationPaths in the same runloop tick the app becomes active (or
-        // the callback deep link lands) desyncs the NavigationStack: the path
-        // empties while the pushed screen lingers as a grey, focusable ghost.
-        // The in-app player's own `onDismiss` defers for exactly this reason.
-        DispatchQueue.main.async {
-            // Pop the stack we are LEAVING (the tab that launched the handoff)
-            // so its source page can't be landed on later, plus Home's own
-            // stack so we truly arrive at the Home root. The OTHER tabs' places
-            // are deliberately left alone — this change is only about where an
-            // external return lands, not a global navigation reset.
-            // `removeLast(count)`, NOT `path = NavigationPath()`: this app
-            // deliberately never resets a path wholesale (every other pop is a
-            // single `removeLast()`), and assigning an empty path is what
-            // leaves the pushed screen behind as a grey ghost.
-            switch selectedTab {
-            case 1: if !searchPath.isEmpty { searchPath.removeLast(searchPath.count) }
-            case 2: if !libraryPath.isEmpty { libraryPath.removeLast(libraryPath.count) }
-            default: break
-            }
-            if !homePath.isEmpty { homePath.removeLast(homePath.count) }
-            selectedTab = 0
-            // Home is the finished screen: make the rail focusable right away
-            // so it is usable instead of waiting on a stale tab-switch timer.
-            sidebarAwaitingContent = false
-            setSidebarEnabled(false, reenableAfter: 0.8)
-        }
-    }
-
     /// Route an incoming `orivio://` / `stremio://` deep link.
     private func handleDeepLink(_ url: URL) {
         guard let link = DeepLinkService.parse(url) else { return }
@@ -2144,24 +1789,6 @@ struct RootView: View {
             DispatchQueue.main.async { homePath.append(Route.detail(meta)) }
         case .addonInstall(let manifestURL):
             requestAddonInstall(manifestURL)
-        case .externalPlaybackFinished(let streamURL, let position):
-            // The callback itself proves we are returning from the other app.
-            // Clear the launch marker so the foreground handler can't fire the
-            // same navigation a second time.
-            _ = ExternalLaunchMarker.consume()
-            returnToHomeFromExternalPlayback()
-            finishExternalPlayback(streamURL: streamURL, position: position)
-        case .externalPlaybackFailed(let message):
-            // The stream never played over there, so drop the optimistic
-            // Continue Watching row we wrote at handoff — it would otherwise
-            // sit at 0% forever.
-            if let first = ExternalPlaybackSession.pending?.items.first {
-                progressStore.remove(id: ProgressStore.key(metaID: first.meta.id, video: first.video))
-            }
-            ExternalPlaybackSession.clear()
-            _ = ExternalLaunchMarker.consume()
-            returnToHomeFromExternalPlayback()
-            NSLog("[OrivioPlayer] external player error: %@", message ?? "(none)")
         }
     }
 

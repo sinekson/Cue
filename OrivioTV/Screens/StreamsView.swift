@@ -1462,17 +1462,6 @@ struct StreamsView: View {
         }
         .buttonStyle(PlainCardButtonStyle())
         .focused($focusedEntry, equals: entry.id)
-        // Hold Select → context actions.
-        .contextMenu {
-            if entry.stream.isPlayable, let streamURL = entry.stream.url,
-               ExternalPlayers.isInfuseInstalled {
-                Button {
-                    ExternalPlayers.openInInfuse(urlString: streamURL)
-                } label: {
-                    Label("Play in Infuse", systemImage: "arrow.up.forward.app.fill")
-                }
-            }
-        }
     }
 }
 
