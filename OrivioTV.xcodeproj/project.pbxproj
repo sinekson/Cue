@@ -73,7 +73,6 @@
 		6D396334A11C8F1EB78247E2 /* ScrubThumbnailer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 388B1E00D3FF9FF3C623E607 /* ScrubThumbnailer.swift */; };
 		6FE058967DDA5D9684B9877B /* StremioAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DC63CE64F31D8669EB31F3D /* StremioAPI.swift */; };
 		7100C66676F8CD50C34B144B /* TitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D97FB17F5E5FED45BC6D56 /* TitleBlock.swift */; };
-		744F21A337C17E861B20E766 /* ParentalGuideService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336649B70E24C035EE57A905 /* ParentalGuideService.swift */; };
 		78C5C453DFDA6EE3060F25DF /* TopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B4A29D8AF76C72EC59202C8 /* TopShelfProvider.swift */; };
 		796445AED9B3FAF5913D4751 /* CollectionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA14A45A7C313EF88FF27D02 /* CollectionResolver.swift */; };
 		7A1B0F4C23ABDF48927A4333 /* OrivioDropdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1EFC66403633B0A8EAE4C5 /* OrivioDropdown.swift */; };
@@ -181,7 +180,6 @@
 		1F4E1CEB920FFBB8B6246A74 /* PlayerDiagnosticsHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerDiagnosticsHUD.swift; sourceTree = "<group>"; };
 		22729AAA2CF777E83EAE0B10 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		22997706F55334744C6F3FEE /* PlusJakartaSans-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Bold.ttf"; sourceTree = "<group>"; };
-		336649B70E24C035EE57A905 /* ParentalGuideService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParentalGuideService.swift; sourceTree = "<group>"; };
 		343918D06B3BE0D50D514515 /* OrivioSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrivioSyncManager.swift; sourceTree = "<group>"; };
 		34E7D17DD079A7F255B25845 /* SimklSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimklSyncManager.swift; sourceTree = "<group>"; };
 		350FC2130915C0A942D1A624 /* OrivioTV.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OrivioTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -445,7 +443,6 @@
 				8DD6C94E7133025F68DE22E9 /* MediaCacheServer.swift */,
 				BAF88678B45876C22D86E134 /* Models.swift */,
 				50258073F04AAA26F8BAD73A /* OrivioRenameMigration.swift */,
-				336649B70E24C035EE57A905 /* ParentalGuideService.swift */,
 				5CBA50043F25BC04985DBBC6 /* PerformanceProfile.swift */,
 				53A6868C0A37D52EC16A5FC7 /* PerformanceSettingsStore.swift */,
 				9D2952EE61E74C62C1F3FB32 /* PlayerSettingsStore.swift */,
@@ -789,7 +786,6 @@
 				861FE4C3277BD4A0016E5325 /* OrivioSyncModels.swift in Sources */,
 				15BB3A05A87E7A5D23708EAE /* OrivioTVApp.swift in Sources */,
 				51478B651D1C986C5293D3A9 /* OrivioTheme.swift in Sources */,
-				744F21A337C17E861B20E766 /* ParentalGuideService.swift in Sources */,
 				45571C4D63C8AEB59E298E03 /* PerformanceProfile.swift in Sources */,
 				80CE576BFB82E07ECBEDFBEE /* PerformanceSettingsStore.swift in Sources */,
 				B69BFAF902737DCAB1312EEC /* PictureInPicture.swift in Sources */,

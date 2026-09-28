@@ -74,7 +74,6 @@ final class DetailViewModel: ObservableObject {
     @Published var facts: TMDBService.TitleFacts?
     @Published var releaseDate: String?
     @Published var contentRating: String?
-    @Published var parentalGuide: [ParentalGuideEntry] = []
     /// Per-season episode extras (rating / air date), keyed season → episode.
     @Published var episodeExtras: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
     @Published var episodeCasts: [String: [TMDBService.CastMember]] = [:]
@@ -104,7 +103,7 @@ final class DetailViewModel: ObservableObject {
     /// stub for that whole visit.
     private var coreLoaded = false
 
-    func load(addonManager: AddonManager, mdbSettings: MDBListSettings = .default, tmdb: TMDBSettings = .default, parentalGuideEnabled: Bool = false) async {
+    func load(addonManager: AddonManager, mdbSettings: MDBListSettings = .default, tmdb: TMDBSettings = .default) async {
         // A previous load is mid-flight or mid-unwind: wait it out briefly.
         // Either it completes (we then just handle the enrichment retry) or
         // its cancellation defer drops the latch and this run loads for real.
@@ -189,7 +188,7 @@ final class DetailViewModel: ObservableObject {
         }
         if let season = selectedSeason { await loadSeason(season) }
         // Episodes are ready now — stop blocking the episode section (gated on
-        // `isLoading`) behind Trakt comments / MDBList ratings / parental guide
+        // `isLoading`) behind Trakt comments / MDBList ratings
         // below. Those are unrelated to episodes and can each be slow
         // themselves; a meta addon that aggregates several sources per request
         // (e.g. AIOMetadata) was already the slow part of this load, and
@@ -700,7 +699,7 @@ struct DetailView: View {
             try? await Task.sleep(for: .seconds(2))
             teaserArmed = true
         }
-        .task { await viewModel.load(addonManager: addonManager, mdbSettings: mdblist.settings, tmdb: tmdbSettings.settings, parentalGuideEnabled: playerSettings.settings.parentalGuideEnabled) }
+        .task { await viewModel.load(addonManager: addonManager, mdbSettings: mdblist.settings, tmdb: tmdbSettings.settings) }
         // Auto-play the trailer in the backdrop after the configured idle
         // delay. Re-runs once trailers finish loading. Resolves silently — no
         // loading UI — and only swaps in when the video is actually ready.
