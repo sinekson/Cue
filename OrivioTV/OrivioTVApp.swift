@@ -164,7 +164,6 @@ enum Route: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var theme: ThemeManager
-    @ObservedObject private var spotlightGate = SpotlightFocusGate.shared
     @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
@@ -1000,11 +999,6 @@ struct RootView: View {
     /// at the left edge of the content (or Menu) calls it back. Settings keeps
     /// its rail regardless — that pane is navigated THROUGH the rail, and
     /// hiding it there leaves no way back out of a settings detail.
-    /// Where the rail lives. Read once here so every axis-dependent site below
-    /// agrees, and so the whole feature is one value to follow.
-    private var navPosition: NavigationPosition { homeCatalogSettings.navigationPosition }
-    private var navIsTop: Bool { navPosition.isHorizontal }
-
     private var sidebarAutoHides: Bool {
         homeCatalogSettings.autoHideSidebar && selectedTab != 3
     }
@@ -1064,12 +1058,10 @@ struct RootView: View {
         DispatchQueue.main.async { sidebarFocus = selectedTab }
     }
 
-    /// The app's single root: an always-visible Liquid Glass rail floating at
-    /// the left edge over full-bleed content. OVERLAY layout (not an HStack)
-    /// so the expanding panel just draws over the content — the content
-    /// column never re-lays-out during the spring.
+    /// The app's single root: the top navigation floating over full-bleed
+    /// content. OVERLAY layout, so the bar just draws over the content.
     private var tabLayout: some View {
-        ZStack(alignment: navIsTop ? .top : .leading) {
+        ZStack(alignment: .top) {
             selectedContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Tab changes CUT. No fade, in either direction.
@@ -1099,50 +1091,25 @@ struct RootView: View {
                 .id(selectedTab)
                 .transition(.identity)
                 .animation(nil, value: selectedTab)
-                // Home runs full-bleed (hero art sweeps under the floating
-                // pill); other tabs clear the rail. The top bar reserves
-                // height where the left rail reserves width — and Home is NOT
-                // exempt there: the left rail floats beside the hero's art,
-                // but a top bar sits across the hero's own title block, which
-                // is text rather than bleed.
-                .padding(.leading, !navIsTop && showSidebar && selectedTab != 0
-                         ? GlassSidebar.collapsedWidth : 0)
-                // Same rule on the other axis, Home included: the bar FLOATS
-                // over Home the way the pill floats beside it, so the hero is
-                // never pushed down. The other tabs get a SAFE-AREA inset
-                // rather than a plain one — see `topBarClearance`: plain
-                // padding cut the page off under the bar, so scrolled rows hit
-                // a black band instead of sliding under the glass.
-                .safeAreaPadding(.top, navIsTop && showSidebar && selectedTab != 0
+                // The bar FLOATS over Home, so the hero is never pushed down.
+                // The other tabs get a SAFE-AREA inset rather than a plain one
+                // — see `topBarClearance`: plain padding cut the page off
+                // under the bar, so scrolled rows hit a black band instead of
+                // sliding under the glass.
+                .safeAreaPadding(.top, showSidebar && selectedTab != 0
                                  ? GlassSidebar.topBarClearance : 0)
-                // The expanded panel draws OVER the page and the page does
-                // not move. There was an `.offset` here (plus an animation
-                // keyed to the rail opening) that slid the content sideways to
-                // clear the panel's right edge. It kept every heading legible,
-                // but it meant opening the rail shoved the whole screen
-                // across, which is the part that reads as wrong in motion — a
-                // side panel is supposed to overlay. The cost is that while it
-                // is open the panel covers the leading edge of what is under
-                // it. Nothing dims behind it either: the rail's glass samples
-                // what is behind it, so a scrim under it only turns the glass
-                // muddy.
                 .focusSection()
-                // Summon a hidden rail — but ONLY from the left edge. This was
-                // `.onMoveCommand(.left)` on the section, on the belief that a
-                // section's move handler fires only when the engine finds no
-                // candidate. It does not: it fires on EVERY left press anywhere
-                // in the content, so stepping between two cards mid-row popped
-                // the rail open. `movementDidFailNotification` is the engine's
-                // own "I looked left and found nothing" — exactly the press
-                // from the first card of a row, and nothing else.
+                // Summon a hidden bar — but ONLY from the top edge. A
+                // section's move handler fires on EVERY press anywhere in the
+                // content; `movementDidFailNotification` is the engine's own
+                // "I looked and found nothing" — exactly the press from the
+                // top row, and nothing else.
                 .onReceive(NotificationCenter.default.publisher(
                     for: UIFocusSystem.movementDidFailNotification)) { note in
                     guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey]
                             as? UIFocusUpdateContext else { return }
-                    // The press that reaches for the rail is whichever one
-                    // points AT it: Left for the edge rail, Up for the bar.
-                    // Everything downstream is identical.
-                    guard ctx.focusHeading.contains(navIsTop ? .up : .left) else { return }
+                    // The press that reaches for the bar: Up.
+                    guard ctx.focusHeading.contains(.up) else { return }
                     // Search root with the rail ON SCREEN but inside one of its
                     // short `.disabled` windows (the moments after a tab switch
                     // or a rail exit, kept so the engine seeds focus into the
@@ -1153,14 +1120,12 @@ struct RootView: View {
                     if selectedTab == 1, showSidebar, !sidebarEnabled, sidebarFocus == nil,
                        playback == nil, !showProfileGate, !showWelcome {
                         focusSidebar(selectedTab)
-                    } else if navIsTop, showSidebar, sidebarFocus == nil, atTabRoot,
+                    } else if showSidebar, sidebarFocus == nil, atTabRoot,
                               playback == nil, !showProfileGate, !showWelcome {
                         // TOP BAR, already on screen, and Up found nothing: put
                         // focus in it.
                         //
-                        // The left rail never needs this — it sits BESIDE the
-                        // content (which is inset by its width), so the engine
-                        // finds it by geometry. The bar sits OVER content that
+                        // The bar sits OVER content that
                         // spans the full height, and from a page whose own
                         // topmost row is close under it the engine answers "no
                         // candidate" instead of stepping up into it. The press
@@ -1175,32 +1140,20 @@ struct RootView: View {
                         revealSidebar()
                     }
                 }
-                // Lets the content tell whether a LEFT press should be its own
-                // (step the hero spotlight) or the rail's (come back).
-                // "A LEFT press has to escape to the rail." False with the bar
-                // on top, where Left is never the rail's press — so the hero's
-                // spotlight sentinels stay in place there, which is what they
-                // are for.
-                .environment(\.railIsHidden,
-                             !navIsTop && sidebarAutoHides && !sidebarRevealed)
-                // Layout, not input: Home's own leading inset exists to clear a
-                // rail at the LEFT edge, and there isn't one in the top layout.
-                .environment(\.navigationIsTop, navIsTop)
 
             if showSidebar {
                 GlassSidebar(selected: $selectedTab, focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             position: navPosition,
                              // The billboard ⇄ Details swap: the bar moves
-                             // away (up; the rail: left) — inside the bar,
-                             // on its items (see `GlassSidebar.swapAway`).
+                             // away (up) — inside the bar, on its items (see
+                             // `GlassSidebar.swapAway`).
                              swapAway: homeChromeOut)
                     .opacity(homeChromeOut ? 0 : 1)
                     .animation(homeChromeOut ? ModeSwap.fadeOut : ModeSwap.fadeIn,
                                value: homeChromeOut)
                     .focusSection()
-                    .disabled(!sidebarEnabled || spotlightGate.holdsLeft || homeChromeOut)
+                    .disabled(!sidebarEnabled || homeChromeOut)
                     // Back while IN the rail collapses it into content instead
                     // of falling through to the system (which quit the app).
                     .onExitCommand { collapseSidebarFromExit() }
@@ -1209,9 +1162,8 @@ struct RootView: View {
                     // so the engine sees no candidate to the right — catch it
                     // and run the same collapse Back uses.
                     .onMoveCommand { direction in
-                        // Out of the rail and into the content: Right off the
-                        // edge rail, Down off the top bar.
-                        guard direction == (navIsTop ? .down : .right) else { return }
+                        // Out of the bar and into the content: Down.
+                        guard direction == .down else { return }
                         // …unless this is the tail of the swipe that just
                         // OPENED the rail.
                         //
@@ -1247,7 +1199,7 @@ struct RootView: View {
                             }
                         }
                     }
-                    .transition(.move(edge: navIsTop ? .top : .leading).combined(with: .opacity))
+                    .transition(.move(edge: .top).combined(with: .opacity))
                     // Stays non-focusable until Home has content to hold
                     // initial focus (onContentReady); timer is the fallback.
                     .task {

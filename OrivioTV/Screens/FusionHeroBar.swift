@@ -215,21 +215,13 @@ struct FusionHeroBar: View {
     /// on the focused view, so Down could never leave the bar for the rows.
     @FocusState private var stepFocus: Int?
     @FocusState private var playButtonFocus: Bool
-    @Environment(\.railIsHidden) private var railIsHidden
 
     @ViewBuilder
     private var buttons: some View {
         HStack(spacing: 0) {
-            // Dropped while the rail is auto-hidden, exactly like the top
-            // hero's sentinel: LEFT must find no candidate here so the failed
-            // move bubbles up and summons the rail. With the sentinel always
-            // present, Left from the Featured bar stepped the carousel forever
-            // and the hidden rail was unreachable from this row.
-            if !railIsHidden {
-                Color.clear.frame(width: 1, height: 40)
-                    .focusable()
-                    .focused($stepFocus, equals: -1)
-            }
+            Color.clear.frame(width: 1, height: 40)
+                .focusable()
+                .focused($stepFocus, equals: -1)
             // One primary action, matching the reference — opens the title's
             // page. Labelled by TYPE: "Go to Show" on a series read wrong as
             // "Go to Movie". (The top hero keeps its own labelling.)

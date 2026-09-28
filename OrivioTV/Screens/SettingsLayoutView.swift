@@ -92,16 +92,6 @@ struct LayoutSettingsDetail: View {
                     options: heroSourceOptions
                 ) { settings.heroCatalogKey = $0 }
 
-                OrivioDropdown(
-                    title: "Navigation Position",
-                    subtitle: settings.navigationPosition.summary,
-                    icon: "sidebar.leading",
-                    selection: settings.navigationPosition.rawValue,
-                    options: NavigationPosition.allCases.map {
-                        OrivioDropdownOption($0.rawValue, $0.displayName)
-                    }
-                ) { settings.navigationPosition = NavigationPosition(rawValue: $0) ?? .left }
-
                 SettingsToggleCard(
                     title: "Hide the sidebar",
                     subtitle: "Give the rows the full width of the screen. Press LEFT from the edge of the page (or Menu) to bring the sidebar back; picking a tab hides it again. Settings always keeps its sidebar.",

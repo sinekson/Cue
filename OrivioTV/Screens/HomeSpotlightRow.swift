@@ -191,11 +191,9 @@ enum Spotlight {
     // Vertical layout (fixed positions — every row puts the box in exactly
     // the same place, which is what lets the rows glide between spots).
 
-    /// Left margin of everything (no sidebar). Shared with the Detail page,
-    /// so both screens line up. With the sidebar pill on screen Home adds
-    /// `railClearance`.
+    /// Left margin of everything. Shared with the Detail page, so both
+    /// screens line up.
     static let screenInset: CGFloat = 84
-    static let railClearance: CGFloat = 80
     static let topPadding: CGFloat = 56
     /// With the top navigation: everything starts below it instead.
     static let topPaddingUnderNav: CGFloat = 124
@@ -279,9 +277,6 @@ enum Spotlight {
     /// The previous catalog's name at the top (above the current one).
     static let showPreviousLabel = false
     static let labelOpacity: Double = 0.6
-
-    /// How much the row dims while focus is elsewhere (e.g. the sidebar).
-    static let unfocusedOpacity: Double = 0.55
 
     // Background
 
@@ -463,19 +458,6 @@ private struct Glide: ViewModifier, Animatable {
 
 // MARK: - Sidebar gate
 
-/// Tells RootView when the spotlight needs Left for itself.
-///
-/// While the box is focused on any title but the first, a Left press must
-/// step back through the row. With the sidebar on screen the tvOS focus
-/// engine kept choosing the sidebar over the row's own step target (however
-/// big that target was), so RootView disables the sidebar for exactly that
-/// window. On the FIRST title this is false, so Left reaches the sidebar
-/// normally.
-final class SpotlightFocusGate: ObservableObject {
-    static let shared = SpotlightFocusGate()
-    @Published var holdsLeft = false
-}
-
 // MARK: - View
 
 /// Netflix-style Home: ONE catalog row in focus at a time. The first column
@@ -496,8 +478,6 @@ struct HomeSpotlightView: View {
     @EnvironmentObject private var layoutSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @Environment(\.railIsHidden) private var railIsHidden
-    @Environment(\.navigationIsTop) private var navigationIsTop
 
     let rows: [HomeRow]
     let onSelect: (MetaItem) -> Void
@@ -662,28 +642,15 @@ struct HomeSpotlightView: View {
         return continueProgress[item.id]
     }
 
-    /// Clears the sidebar pill while it's on screen, like Home's own rows.
-    private var leadingInset: CGFloat {
-        (railIsHidden || navigationIsTop) ? Spotlight.screenInset
-                                          : Spotlight.screenInset + Spotlight.railClearance
-    }
+    private var leadingInset: CGFloat { Spotlight.screenInset }
 
-    /// The left step target spans the gap between the sidebar pill and the box.
+    /// The left step target spans the gap between the screen edge and the box.
     private var leftSentinelWidth: CGFloat { max(leadingInset - 110, 20) }
 
-    /// Left belongs to the row (not the sidebar): focused, past title one.
-    /// Never with the top navigation: Left isn't the way into it there.
-    private var holdsLeft: Bool { !navigationIsTop && focus != nil && itemIndex > 0 }
+    /// Home doesn't dim its own content while focus is in the top bar.
+    private var unfocusedOpacity: Double { 1 }
 
-    /// Home's own content dimming while focus is elsewhere — side rail
-    /// only. With the top navigation the app dims the whole page instead.
-    private var unfocusedOpacity: Double {
-        navigationIsTop ? 1 : Spotlight.unfocusedOpacity
-    }
-
-    private var topPadding: CGFloat {
-        navigationIsTop ? Spotlight.topPaddingUnderNav : Spotlight.topPadding
-    }
+    private var topPadding: CGFloat { Spotlight.topPaddingUnderNav }
 
     private var showsAmbient: Bool {
         Spotlight.ambientBackground && !PerformanceProfile.isLowPower
@@ -841,10 +808,6 @@ struct HomeSpotlightView: View {
                 }
             }
         }
-        // Keep RootView's sidebar out of the way while Left is ours.
-        .onChange(of: holdsLeft) { _, holds in SpotlightFocusGate.shared.holdsLeft = holds }
-        .onAppear { SpotlightFocusGate.shared.holdsLeft = holdsLeft }
-        .onDisappear { SpotlightFocusGate.shared.holdsLeft = false }
     }
 
     // MARK: Layout
@@ -1556,8 +1519,8 @@ struct HomeSpotlightView: View {
             sentinel(.up, enabled: rowIndex > 0,
                      width: box.width, height: 1)
             HStack(spacing: 0) {
-                // WIDE, not 1pt: fills the gap between the sidebar and the box.
-                sentinel(.left, enabled: current > 0 || navigationIsTop,
+                // WIDE, not 1pt: fills the gap between the screen edge and the box.
+                sentinel(.left, enabled: true,
                          width: leftSentinelWidth, height: box.height)
                 Color.clear
                     .frame(width: box.width, height: box.height)
@@ -2012,9 +1975,6 @@ struct HomeSpotlightView: View {
         var next = v + delta
         if !loops(row) {
             next = min(max(next, 0), row.items.count - 1)
-        } else if delta < 0, itemIndex == 0, !navigationIsTop {
-            // With the side rail, Left on the first title is the rail's.
-            return
         }
         // At the end of a row that ends: resistance, then back.
         guard next != v else { bounce(pushing: CGFloat(delta)); return }
@@ -2073,7 +2033,7 @@ struct HomeSpotlightView: View {
         let y = (Spotlight.rowHeight - size) / 2
         chevron("chevron.left", pressed: inFocus && pressedChevron == -1)
             .offset(x: -Spotlight.leftChevronOffset - size / 2, y: y)
-            .opacity(inFocus && (current > 0 || (loops(row) && navigationIsTop)) ? 1 : 0)
+            .opacity(inFocus && (current > 0 || loops(row)) ? 1 : 0)
         chevron("chevron.right", pressed: inFocus && pressedChevron == 1)
             .offset(x: width - size - Spotlight.chevronRightInset, y: y)
             .opacity(inFocus && (loops(row) || current < row.items.count - 1) ? 1 : 0)
@@ -2404,10 +2364,7 @@ struct HomeSpotlightView: View {
 
     private func handleBack() {
         if trailerMode { revealTrailerPage(); return }
-        // Straight to the sidebar from ANY title; the row keeps its position.
-        // Lift the sidebar gate FIRST: a focus request into a disabled
-        // sidebar is dropped.
-        SpotlightFocusGate.shared.holdsLeft = false
+        // Straight to the top bar from ANY title; the row keeps its position.
         onBack()
     }
 

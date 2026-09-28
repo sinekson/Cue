@@ -778,65 +778,6 @@ private struct HeroFadeMask: ViewModifier {
     }
 }
 
-/// True while the glass rail is auto-hidden and not currently summoned
-/// (Layout → "Hide the sidebar"). Injected by RootView, which owns that state.
-///
-/// The hero needs it because it flanks its Play button with two invisible
-/// focusable sentinels that turn LEFT/RIGHT into spotlight steps — and the
-/// hero's Play button is where focus lands at launch. With the rail hidden,
-/// the left sentinel swallowed the very press that is supposed to call the
-/// rail back, so the first thing a viewer tried did nothing.
-private struct RailIsHiddenKey: EnvironmentKey { static let defaultValue = false }
-
-/// Whether the navigation runs across the TOP rather than down the left edge.
-///
-/// Separate from `railIsHidden` on purpose — the two answer different
-/// questions and in the top layout they want opposite values. `railIsHidden`
-/// is about INPUT ("must a Left press escape to the rail?"); this one is about
-/// LAYOUT ("is there a rail at the left edge to clear?").
-private struct NavigationIsTopKey: EnvironmentKey { static let defaultValue = false }
-
-extension EnvironmentValues {
-    var railIsHidden: Bool {
-        get { self[RailIsHiddenKey.self] }
-        set { self[RailIsHiddenKey.self] = newValue }
-    }
-
-    var navigationIsTop: Bool {
-        get { self[NavigationIsTopKey.self] }
-        set { self[NavigationIsTopKey.self] = newValue }
-    }
-}
-
-/// A leading inset that clears the floating glass rail while the rail is on
-/// screen, and goes back to Home's own inset while the rail is hidden.
-///
-/// Home ignores the horizontal safe area so its art can bleed to the edges, so
-/// it doesn't get the padding RootView gives every other tab while the rail is
-/// on screen. It carries the rail's clearance in these insets instead, and
-/// nothing took that clearance away when "Hide the sidebar" removed the rail:
-/// the rows and hero text stayed exactly as far from the edge as they sit
-/// beside the pill. Keyed to whether the rail is actually on screen, the way
-/// RootView's padding is for the other tabs — whenever the rail comes back (a
-/// Left at the edge, Back, or a rail left parked after focus moves out of it)
-/// the clearance returns with it, so nothing ever sits under the pill.
-private struct RailClearingLeading: ViewModifier {
-    @Environment(\.railIsHidden) private var railIsHidden
-    /// With the navigation across the top there is no rail at the left edge to
-    /// clear, so Home goes back to its own title-safe inset — the same one it
-    /// uses when the rail is hidden.
-    @Environment(\.navigationIsTop) private var navigationIsTop
-    /// The inset beside the rail.
-    let withRail: CGFloat
-    /// The inset with no rail: the title-safe `lg` Home's rows had before the
-    /// rail existed, which puts cards and text 84pt from the edge.
-    let withoutRail: CGFloat
-
-    func body(content: Content) -> some View {
-        content.padding(.leading, (railIsHidden || navigationIsTop) ? withoutRail : withRail)
-    }
-}
-
 /// The live billboard title, updated as focus moves across cards. Kept separate
 /// from HomeViewModel and owned by HomeView WITHOUT observation, so its frequent
 /// animated changes re-render only the billboard subviews — not the poster rows.
@@ -1610,7 +1551,7 @@ struct HomeView: View {
                         // Rows keep a title-safe inset that also clears the
                         // floating glass rail; the hero (above) does not, so
                         // its art can bleed to the very edges.
-                        .modifier(RailClearingLeading(withRail: 100, withoutRail: OrivioSpacing.lg))
+                        .padding(.leading, OrivioSpacing.lg)
                         .padding(.trailing, OrivioSpacing.lg)
                     }
                     // Under a pinned hero the first row would otherwise sit
@@ -3351,7 +3292,7 @@ private struct FusionHeroHeader: View {
             // even though the art bleeds to the edge.
             ATVHeroInfoView(hero: hero, onPlay: onPlay, playFocus: playFocus,
                             showsActions: showsActions)
-                .modifier(RailClearingLeading(withRail: 100, withoutRail: OrivioSpacing.lg))
+                .padding(.leading, OrivioSpacing.lg)
         }
         .frame(height: height)
         .frame(maxWidth: .infinity)
@@ -3362,8 +3303,7 @@ private struct FusionHeroHeader: View {
                     .font(FusionType.badge(theme.font))
                     .tracking(2)
                     .foregroundStyle(theme.palette.secondary)
-                    .modifier(RailClearingLeading(withRail: OrivioSpacing.huge + 100,
-                                                withoutRail: OrivioSpacing.huge + OrivioSpacing.lg))
+                    .padding(.leading, OrivioSpacing.huge + OrivioSpacing.lg)
                     .padding(.top, 64)
             }
         }
@@ -3391,7 +3331,6 @@ private struct ATVHeroInfoView: View {
     /// `spotlightStep` handler.
     @State private var heroFocusLeftAt: Date?
     @State private var contentRating: String?
-    @Environment(\.railIsHidden) private var railIsHidden
 
     var body: some View {
         VStack(alignment: .leading, spacing: OrivioSpacing.md) {
@@ -3457,15 +3396,9 @@ private struct ATVHeroInfoView: View {
             // never leave the hero and the catalog rows were unreachable.
             if showsActions {
             HStack(spacing: 0) {
-                // Dropped while the rail is hidden, so LEFT finds no candidate
-                // here, bubbles up to RootView's `onMoveCommand`, and brings
-                // the sidebar back (see `railIsHidden`). Stepping the spotlight
-                // backwards costs nothing there — RIGHT still cycles it.
-                if !railIsHidden {
-                    Color.clear.frame(width: 1, height: 44)
-                        .focusable()
-                        .focused($spotlightStep, equals: -1)
-                }
+                Color.clear.frame(width: 1, height: 44)
+                    .focusable()
+                    .focused($spotlightStep, equals: -1)
                 ATVHeroPlayButton(title: item.type == "series" ? "Go to Show" : "Go to Movie") {
                     onPlay(item)
                 }

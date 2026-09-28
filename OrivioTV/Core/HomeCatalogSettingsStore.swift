@@ -77,46 +77,6 @@ enum HeroLayout: String, CaseIterable, Identifiable, Codable {
 }
 
 
-// MARK: - Navigation position
-
-/// Where the primary navigation sits. The rail is the same component either
-/// way — same items, icons, labels, focus behaviour and glass — turned on its
-/// side; see `GlassSidebar`.
-enum NavigationPosition: String, CaseIterable, Identifiable, Codable {
-    /// A vertical rail hugging the left edge.
-    case left
-    /// Tab names across the top of the screen. The default.
-    case top
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .left: return "Left / Vertical"
-        case .top:  return "Top / Horizontal"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .left: return "A vertical rail down the left edge."
-        case .top:  return "Tabs across the top of the screen. The default."
-        }
-    }
-
-    /// True when the rail runs across the top. Reads better than `== .top` at
-    /// the layout call sites.
-    var isHorizontal: Bool { self == .top }
-
-    /// Lenient, for the same reason `HeroLayout` is: a raw value a LATER build
-    /// introduced must not throw out of the whole settings blob and reset every
-    /// unrelated preference with it.
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = NavigationPosition(rawValue: raw) ?? .left
-    }
-}
-
 /// Poster card size — drives the portrait card width everywhere it renders.
 enum PosterSize: String, CaseIterable, Identifiable, Codable {
     case small, medium, large
@@ -197,9 +157,6 @@ struct HomePresentationSnapshot: Codable, Equatable {
     var pinnedHero = false
     var heroLayout: HeroLayout = .hybrid
     var autoHideSidebar = false
-    /// Where the navigation sits. New installs get the top navigation; an
-    /// install that saved a choice keeps it.
-    var navigationPosition: NavigationPosition = .top
     var fullStreamTitles = false
     var heroTrailersEnabled = true
     var heroTrailerSound = false
@@ -251,7 +208,6 @@ extension HomePresentationSnapshot {
         heroLayout = (try? c.decode(HeroLayout.self, forKey: .heroLayout))
             ?? (pinnedHero ? .pinnedFocus : .hybrid)
         autoHideSidebar = (try? c.decode(Bool.self, forKey: .autoHideSidebar)) ?? d.autoHideSidebar
-        navigationPosition = (try? c.decode(NavigationPosition.self, forKey: .navigationPosition)) ?? d.navigationPosition
         fullStreamTitles = (try? c.decode(Bool.self, forKey: .fullStreamTitles)) ?? d.fullStreamTitles
         heroTrailersEnabled = (try? c.decode(Bool.self, forKey: .heroTrailersEnabled)) ?? d.heroTrailersEnabled
         heroTrailerSound = (try? c.decode(Bool.self, forKey: .heroTrailerSound)) ?? d.heroTrailerSound
@@ -381,10 +337,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
     /// the full width of the screen the rest of the time.
     @Published var autoHideSidebar: Bool = false {
         didSet { guard autoHideSidebar != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Navigation Position.
-    @Published var navigationPosition: NavigationPosition = .top {
-        didSet { guard navigationPosition != oldValue else { return }; save(); notifyPresentationChange() }
     }
     /// Sources page: let every link's release name wrap in full instead of
     /// truncating — the whole point of a remux hunt is reading the whole name.
@@ -782,7 +734,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         var pinnedHero: Bool?
         var heroLayout: HeroLayout?
         var autoHideSidebar: Bool?
-        var navigationPosition: NavigationPosition?
         var fullStreamTitles: Bool?
         var heroTrailersEnabled: Bool?
         var heroTrailerSound: Bool?
@@ -828,7 +779,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             pinnedHero: pinnedHero,
             heroLayout: heroLayout,
             autoHideSidebar: autoHideSidebar,
-            navigationPosition: navigationPosition,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
@@ -867,7 +817,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         pinnedHero = d.pinnedHero
         heroLayout = d.heroLayout
         autoHideSidebar = d.autoHideSidebar
-        navigationPosition = d.navigationPosition
         fullStreamTitles = d.fullStreamTitles
         heroTrailersEnabled = d.heroTrailersEnabled
         heroTrailerSound = d.heroTrailerSound
@@ -904,7 +853,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         pinnedHero = s.pinnedHero
         heroLayout = s.heroLayout
         autoHideSidebar = s.autoHideSidebar
-        navigationPosition = s.navigationPosition
         fullStreamTitles = s.fullStreamTitles
         heroTrailersEnabled = s.heroTrailersEnabled
         heroTrailerSound = s.heroTrailerSound
@@ -971,7 +919,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         // app has only the boolean.
         heroLayout = decoded.heroLayout ?? (pinnedHero ? .pinnedFocus : .hybrid)
         autoHideSidebar = decoded.autoHideSidebar ?? false
-        navigationPosition = decoded.navigationPosition ?? .left
         fullStreamTitles = decoded.fullStreamTitles ?? false
         heroTrailersEnabled = decoded.heroTrailersEnabled ?? true
         heroTrailerSound = decoded.heroTrailerSound ?? false
@@ -1018,7 +965,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             pinnedHero: pinnedHero,
             heroLayout: heroLayout,
             autoHideSidebar: autoHideSidebar,
-            navigationPosition: navigationPosition,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
