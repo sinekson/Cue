@@ -66,7 +66,6 @@ struct OrivioTVApp: App {
     @StateObject private var homeCatalogSettings = HomeCatalogSettingsStore()
     @StateObject private var tmdbSettings = TMDBSettingsStore()
     @StateObject private var mdblistSettings = MDBListSettingsStore()
-    @StateObject private var stremioAccount = StremioAccountStore()
     @StateObject private var playerSettings = PlayerSettingsStore()
     @StateObject private var streamBadges = StreamBadgeStore()
 
@@ -85,7 +84,6 @@ struct OrivioTVApp: App {
                 .environmentObject(homeCatalogSettings)
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
-                .environmentObject(stremioAccount)
                 .environmentObject(playerSettings)
                 .environmentObject(streamBadges)
                 // Classic is hard-dark (the original look). The Apple TV theme
@@ -163,7 +161,6 @@ struct RootView: View {
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
-    @EnvironmentObject private var stremioAccount: StremioAccountStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
@@ -212,7 +209,6 @@ struct RootView: View {
     @State private var sync: OrivioSyncManager?
     /// Held only by -addonServerProbe; nil in normal runs.
     @State private var devAddonServer: AddonImportServer?
-    @State private var stremioSync: StremioSyncManager?
     @State private var showProfileGate = false
     /// First launch, nobody signed in — the welcome screen sits in front of
     /// everything, including the profile gate.
@@ -349,19 +345,6 @@ struct RootView: View {
                         orivioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
                     }
-                    let stremioManager = StremioSyncManager(
-                        stremio: stremioAccount,
-                        addonManager: addonManager,
-                        library: library,
-                        progress: progressStore,
-                        watched: watched
-                    )
-                    stremioManager.onMergedFromStremio = { [weak orivioSync, account] in
-                        guard account.authState.isSignedIn else { return }
-                        await orivioSync?.pushThisDevice()
-                    }
-                    stremioSync = stremioManager
-
                     // Anything sync-relevant that happens locally now kicks a
                     // full sync of every destination, debounced (see
                     // SyncCoordinator). Registered by name, so this is safe to
@@ -386,9 +369,6 @@ struct RootView: View {
                                 await orivioSync?.syncNow()
                             }
                         }
-                    }
-                    coordinator.addDestination("Stremio") { [weak stremioManager] in
-                        stremioManager?.syncNow(reason: "Local change")
                     }
                     // Fix up any already-installed Community Collections after
                     // launch has yielded. Keep network-backed logo migration
@@ -509,7 +489,7 @@ struct RootView: View {
                     }
                     // Dev: remove a title from Continue Watching through the
                     // same call the hold menu makes, so the fan-out to Orivio
-                    // and Stremio can be exercised without the tvOS UI.
+                    // can be exercised without the tvOS UI.
                     if let meta = args.first(where: { $0.hasPrefix("-removeCW:") })?
                         .replacingOccurrences(of: "-removeCW:", with: ""), !meta.isEmpty {
                         progressStore.removeShow(metaID: meta, notifySync: true)
@@ -617,7 +597,6 @@ struct RootView: View {
                     // Stands down on its own while that sync is armed, so the
                     // two can't pull progress and library at the same time.
                     sync?.refreshContinueWatching()
-                    stremioSync?.syncNow(reason: "Foreground Stremio sync")
                     // An add-on left as a stub — its manifest fetch answered
                     // during a wake, before the network was really back — has
                     // no catalogs and serves no streams, and NOTHING else

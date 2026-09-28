@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Settings → Integrations: the external services Orivio talks to — TMDB
-/// and MDBList. Trakt and the Orivio/Stremio accounts have their own panes.
+/// and MDBList. The Orivio account has its own pane.
 struct IntegrationsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var tmdb: TMDBSettingsStore

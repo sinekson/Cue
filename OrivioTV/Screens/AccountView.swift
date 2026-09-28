@@ -8,19 +8,14 @@ struct AccountView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progress: ProgressStore
     @EnvironmentObject private var watched: WatchedStore
-    @EnvironmentObject private var stremio: StremioAccountStore
 
     private enum AccountFocus: Hashable {
         case orivioSignIn
         case orivioEmailSignIn
-        case stremioSignIn
-        case stremioEmailSignIn
         case cancelOrivioSignIn
         case mergeSync
         case pullUpdates
         case pushDevice
-        case stremioSync
-        case stremioDisconnect
         case syncPanel
         case clearLog
         case exportBackup
@@ -28,21 +23,18 @@ struct AccountView: View {
         case providerCheck
         case signOut
         case navOrivio
-        case navStremio
         case navSync
         case navBackups
     }
 
     private enum AccountSection: CaseIterable {
         case orivio
-        case stremio
         case sync
         case backups
 
         var title: String {
             switch self {
             case .orivio: return "Orivio"
-            case .stremio: return "Stremio"
             case .sync: return "Sync"
             case .backups: return "Backups"
             }
@@ -51,7 +43,6 @@ struct AccountView: View {
         var subtitle: String {
             switch self {
             case .orivio: return "Account sign-in"
-            case .stremio: return "Stremio Link"
             case .sync: return "Status and actions"
             case .backups: return "Local safety copy"
             }
@@ -60,7 +51,6 @@ struct AccountView: View {
         var icon: String {
             switch self {
             case .orivio: return "person.crop.circle"
-            case .stremio: return "link.circle"
             case .sync: return "arrow.triangle.2.circlepath"
             case .backups: return "archivebox"
             }
@@ -69,7 +59,6 @@ struct AccountView: View {
         var focus: AccountFocus {
             switch self {
             case .orivio: return .navOrivio
-            case .stremio: return .navStremio
             case .sync: return .navSync
             case .backups: return .navBackups
             }
@@ -84,11 +73,6 @@ struct AccountView: View {
     @State private var orivioEmailField = ""
     @State private var orivioPasswordField = ""
     @State private var orivioEmailBusy = false
-    @State private var showStremioEmailSignIn = false
-    @State private var stremioEmailField = ""
-    @State private var stremioPasswordField = ""
-    @State private var stremioEmailBusy = false
-    @State private var stremioEmailError: String?
     @State private var confirmClearHistory = false
     @State private var selectedSection: AccountSection = .orivio
 
@@ -99,18 +83,7 @@ struct AccountView: View {
             .padding(.horizontal, OrivioSpacing.huge)
             .padding(.vertical, OrivioSpacing.xxl)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .onDisappear { stremioPollTask?.cancel() }
             .onChange(of: focusedControl, correctSkippedFocus)
-            .fullScreenCover(isPresented: $showStremioConnect) {
-                ZStack {
-                    ATVBackground()
-                    if let code = stremioLinkCode {
-                        StremioConnectPage(code: code, status: stremioConnectStatus).id(code.code)
-                    }
-                }
-                .environmentObject(theme)
-                .onExitCommand { cancelStremioConnect() }
-            }
             .fullScreenCover(isPresented: $showOrivioEmailSignIn) {
                 EmailSignInView(
                     service: "Orivio",
@@ -121,19 +94,6 @@ struct AccountView: View {
                     busy: orivioEmailBusy,
                     onSubmit: submitOrivioEmailSignIn,
                     onCancel: cancelOrivioEmailSignIn
-                )
-                .environmentObject(theme)
-            }
-            .fullScreenCover(isPresented: $showStremioEmailSignIn) {
-                EmailSignInView(
-                    service: "Stremio",
-                    email: $stremioEmailField,
-                    password: $stremioPasswordField,
-                    status: stremioEmailError,
-                    isError: stremioEmailError != nil,
-                    busy: stremioEmailBusy,
-                    onSubmit: submitStremioEmailSignIn,
-                    onCancel: cancelStremioEmailSignIn
                 )
                 .environmentObject(theme)
             }
@@ -223,7 +183,6 @@ struct AccountView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 AccountRailStatus(title: "Orivio", value: orivioEmail ?? "Not connected", connected: orivioEmail != nil)
-                AccountRailStatus(title: "Stremio", value: stremio.isSignedIn ? (stremio.email ?? "Connected") : "Not connected", connected: stremio.isSignedIn)
             }
         }
         .padding(OrivioSpacing.xl)
@@ -257,8 +216,6 @@ struct AccountView: View {
             switch selectedSection {
             case .orivio:
                 orivioAccountDetail(orivioEmail: orivioEmail)
-            case .stremio:
-                stremioConnectionCard
             case .sync:
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
@@ -283,12 +240,7 @@ struct AccountView: View {
     }
 
     private func accountRailSubtitle(orivioEmail: String?) -> String {
-        switch (orivioEmail != nil, stremio.isSignedIn) {
-        case (true, true): return "Orivio and Stremio connected"
-        case (true, false): return "Orivio connected"
-        case (false, true): return "Stremio connected"
-        case (false, false): return "No accounts connected"
-        }
+        orivioEmail != nil ? "Orivio connected" : "Not connected"
     }
 
     private func detailSubtitle(orivioEmail: String?) -> String {
@@ -297,8 +249,6 @@ struct AccountView: View {
             return orivioEmail == nil
                 ? "Sign in by QR or with your email and password to sync this Apple TV with your Orivio account."
                 : "Signed in as \(orivioEmail ?? "Orivio account")."
-        case .stremio:
-            return "Connect by Stremio Link or email and password, and keep Stremio data merged into this app."
         case .sync:
             return "Run account sync actions and inspect the latest sync state without leaving this page."
         case .backups:
@@ -495,100 +445,6 @@ struct AccountView: View {
         )
     }
 
-    private var stremioConnectionCard: some View {
-        VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
-            HStack(alignment: .top, spacing: OrivioSpacing.lg) {
-                ZStack {
-                    Circle()
-                        .fill(theme.palette.secondary.opacity(0.18))
-                    Image(systemName: stremio.isSignedIn ? "link.circle.fill" : "link.badge.plus")
-                        .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(theme.palette.secondary)
-                }
-                .frame(width: 76, height: 76)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: OrivioSpacing.sm) {
-                        Text("Stremio")
-                            .font(.system(size: 31, weight: .heavy))
-                            .foregroundStyle(theme.palette.textPrimary)
-                        Text(stremio.isSignedIn ? "Connected" : "Optional")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(stremio.isSignedIn ? OrivioPrimitives.success : theme.palette.textTertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill((stremio.isSignedIn ? OrivioPrimitives.success : theme.palette.textTertiary).opacity(0.16))
-                            )
-                    }
-
-                    Text(stremio.isSignedIn ? (stremio.email ?? "Stremio account linked") : "Connect with Stremio Link to bring over add-ons, saved library, watched movies, and Continue Watching.")
-                        .font(.system(size: 21, weight: .medium))
-                        .foregroundStyle(theme.palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: OrivioSpacing.md)
-            }
-
-            HStack(spacing: OrivioSpacing.sm) {
-                AccountMetricPill(title: "Add-ons", value: "\(addonManager.addons.count)", systemImage: "puzzlepiece.extension")
-                AccountMetricPill(title: "Library", value: "\(library.items.count)", systemImage: "bookmark")
-                AccountMetricPill(title: "Continue", value: "\(progress.continueWatching.count)", systemImage: "play.rectangle")
-                AccountMetricPill(title: "Watched", value: "\(watched.items.count)", systemImage: "checkmark.seal")
-            }
-
-            VStack(alignment: .leading, spacing: OrivioSpacing.sm) {
-                HStack(spacing: OrivioSpacing.md) {
-                    if stremio.isSignedIn {
-                        AccountPrimaryButton(
-                            title: stremio.isSyncing ? "Syncing..." : "Sync Stremio",
-                            systemImage: "arrow.triangle.2.circlepath",
-                            filled: false
-                        ) {
-                            syncStremioNow()
-                        }
-                        .focused($focusedControl, equals: .stremioSync)
-
-                        AccountPrimaryButton(title: "Disconnect", systemImage: "xmark.circle", filled: false) {
-                            stremio.signOut()
-                            focusedControl = .stremioSignIn
-                        }
-                        .focused($focusedControl, equals: .stremioDisconnect)
-                    } else {
-                        AccountPrimaryButton(title: "Connect with QR", systemImage: "qrcode", filled: false) {
-                            startStremioLogin()
-                        }
-                        .focused($focusedControl, equals: .stremioSignIn)
-
-                        AccountPrimaryButton(title: "Sign In with Email", systemImage: "envelope", filled: false) {
-                            beginStremioEmailSignIn()
-                        }
-                        .focused($focusedControl, equals: .stremioEmailSignIn)
-                    }
-                }
-
-                if let status = stremioStatus ?? stremio.lastSyncStatus {
-                    Text(status)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(status.hasPrefix("Couldn't") ? OrivioPrimitives.error : theme.palette.textTertiary)
-                        .lineLimit(2)
-                }
-            }
-        }
-        .padding(OrivioSpacing.xl)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(theme.palette.backgroundElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(stremio.isSignedIn ? OrivioPrimitives.success.opacity(0.45) : OrivioPrimitives.neutral750.opacity(0.65), lineWidth: 1)
-        )
-        .focusSection()
-    }
-
     private func qrLoginView(_ qr: QRLoginState) -> some View {
         HStack(spacing: OrivioSpacing.huge) {
             QRCodeView(string: qr.webURL, side: 360)
@@ -658,11 +514,6 @@ struct AccountView: View {
     @State private var backupImportText = ""
     @State private var backupImportStatus: String?
     @State private var importingBackup = false
-    @State private var showStremioConnect = false
-    @State private var stremioLinkCode: StremioLinkCode?
-    @State private var stremioPollTask: Task<Void, Never>?
-    @State private var stremioConnectStatus = "Starting sign-in..."
-    @State private var stremioStatus: String?
     private var sync: OrivioSyncManager? { OrivioSyncManager.shared }
 
     private var syncStatusPanel: some View {
@@ -683,7 +534,6 @@ struct AccountView: View {
                 AccountSyncStatusRow(title: "Library", value: "\(library.items.count) saved", systemImage: "bookmark")
                 AccountSyncStatusRow(title: "Continue Watching", value: "\(progress.continueWatching.count) active", systemImage: "play.rectangle")
                 AccountSyncStatusRow(title: "Watched", value: "\(watched.items.count) marked", systemImage: "checkmark.seal")
-                AccountSyncStatusRow(title: "Stremio", value: stremio.isSignedIn ? (stremio.email ?? "Connected") : "Not connected", systemImage: "link")
                 AccountSyncStatusRow(title: "Pending Queue", value: pendingQueueLabel, systemImage: "tray.and.arrow.up")
                 AccountSyncStatusRow(title: "Last Error", value: sync?.lastSyncError ?? "None", systemImage: "exclamationmark.triangle")
             }
@@ -760,60 +610,9 @@ struct AccountView: View {
     private func railSection(for focus: AccountFocus?) -> AccountSection? {
         switch focus {
         case .navOrivio: return .orivio
-        case .navStremio: return .stremio
         case .navSync: return .sync
         case .navBackups: return .backups
         default: return nil
-        }
-    }
-
-    private func startStremioLogin() {
-        stremioStatus = nil
-        stremioConnectStatus = "Starting sign-in..."
-        showStremioConnect = true
-        Task { await loadStremioCode() }
-    }
-
-    private func loadStremioCode() async {
-        do {
-            let code = try await StremioAccountService.createLink()
-            stremioLinkCode = code
-            stremioConnectStatus = "Waiting for authorization..."
-            beginStremioPolling(code)
-        } catch {
-            stremioStatus = "Couldn't start Stremio login."
-            showStremioConnect = false
-        }
-    }
-
-    private func beginStremioPolling(_ code: StremioLinkCode) {
-        stremioPollTask?.cancel()
-        stremioPollTask = Task {
-            let deadline = Date().addingTimeInterval(300)
-            while !Task.isCancelled && Date() < deadline {
-                switch await StremioAccountService.readLink(code: code.code) {
-                case .pending:
-                    stremioConnectStatus = "Waiting for authorization..."
-                case .authorized(let authKey):
-                    stremioConnectStatus = "Authorized. Syncing your account..."
-                    let user = await StremioAccountService.getUser(authKey: authKey)
-                    stremio.signIn(authKey: authKey, user: user)
-                    stremioLinkCode = nil
-                    showStremioConnect = false
-                    syncStremioNow()
-                    focusedControl = .stremioSync
-                    return
-                case .failed(let message):
-                    stremioStatus = message
-                    stremioConnectStatus = message
-                    stremioLinkCode = nil
-                    showStremioConnect = false
-                    focusedControl = .stremioSignIn
-                    return
-                }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-            }
-            if !Task.isCancelled && showStremioConnect { await loadStremioCode() }
         }
     }
 
@@ -848,76 +647,6 @@ struct AccountView: View {
                 showOrivioEmailSignIn = false
                 orivioPasswordField = ""
             }
-        }
-    }
-
-    private func beginStremioEmailSignIn() {
-        stremioPasswordField = ""
-        stremioEmailError = nil
-        stremioEmailBusy = false
-        showStremioEmailSignIn = true
-    }
-
-    private func cancelStremioEmailSignIn() {
-        guard !stremioEmailBusy else { return }
-        showStremioEmailSignIn = false
-        stremioPasswordField = ""
-        stremioEmailError = nil
-        focusedControl = .stremioEmailSignIn
-    }
-
-    private func submitStremioEmailSignIn() {
-        guard !stremioEmailBusy else { return }
-        stremioEmailBusy = true
-        stremioEmailError = nil
-        Task {
-            do {
-                let result = try await StremioAccountService.login(email: stremioEmailField,
-                                                                   password: stremioPasswordField)
-                stremio.signIn(authKey: result.authKey, user: result.user)
-                stremioPasswordField = ""
-                stremioEmailBusy = false
-                showStremioEmailSignIn = false
-                // Same landing as the QR flow: pull the account straight away
-                // so the panel shows real numbers instead of an empty shell.
-                syncStremioNow()
-                focusedControl = .stremioSync
-            } catch {
-                stremioEmailBusy = false
-                stremioEmailError = (error as? LocalizedError)?.errorDescription
-                    ?? "Couldn't sign in to Stremio."
-            }
-        }
-    }
-
-    private func cancelStremioConnect() {
-        stremioPollTask?.cancel()
-        stremioLinkCode = nil
-        showStremioConnect = false
-        focusedControl = .stremioSignIn
-    }
-
-    private func syncStremioNow() {
-        if let manager = StremioSyncManager.shared {
-            manager.syncNow(reason: "Manual Stremio sync")
-            focusedControl = .stremioSync
-            return
-        }
-
-        guard let key = stremio.authKey else { return }
-        stremio.setSyncing(true)
-        stremio.setStatus("Syncing...")
-        Task {
-            let result = await StremioSync.pull(
-                authKey: key,
-                addonManager: addonManager,
-                library: library,
-                progress: progress,
-                watched: watched
-            )
-            stremio.setStatus(result)
-            stremio.setSyncing(false)
-            focusedControl = .stremioSync
         }
     }
 

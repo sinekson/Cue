@@ -383,7 +383,6 @@ struct AccountSettingsDetail: View {
     @EnvironmentObject private var account: OrivioAccountManager
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var stremio: StremioAccountStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var watchedStore: WatchedStore
@@ -400,8 +399,8 @@ struct AccountSettingsDetail: View {
                     SettingsValueCard(
                         title: "Accounts",
                         subtitle: account.authState.isSignedIn
-                            ? "Manage Orivio, Stremio, sync status and backups"
-                            : "Sign in to Orivio, Stremio, or both",
+                            ? "Manage Orivio, sync status and backups"
+                            : "Sign in to Orivio",
                         value: accountStatus
                     )
                 }
@@ -447,7 +446,6 @@ struct AccountSettingsDetail: View {
             .environmentObject(library)
             .environmentObject(progressStore)
             .environmentObject(watchedStore)
-            .environmentObject(stremio)
             .onExitCommand { showAccount = false }
         }
         .fullScreenCover(isPresented: $showProfiles) {
@@ -463,7 +461,7 @@ struct AccountSettingsDetail: View {
         case .signedIn(_, let email): return email.isEmpty ? "Orivio connected" : email
         case .loading: return "..."
         case .signedOut:
-            return stremio.isSignedIn ? (stremio.email ?? "Stremio connected") : ""
+            return ""
         }
     }
 

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Email + password sign-in, shared by the Orivio and Stremio account panels as
-/// the alternative to their QR flows. Both services already accept a password
-/// grant; only a way to type one was missing.
+/// Email + password sign-in, used by the Orivio account panel as the
+/// alternative to its QR flow. The backend already accepts a password grant;
+/// only a way to type one was missing.
 ///
 /// Presented as a full-screen cover like the QR pages it sits beside, because a
 /// tvOS keyboard needs the room and the field it is editing must not be under
