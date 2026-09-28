@@ -151,9 +151,7 @@ private struct ATVRowButtonStyle: ButtonStyle {
             configuration.label
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(isFocused ? Color.white
-                              : (theme.atvIsLight ? Color.white.opacity(0.45)
-                                                  : Color.white.opacity(0.05)))
+                        .fill(isFocused ? Color.white : Color.white.opacity(0.05))
                 )
                 .shadow(color: .black.opacity(isFocused ? 0.28 : 0),
                         radius: isFocused ? 18 : 0, y: 8)

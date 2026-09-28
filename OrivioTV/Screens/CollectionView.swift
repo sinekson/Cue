@@ -204,44 +204,6 @@ struct CollectionsRowSection: View {
 
 /// A tile representing a whole collection (its first folder's cover/emoji plus
 /// the collection title), used in the combined Home collections row.
-/// Fusion (§27.1): a layered "stack" backing drawn behind a collection folder
-/// tile — two offset, darker, slightly-rotated cards peeking out so the tile
-/// reads as a folder holding things. On focus the layers separate a little more
-/// (§27.2). Purely decorative (the tiles carry a single brand cover, not member
-/// posters), so it uses tinted cards rather than real artwork.
-struct FusionFolderStack: View {
-    let size: CGSize
-    let radius: CGFloat
-    let tint: Color
-    let focused: Bool
-
-    var body: some View {
-        ZStack {
-            layer(scale: 0.95, offset: focused ? 30 : 22, angle: 3.5, dim: -0.16, opacity: 0.6)
-            layer(scale: 0.975, offset: focused ? 17 : 12, angle: 1.8, dim: -0.08, opacity: 0.82)
-        }
-        .animation(FusionMotion.focusEntry, value: focused)
-    }
-
-    private func layer(scale: CGFloat, offset: CGFloat, angle: Double, dim: Double, opacity: Double) -> some View {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(tint)
-            // Darken via a black overlay, not `.brightness()`: the filter put
-            // an offscreen color-matrix pass on BOTH stack layers of every
-            // collection tile, re-composited through the focus animation. The
-            // overlay is a plain alpha blend for the same darkened read.
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(Color.black.opacity(-dim))
-            )
-            .frame(width: size.width, height: size.height)
-            .scaleEffect(scale)
-            .rotationEffect(.degrees(angle))
-            .offset(x: offset, y: offset)
-            .opacity(opacity)
-    }
-}
-
 /// Equatable so a focus step — which writes the row's @FocusState and re-runs
 /// the row body — skips the bodies of unchanged tiles instead of rebuilding
 /// every one in the row. Focus visuals come through \.isFocused, which
@@ -306,13 +268,6 @@ struct CollectionTileCard: View, Equatable {
                 }
             }
             .frame(width: cardSize.width, height: cardSize.height)
-            // Fusion (§27): layered-stack backing behind the tile.
-            .background {
-                if theme.isAppleTVTheme {
-                    FusionFolderStack(size: cardSize, radius: OrivioRadius.md,
-                                      tint: theme.palette.backgroundCard, focused: isFocused)
-                }
-            }
             .overlay(
                 RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
                     .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
@@ -326,7 +281,7 @@ struct CollectionTileCard: View, Equatable {
                     radius: glowEnabled && perf.settings.cardShadows && isFocused ? 28 : 0)
 
             Text(collection.title)
-                .font(theme.isAppleTVTheme ? FusionType.cardTitle(theme.font) : .system(size: 24, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(isFocused ? theme.palette.textPrimary : theme.palette.textSecondary)
                 .lineLimit(1)
                 .frame(width: cardSize.width, alignment: .leading)
@@ -483,13 +438,6 @@ struct CollectionFolderCard: View, Equatable {
             .frame(width: cardSize.width, height: cardSize.height)
             // Unfocusing tears the GIF down; reset so the still returns.
             .onChange(of: isFocused) { _, focused in if !focused { gifPlaying = false } }
-            // Fusion (§27): layered-stack backing behind the tile.
-            .background {
-                if theme.isAppleTVTheme {
-                    FusionFolderStack(size: cardSize, radius: OrivioRadius.md,
-                                      tint: theme.palette.backgroundCard, focused: isFocused)
-                }
-            }
             .overlay(
                 RoundedRectangle(cornerRadius: OrivioRadius.md, style: .continuous)
                     .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
@@ -501,7 +449,7 @@ struct CollectionFolderCard: View, Equatable {
 
             if showTitle && folder?.hideTitle != true && !title.isEmpty {
                 Text(title)
-                    .font(theme.isAppleTVTheme ? FusionType.cardTitle(theme.font) : .system(size: 24, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(isFocused ? theme.palette.textPrimary : theme.palette.textSecondary)
                     .lineLimit(1)
                     .frame(width: cardSize.width, alignment: .leading)

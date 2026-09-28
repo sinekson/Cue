@@ -839,7 +839,6 @@ struct PosterCard: View {
 
     private var cardWidth: CGFloat { layout.posterSize.posterWidth }
     private var cardHeight: CGFloat { cardWidth * 3 / 2 }
-    private var stremio: Bool { theme.isStremioTheme }
     /// Stremio uses generously rounded poster corners.
     private var cornerRadius: CGFloat {
         CGFloat(layout.posterCornerRadius)
@@ -971,7 +970,6 @@ struct LandscapeCard: View {
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @Environment(\.isFocused) private var isFocused
 
-    private var stremio: Bool { theme.isStremioTheme }
     private var cardRadius: CGFloat { OrivioRadius.md }
 
     let imageURL: String?

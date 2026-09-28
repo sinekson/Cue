@@ -106,28 +106,6 @@ enum OrivioThemes {
     )
 }
 
-/// Light/dark preference for the Apple TV theme (Classic is always dark).
-/// `system` follows the Apple TV's own Appearance setting.
-enum ATVAppearance: String, CaseIterable, Identifiable, Codable {
-    case system, light, dark
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .system: return "Automatic"
-        case .light: return "Light"
-        case .dark: return "Dark"
-        }
-    }
-    /// Value handed to `.preferredColorScheme` (nil = follow the system).
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
-        }
-    }
-}
-
 /// App-wide font family (applied at the root via `.fontDesign`).
 enum AppFont: String, CaseIterable, Identifiable, Codable {
     case system, rounded, serif, monospaced
@@ -207,78 +185,9 @@ enum SettingsUiStyle: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-/// A per-axis LOOK variant — the detail page, profile screen and player overlay
-/// can each independently use any theme's design (Orivio default, Marquee, or
-/// Streamline), regardless of the selected app theme.
-enum ThemeVariant: String, CaseIterable, Identifiable, Codable {
-    case orivio, marquee, streamline
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .orivio: return "Orivio"
-        case .marquee: return "Marquee"
-        case .streamline: return "Streamline"
-        }
-    }
-    func summary(_ kind: String) -> String {
-        switch self {
-        case .orivio: return "The default Orivio \(kind)."
-        case .marquee: return "The HBO-Max-style \(kind) — pure black, white focus."
-        case .streamline: return "The Hulu-style \(kind) — navy stage, accent focus."
-        }
-    }
-}
-
-/// The player-overlay axis. Independent of `ThemeVariant` (which still drives the
-/// detail/profile axes): the player offers the original Orivio controls and
-/// Fusion, an Apple-TV-style transport.
-enum PlayerLayout: String, CaseIterable, Identifiable {
-    case classic, fusion
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .classic: return "Classic"
-        case .fusion: return "Fusion"
-        }
-    }
-    var summary: String {
-        switch self {
-        case .classic: return "The original Orivio playback controls."
-        case .fusion: return "Apple TV\u{2011}style transport \u{2014} centred glass controls, a chapter-aware scrubber."
-        }
-    }
-    var icon: String {
-        switch self {
-        case .classic: return "circle.grid.2x2.fill"
-        case .fusion: return "play.circle.fill"
-        }
-    }
-    /// Map any stored/synced string onto the two current options. Covers the
-    /// retired values written while the player axis still shared `ThemeVariant`
-    /// ("orivio"/"marquee"/"streamline") and the retired plain-Apple-TV layout
-    /// ("hbo"). Anyone who had chosen the minimal Apple-TV transport lands on
-    /// Fusion — the closest thing to what they picked — rather than being
-    /// dropped back to Classic.
-    init(stored raw: String?) {
-        switch raw {
-        case "fusion", "hbo", "marquee": self = .fusion
-        default: self = .classic
-        }
-    }
-}
-
-extension PlayerLayout: Codable {
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = PlayerLayout(stored: raw)
-    }
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-}
-
-/// The synced slice of the theme (accent palette + AMOLED + font + experience).
+/// The synced slice of the theme. `paletteID` and `amoled` are fixed now but
+/// kept so the blob keeps its shape; fields older builds wrote (app theme,
+/// appearance, per-axis looks) are ignored on decode.
 struct ThemeSnapshot: Codable, Equatable {
     var paletteID: String
     var amoled: Bool
@@ -286,16 +195,6 @@ struct ThemeSnapshot: Codable, Equatable {
     /// Default advanced so existing users keep the full settings surface.
     var experienceMode: ExperienceMode = .advanced
     var settingsUiStyle: SettingsUiStyle = .classic
-    /// Selected app theme id. Optional so blobs written before this field
-    /// (and any Android blob without it) still decode cleanly.
-    var appThemeID: String? = nil
-    /// Apple TV theme light/dark preference. Optional for the same
-    /// backward-compatibility reason as `appThemeID`.
-    var atvAppearance: ATVAppearance? = nil
-    /// Independent look axes — optional so old blobs still decode.
-    var detailStyle: ThemeVariant? = nil
-    var profileStyle: ThemeVariant? = nil
-    var playerStyle: PlayerLayout? = nil
 }
 
 @MainActor
@@ -419,7 +318,6 @@ final class ThemeManager: ObservableObject {
     var rootFontDesign: Font.Design { font.design }
 
     /// The app renders dark, always.
-    var atvIsLight: Bool { false }
     var preferredColorScheme: ColorScheme? { .dark }
 
     /// The one palette used across the app: neutral, no accent colour.
@@ -433,17 +331,6 @@ final class ThemeManager: ObservableObject {
     // `focusGlow` was only ever written by the never-called `ATVPalettes.adapt`,
     // so it was always `.clear` and every `.shadow(color: effectiveFocusGlow)`
     // in the app drew nothing. The no-op shadows went with it.
-
-    // MARK: Retired theme flags — every alternate theme was deleted; these
-    // stubs keep not-yet-redesigned screens on their default styling and get
-    // removed as each screen is swept.
-    var isAppleTVTheme: Bool { false }
-    var isNetflixTheme: Bool { false }
-    var isStremioTheme: Bool { false }
-    var isCinemaTheme: Bool { false }
-    var isOnyxTheme: Bool { false }
-    var isMaxTheme: Bool { false }
-    var isHuluTheme: Bool { false }
 }
 
 /// Spacing scale ported from Orivio's SpacingTokens.

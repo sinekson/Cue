@@ -75,14 +75,6 @@ struct PerformanceSettingsDetail: View {
                     subtitle: "The focused card springs slightly larger. Off: only the highlight ring marks focus — the cheapest possible focus effect.",
                     isOn: s.focusZoom
                 )
-                // No longer gated on `theme.isAppleTVTheme`: that flag is a
-                // retired stub that always returns false, so this row never
-                // rendered — yet `cardParallax` still drives the card button
-                // style and the Performance-mode summary. Apple TV HD users
-                // (where the migration forces it off) were stuck on the flat
-                // card style with no switch to turn it back on, and switching
-                // every VISIBLE effect off still reported Performance mode as
-                // OFF because of this hidden flag.
                 PerfToggleRow(
                     icon: "move.3d",
                     title: "Card wiggle & lift",
