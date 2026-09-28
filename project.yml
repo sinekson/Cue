@@ -290,11 +290,6 @@ schemes:
         - OrivioTVUITests
     run:
       config: Debug
-      # The new Home (HomeSpotlightView) is switched on by this launch
-      # argument (see HomeView.body). Kept HERE so an xcodegen run doesn't
-      # drop it from the generated scheme.
-      commandLineArguments:
-        "-spotlightHome": true
       # KSPlayer's Metal renderer (MetalRender.textures) calls makeTexture and
       # tolerates a nil result via compactMap — fine on device. But the SIMULATOR
       # Debug run enables Metal API Validation, which ASSERTS (SIGABRT) on the

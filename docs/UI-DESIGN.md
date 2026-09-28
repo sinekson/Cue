@@ -5,8 +5,8 @@ open. Read this before changing Home (`HomeSpotlightRow.swift`), the Detail
 page (`DetailView.swift`), the top navigation (`GlassSidebar.swift`) or the
 shared pieces (`Components/TitleBlock.swift`, glass in `Components.swift`).
 
-The new Home is switched on by the launch argument `-spotlightHome` (kept in
-`project.yml` — xcodegen regenerates the scheme).
+The new Home is the only Home (the old layout was removed). Collections show
+on it as plain rows for now (`HomeView.spotlightRows`) — not styled yet.
 
 ## 1. Glass language — one set of parts, used everywhere
 
