@@ -2443,8 +2443,8 @@ struct DotGrow: ViewModifier {
     let shown: Bool
 
     static let dotScale: CGFloat = 0.14
-    /// One spring for all — they grow together, at the same pace.
-    static let grow: Animation = .spring(response: 0.42, dampingFraction: 0.62)
+    /// One curve for all — they grow together, no overshoot.
+    static var grow: Animation { Motion.present }
 
     func body(content: Content) -> some View {
         content

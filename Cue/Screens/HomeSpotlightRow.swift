@@ -27,15 +27,17 @@ enum Spotlight {
     /// Right on the last title turns the ring on: the row resists a little
     /// (`wrapNudge`), then the end card slides past under the box and the
     /// first title lands in it (`wrapSlide`). Left on the first: reverse.
-    static let wrapSlide: Animation = .timingCurve(0.45, 0, 0.2, 1, duration: 0.55)
+    static var wrapSlide: Animation { Motion.move }
     /// Which rows are rings: catalogs from this many titles up (and the
     /// billboard). Continue Watching and short rows END instead — at an end
     /// the cards give (the same resistance) and spring back (`endBounce`).
     static let minRingCount = 6
-    static let endBounce: Animation = .smooth(duration: 0.3)
+    static var endBounce: Animation { Motion.move }
     /// The resistance: how far the row gives, how fast, and the beat at
     /// full resistance before it turns.
     static let wrapNudge: CGFloat = 36
+    /// End of a row that doesn't loop: how far the cards give.
+    static let endNudge: CGFloat = 14
     /// The resistance moves the box too. Off: only the cards give; the box
     /// stays put, as on every other step.
     static let wrapNudgeMovesBox = false
@@ -56,7 +58,7 @@ enum Spotlight {
     /// Left/Right: posters slide one slot (the next one tucks under the
     /// box) while the box crossfades to the new title. (Also the Detail
     /// page's episode row.)
-    static let slide: Animation = .smooth(duration: 0.3)
+    static var slide: Animation { Motion.move }
     /// Up/Down: ONE movement — all rows scroll one row (no fading), and on
     /// the way the arriving row OPENS (its first poster widens into the
     /// box, the posters beside it make room) while the leaving row keeps
@@ -65,7 +67,7 @@ enum Spotlight {
     ///
     /// Fast start, gentle finish: most of the way is covered early, the
     /// rest eases in.
-    static let rowChange: Animation = .timingCurve(0.5, 0.8, 0.3, 1, duration: 0.6)
+    static var rowChange: Animation { Motion.move }
     /// (`.scroll`) Down, Netflix-style, in ONE go: the preview opens its box
     /// (fast, `prepare`) while the scroll (`downScroll`) is still barely
     /// moving — its start is slow — so the opening is done within the first
@@ -75,7 +77,7 @@ enum Spotlight {
     static let prepareDuration: Double = 0.12
     static var prepare: Animation { .linear(duration: prepareDuration) }
     /// Down's scroll: slower start than `rowChange`, same length.
-    static let downScroll: Animation = .timingCurve(0.6, 0.15, 0.3, 1, duration: 0.6)
+    static var downScroll: Animation { Motion.move }
     /// Which Up/Down to use:
     /// - `.scroll`: the above — rows scroll, the arriving row opens.
     /// - `.fade`: like Left/Right instead. The box never moves and stays
@@ -113,7 +115,7 @@ enum Spotlight {
     /// travel, back this long after the press.
     static let textReturn: Duration = .milliseconds(320)
     /// Text (info, logo) crossfades in place.
-    static let textFade: Animation = .easeOut(duration: 0.12)
+    static var textFade: Animation { Motion.fade }
     /// Where a new preview row starts when there's no preview spot.
     static let incomingPreviewRise: CGFloat = 120
 
@@ -340,10 +342,9 @@ private struct BillboardDots: View {
     static let current: CGFloat = 20
     /// Centre to centre — room for the large one.
     static let pitch: CGFloat = 32
-    /// The swell: a spring with a little overshoot.
-    static let change: Animation = .spring(response: 0.34, dampingFraction: 0.58)
-    /// The arrival stretch, springing back.
-    static let settle: Animation = .spring(response: 0.42, dampingFraction: 0.45)
+    /// The marker moving to the new dot (no overshoot, no stretch).
+    static var change: Animation { Motion.move }
+    static var settle: Animation { Motion.move }
     static let stretch: CGFloat = 0.45
 
     /// The last page's direction (+1 right, -1 left) — at full strength
@@ -375,16 +376,12 @@ private struct BillboardDots: View {
             }
         }
         .animation(Self.change, value: current)
-        .animation(.easeOut(duration: 0.2), value: focused)
+        .animation(Motion.focus, value: focused)
         .onChange(of: current) { old, new in
             // Wrapping round the ring counts as one step onward.
             let step: CGFloat = new == old + 1 || (old == count - 1 && new == 0) ? 1 : -1
-            var jolt = Transaction()
-            jolt.disablesAnimations = true
-            withTransaction(jolt) { pulse = step }
-            // Next turn: in the same update the jolt and the settle merged
-            // into one change, and the stretch never showed.
-            DispatchQueue.main.async { withAnimation(Self.settle) { pulse = 0 } }
+            // (No liquid stretch any more: one press, one movement.)
+            _ = step
         }
         .opacity(count > 1 ? 1 : 0)
         .allowsHitTesting(false)
@@ -478,6 +475,7 @@ struct HomeSpotlightView: View {
     @EnvironmentObject private var layoutSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @ObservedObject private var perf = PerformanceSettingsStore.shared
+    @ObservedObject private var probe = RenderProbe.shared
 
     let rows: [HomeRow]
     let onSelect: (MetaItem) -> Void
@@ -503,6 +501,12 @@ struct HomeSpotlightView: View {
     /// Position inside each row, keyed by row id, so coming back to a row
     /// lands on the title you left it on.
     @State private var positions: [String: Int] = [:]
+    /// While stepping, the info under the box keeps showing this title
+    /// (row id, item index) and only changes once the steps settle — its
+    /// text is expensive to lay out and draw, and doing it on every step
+    /// dropped frames while holding Left/Right. nil = show the current.
+    @State private var infoLag: (rowID: String, index: Int)?
+    @State private var infoTask: Task<Void, Never>?
     /// The remembered row has been put back (see `restorePlace`).
     @State private var placeRestored = false
     /// Rows whose remembered title has been put back.
@@ -557,7 +561,6 @@ struct HomeSpotlightView: View {
     /// The end card is being pressed (the ring's resistance).
     @State private var seamPressed = false
     /// The chevron being pressed: -1 left, +1 right, 0 none.
-    @State private var pressedChevron = 0
     /// The billboard's section hint being pressed (Down).
     @State private var downPressed = false
     /// The box's liquid stretch (points; + right, − left).
@@ -653,7 +656,7 @@ struct HomeSpotlightView: View {
     private var topPadding: CGFloat { Spotlight.topPaddingUnderNav }
 
     private var showsAmbient: Bool {
-        Spotlight.ambientBackground && !PerformanceProfile.isLowPower
+        Spotlight.ambientBackground && !PerformanceProfile.isLowPower && !probe.flags.noAmbient
     }
 
     private var cardShadows: Bool { Spotlight.cardShadows && perf.settings.cardShadows }
@@ -669,6 +672,7 @@ struct HomeSpotlightView: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
         .ignoresSafeArea()
+        .transaction { if probe.flags.noAnimations { $0.animation = nil; $0.disablesAnimations = true } }
         .defaultFocus($focus, .box)
         // A directional press landed on a sentinel: do the step, then hand
         // focus straight back to the box. Only a move that STARTED on the box
@@ -1022,16 +1026,15 @@ struct HomeSpotlightView: View {
             }
             // Its info under the first card — it rides along with the row.
             if !featured, entry.row.items.indices.contains(position(in: entry.row)) {
-                let item = entry.row.items[position(in: entry.row)]
+                let lagged = infoLag.flatMap { $0.rowID == entry.row.id ? $0.index : nil }
+                let shown = lagged.flatMap { entry.row.items.indices.contains($0) ? $0 : nil }
+                    ?? position(in: entry.row)
+                let item = entry.row.items[shown]
                 info(for: item, progress: isContinueRow(entry.row)
                         ? continueProgress[item.id] : nil)
                     .frame(height: Spotlight.infoHeight, alignment: .topLeading)
                     .offset(y: Spotlight.rowHeight + Spotlight.rowToInfoGap)
                     .opacity(rowOpacity(for: entry.role))
-            }
-            // Its chevrons — carried by the row, shown while it's in focus.
-            if !featured {
-                rowChevrons(entry, width: width)
             }
             if titles, Spotlight.showPreviousLabel, entry.index > 0 {
                 rowTitle(rows[entry.index - 1], role: -1)
@@ -1144,7 +1147,7 @@ struct HomeSpotlightView: View {
         let item = row.items.indices.contains(current) ? row.items[current] : nil
         return ZStack {
             Color.black.opacity(0.3)
-            if let item {
+            if let item, !probe.flags.noBackdrop {
                 RemoteImage(url: item.background ?? item.poster,
                             maxPixels: PerformanceProfile.backdropPixelCap)
                     .frame(width: size.width, height: size.height)
@@ -1205,15 +1208,26 @@ struct HomeSpotlightView: View {
             }
             return -CGFloat(v - k) * slotWidth - CGFloat(gaps(row, from: k, to: v)) * gap
         }
+        // PERFORMANCE: the cards move as ONE strip. Card k sits at a fixed
+        // spot in the strip (`x(k) - shift`, constant while its side of the
+        // box doesn't change), and a step animates only the strip's
+        // `shift` — one transform, instead of re-animating every card's
+        // offset each frame (which held Left/Right at ~47 fps).
+        // Absolute strip x of card v: its slots plus the end cards crossed
+        // since 0 (`gaps` counts multiples of n, so floor(v / n)).
+        let ringStarts = loops(row) ? Int((Double(v) / Double(n)).rounded(.down)) : 0
+        let absoluteV = CGFloat(v) * slotWidth + CGFloat(ringStarts) * gap
+        let shift = afterStart - slotWidth - absoluteV
 
         return ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
             if n > 0 {
                 ForEach(Array(first...max(first, last)), id: \.self) { k in
                     let item = row.items[wrap(k, n)]
                     poster(item,
                            continueEntry: isContinue ? continueProgress[item.id] : nil,
                            landscape: isContinue)
-                        .offset(x: x(k))
+                        .offset(x: x(k) - shift)
                         // The previous card peeks (across the gap it's off
                         // screen anyway); older ones have slid away; the
                         // current one is under the open box — so a dimmed
@@ -1226,10 +1240,12 @@ struct HomeSpotlightView: View {
                 ForEach(Array(first...max(first, last)).filter { loops(row) && wrap($0, n) == 0 },
                         id: \.self) { k in
                     endCard(row, compact: k == v, pressed: isFocusRow && seamPressed)
-                        .offset(x: (k == v ? 0 : x(k)) - slotWidth)
+                        .offset(x: (k == v ? 0 : x(k)) - slotWidth - shift)
                         .opacity(k >= v ? 1 : 0)
                 }
             }
+            }
+            .offset(x: shift)
             if showBox {
                 boxArt(row, current: current, open: open, isFocusRow: isFocusRow)
                     // Takes back the cards' nudge, plus its own share.
@@ -1358,14 +1374,12 @@ struct HomeSpotlightView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-        // The same glass rim as the posters (under the focus outline).
-        .overlay { if Spotlight.cardEdgeHighlight { edgeHighlight() } }
         // The focus outline is part of the box too: it travels with the
         // row, grows with the box as it opens (and fades in with it), and
         // sits above the logo and its scrim, so nothing darkens it.
         .overlay { boxFrame(focused: outlined) }
         .opacity(open ? 1 : 0)
-        .shadow(color: cardShadows ? .black.opacity(0.45) : .clear,
+        .probeShadow(color: cardShadows ? .black.opacity(0.45) : .clear,
                 radius: cardShadows ? 22 : 0, y: cardShadows ? 10 : 0)
         // Stretching left: grow to the left (the right edge stays).
         .offset(x: min(stretch, 0))
@@ -1411,7 +1425,7 @@ struct HomeSpotlightView: View {
             .lineLimit(2)
             .minimumScaleFactor(0.6)
             .frame(width: Spotlight.logoMaxWidth, alignment: .bottomLeading)
-            .shadow(color: .black.opacity(0.6), radius: 10, y: 3)
+            .probeShadow(color: .black.opacity(0.6), radius: 10, y: 3)
     }
 
     private func endCard(_ row: HomeRow, compact: Bool, pressed: Bool = false) -> some View {
@@ -1477,10 +1491,7 @@ struct HomeSpotlightView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-            .overlay {
-                if Spotlight.cardEdgeHighlight { edgeHighlight() }
-            }
-            .shadow(color: cardShadows ? .black.opacity(0.25) : .clear,
+            .probeShadow(color: cardShadows ? .black.opacity(0.25) : .clear,
                     radius: cardShadows ? 10 : 0, y: cardShadows ? 5 : 0)
     }
 
@@ -1503,7 +1514,7 @@ struct HomeSpotlightView: View {
                                                 style: .continuous))
                     .allowsHitTesting(false)
             }
-            focusTargets(row: row, current: itemIndex, box: box)
+            focusTargets(row: row, current: itemIndex, box: box, width: width)
         }
         .frame(width: width, height: box.height, alignment: .topLeading)
         .opacity(focus == nil ? unfocusedOpacity : 1)
@@ -1514,7 +1525,7 @@ struct HomeSpotlightView: View {
     /// sentinels are replaced by placeholders so the box never shifts, and a
     /// press with nothing to step to falls through to what's really there:
     /// Left on the first title → sidebar, Up on the first row → top bar.
-    private func focusTargets(row: HomeRow, current: Int, box: CGSize) -> some View {
+    private func focusTargets(row: HomeRow, current: Int, box: CGSize, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sentinel(.up, enabled: rowIndex > 0,
                      width: box.width, height: 1)
@@ -1569,7 +1580,7 @@ struct HomeSpotlightView: View {
     private func boxFrame(focused: Bool) -> some View {
         switch Spotlight.boxStyle {
         case .outline:
-            // The glass focus rim (bold sibling of the posters' rim).
+            // The focus outline: solid white, the only line on artwork.
             GlassFocusRim(cornerRadius: Spotlight.cornerRadius, lineWidth: Spotlight.outlineWidth)
                 .opacity(focused ? 1 : 0)
                 // Only its own fade when focus comes or goes (top bar).
@@ -1670,7 +1681,7 @@ struct HomeSpotlightView: View {
                         fallback: AnyView(logoText(item.name)))
                 .frame(width: Spotlight.logoMaxWidth, height: Spotlight.logoMaxHeight,
                        alignment: .bottomLeading)
-                .shadow(color: .black.opacity(0.5), radius: 12, y: 4)
+                .probeShadow(color: .black.opacity(0.5), radius: 12, y: 4)
         } else {
             logoText(item.name)
         }
@@ -1920,13 +1931,13 @@ struct HomeSpotlightView: View {
                             : "Up Next")
             .font(.system(size: Spotlight.continueStateSize, weight: .semibold))
             .foregroundStyle(AppGlass.text)
-            .shadow(color: .black.opacity(0.6), radius: 6, y: 1)
+            .probeShadow(color: .black.opacity(0.6), radius: 6, y: 1)
             .lineLimit(1)
             .fixedSize()
         let episodeLabel = episode?
             .font(.system(size: Spotlight.continueStateSize, weight: .semibold))
             .foregroundStyle(AppGlass.text)
-            .shadow(color: .black.opacity(0.6), radius: 6, y: 1)
+            .probeShadow(color: .black.opacity(0.6), radius: 6, y: 1)
             .lineLimit(1)
             .fixedSize()
         if entry.fraction > 0.02 {
@@ -1969,13 +1980,12 @@ struct HomeSpotlightView: View {
 
     private func step(by delta: Int) {
         guard let row, !row.items.isEmpty, !wrapping else { return }
-        pressChevron(delta)
-        if !isFeatured(row) { stretchBox(delta) }
         let v = virtualPosition(in: row)
         var next = v + delta
         if !loops(row) {
             next = min(max(next, 0), row.items.count - 1)
         }
+        if next != v { holdInfo(row) }
         // At the end of a row that ends: resistance, then back.
         guard next != v else { bounce(pushing: CGFloat(delta)); return }
         // Round the ring (across the gap): resistance first, then the
@@ -2000,62 +2010,8 @@ struct HomeSpotlightView: View {
             }
             return
         }
-        wrapping = true
-        withAnimation(Spotlight.wrapPress) {
-            wrapNudge = -CGFloat(delta) * Spotlight.wrapNudge
-            if Spotlight.wrapNudgeMovesBox { boxNudge = wrapNudge }
-            seamPressed = true
-        }
-        Task {
-            try? await Task.sleep(for: Spotlight.wrapHold)
-            // Released: springs back as the ring turns.
-            withAnimation(.smooth(duration: 0.25)) { seamPressed = false }
-            withAnimation(Spotlight.wrapSlide) {
-                wrapNudge = 0
-                boxNudge = 0
-                positions[row.id] = next
-            }
-            try? await Task.sleep(for: .seconds(0.3))
-            wrapping = false
-        }
-    }
-
-    /// A row's ‹ and ›: in the margin left of the box, and at the right
-    /// edge. Only while the row is in focus, and only where the press
-    /// does something (rows that END lose ‹ on the first title, › on the
-    /// last; rings keep both).
-    @ViewBuilder
-    private func rowChevrons(_ entry: RowEntry, width: CGFloat) -> some View {
-        let row = entry.row
-        let current = position(in: row)
-        let inFocus = entry.role == 0
-        let size = Spotlight.chevronCircle
-        let y = (Spotlight.rowHeight - size) / 2
-        chevron("chevron.left", pressed: inFocus && pressedChevron == -1)
-            .offset(x: -Spotlight.leftChevronOffset - size / 2, y: y)
-            .opacity(inFocus && (current > 0 || loops(row)) ? 1 : 0)
-        chevron("chevron.right", pressed: inFocus && pressedChevron == 1)
-            .offset(x: width - size - Spotlight.chevronRightInset, y: y)
-            .opacity(inFocus && (loops(row) || current < row.items.count - 1) ? 1 : 0)
-    }
-
-    /// One chevron: a small glass circle (the app's glass), pressable.
-    private func chevron(_ symbol: String, pressed: Bool) -> some View {
-        GlassChevron(symbol: symbol, pressed: pressed)
-    }
-
-    /// The box's liquid step: its edge runs ahead in the pressed direction,
-    /// then it settles back.
-    private func stretchBox(_ delta: Int) {
-        stretchTask?.cancel()
-        withAnimation(Spotlight.boxStretchLead) {
-            boxStretch = (delta > 0 ? 1 : -1) * Spotlight.boxStretch
-        }
-        stretchTask = Task { @MainActor in
-            try? await Task.sleep(for: Spotlight.boxStretchHold)
-            guard !Task.isCancelled else { return }
-            withAnimation(Spotlight.boxStretchSettle) { boxStretch = 0 }
-        }
+        // Across the end card: the same one movement as any step.
+        withAnimation(Motion.move) { positions[row.id] = next }
     }
 
     /// The billboard's section hint: a quick push of its chevron.
@@ -2067,27 +2023,27 @@ struct HomeSpotlightView: View {
         }
     }
 
-    /// The pressed direction's chevron: a quick press and release.
-    private func pressChevron(_ delta: Int) {
-        let side = delta > 0 ? 1 : -1
-        withAnimation(.easeOut(duration: 0.08)) { pressedChevron = side }
-        Task {
-            try? await Task.sleep(for: .milliseconds(120))
-            withAnimation(.smooth(duration: 0.25)) {
-                if pressedChevron == side { pressedChevron = 0 }
-            }
+    /// Keep the info on the title it shows now until the steps settle,
+    /// then crossfade it to where they landed.
+    private func holdInfo(_ row: HomeRow) {
+        if infoLag?.rowID != row.id { infoLag = (row.id, position(in: row)) }
+        infoTask?.cancel()
+        infoTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.fade) { infoLag = nil }
         }
     }
 
     /// The end of a row that doesn't loop: the cards give in the pressed
     /// direction — the ring's resistance — and spring back.
     private func bounce(pushing: CGFloat) {
+        // A small, quick nudge: out on `focus`, back on `move`.
         wrapping = true
-        withAnimation(Spotlight.wrapPress) { wrapNudge = -pushing * Spotlight.wrapNudge }
+        withAnimation(Motion.focus) { wrapNudge = -pushing * Spotlight.endNudge }
         Task {
-            try? await Task.sleep(for: Spotlight.wrapHold)
-            withAnimation(Spotlight.endBounce) { wrapNudge = 0 }
-            try? await Task.sleep(for: .seconds(0.15))
+            try? await Task.sleep(for: .seconds(Motion.durations.focus * 0.6))
+            withAnimation(Motion.move) { wrapNudge = 0 }
             wrapping = false
         }
     }
@@ -2333,8 +2289,11 @@ struct HomeSpotlightView: View {
             if down {
                 // Both start together; the opening is done while the
                 // scroll is still in its slow start.
-                withAnimation(Spotlight.prepare) { openPreviewID = rows[next].id }
-                withAnimation(Spotlight.downScroll) { rowIndex = next }
+                // One movement: the preview opens as the rows scroll.
+                withAnimation(Motion.move) {
+                    openPreviewID = rows[next].id
+                    rowIndex = next
+                }
             } else {
                 // The old focus row folds back into posters DURING the
                 // scroll — same curve, finishing together.
@@ -2397,7 +2356,7 @@ struct HomeSpotlightView: View {
         case .tint:
             ZStack {
                 // ONE layer; its colour interpolates in place.
-                Rectangle().fill(glowColor ?? Spotlight.plainTop)
+                Rectangle().fill(probe.flags.noTint ? Spotlight.plainTop : (glowColor ?? Spotlight.plainTop))
                 if Spotlight.tintBackdrop, showsAmbient, let ambientImage {
                     Image(uiImage: ambientImage)
                         .resizable()
@@ -2775,7 +2734,7 @@ struct SpotlightChevron: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: Spotlight.chevronSize, weight: .bold))
                 .foregroundStyle(theme.palette.textPrimary.opacity(0.9))
-                .shadow(color: .black.opacity(0.6), radius: 6)
+                .probeShadow(color: .black.opacity(0.6), radius: 6)
                 .padding(.trailing, 22)
                 .allowsHitTesting(false)
         }

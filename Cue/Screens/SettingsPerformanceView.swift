@@ -141,12 +141,6 @@ struct PerformanceSettingsDetail: View {
                 title: "Developer",
                 subtitle: "Diagnostics — safe to leave off"
             ) {
-                PerfToggleRow(
-                    icon: "speedometer",
-                    title: "Show FPS overlay",
-                    subtitle: "Overlay a live frames-per-second read-out on the whole app (green = smooth, amber = some drops, red = janky), so you can see the effect of these switches while you browse. Off by default.",
-                    isOn: s.showFPSOverlay
-                )
 
                 PerfToggleRow(
                     icon: "hand.tap",
@@ -302,5 +296,257 @@ private struct PerfRowLabel<Accessory: View>: View {
         .frame(minHeight: 76)
         .frame(maxWidth: .infinity)
         .background(SettingsRowBackground(isFocused: isFocused))
+    }
+}
+
+
+/// Settings → Render Lab (top of Settings): the FPS overlay and the render
+/// bisect switches in one place, for quick A/B runs while tuning Home.
+struct RenderLabDetail: View {
+    @ObservedObject private var store = PerformanceSettingsStore.shared
+    @ObservedObject private var probe = RenderProbe.shared
+
+    private var s: Binding<PerformanceSettingsStore.Settings> {
+        Binding(get: { store.settings }, set: { store.settings = $0 })
+    }
+
+    var body: some View {
+        DetailScaffold(title: SettingsCategory.renderLab.title,
+                       subtitle: SettingsCategory.renderLab.subtitle) {
+            SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
+                PerfToggleRow(
+                    icon: "square.stack.3d.up",
+                    title: "New Home",
+                    subtitle: "Rows in UIKit: native focus, our own movement to the fixed box. Off: the previous Home, kept for reference.",
+                    isOn: Binding(get: { probe.flags.uikitHome }, set: { probe.flags.uikitHome = $0 })
+                )
+                PerfToggleRow(
+                    icon: "paintpalette",
+                    title: "Poster rims",
+                    subtitle: "Each poster gets a subtle rim in its own colour (pre-rendered; switch tabs to refresh).",
+                    isOn: Binding(get: { probe.flags.posterRims }, set: { probe.flags.posterRims = $0 })
+                )
+                CueDropdown(
+                    title: "Rim",
+                    subtitle: "Posters' and box's rim: a colour of its own, or glass-like — lighter over the poster's own edge (switch tabs to refresh).",
+                    icon: "square.dashed",
+                    selection: probe.flags.rimStyle,
+                    options: FixedFocusRim.Style.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.rimStyle = raw
+                }
+                PerfToggleRow(
+                    icon: "rectangle.dashed",
+                    title: "Box outline: rim",
+                    subtitle: "The box's outline as a rim (see Rim). Off: plain white.",
+                    isOn: Binding(get: { probe.flags.boxRimColored }, set: { probe.flags.boxRimColored = $0 })
+                )
+                PerfToggleRow(
+                    icon: "circle.lefthalf.filled.righthalf.striped.horizontal",
+                    title: "Background tint",
+                    subtitle: "The background takes the focused title's colour, strongest around the box.",
+                    isOn: Binding(get: { probe.flags.backgroundTint }, set: { probe.flags.backgroundTint = $0 })
+                )
+                CueDropdown(
+                    title: "Background",
+                    subtitle: "A fixed, dark colour with a soft glow — or the focused title's colour (with a dark left third and foot).",
+                    icon: "photo.on.rectangle",
+                    selection: probe.flags.backgroundStyle,
+                    options: FixedFocusBackground.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.backgroundStyle = raw
+                }
+                CueDropdown(
+                    title: "Tint delay",
+                    subtitle: "Title colour: how long you rest on a title before the background changes.",
+                    icon: "timer",
+                    selection: String(probe.flags.tintDelay),
+                    options: [0.08, 0.12, 0.18, 0.25].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintDelay = v }
+                }
+                CueDropdown(
+                    title: "Tint fade",
+                    subtitle: "Title colour: how long the change of colour takes.",
+                    icon: "circle.lefthalf.filled",
+                    selection: String(probe.flags.tintFade),
+                    options: [0.2, 0.25, 0.3, 0.4, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintFade = v }
+                }
+                PerfToggleRow(
+                    icon: "sun.max",
+                    title: "Background glow",
+                    subtitle: "A soft glow in the background's colour. Off: an even gradient.",
+                    isOn: Binding(get: { probe.flags.backgroundGlow }, set: { probe.flags.backgroundGlow = $0 })
+                )
+            }
+
+            SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {
+                CueDropdown(
+                    title: "Focus",
+                    subtitle: "Focus outline, highlights, button focus.",
+                    icon: "scope",
+                    selection: String(probe.flags.motion.focus),
+                    options: [0.12, 0.16, 0.2, 0.25, 0.3].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.focus = v }
+                }
+                CueDropdown(
+                    title: "Move",
+                    subtitle: "Rows sliding, wrapping, changing row.",
+                    icon: "arrow.left.and.right",
+                    selection: String(probe.flags.motion.move),
+                    options: [0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.move = v }
+                }
+                CueDropdown(
+                    title: "Fade",
+                    subtitle: "Crossfades: box art, text, chrome.",
+                    icon: "circle.lefthalf.filled",
+                    selection: String(probe.flags.motion.fade),
+                    options: [0.15, 0.2, 0.25, 0.3, 0.4].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.fade = v }
+                }
+                CueDropdown(
+                    title: "Up / Down",
+                    subtitle: "Home: a row change (the row moves up, the box opens).",
+                    icon: "arrow.up.arrow.down",
+                    selection: String(probe.flags.motion.vertical),
+                    options: [0.45, 0.5, 0.55, 0.6, 0.65, 0.75, 0.85].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.vertical = v }
+                }
+                CueDropdown(
+                    title: "Continue Watching step",
+                    subtitle: "Home: one step in Continue Watching (a whole box-wide card).",
+                    icon: "rectangle.on.rectangle",
+                    selection: String(probe.flags.motion.continueMove),
+                    options: [0.35, 0.45, 0.55, 0.65].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.continueMove = v }
+                }
+                CueDropdown(
+                    title: "Left / Right curve",
+                    subtitle: "Home: the curve of a step (its duration is Move). Up/Down keeps its spring.",
+                    icon: "point.topleft.down.curvedto.point.bottomright.up",
+                    selection: probe.flags.horizontalCurve,
+                    options: FixedFocusMotion.Curve.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.horizontalCurve = raw
+                }
+                PerfToggleRow(
+                    icon: "arrow.left.and.right.square",
+                    title: "Box change: drift",
+                    subtitle: "Home: the box's new title fades in while shifting a little in the direction you move. Off: plain crossfade.",
+                    isOn: Binding(get: { probe.flags.boxDrift }, set: { probe.flags.boxDrift = $0 })
+                )
+                CueDropdown(
+                    title: "Up / Down curve",
+                    subtitle: "Home: the curve of a row change (its duration is Up / Down; damping only applies to Spring).",
+                    icon: "point.bottomleft.forward.to.point.topright.scurvepath",
+                    selection: probe.flags.verticalCurve,
+                    options: FixedFocusMotion.Curve.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.verticalCurve = raw
+                }
+                CueDropdown(
+                    title: "Up / Down damping",
+                    subtitle: "1.0: no give at all. Lower: a slight settle at the end (no visible bounce down to about 0.85).",
+                    icon: "waveform.path.ecg",
+                    selection: String(probe.flags.motion.verticalDamping),
+                    options: [1.0, 0.95, 0.9, 0.85].map { CueDropdownOption(String($0), String(format: "%.2f", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.verticalDamping = v }
+                }
+                CueDropdown(
+                    title: "Present",
+                    subtitle: "Screen changes: billboard ⇄ Details, box → Details.",
+                    icon: "rectangle.expand.vertical",
+                    selection: String(probe.flags.motion.present),
+                    options: [0.35, 0.4, 0.45, 0.5, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.motion.present = v }
+                }
+            }
+
+            SettingsGroupCard(title: "Measure", subtitle: "Live frame rate over the whole app") {
+                PerfToggleRow(
+                    icon: "speedometer",
+                    title: "Show FPS overlay",
+                    subtitle: "Overlay a live frames-per-second read-out on the whole app (green = smooth, amber = some drops, red = janky), so you can see the effect of these switches while you browse. Off by default.",
+                    isOn: s.showFPSOverlay
+                )
+            }
+
+            SettingsGroupCard(
+                title: "Render bisect",
+                subtitle: "Temporary: remove one render cost at a time on Home and watch the FPS overlay"
+            ) {
+                PerfToggleRow(
+                    icon: "drop.fill",
+                    title: "No live glass",
+                    subtitle: "Glass surfaces (end cards, chevrons, dots, top bar) become a flat fill.",
+                    isOn: Binding(get: { probe.flags.noGlass }, set: { probe.flags.noGlass = $0 })
+                )
+                PerfToggleRow(
+                    icon: "square.3.layers.3d.down.backward",
+                    title: "No stage scrim",
+                    subtitle: "Removes the three full-screen darkening gradients.",
+                    isOn: Binding(get: { probe.flags.noScrim }, set: { probe.flags.noScrim = $0 })
+                )
+                PerfToggleRow(
+                    icon: "shadow",
+                    title: "No shadows",
+                    subtitle: "Every shadow on Home: cards, box, logos, focus glow.",
+                    isOn: Binding(get: { probe.flags.noShadows }, set: { probe.flags.noShadows = $0 })
+                )
+                PerfToggleRow(
+                    icon: "square.dashed",
+                    title: "No card rims",
+                    subtitle: "The thin gradient edge on every card.",
+                    isOn: Binding(get: { probe.flags.noRims }, set: { probe.flags.noRims = $0 })
+                )
+                PerfToggleRow(
+                    icon: "circle.lefthalf.filled",
+                    title: "No ambient backdrop",
+                    subtitle: "The blurred artwork behind the rows.",
+                    isOn: Binding(get: { probe.flags.noAmbient }, set: { probe.flags.noAmbient = $0 })
+                )
+                PerfToggleRow(
+                    icon: "paintbrush",
+                    title: "No title tint",
+                    subtitle: "Fixed dark background instead of the colour taken from the focused title.",
+                    isOn: Binding(get: { probe.flags.noTint }, set: { probe.flags.noTint = $0 })
+                )
+                PerfToggleRow(
+                    icon: "photo",
+                    title: "No billboard artwork",
+                    subtitle: "The billboard's full-screen image.",
+                    isOn: Binding(get: { probe.flags.noBackdrop }, set: { probe.flags.noBackdrop = $0 })
+                )
+                PerfToggleRow(
+                    icon: "arrow.down.right.and.arrow.up.left",
+                    title: "Cap backdrops at 2560 px",
+                    subtitle: "Decode full-screen art smaller (relaunch or browse to reload images).",
+                    isOn: Binding(get: { probe.flags.capBackdrop }, set: { probe.flags.capBackdrop = $0 })
+                )
+                PerfToggleRow(
+                    icon: "pause.circle",
+                    title: "No Home animations",
+                    subtitle: "Every step snaps. Separates animation cost from drawing cost.",
+                    isOn: Binding(get: { probe.flags.noAnimations }, set: { probe.flags.noAnimations = $0 })
+                )
+                PerfActionRow(
+                    icon: "arrow.counterclockwise",
+                    title: "Reset bisect switches",
+                    subtitle: "Everything back on.",
+                    action: { probe.flags = .init() }
+                )
+            }
+
+        }
     }
 }

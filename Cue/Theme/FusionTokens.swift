@@ -28,7 +28,7 @@ enum FusionType {
     /// Body design: sans when Serif is picked (headings only get serif), else
     /// the font's own design.
     private static func body(_ f: AppFont) -> Font.Design {
-        f == .serif ? .default : f.design
+        return f == .serif ? .default : f.design
     }
 }
 
@@ -118,4 +118,55 @@ enum FusionFocus {
 enum FusionMaterials {
     static let sidebar = Color(hex: 0x080A0D, alpha: 0.88)
     static let dialog = Color(hex: 0x14171D, alpha: 0.94)
+}
+
+// MARK: - Motion (the ONE system, docs/UI-DESIGN.md §2)
+
+/// Durations of the four motion tokens, in seconds. Tunable live in
+/// Settings → Render Lab → Motion until they're locked.
+struct MotionDurations: Codable, Equatable {
+    var focus: Double = 0.2
+    var move: Double = 0.35
+    var fade: Double = 0.25
+    var present: Double = 0.45
+    /// Home Up/Down (a whole row plus the box opening): longer than `move`.
+    /// Damping 1 = no overshoot (0.95 already showed as a visible settle-back
+    /// on a movement this large).
+    var vertical: Double = 0.55
+    var verticalDamping: Double = 1
+    /// Home, Continue Watching: a step moves a whole box-wide card.
+    var continueMove: Double = 0.45
+
+    init() {}
+
+    /// Lenient: a value missing from an older save keeps its default.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MotionDurations()
+        focus = (try? c.decode(Double.self, forKey: .focus)) ?? d.focus
+        move = (try? c.decode(Double.self, forKey: .move)) ?? d.move
+        fade = (try? c.decode(Double.self, forKey: .fade)) ?? d.fade
+        present = (try? c.decode(Double.self, forKey: .present)) ?? d.present
+        vertical = (try? c.decode(Double.self, forKey: .vertical)) ?? d.vertical
+        verticalDamping = (try? c.decode(Double.self, forKey: .verticalDamping)) ?? d.verticalDamping
+        continueMove = (try? c.decode(Double.self, forKey: .continueMove)) ?? d.continueMove
+    }
+}
+
+/// Every animation in the app is one of these four. No bounce anywhere:
+/// springs with bounce 0 keep their speed when a new press interrupts them
+/// (fast remote swipes), which timing curves can't.
+/// Rule: one press, one movement.
+enum Motion {
+    /// Mirrors `RenderProbe.flags.motion` (set there), readable anywhere.
+    nonisolated(unsafe) static var durations = MotionDurations()
+
+    /// Focus outline, highlights, button focus, presses.
+    static var focus: Animation { .spring(duration: durations.focus, bounce: 0) }
+    /// Rows sliding, wrapping, changing row.
+    static var move: Animation { .spring(duration: durations.move, bounce: 0) }
+    /// Crossfades: box art, text, chrome in and out.
+    static var fade: Animation { .easeInOut(duration: durations.fade) }
+    /// Screen changes: billboard ⇄ Details, box → Details.
+    static var present: Animation { .spring(duration: durations.present, bounce: 0) }
 }

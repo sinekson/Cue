@@ -317,3 +317,127 @@ final class PerformanceSettingsStore: ObservableObject {
         UserDefaults.standard.set(data, forKey: Self.key)
     }
 }
+
+/// Developer: render bisect switches (Settings → Performance → Render bisect).
+/// Each one removes ONE suspected render cost on Home so the FPS overlay can
+/// tell which of them is dropping frames. Not tier defaults, not user-facing
+/// polish — temporary diagnostics; delete once the culprits are fixed.
+@MainActor
+final class RenderProbe: ObservableObject {
+    static let shared = RenderProbe()
+
+    struct Flags: Codable, Equatable {
+        /// Live glass (glassEffect / material) → a flat translucent fill.
+        var noGlass = false
+        /// The 3-gradient `StageScrim` over the whole stage.
+        var noScrim = false
+        /// Every drop shadow on Home (cards, box, logos, focus glow).
+        var noShadows = false
+        /// The 1.5 pt gradient rim on every card.
+        var noRims = false
+        /// The blurred ambient backdrop behind the rows.
+        var noAmbient = false
+        /// The billboard's full-screen artwork.
+        var noBackdrop = false
+        /// The background colour taken from the focused title (fixed dark
+        /// background instead).
+        var noTint = false
+        /// Decode full-bleed backdrops at 2560 px instead of 3840.
+        var capBackdrop = false
+        /// Every animation on Home: steps snap. Tells animation cost from
+        /// static drawing cost.
+        var noAnimations = false
+        /// Home: the new Home with UIKit rows (`HomeUIKitView`). Off: the
+        /// previous Home, kept for reference.
+        var uikitHome = true
+        /// New Home: the fixed box's content drifts in (a crossfade with a
+        /// hint of direction); off: plain crossfade.
+        var boxDrift = true
+        /// New Home: each poster's rim in its own colour (subtle).
+        var posterRims = false
+        /// New Home: the box's outline in the title's colour (off: white).
+        var boxRimColored = false
+        /// New Home: the rims' look (`FixedFocusRim.Style`).
+        var rimStyle = "glass"
+        /// New Home: the background takes the focused title's colour.
+        var backgroundTint = true
+        /// New Home: the background (`FixedFocusBackground`).
+        var backgroundStyle = "titleColor"
+        /// New Home, title colour: how long to rest on a title before the
+        /// background changes, and how long the change takes (seconds).
+        var tintDelay: Double = 0.12
+        var tintFade: Double = 0.25
+        /// New Home: a soft glow in the background's colour.
+        var backgroundGlow = false
+        /// New Home: the Left/Right curve (`FixedFocusMotion.Curve`).
+        var horizontalCurve = "easeInOut"
+        /// New Home: the Up/Down curve.
+        var verticalCurve = "easeInOut"
+        /// The motion tokens' durations (see `Motion`).
+        var motion = MotionDurations()
+
+        init() {}
+
+        /// Lenient: a flag missing from an older save keeps its default.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let d = Flags()
+            noGlass = (try? c.decode(Bool.self, forKey: .noGlass)) ?? d.noGlass
+            noScrim = (try? c.decode(Bool.self, forKey: .noScrim)) ?? d.noScrim
+            noShadows = (try? c.decode(Bool.self, forKey: .noShadows)) ?? d.noShadows
+            noRims = (try? c.decode(Bool.self, forKey: .noRims)) ?? d.noRims
+            noAmbient = (try? c.decode(Bool.self, forKey: .noAmbient)) ?? d.noAmbient
+            noBackdrop = (try? c.decode(Bool.self, forKey: .noBackdrop)) ?? d.noBackdrop
+            noTint = (try? c.decode(Bool.self, forKey: .noTint)) ?? d.noTint
+            capBackdrop = (try? c.decode(Bool.self, forKey: .capBackdrop)) ?? d.capBackdrop
+            noAnimations = (try? c.decode(Bool.self, forKey: .noAnimations)) ?? d.noAnimations
+            motion = (try? c.decode(MotionDurations.self, forKey: .motion)) ?? d.motion
+            uikitHome = (try? c.decode(Bool.self, forKey: .uikitHome)) ?? d.uikitHome
+            boxDrift = (try? c.decode(Bool.self, forKey: .boxDrift)) ?? d.boxDrift
+            posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
+            boxRimColored = (try? c.decode(Bool.self, forKey: .boxRimColored)) ?? d.boxRimColored
+            rimStyle = (try? c.decode(String.self, forKey: .rimStyle)) ?? d.rimStyle
+            backgroundTint = (try? c.decode(Bool.self, forKey: .backgroundTint)) ?? d.backgroundTint
+            backgroundStyle = (try? c.decode(String.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
+            backgroundGlow = (try? c.decode(Bool.self, forKey: .backgroundGlow)) ?? d.backgroundGlow
+            tintDelay = (try? c.decode(Double.self, forKey: .tintDelay)) ?? d.tintDelay
+            tintFade = (try? c.decode(Double.self, forKey: .tintFade)) ?? d.tintFade
+            horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve
+            verticalCurve = (try? c.decode(String.self, forKey: .verticalCurve)) ?? d.verticalCurve
+        }
+    }
+
+    @Published var flags: Flags {
+        didSet {
+            Motion.durations = flags.motion
+            if let data = try? JSONEncoder().encode(flags) {
+                UserDefaults.standard.set(data, forKey: Self.key)
+            }
+        }
+    }
+
+    var anyOn: Bool { flags != Flags() }
+
+    private static let key = "cue.renderProbe.v1"
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: Self.key),
+           let decoded = try? JSONDecoder().decode(Flags.self, from: data) {
+            flags = decoded
+        } else {
+            flags = Flags()
+        }
+        Motion.durations = flags.motion
+    }
+}
+
+extension View {
+    /// `.shadow`, skipped while the render probe's "no shadows" is on.
+    @MainActor
+    func probeShadow(color: Color = .black.opacity(0.33), radius: CGFloat,
+                     x: CGFloat = 0, y: CGFloat = 0) -> some View {
+        let off = RenderProbe.shared.flags.noShadows
+        return shadow(color: off ? .clear : color, radius: off ? 0 : radius,
+                      x: off ? 0 : x, y: off ? 0 : y)
+    }
+}

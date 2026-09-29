@@ -62,10 +62,9 @@ struct GlassSidebar: View {
     /// sit CLOSE to the bar rather than marooned below it.
     static let topBarClearance: CGFloat = 52
 
-    /// The top navigation: no bar, no pill — just the tab names, sitting
-    /// straight on the screen, centred. The profile picture sits at the
-    /// top-right, on the content margin. Grey text, white for the current /
-    /// focused tab — no highlight shapes.
+    /// The top navigation: one floating Liquid Glass pill with the tabs and
+    /// the profile, centred; a white capsule glides to the focused tab (dark
+    /// text), a faint one marks the current tab otherwise.
     ///
     /// Moving focus along it SWITCHES tab right away (no Select needed), so
     /// the page underneath follows as you browse the tabs. Select on a tab
@@ -76,19 +75,16 @@ struct GlassSidebar: View {
         // The highlighted item: the focused one (a tab or the profile, -1)
         // while the navigation has focus, else the current tab.
         let lit = focusBinding.wrappedValue ?? selected
-        let flat = Self.topBarStyle == .flat
         return HStack(alignment: .center, spacing: 20) {
-            // Tabs and profile in ONE floating Liquid Glass pill (tvOS 26) —
-            // or, flat, straight on the screen.
-            HStack(alignment: .center, spacing: flat ? Self.flatSpacing : 0) {
+            // Tabs and profile in ONE floating Liquid Glass pill (tvOS 26).
+            HStack(alignment: .center, spacing: 0) {
                 ForEach(tabs) { tab in
                     Button {
                         onTabSelected(tab.rawValue)
                         selected = tab.rawValue
                     } label: {
                         TopNavLabel(tab: tab, lit: lit == tab.rawValue,
-                                    focusPlatter: !flat && navFocused && lit == tab.rawValue,
-                                    flatFocused: flat && navFocused && lit == tab.rawValue)
+                                    focusPlatter: navFocused && lit == tab.rawValue)
                             .matchedGeometryEffect(id: tab.rawValue, in: navHighlight, isSource: true)
                     }
                     .buttonStyle(PlainCardButtonStyle())
@@ -97,17 +93,8 @@ struct GlassSidebar: View {
                 // The profile, last in the pill — a square slot, so the
                 // highlight is a circle on it (as on the search icon).
                 Button(action: onProfileTap) {
-                    ProfileAvatarView(profile: profiles.active, size: flat ? Self.flatAvatarSize : 44)
-                        // Flat: a thin white ring and a small lift on focus.
-                        .overlay {
-                            if flat {
-                                Circle().strokeBorder(Color.white, lineWidth: 3)
-                                    .padding(-5)
-                                    .opacity(navFocused && lit == -1 ? 1 : 0)
-                            }
-                        }
-                        .scaleEffect(flat && navFocused && lit == -1 ? Self.flatFocusScale : 1)
-                        .animation(.easeOut(duration: 0.18), value: navFocused && lit == -1)
+                    // As large as on the tvOS home screen: nearly the pill's height.
+                    ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
                         .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
                         .matchedGeometryEffect(id: -1, in: navHighlight, isSource: true)
                 }
@@ -120,21 +107,17 @@ struct GlassSidebar: View {
             // (A capsule: on the square slots — search, profile — a circle;
             // it morphs between the two as it glides.)
             .background {
-                if !flat {
-                    GlassHighlight(focused: navFocused, shape: Capsule())
-                        .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
-                        .animation(.smooth(duration: 0.3), value: lit)
-                        .animation(.easeOut(duration: 0.2), value: navFocused)
-                }
+                GlassHighlight(focused: navFocused, shape: Capsule())
+                    .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
+                    .animation(.smooth(duration: 0.3), value: lit)
+                    .animation(.easeOut(duration: 0.2), value: navFocused)
             }
             .padding(Self.pillInset)
-            // The app's glass surface (see `AppGlass`) — the pill style only.
-            .background {
-                if !flat { Color.clear.liquidGlass(in: Capsule()) }
-            }
+            // The app's glass surface (see `AppGlass`).
+            .background { Color.clear.liquidGlass(in: Capsule()) }
             .defaultFocus(focusBinding, selected)
             // Focused, the pill grows a little (like the system tab bar).
-            .scaleEffect(!flat && navFocused ? Self.focusedScale : 1, anchor: .top)
+            .scaleEffect(navFocused ? Self.focusedScale : 1, anchor: .top)
             .animation(.smooth(duration: 0.3), value: navFocused)
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -164,25 +147,6 @@ struct GlassSidebar: View {
         }
     }
 
-    /// The top bar's look. `.glass`: one Liquid Glass pill with a gliding
-    /// highlight. `.flat`: no pill, no highlight shape — the names straight
-    /// on the screen (grey; white for the current tab; the focused one also
-    /// grows a little), the avatar with a thin white ring on focus. Both
-    /// kept for comparison.
-    enum TopBarStyle { case glass, flat }
-    static let topBarStyle: TopBarStyle = .flat
-    /// Flat: the room between the items (their own padding does the rest),
-    /// and how much the focused one grows.
-    static let flatSpacing: CGFloat = 0
-    /// Flat: each name's own side padding (the pill style uses 26).
-    static let flatItemPadding: CGFloat = 16
-    /// Flat: the names' size — the hints' capitals (18pt), a little larger
-    /// for reading from the couch.
-    static let flatTextSize: CGFloat = 21
-    /// Flat: the avatar, smaller to sit with the capitals.
-    static let flatAvatarSize: CGFloat = 36
-    static let flatFocusScale: CGFloat = 1.12
-
     /// The tab pill: how much it grows while the navigation has focus, and
     /// the room between its edge and the tabs' highlight.
     static let focusedScale: CGFloat = 1.06
@@ -207,10 +171,6 @@ private struct TopNavLabel: View {
     let lit: Bool
     /// On the white focus capsule: dark text.
     var focusPlatter = false
-    /// The flat style's focus: white, a little larger.
-    var flatFocused = false
-
-    private var flat: Bool { GlassSidebar.topBarStyle == .flat }
 
     var body: some View {
         Group {
@@ -218,15 +178,8 @@ private struct TopNavLabel: View {
             if tab == .search {
                 // A square slot, so the highlight is a circle here.
                 Image(systemName: tab.icon)
-                    .font(.system(size: flat ? GlassSidebar.flatTextSize + 2 : 26, weight: .semibold))
+                    .font(.system(size: 26, weight: .semibold))
                     .frame(width: GlassSidebar.topBarItemHeight)
-            } else if flat {
-                // The section hints' typography ("▾ EPISODES"): small spaced
-                // capitals — one quiet navigation language, top and bottom.
-                Text(tab.label.uppercased())
-                    .font(.system(size: GlassSidebar.flatTextSize, weight: .semibold))
-                    .tracking(SectionHint.tracking)
-                    .padding(.horizontal, GlassSidebar.flatItemPadding)
             } else {
                 Text(tab.label)
                     .font(.system(size: 28, weight: .semibold))
@@ -234,14 +187,9 @@ private struct TopNavLabel: View {
             }
         }
         .foregroundStyle(focusPlatter ? AppGlass.textOnFocus
-                         : lit ? AppGlass.text
-                         : flat ? Color.white.opacity(SectionHint.opacity) : AppGlass.textMuted)
-        // Flat: straight on the artwork — the hints' soft shadow.
-        .shadow(color: flat ? .black.opacity(0.4) : .clear, radius: 6, y: 2)
-        .scaleEffect(flatFocused ? GlassSidebar.flatFocusScale : 1)
+                         : lit ? AppGlass.text : AppGlass.textMuted)
         .frame(height: GlassSidebar.topBarItemHeight)
         .animation(.easeOut(duration: 0.18), value: lit)
         .animation(.easeOut(duration: 0.18), value: focusPlatter)
-        .animation(.easeOut(duration: 0.18), value: flatFocused)
     }
 }

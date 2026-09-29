@@ -577,7 +577,7 @@ struct RemoteImage: View {
     /// while nearby sizes collapse into one decode.
     private static let budgetLadder: [CGFloat] = [240, 340, 480, 680, 960, 1360, 1920, 2720, 3840]
 
-    private static func pixelBudget(maxDimension: CGFloat?, maxPixels: CGFloat?) -> CGFloat? {
+    static func pixelBudget(maxDimension: CGFloat?, maxPixels: CGFloat?) -> CGFloat? {
         let fromPoints = maxDimension.map { $0 * UIScreen.main.scale * 1.5 }
         let raw: CGFloat?
         switch (fromPoints, maxPixels) {
@@ -590,7 +590,7 @@ struct RemoteImage: View {
         return budgetLadder.first { $0 >= raw } ?? raw
     }
 
-    private static func memoryKey(_ value: String, maxDimension: CGFloat?, maxPixels: CGFloat?) -> String {
+    static func memoryKey(_ value: String, maxDimension: CGFloat?, maxPixels: CGFloat?) -> String {
         pixelBudget(maxDimension: maxDimension, maxPixels: maxPixels).map { "\(value)#\(Int($0))" } ?? value
     }
 
@@ -1258,6 +1258,7 @@ extension View {
     /// The glass material behind this view, in `shape`. As a BACKGROUND —
     /// never wrapping focusable content (that hides it from the focus
     /// engine).
+    @MainActor
     func glassSurface<S: Shape>(in shape: S) -> some View {
         background(Color.clear.liquidGlass(in: shape))
     }
@@ -1273,39 +1274,74 @@ struct GlassRim: View {
     var strength: Double = 1
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .strokeBorder(
-                LinearGradient(stops: [
-                    .init(color: .white.opacity(0.55 * strength), location: 0),
-                    .init(color: .white.opacity(0.14 * strength), location: 0.3),
-                    .init(color: .white.opacity(0.04 * strength), location: 0.6),
-                    .init(color: .white.opacity(0.22 * strength), location: 1)
-                ], startPoint: .topLeading, endPoint: .bottomTrailing),
-                lineWidth: 1.5)
+        if !RenderProbe.shared.flags.noRims {
+            // Pre-rendered once per size (see `GlassRimCache`): a live
+            // gradient stroke on every moving card was re-rasterised each
+            // frame and alone took catalog scrolling from ~50 to ~15-20 fps.
+            GeometryReader { geo in
+                if let image = GlassRimCache.image(size: geo.size, cornerRadius: cornerRadius,
+                                                   strength: strength) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+            }
             .allowsHitTesting(false)
+        }
     }
 }
 
-/// The FOCUS outline on artwork: the glass rim's big sibling — bold and
-/// nearly white all round, with the same light play (brightest top-left, a
-/// catch bottom-right) and a faint glow, so it reads as the same glass
-/// language while clearly marking focus.
+/// Bitmaps of `GlassRim`, keyed by size, corner and strength. Cards come in a
+/// handful of sizes, so this stays small.
+enum GlassRimCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 64
+        return c
+    }()
+
+    static func image(size: CGSize, cornerRadius: CGFloat, strength: Double) -> UIImage? {
+        let w = size.width.rounded(), h = size.height.rounded()
+        guard w > 2, h > 2 else { return nil }
+        let strength = (strength * 100).rounded() / 100
+        let key = "\(w)x\(h)r\(cornerRadius)s\(strength)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+
+        let lineWidth: CGFloat = 1.5
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        let image = UIGraphicsImageRenderer(size: rect.size).image { ctx in
+            let cg = ctx.cgContext
+            // strokeBorder: the stroke sits fully inside the shape.
+            let inset = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+            let radius = max(min(cornerRadius - lineWidth / 2, min(inset.width, inset.height) / 2), 0)
+            let path = UIBezierPath(roundedRect: inset, cornerRadius: radius)
+            cg.addPath(path.cgPath)
+            cg.setLineWidth(lineWidth)
+            cg.replacePathWithStrokedPath()
+            cg.clip()
+            let colors = [0.55, 0.14, 0.04, 0.22].map {
+                UIColor.white.withAlphaComponent(min($0 * strength, 1)).cgColor
+            } as CFArray
+            let locations: [CGFloat] = [0, 0.3, 0.6, 1]
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors, locations: locations) {
+                cg.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: w, y: h), options: [])
+            }
+        }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+}
+
+/// The FOCUS outline on artwork: solid white, no glow. Artwork carries no
+/// other line (docs/UI-DESIGN.md §1: only focus gets a line).
 struct GlassFocusRim: View {
     var cornerRadius: CGFloat
     var lineWidth: CGFloat = 4
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        shape
-            .strokeBorder(
-                LinearGradient(stops: [
-                    .init(color: .white, location: 0),
-                    .init(color: .white.opacity(0.8), location: 0.35),
-                    .init(color: .white.opacity(0.68), location: 0.65),
-                    .init(color: .white.opacity(0.92), location: 1)
-                ], startPoint: .topLeading, endPoint: .bottomTrailing),
-                lineWidth: lineWidth)
-            .shadow(color: .white.opacity(0.3), radius: 6)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(Color.white, lineWidth: lineWidth)
             .allowsHitTesting(false)
     }
 }
@@ -1316,7 +1352,7 @@ struct GlassHighlight<S: Shape>: View {
     let shape: S
 
     var body: some View {
-        if #available(tvOS 26.0, *), AppGlass.isReal {
+        if #available(tvOS 26.0, *), AppGlass.isReal, !RenderProbe.shared.flags.noGlass {
             Color.clear.glassEffect(
                 .regular.tint(focused ? AppGlass.focusTint : AppGlass.currentTint), in: shape)
         } else {
@@ -1330,6 +1366,7 @@ struct GlassHighlight<S: Shape>: View {
 /// search bar, detail icon circles, season chips).
 extension View {
     @ViewBuilder
+    @MainActor
     func liquidGlass<S: Shape>(in shape: S) -> some View {
         // `atvGlass` has had a solid fallback for the slower boxes for a while;
         // this one — which is what the rail, the filter pills, the search bar,
@@ -1337,7 +1374,9 @@ extension View {
         // — had none. A fifteen-season show meant fourteen live glass capsules
         // in one scroller, and the rail was a full-height live blur that
         // re-composited through its own expand/collapse animation.
-        if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
+        if RenderProbe.shared.flags.noGlass {
+            self.background(Color.white.opacity(0.14), in: shape)
+        } else if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
             self.background(FusionMaterials.dialog, in: shape)
         } else if #available(tvOS 26.0, *) {
             self.glassEffect(.regular, in: shape)
@@ -1943,8 +1982,12 @@ enum StageScrimStyle {
 
 struct StageScrim: View {
     var body: some View {
+        if !RenderProbe.shared.flags.noScrim { scrim }
+    }
+
+    private var scrim: some View {
         let s = StageScrimStyle.self
-        ZStack {
+        return ZStack {
             LinearGradient(stops: [
                 .init(color: .black.opacity(s.left), location: 0),
                 .init(color: .black.opacity(s.left * 0.8), location: s.leftReach * 0.3),
@@ -2225,3 +2268,5 @@ extension View {
         }
     }
 }
+
+

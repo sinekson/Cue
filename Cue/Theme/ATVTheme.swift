@@ -4,6 +4,7 @@ extension View {
     /// Liquid Glass when the box runs tvOS 26+, a plain translucent material
     /// on anything older — "liquid glass if the TV accepts it".
     @ViewBuilder
+    @MainActor
     func atvGlass<S: Shape>(in shape: S) -> some View {
         if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
             // A live glass/blur pass is one of the costliest composites on the

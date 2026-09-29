@@ -8,6 +8,17 @@ shared pieces (`Components/TitleBlock.swift`, glass in `Components.swift`).
 The new Home is the only Home (the old layout was removed). Collections show
 on it as plain rows for now (`HomeView.spotlightRows`) — not styled yet.
 
+## 0. Direction (locked 2026-09-28)
+
+**Flat artwork, glass controls, one outline for focus. Motion calm and
+quick.** Priority is a stable 60 fps; smooth over fancy. Tried and dropped
+the same day: a warm "cozy flat" variant (warm neutrals, cream, rounded
+type, grain) — looked wrong; fancier poster hairlines — not needed.
+
+**Top bar (locked 2026-09-29):** one floating Liquid Glass pill (tabs +
+profile); a white capsule glides to the focused tab (dark text). The flat
+tab names and the dark top fade were tried and removed.
+
 ## 1. Glass language — one set of parts, used everywhere
 
 Defined once in `Components.swift` (`AppGlass`, `GlassHighlight`, `GlassRim`,
@@ -20,10 +31,13 @@ Defined once in `Components.swift` (`AppGlass`, `GlassHighlight`, `GlassRim`,
 - **Highlight on glass** (`GlassHighlight`): itself tinted glass — bright when
   focused (dark text, the tvOS focus look), faint when merely current.
 - **Text on glass**: `AppGlass.text` (white), `.textMuted`, `.textOnFocus`.
-- **Rims on artwork**: `GlassRim` (thin light edge, top-left bright, faint
-  catch bottom-right) on every poster / card / box; `GlassFocusRim` (bold,
-  nearly white, faint glow) marks focus. Static, cheap — no live glass on
-  artwork, no transparency.
+- **Artwork carries no line** (locked 2026-09-28): posters, cards and the
+  box are artwork + rounded corners only — no rim, no glow. The glass rim
+  (`GlassRim`) is gone from Home's posters and box.
+- **Only focus gets a line**: `GlassFocusRim` is a solid white outline, no
+  glow, no gradient. One meaning, everywhere.
+- **Glass is for controls, never content**: top bar, buttons, chips,
+  chevrons. Anything that slides with content stays flat.
 - **Buttons** (Detail): exactly three, always there — Play, Add to
   Library, Watch Trailer (without a trailer: a toast). `DetailActionButton`:
   a circle with its icon at rest (plain fill + glass rim, not glass); the
@@ -45,6 +59,18 @@ Defined once in `Components.swift` (`AppGlass`, `GlassHighlight`, `GlassRim`,
   focus — only content may step back.
 
 ## 2. Motion — one system
+
+**Four tokens, nothing else** (`Motion` in `FusionTokens.swift`, locked
+2026-09-28; durations tunable in Render Lab until final): `focus` 0.2s,
+`move` 0.35s, `present` 0.45s — springs with NO bounce (they keep their
+speed when a press interrupts them) — and `fade` 0.25s ease-in-out.
+**One press, one movement.** Removed: the box stretch on Left/Right, the
+wrap press-and-hold (the ring now wraps with a plain `move`), the end
+bounce (now a small `endNudge`), the two-phase Down (open + scroll are one
+`move`), the billboard dots' liquid stretch, the bouncy `DotGrow`.
+Spotlight's named curves (`slide`, `wrapSlide`, `rowChange`, …) now just
+return a token. Details below describe WHAT moves; where they name older
+curves or timings, the tokens win.
 
 - **Horizontal rows** (Home catalogs, episode row, More-page rows): a FIXED
   box at the focus position whose content CROSSFADES in place (neighbours

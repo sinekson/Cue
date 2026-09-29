@@ -617,6 +617,7 @@ final class HomeViewModel: ObservableObject {
 }
 
 struct HomeView: View {
+    @ObservedObject private var probe = RenderProbe.shared
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
@@ -790,6 +791,18 @@ struct HomeView: View {
             let featured = viewModel.spotlightItems(max: 10)
             let featuredRow = featured.isEmpty || !Spotlight.showFeatured ? [] :
                 [HomeRow(id: HomeSpotlightView.featuredRowID, title: "Featured", items: featured)]
+            if probe.flags.uikitHome {
+                // The new Home: rows in UIKit (collection views), native
+                // focus, our own Core Animation movement to the fixed box.
+                // (Catalogs only for now.)
+                HomeUIKitView(rows: (cw.map { [$0.row] } ?? []) + spotlightRows,
+                              continueRowID: HomeSpotlightView.continueRowID,
+                              progress: cw?.progress ?? [:],
+                              onSelect: selectSpotlight,
+                              onResume: onResume)
+            } else {
+                // The previous Home, kept for reference (Render Lab → UIKit
+                // Home off).
             HomeSpotlightView(
                 rows: featuredRow + (cw.map { [$0.row] } ?? []) + spotlightRows,
                 onSelect: selectSpotlight,
@@ -800,6 +813,7 @@ struct HomeView: View {
                 onResumeFromStart: onResumeFromStart,
                 onPlayManually: onPlayManuallyProgress
             )
+            }
         }
         .onAppear {
             isVisible = true
@@ -1372,3 +1386,1443 @@ private struct FocusChangeModifier: ViewModifier {
 }
 
 
+
+
+// MARK: - Home rows (UIKit)
+
+/// The rows in UIKit. Focus moves natively over real poster cells; the
+/// system never scrolls (scrolling is off). On every focus change WE move
+/// the row — and the rows — to the fixed spot with a UIKit animation, which
+/// runs in Core Animation (off the main thread, cleanly re-aimable), and
+/// the focused cell grows to box width in the same animation.
+struct HomeUIKitView: View {
+    @ObservedObject private var probe = RenderProbe.shared
+    let rows: [HomeRow]
+    /// The Continue Watching row's id (landscape cards, Select resumes).
+    let continueRowID: String
+    let progress: [String: WatchProgress]
+    let onSelect: (MetaItem) -> Void
+    let onResume: (WatchProgress) -> Void
+    /// The focused title (drives the background).
+    @State private var focused: MetaItem?
+    /// Its colour (the "Title colour" background only).
+    @State private var tint: Color?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            LinearGradient(colors: [Color(white: 0.10), Color(white: 0.03)],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+            if probe.flags.backgroundTint { background }
+            FixedFocusRows(rows: rows, continueRowID: continueRowID, progress: progress,
+                           onSelect: onSelect, onResume: onResume) { item in
+                focused = item
+            }
+            .ignoresSafeArea()
+        }
+        .ignoresSafeArea()
+        // Title colour style only: follows the focused title once you've
+        // paused on it.
+        .task(id: focused?.id) {
+            guard FixedFocusBackground.current == .titleColor,
+                  let item = focused, let url = item.background ?? item.poster else { return }
+            // A brief rest on the title first (Render Lab → Tint delay): long
+            // enough that fast scrolling doesn't flicker, short enough to
+            // feel immediate.
+            try? await Task.sleep(for: .seconds(probe.flags.tintDelay))
+            guard !Task.isCancelled, let color = await SpotlightTint.color(for: url),
+                  !Task.isCancelled else { return }
+            // The extracted colour is tuned dark; lifted a little so the
+            // background stays recognisably the image's colour.
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            let lifted = Color(hue: h, saturation: s, brightness: max(b, 0.55))
+            withAnimation(.easeInOut(duration: probe.flags.tintFade)) { tint = lifted }
+        }
+    }
+
+    /// The background (Render Lab → Background): one fixed, designed colour —
+    /// a deep gradient with a soft glow — or (for comparison) the focused
+    /// title's colour. A black fade over the left third keeps text readable.
+    @ViewBuilder
+    private var background: some View {
+        let style = FixedFocusBackground.current
+        ZStack {
+            // Even from top to bottom: no darker lower half, no corners.
+            Color(white: 0.06)
+            if let palette = style.palette {
+                palette.top
+                // Optional (Render Lab → Background glow). Large enough to
+                // reach the right edge and corners evenly.
+                if probe.flags.backgroundGlow {
+                RadialGradient(colors: [palette.glow.opacity(0.55), palette.glow.opacity(0.22), .clear],
+                               center: UnitPoint(x: 0.62, y: 0.45), startRadius: 0, endRadius: 1900)
+                }
+            } else if let tint {
+                // The title's colour, evenly over the whole surface.
+                Rectangle().fill(tint.opacity(0.5))
+            }
+            // Dark (not black) at the edge, easing out across the first
+            // quarter, clear by ~48 %.
+            LinearGradient(stops: [.init(color: .black.opacity(0.7), location: 0),
+                                   .init(color: .black.opacity(0.55), location: 0.24),
+                                   .init(color: .black.opacity(0.25), location: 0.36),
+                                   .init(color: .clear, location: 0.48)],
+                           startPoint: .leading, endPoint: .trailing)
+        }
+        .frame(width: 1920, height: 1080)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
+/// The new Home's background choices.
+enum FixedFocusBackground: String, CaseIterable {
+    case midnight, charcoal, teal, titleColor
+
+    @MainActor static var current: FixedFocusBackground {
+        FixedFocusBackground(rawValue: RenderProbe.shared.flags.backgroundStyle) ?? .midnight
+    }
+
+    var displayName: String {
+        switch self {
+        case .midnight: return "Midnight (blue-violet)"
+        case .charcoal: return "Charcoal (warm grey)"
+        case .teal: return "Deep teal"
+        case .titleColor: return "Title colour (changes)"
+        }
+    }
+
+    /// Fixed palettes: a dark top-to-bottom base and the glow's colour.
+    var palette: (top: Color, bottom: Color, glow: Color)? {
+        switch self {
+        case .midnight: return (Color(red: 0.07, green: 0.05, blue: 0.14),
+                                Color(red: 0.02, green: 0.02, blue: 0.05),
+                                Color(red: 0.32, green: 0.16, blue: 0.62))
+        case .charcoal: return (Color(red: 0.11, green: 0.10, blue: 0.09),
+                                Color(red: 0.04, green: 0.04, blue: 0.035),
+                                Color(red: 0.38, green: 0.32, blue: 0.26))
+        case .teal: return (Color(red: 0.03, green: 0.09, blue: 0.10),
+                            Color(red: 0.01, green: 0.03, blue: 0.04),
+                            Color(red: 0.08, green: 0.40, blue: 0.42))
+        case .titleColor: return nil
+        }
+    }
+}
+
+private struct FixedFocusRows: UIViewControllerRepresentable {
+    let rows: [HomeRow]
+    let continueRowID: String
+    let progress: [String: WatchProgress]
+    let onSelect: (MetaItem) -> Void
+    let onResume: (WatchProgress) -> Void
+    let onFocusItem: (MetaItem) -> Void
+
+    func makeUIViewController(context: Context) -> FixedFocusRowsController {
+        let controller = FixedFocusRowsController()
+        apply(to: controller)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: FixedFocusRowsController, context: Context) {
+        apply(to: controller)
+    }
+
+    private func apply(to controller: FixedFocusRowsController) {
+        controller.onSelect = onSelect
+        controller.onResume = onResume
+        controller.onFocusItem = onFocusItem
+        controller.continueRowID = continueRowID
+        controller.progress = progress
+        controller.update(rows)
+    }
+}
+
+/// Geometry shared by the controller and its cells (points, 1920 × 1080).
+private enum FixedFocusMetrics {
+    /// The original Home's gap.
+    static let gap: CGFloat = Spotlight.spacing
+    /// The original margin: the box lines up with the row names; a strip
+    /// of the previous poster peeks in left of it.
+    static let inset: CGFloat = Spotlight.screenInset
+    /// Text next to the rounded box is indented a little (optical
+    /// alignment: the corner makes the edge look further in than it is).
+    static let textIndent: CGFloat = 5
+    static var titleInset: CGFloat { inset + textIndent }
+    /// The original Home's sizes exactly (box 16:9 and posters 2:3, both
+    /// 420 pt tall) — about 3½ posters right of the box.
+    static let height: CGFloat = Spotlight.rowHeight
+    static let posterWidth: CGFloat = Spotlight.posterWidth
+    static let boxWidth: CGFloat = Spotlight.boxWidth
+    static var pitch: CGFloat { posterWidth + gap }
+    /// The row name (the original Home's size): its line, then a small gap
+    /// to the row — it belongs to the row.
+    static let titleLine: CGFloat = 48
+    static let titleHeight: CGFloat = titleLine + 14
+    /// The row below shows as much as on the original Home at the bottom
+    /// edge (a little under half); the row above shows what's left of it.
+    /// Rows further up / down than the neighbours: a whole row apart.
+    static var rowPitch: CGFloat { titleHeight + height + 70 }
+    /// The row above: its posters' lower fifth shows at the top.
+    static var aboveVisible: CGFloat { height / 5 }
+    /// The row below: this much of its posters shows at the bottom (as on
+    /// the original Home — a little under half).
+    static var belowVisible: CGFloat { Spotlight.previewVisibleHeight }
+    /// Rows other than the focused one (the preview below).
+    static let dimmedAlpha: CGFloat = 0.45
+    /// The focused row's name: exactly where the original Home had it.
+    static var rowTop: CGFloat {
+        Spotlight.catalogTitleY(screenHeight: 1080, topPadding: Spotlight.topPaddingUnderNav)
+    }
+    /// The box, on screen.
+    static var boxFrame: CGRect {
+        CGRect(x: inset, y: rowTop + titleHeight, width: boxWidth, height: height)
+    }
+}
+
+final class FixedFocusRowsController: UIViewController, UICollectionViewDataSource,
+                                      UICollectionViewDelegateFlowLayout {
+    var onSelect: (MetaItem) -> Void = { _ in }
+    var onResume: (WatchProgress) -> Void = { _ in }
+    /// The focused title (for the background tint).
+    var onFocusItem: (MetaItem) -> Void = { _ in }
+    /// Continue Watching: landscape cards (no growing, no fixed box — the
+    /// focused card itself sits at the spot), Select resumes.
+    var continueRowID = ""
+    var progress: [String: WatchProgress] = [:]
+
+    func isContinue(_ rowIndex: Int) -> Bool {
+        rows.indices.contains(rowIndex) && rows[rowIndex].id == continueRowID
+    }
+    private(set) var rows: [HomeRow] = []
+    /// Each row's title at the spot.
+    private(set) var selected: [String: Int] = [:]
+    /// The row focus is in (only it has a grown cell).
+    private(set) var focusedRow = 0
+    private var outer: UICollectionView!
+    /// Reuse identifiers registered so far (one per catalog).
+    private var registeredRows = Set<String>()
+    /// THE FIXED BOX: on Left/Right it never moves — only its content
+    /// changes; the posters slide in behind it.
+    private let box = FixedFocusBoxView()
+    private var hasFocus = false
+
+    func update(_ rows: [HomeRow]) {
+        let changed = rows.map(\.id) != self.rows.map(\.id)
+            || zip(rows, self.rows).contains { $0.items.count != $1.items.count }
+        self.rows = rows
+        if changed, isViewLoaded { outer.reloadData() }
+    }
+
+    override func loadView() {
+        let root = UIView()
+        let layout = FixedFocusRowsLayout()
+        layout.focusedRow = { [weak self] in self?.focusedRow ?? 0 }
+        outer = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        outer.backgroundColor = .clear
+        outer.clipsToBounds = false
+        // The system never scrolls: only our animation moves the rows.
+        outer.isScrollEnabled = false
+        outer.showsVerticalScrollIndicator = false
+        outer.contentInsetAdjustmentBehavior = .never
+        outer.dataSource = self
+        outer.delegate = self
+        root.addSubview(outer)
+        box.frame = FixedFocusMetrics.boxFrame
+        box.alpha = 0
+        box.isUserInteractionEnabled = false
+        root.addSubview(box)
+        view = root
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Taller than the screen: rows sliding out of (or into) the screen
+        // stay inside the list's visible area, so UIKit keeps their cells
+        // and they SLIDE — outside it, it drops them and fades them in place.
+        outer.frame = view.bounds.insetBy(dx: 0, dy: -FixedFocusRowsLayout.overscan)
+    }
+
+    func collectionView(_ cv: UICollectionView, numberOfItemsInSection section: Int) -> Int { rows.count }
+
+    func collectionView(_ cv: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        // One reuse identifier PER CATALOG: UIKit only ever hands a row cell
+        // back to its own catalog — with its poster row's native focus
+        // memory (`remembersLastFocusedIndexPath`) and scroll position
+        // intact. (One shared identifier recycled a row's cell, memory and
+        // all, for a different catalog: rows "forgot" their title.)
+        let reuseID = "row-" + rows[indexPath.item].id
+        if registeredRows.insert(reuseID).inserted {
+            cv.register(FixedFocusRowCell.self, forCellWithReuseIdentifier: reuseID)
+        }
+        let cell = cv.dequeueReusableCell(withReuseIdentifier: reuseID, for: indexPath) as! FixedFocusRowCell
+        cell.configure(rowIndex: indexPath.item, controller: self)
+        // (contentView, not the cell: the collection view resets a cell's
+        // own alpha from its layout attributes.)
+        cell.contentView.alpha = indexPath.item == focusedRow ? 1 : FixedFocusMetrics.dimmedAlpha
+        return cell
+    }
+
+    func collectionView(_ cv: UICollectionView, layout: UICollectionViewLayout,
+                        sizeForItemAt indexPath: IndexPath) -> CGSize {
+        CGSize(width: 1920, height: FixedFocusMetrics.titleHeight + FixedFocusMetrics.height)
+    }
+
+    func collectionView(_ cv: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool { false }
+
+    /// A row coming into view mid-animation gets its dimming too.
+    func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        cell.contentView.alpha = indexPath.item == focusedRow ? 1 : FixedFocusMetrics.dimmedAlpha
+    }
+
+    /// Focus moved (natively). Left/Right: the box stays, its content
+    /// changes, the row slides behind it. Up/Down ("opening a book"): the
+    /// box steps aside, the new row's title grows into the box as the rows
+    /// move up; at the end the box takes over again, in the same place.
+    override func didUpdateFocus(in context: UIFocusUpdateContext,
+                                 with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard let cell = context.nextFocusedView as? FixedFocusPosterCell,
+              let rowCell = cell.rowCell, rows.indices.contains(rowCell.rowIndex) else { return }
+        let rowIndex = rowCell.rowIndex
+        let row = rows[rowIndex]
+        guard row.items.indices.contains(cell.itemIndex) else { return }
+        let item = row.items[cell.itemIndex]
+        onFocusItem(item)
+        let rowChanged = rowIndex != focusedRow || !hasFocus
+        let continueRow = isContinue(rowIndex)
+        let entry = continueRow ? progress[item.id] : nil
+        // Up/Down is the "opening": the box steps aside, the new row's title
+        // grows into it, the old one shrinks back to a poster.
+        let verticalDrift = false
+        let direction: CGFloat = rowChanged
+            ? (rowIndex > focusedRow ? 1 : -1)
+            : (cell.itemIndex >= (selected[row.id] ?? 0) ? 1 : -1)
+        let oldRowCell = rowChanged
+            ? outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell : nil
+        if rowChanged, !verticalDrift, box.alpha == 1 {
+            // Opening: the old row's cell first takes on the box's exact
+            // look (still the focused row here) — the box can step aside
+            // without anything changing — and then shrinks, animated.
+            oldRowCell?.contentHidden = false
+            // Commit that look NOW: the animation below continues from what's
+            // on screen (beginFromCurrentState), and without this it started
+            // from the plain poster — the old box was instantly small.
+            CATransaction.flush()
+        }
+        selected[row.id] = cell.itemIndex
+        focusedRow = rowIndex
+
+        if rowChanged, !verticalDrift {
+            // The opening: the grown cell shows its own content.
+            box.alpha = 0
+            rowCell.contentHidden = false
+        } else if box.alpha < 1 {
+            // Left/Right while an opening is still running: the box takes
+            // over (instead of the new cell growing in visibly) — a quick
+            // fade over the moving cell, then the cell steps back.
+            box.show(item, progress: entry, animated: false)
+            UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState]) {
+                self.box.alpha = 1
+            } completion: { _ in
+                if self.box.alpha == 1 { rowCell.contentHidden = true }
+            }
+        } else {
+            // The box stays; its content drifts (sideways on Left/Right, up
+            // or down on Up/Down) while the row(s) move underneath.
+            rowCell.contentHidden = true
+            oldRowCell?.contentHidden = true
+            box.show(item, progress: entry, animated: true, direction: direction,
+                     vertical: rowChanged)
+        }
+        // Up/Down moves much more than a step: its own, longer spring.
+        // Continue Watching's cards are box-wide: a step travels 2.5× as far
+        // as a poster step — its own, slightly longer duration.
+        let duration = rowChanged ? Motion.durations.vertical
+            : continueRow ? Motion.durations.continueMove : Motion.durations.move
+        let damping = rowChanged ? Motion.durations.verticalDamping : 1
+        // For the cells' Up/Down details: the image drift's direction and
+        // the outlines' own, gradual crossfade (see `setGrown`).
+        FixedFocusPosterCell.vertical = rowChanged && hasFocus
+            ? (direction: direction, duration: duration) : nil
+        defer { FixedFocusPosterCell.vertical = nil }
+        FixedFocusMotion.run(vertical: rowChanged, duration: duration, damping: damping) {
+            self.applyDimming()
+            oldRowCell?.relayout()
+            rowCell.focus(index: cell.itemIndex)
+            // The row list doesn't scroll: its layout places every row
+            // around the focused one, and the rows glide to their places.
+            self.outer.collectionViewLayout.invalidateLayout()
+            self.outer.layoutIfNeeded()
+        } completion: { _ in
+            guard rowChanged, self.box.alpha < 1, self.focusedRow == rowIndex,
+                  let current = self.selected[row.id], row.items.indices.contains(current) else { return }
+            // Hand over to the box: identical look, same place — no jump.
+            // (The title focused NOW — a Left/Right may have followed.)
+            let now = row.items[current]
+            self.box.show(now, progress: self.isContinue(rowIndex) ? self.progress[now.id] : nil,
+                          animated: false)
+            self.box.alpha = 1
+            rowCell.contentHidden = true
+        }
+        hasFocus = true
+    }
+
+    func select(_ item: MetaItem, rowIndex: Int) {
+        if isContinue(rowIndex), let entry = progress[item.id] {
+            onResume(entry)
+        } else {
+            onSelect(item)
+        }
+    }
+
+    /// The focused row full, every other row dimmed.
+    private func applyDimming() {
+        for case let cell as FixedFocusRowCell in outer.visibleCells {
+            cell.contentView.alpha = cell.rowIndex == focusedRow ? 1 : FixedFocusMetrics.dimmedAlpha
+        }
+    }
+}
+
+/// The fixed box: backdrop, shade, logo, focus outline. Content changes
+/// crossfade; the box itself never moves.
+final class FixedFocusBoxView: UIView {
+    /// One "page" of the box: backdrop, shade, logo. A change either slides
+    /// a new page in (the old one out) or crossfades on the current page.
+    private final class Page: UIView {
+        let backdrop = UIImageView()
+        let shade = CAGradientLayer()
+        let logo = UIImageView()
+        /// Continue Watching: the state line (no logo).
+        let state = FixedFocusProgressView()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backdrop.contentMode = .scaleAspectFill
+            backdrop.clipsToBounds = true
+            addSubview(backdrop)
+            shade.colors = [UIColor.clear.cgColor,
+                            UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
+            shade.startPoint = CGPoint(x: 0.5, y: 0.5)
+            shade.endPoint = CGPoint(x: 0.5, y: 1)
+            layer.addSublayer(shade)
+            logo.contentMode = .scaleAspectFit
+            addSubview(logo)
+            state.alpha = 0
+            addSubview(state)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            backdrop.frame = bounds
+            shade.frame = bounds
+            layer.insertSublayer(shade, above: backdrop.layer)
+            logo.frame = CGRect(x: Spotlight.logoInset,
+                                y: bounds.height - Spotlight.logoInset - bounds.height * 0.28,
+                                width: bounds.width * 0.55, height: bounds.height * 0.28)
+            state.frame = CGRect(x: 24, y: bounds.height - 22 - 34, width: bounds.width - 48, height: 34)
+        }
+
+        func show(_ item: MetaItem, progress: WatchProgress?) {
+            if let progress {
+                // Continue Watching: its card's look — the still, the state
+                // line, no logo.
+                FixedFocusImages.load(progress.episodeThumbnail ?? item.background ?? item.poster,
+                                      into: backdrop, maxDimension: FixedFocusMetrics.boxWidth)
+                FixedFocusImages.load(nil, into: logo, maxDimension: 0)
+                state.show(progress)
+                state.alpha = 1
+                return
+            }
+            state.alpha = 0
+            FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
+                                  maxDimension: FixedFocusMetrics.boxWidth)
+            FixedFocusImages.load(item.logo, into: logo,
+                                  maxDimension: FixedFocusMetrics.boxWidth * 0.55)
+        }
+    }
+
+    /// The box's info (name, facts) under it — part of the box: it stays
+    /// put and drifts with it.
+    private final class InfoPage: UIView {
+        let name = UILabel()
+        let facts = UILabel()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            name.font = .systemFont(ofSize: 23, weight: .regular)
+            name.textColor = .white
+            facts.font = .systemFont(ofSize: 20, weight: .medium)
+            facts.textColor = UIColor.white.withAlphaComponent(0.62)
+            addSubview(name)
+            addSubview(facts)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            name.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 30)
+            facts.frame = CGRect(x: 0, y: 36, width: bounds.width, height: 28)
+        }
+
+        func show(_ item: MetaItem, progress: WatchProgress?) {
+            name.text = item.name
+            facts.text = progress?.episodeTitle
+                ?? TitleBlock.metaSegments(for: item, seriesSize: TitleBlock.seriesSizeText(item))
+                    .joined(separator: "  •  ")
+        }
+    }
+
+    /// Clips the pages to the box's rounded shape (the box itself doesn't
+    /// clip: its info sits below it).
+    private let clip = UIView()
+    private var page = Page()
+    private var infoPage = InfoPage()
+    private var shownID: String?
+    /// The box's outline in the title's colour (Render Lab → Box outline:
+    /// title colour); off: white.
+    private let rim = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = false
+        clip.clipsToBounds = true
+        clip.layer.cornerRadius = Spotlight.cornerRadius
+        clip.layer.cornerCurve = .continuous
+        clip.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        addSubview(clip)
+        clip.addSubview(page)
+        addSubview(infoPage)
+        rim.image = FixedFocusRim.image(.box, lineWidth: 4)
+        addSubview(rim)
+        // (A layer's border is drawn above its sublayers: above the pages.)
+        layer.cornerRadius = Spotlight.cornerRadius
+        layer.cornerCurve = .continuous
+        layer.borderColor = UIColor.white.cgColor
+        applyOutlineStyle()
+    }
+
+    /// White border, or the rim (title colour / light / vivid).
+    private func applyOutlineStyle() {
+        let colored = RenderProbe.shared.flags.boxRimColored
+        layer.borderWidth = colored ? 0 : 4
+        rim.isHidden = !colored
+        let style = FixedFocusRim.style
+        FixedFocusRim.apply(style, to: rim.layer)
+        rim.image = FixedFocusRim.image(.box, lineWidth: 4)
+        if style != .titleColor { rim.tintColor = .white }
+    }
+
+    private func tintRim(for item: MetaItem, progress: WatchProgress?) {
+        applyOutlineStyle()
+        // (The poster's colour — the same the cells use, so the handover
+        // between cell and box is seamless.)
+        guard RenderProbe.shared.flags.boxRimColored, FixedFocusRim.style == .titleColor,
+              let url = item.poster ?? item.background else { return }
+        let id = item.id
+        FixedFocusColors.color(for: url) { [weak self] color in
+            guard let self, self.shownID == id else { return }
+            UIView.animate(withDuration: Motion.durations.move) { self.rim.tintColor = color }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Where the info sits: as under the cells (18 pt below, optically
+    /// indented).
+    private var infoFrame: CGRect {
+        CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + 18, width: bounds.width, height: 70)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        clip.frame = bounds
+        rim.frame = bounds
+        if page.layer.animationKeys()?.isEmpty ?? true { page.frame = bounds }
+        if infoPage.layer.animationKeys()?.isEmpty ?? true { infoPage.frame = infoFrame }
+    }
+
+    /// `direction`: +1 moving right (new content comes from the right),
+    /// −1 moving left. Render Lab → Box change: slide or crossfade.
+    func show(_ item: MetaItem, progress: WatchProgress? = nil, animated: Bool,
+              direction: CGFloat = 1, vertical: Bool = false) {
+        guard item.id != shownID else { return }
+        shownID = item.id
+        tintRim(for: item, progress: progress)
+        guard animated else {
+            page.show(item, progress: progress)
+            infoPage.show(item, progress: progress)
+            return
+        }
+        if RenderProbe.shared.flags.boxDrift {
+            // DRIFT: a crossfade with a hint of direction — the new image
+            // fades in while shifting a little in the direction of travel,
+            // the old one fades out shifting on. No seam, little movement.
+            // (Up/Down: the same, vertically — from below on Down.)
+            let shift: CGFloat = 30
+            let dx = vertical ? 0 : direction * shift
+            let dy = vertical ? direction * shift : 0
+            let incoming = Page(frame: bounds.offsetBy(dx: dx, dy: dy))
+            incoming.show(item, progress: progress)
+            incoming.alpha = 0
+            clip.addSubview(incoming)
+            let outgoing = page
+            page = incoming
+            // The info drifts the same way, in sync.
+            let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: dx, dy: dy))
+            infoIn.show(item, progress: progress)
+            infoIn.alpha = 0
+            addSubview(infoIn)
+            let infoOut = infoPage
+            infoPage = infoIn
+            let infoTarget = infoFrame
+            FixedFocusMotion.run(vertical: vertical,
+                                 duration: vertical ? Motion.durations.vertical : Motion.durations.move,
+                                 damping: 1) {
+                incoming.frame = self.bounds
+                incoming.alpha = 1
+                outgoing.frame = self.bounds.offsetBy(dx: -dx, dy: -dy)
+                outgoing.alpha = 0
+                infoIn.frame = infoTarget
+                infoIn.alpha = 1
+                infoOut.frame = infoTarget.offsetBy(dx: -dx, dy: -dy)
+                infoOut.alpha = 0
+            } completion: { _ in
+                if outgoing !== self.page { outgoing.removeFromSuperview() }
+                if infoOut !== self.infoPage { infoOut.removeFromSuperview() }
+            }
+        } else {
+            UIView.transition(with: page, duration: Motion.durations.fade,
+                              options: [.transitionCrossDissolve, .beginFromCurrentState,
+                                        .allowUserInteraction],
+                              animations: { self.page.show(item, progress: progress) })
+            UIView.transition(with: infoPage, duration: Motion.durations.fade,
+                              options: [.transitionCrossDissolve, .beginFromCurrentState,
+                                        .allowUserInteraction],
+                              animations: { self.infoPage.show(item, progress: progress) })
+        }
+    }
+}
+
+/// Image loading for the UIKit cells: memory cache, then disk, then network
+/// (decoded off the main thread); stale results are dropped.
+@MainActor
+enum FixedFocusImages {
+    private static var requested: [ObjectIdentifier: String] = [:]
+
+    static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat) {
+        let slot = ObjectIdentifier(view)
+        requested[slot] = url
+        guard let url else { view.image = nil; return }
+        let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
+        if let hit = ImageCache.shared.image(for: memoryKey) { view.image = hit; return }
+        view.image = nil
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        Task { @MainActor [weak view] in
+            var image = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey)
+            if image == nil, let remote = URL(string: url),
+               let data = try? await ImageCache.shared.download(remote) {
+                ImageCache.shared.insertData(data, for: url)
+                image = ImageCache.decodeDownsampled(data, budget: budget)
+            }
+            guard let view, requested[slot] == url else { return }
+            view.image = image
+        }
+    }
+}
+
+/// One row: its name and a horizontal collection view of posters.
+final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
+                               UICollectionViewDelegateFlowLayout {
+    private(set) var rowIndex = 0
+    private weak var controller: FixedFocusRowsController?
+    private let title = UILabel()
+    private let strip: UICollectionView
+    private var row: HomeRow? {
+        guard let controller, controller.rows.indices.contains(rowIndex) else { return nil }
+        return controller.rows[rowIndex]
+    }
+    private var selectedIndex: Int { row.flatMap { controller?.selected[$0.id] } ?? 0 }
+    /// Only the focused row has a grown cell; the others are all posters.
+    private var isFocusRow: Bool { controller?.focusedRow == rowIndex }
+    /// Continue Watching: landscape cards.
+    var isContinue: Bool { controller?.isContinue(rowIndex) == true }
+    /// The grown cell's own content hidden (the fixed box shows it).
+    var contentHidden = true {
+        didSet { applyGrown() }
+    }
+
+    private let layout = FixedFocusStripLayout()
+
+    override init(frame: CGRect) {
+        strip = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        super.init(frame: frame)
+        layout.wideIndex = { [weak self] in
+            guard let self, self.isFocusRow, !self.isContinue else { return nil }
+            return self.selectedIndex
+        }
+        layout.cardWidth = { [weak self] in
+            self?.isContinue == true ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
+        }
+        clipsToBounds = false
+        contentView.clipsToBounds = false
+        title.font = .systemFont(ofSize: Spotlight.headerTitleSize, weight: .semibold)
+        title.textColor = .white
+        contentView.addSubview(title)
+        strip.backgroundColor = .clear
+        strip.clipsToBounds = false
+        strip.isScrollEnabled = false
+        strip.showsHorizontalScrollIndicator = false
+        strip.contentInsetAdjustmentBehavior = .never
+        strip.remembersLastFocusedIndexPath = true
+        strip.dataSource = self
+        strip.delegate = self
+        strip.register(FixedFocusPosterCell.self, forCellWithReuseIdentifier: "poster")
+        contentView.addSubview(strip)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        title.frame = CGRect(x: FixedFocusMetrics.titleInset, y: 0, width: 1200,
+                             height: FixedFocusMetrics.titleLine)
+        // Wider than the screen on both sides: posters sliding in or out at
+        // the edges keep their cells and SLIDE (outside the visible area
+        // UIKit creates / drops them with a fade, in place).
+        let over = FixedFocusStripLayout.overscan
+        strip.frame = CGRect(x: -over, y: FixedFocusMetrics.titleHeight,
+                             width: 1920 + 2 * over, height: FixedFocusMetrics.height)
+    }
+
+    /// The catalog (and its size) this cell last showed.
+    private var shownRow: (id: String, count: Int)?
+
+    func configure(rowIndex: Int, controller: FixedFocusRowsController) {
+        self.rowIndex = rowIndex
+        self.controller = controller
+        title.text = row?.title
+        // The same catalog coming back (it keeps its own cell): leave its
+        // posters, scroll position and focus memory as they are — a reload
+        // would erase exactly that. Only new content reloads.
+        if let row, let shown = shownRow, shown.id == row.id, shown.count == row.items.count {
+            return
+        }
+        shownRow = row.map { ($0.id, $0.items.count) }
+        contentHidden = true
+        strip.reloadData()
+        strip.layoutIfNeeded()
+        strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0)
+    }
+
+    /// Inside the controller's animation: grow the new, shrink the old,
+    /// move the row so the new one sits at the spot.
+    func focus(index: Int) {
+        relayout()
+        strip.contentOffset = CGPoint(x: offset(for: index), y: 0)
+    }
+
+    /// Re-lay out (grown cell or not) and restyle the visible cells.
+    func relayout() {
+        strip.collectionViewLayout.invalidateLayout()
+        strip.layoutIfNeeded()
+        applyGrown()
+        if !isFocusRow { strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0) }
+    }
+
+    private func applyGrown() {
+        for cell in strip.visibleCells {
+            guard let poster = cell as? FixedFocusPosterCell else { continue }
+            poster.setGrown(isFocusRow && poster.itemIndex == selectedIndex,
+                            contentHidden: contentHidden)
+        }
+    }
+
+    /// The row offset that puts title `index` at the spot. Exact: every
+    /// title before it is card-wide (`FixedFocusStripLayout`).
+    private func offset(for index: Int) -> CGFloat {
+        let card = isContinue ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
+        return CGFloat(index) * (card + FixedFocusMetrics.gap)
+    }
+
+    func collectionView(_ cv: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        row?.items.count ?? 0
+    }
+
+    func collectionView(_ cv: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = cv.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath) as! FixedFocusPosterCell
+        if let row {
+            let item = row.items[indexPath.item]
+            cell.configure(item, index: indexPath.item, rowCell: self,
+                           progress: isContinue ? controller?.progress[item.id] : nil,
+                           landscape: isContinue)
+            cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
+        }
+        return cell
+    }
+
+    func collectionView(_ cv: UICollectionView, layout: UICollectionViewLayout,
+                        sizeForItemAt indexPath: IndexPath) -> CGSize {
+        CGSize(width: isFocusRow && indexPath.item == selectedIndex ? FixedFocusMetrics.boxWidth
+                                                                     : FixedFocusMetrics.posterWidth,
+               height: FixedFocusMetrics.height)
+    }
+
+    func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard let row, row.items.indices.contains(indexPath.item) else { return }
+        controller?.select(row.items[indexPath.item], rowIndex: rowIndex)
+    }
+}
+
+/// A poster cell: a WINDOW onto two fixed-size images — the portrait
+/// poster and the box-sized backdrop (with logo). Growing opens the window;
+/// nothing is stretched. Backdrop and logo load only once it grows.
+final class FixedFocusPosterCell: UICollectionViewCell {
+    /// Set by the controller while it starts an Up/Down movement.
+    static var vertical: (direction: CGFloat, duration: Double)?
+
+    private(set) var itemIndex = 0
+    private(set) weak var rowCell: FixedFocusRowCell?
+    private let poster = UIImageView()
+    private let backdrop = UIImageView()
+    private let shade = CAGradientLayer()
+    private let logo = UIImageView()
+    /// The grown cell's own outline — fades in as it opens (Up/Down), while
+    /// the fixed box is away.
+    private let outline = UIView()
+    /// The title's info (name, facts) — BELOW the cell, so it travels with
+    /// its title: in with it, away with it.
+    private let info = UIView()
+    private let name = UILabel()
+    private let facts = UILabel()
+    private var item: MetaItem?
+    private var backdropFor: String?
+    /// The poster's own-coloured rim (pre-rendered, tinted — see
+    /// `FixedFocusRim`). Sits with the poster; the box covers it.
+    private let rim = UIImageView()
+    /// The opening's outline in the title's colour (matches the box's).
+    private let outlineRim = UIImageView()
+    private var rimColor: UIColor?
+    /// Continue Watching: a landscape card (backdrop always), with its state.
+    private var landscape = false
+    private let state = FixedFocusProgressView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = false
+        contentView.clipsToBounds = true
+        contentView.layer.cornerRadius = Spotlight.cornerRadius
+        contentView.layer.cornerCurve = .continuous
+        for view in [backdrop, poster] {
+            view.contentMode = .scaleAspectFill
+            view.clipsToBounds = true
+            contentView.addSubview(view)
+        }
+        shade.colors = [UIColor.clear.cgColor,
+                        UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
+        shade.startPoint = CGPoint(x: 0.5, y: 0.5)
+        shade.endPoint = CGPoint(x: 0.5, y: 1)
+        backdrop.layer.addSublayer(shade)
+        logo.contentMode = .scaleAspectFit
+        backdrop.addSubview(logo)
+        state.alpha = 0
+        backdrop.addSubview(state)
+        rim.isUserInteractionEnabled = false
+        rim.alpha = 0
+        contentView.addSubview(rim)
+        outlineRim.isUserInteractionEnabled = false
+        outlineRim.image = FixedFocusRim.image(.box, lineWidth: 4)
+        outlineRim.alpha = 0
+        addSubview(outlineRim)
+        outline.isUserInteractionEnabled = false
+        outline.layer.borderColor = UIColor.white.cgColor
+        outline.layer.borderWidth = 4
+        outline.layer.cornerRadius = Spotlight.cornerRadius
+        outline.layer.cornerCurve = .continuous
+        outline.alpha = 0
+        addSubview(outline)
+        name.font = .systemFont(ofSize: 23, weight: .regular)
+        name.textColor = .white
+        facts.font = .systemFont(ofSize: 20, weight: .medium)
+        facts.textColor = UIColor.white.withAlphaComponent(0.62)
+        info.addSubview(name)
+        info.addSubview(facts)
+        info.alpha = 0
+        info.isUserInteractionEnabled = false
+        addSubview(info)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Fixed sizes, anchored left: the cell's width only reveals.
+        poster.frame = CGRect(x: 0, y: 0, width: FixedFocusMetrics.posterWidth, height: FixedFocusMetrics.height)
+        backdrop.frame = CGRect(x: 0, y: 0, width: FixedFocusMetrics.boxWidth, height: FixedFocusMetrics.height)
+        shade.frame = backdrop.bounds
+        logo.frame = CGRect(x: Spotlight.logoInset,
+                            y: FixedFocusMetrics.height - Spotlight.logoInset - FixedFocusMetrics.height * 0.28,
+                            width: FixedFocusMetrics.boxWidth * 0.55, height: FixedFocusMetrics.height * 0.28)
+        outline.frame = bounds
+        outlineRim.frame = CGRect(x: 0, y: 0, width: FixedFocusMetrics.boxWidth, height: FixedFocusMetrics.height)
+        let rimSize = landscape
+            ? CGSize(width: FixedFocusMetrics.boxWidth, height: FixedFocusMetrics.height)
+            : CGSize(width: FixedFocusMetrics.posterWidth, height: FixedFocusMetrics.height)
+        rim.frame = CGRect(origin: .zero, size: rimSize)
+        state.frame = CGRect(x: 24, y: FixedFocusMetrics.height - 22 - 34,
+                             width: FixedFocusMetrics.boxWidth - 48, height: 34)
+        info.frame = CGRect(x: FixedFocusMetrics.textIndent, y: FixedFocusMetrics.height + 18,
+                            width: FixedFocusMetrics.boxWidth, height: 70)
+        name.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: 30)
+        facts.frame = CGRect(x: 0, y: 36, width: info.bounds.width, height: 28)
+    }
+
+    func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell,
+                   progress: WatchProgress?, landscape: Bool) {
+        itemIndex = index
+        self.rowCell = rowCell
+        self.item = item
+        self.landscape = landscape
+        backdropFor = nil
+        // The rim, in the poster's own colour (subtle).
+        let rimOn = RenderProbe.shared.flags.posterRims
+        rim.image = rimOn ? FixedFocusRim.image(landscape ? .box : .poster, lineWidth: 2) : nil
+        rim.alpha = 0
+        rimColor = nil
+        let style = FixedFocusRim.style
+        FixedFocusRim.apply(style, to: rim.layer)
+        FixedFocusRim.apply(style, to: outlineRim.layer)
+        outlineRim.image = FixedFocusRim.image(.box, lineWidth: 4)
+        if style == .titleColor {
+            if let url = item.poster ?? item.background {
+                let id = item.id
+                FixedFocusColors.color(for: url) { [weak self] color in
+                    guard let self, self.item?.id == id else { return }
+                    self.rimColor = color
+                    self.rim.tintColor = color
+                    self.outlineRim.tintColor = color
+                    if rimOn { self.rim.alpha = self.backdrop.alpha > 0.5 ? 0 : FixedFocusRim.posterAlpha }
+                }
+            }
+        } else {
+            // Light / vivid: white — over the poster's own edge it reads as
+            // a lighter version of exactly that colour (glass-like).
+            rimColor = .white
+            rim.tintColor = .white
+            outlineRim.tintColor = .white
+            if rimOn { rim.alpha = FixedFocusRim.posterAlpha }
+        }
+        setNeedsLayout()
+        if landscape {
+            // Continue Watching: the landscape art right away — no logo, the
+            // state line is the card's only text.
+            backdropFor = item.id
+            FixedFocusImages.load(progress?.episodeThumbnail ?? item.background ?? item.poster,
+                                  into: backdrop, maxDimension: FixedFocusMetrics.boxWidth)
+            FixedFocusImages.load(nil, into: logo, maxDimension: 0)
+            FixedFocusImages.load(nil, into: poster, maxDimension: 0)
+            state.show(progress)
+            state.alpha = progress == nil ? 0 : 1
+            name.text = item.name
+            facts.text = progress?.episodeTitle
+                ?? TitleBlock.metaSegments(for: item, seriesSize: TitleBlock.seriesSizeText(item))
+                    .joined(separator: "  •  ")
+            return
+        }
+        state.alpha = 0
+        FixedFocusImages.load(item.poster ?? item.background, into: poster,
+                              maxDimension: FixedFocusMetrics.height)
+        FixedFocusImages.load(nil, into: backdrop, maxDimension: 0)
+        FixedFocusImages.load(nil, into: logo, maxDimension: 0)
+        name.text = item.name
+        facts.text = TitleBlock.metaSegments(for: item, seriesSize: TitleBlock.seriesSizeText(item))
+            .joined(separator: "  •  ")
+    }
+
+    /// The cell's outline: white, or the rim in the title's colour (as the
+    /// box's — Render Lab → Box outline: title colour).
+    private func setOutline(_ on: Bool) {
+        let colored = RenderProbe.shared.flags.boxRimColored
+        outline.alpha = on && !colored ? 1 : 0
+        outlineRim.alpha = on && colored ? 1 : 0
+    }
+
+    /// Grown: the backdrop shows — unless the fixed box shows it
+    /// (`contentHidden`), then the cell is just a box-wide gap. The info
+    /// shows under every grown cell (it travels with its title).
+    func setGrown(_ grown: Bool, contentHidden: Bool) {
+        if landscape {
+            // Continue Watching: always the landscape card; the outline only
+            // while it shows itself (under the fixed box: none).
+            poster.alpha = 0
+            backdrop.alpha = 1
+            setOutline(grown && !contentHidden)
+            info.alpha = grown && !contentHidden ? 1 : 0
+            return
+        }
+        if grown, let item, backdropFor != item.id {
+            backdropFor = item.id
+            FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
+                                  maxDimension: FixedFocusMetrics.boxWidth)
+            FixedFocusImages.load(item.logo, into: logo, maxDimension: FixedFocusMetrics.boxWidth * 0.55)
+        }
+        // Under the fixed box (contentHidden) the poster simply stays: the
+        // box covers it — no fade, only movement. It only gives way to the
+        // backdrop while the cell itself shows the box (Up/Down opening).
+        let shows = grown && !contentHidden
+        poster.alpha = shows ? 0 : 1
+        backdrop.alpha = shows ? 1 : 0
+        // The info too only while the cell shows itself (Up/Down); under the
+        // box, the box's own info drifts in place.
+        info.alpha = shows ? 1 : 0
+        if let vertical = Self.vertical {
+            // Up/Down: the outlines hand over gradually: the old one fades out over
+            // the first 70 %, the new one in over the last 70 %, linearly.
+            let span = vertical.duration * 0.7
+            UIView.animate(withDuration: span, delay: shows ? vertical.duration - span : 0,
+                           options: [.curveLinear, .overrideInheritedDuration,
+                                     .overrideInheritedCurve, .beginFromCurrentState]) {
+                self.setOutline(shows)
+            }
+        } else {
+            setOutline(shows)
+        }
+        // The poster's own rim steps back while the cell shows the box.
+        if RenderProbe.shared.flags.posterRims, rimColor != nil {
+            rim.alpha = shows ? 0 : FixedFocusRim.posterAlpha
+        }
+    }
+}
+
+
+/// The poster row's layout: every position computed exactly — title i at
+/// `inset + i × pitch`, everything after the wide (focused) title shifted
+/// by its extra width. (UIKit's flow layout spread the posters out as soon
+/// as one cell was wider than the rest.)
+final class FixedFocusStripLayout: UICollectionViewLayout {
+    /// The row extends this far beyond the screen on both sides; positions
+    /// are shifted by it (so on screen nothing moves).
+    static let overscan: CGFloat = 1200
+    /// The grown title's index (nil: all posters).
+    var wideIndex: () -> Int? = { nil }
+    /// The cards' width (posters; Continue Watching: box-wide).
+    var cardWidth: () -> CGFloat = { FixedFocusMetrics.posterWidth }
+    private var frames: [CGRect] = []
+    private var contentWidth: CGFloat = 0
+
+    override func prepare() {
+        super.prepare()
+        let count = collectionView?.numberOfItems(inSection: 0) ?? 0
+        let wide = wideIndex()
+        let card = cardWidth()
+        let pitch = card + FixedFocusMetrics.gap
+        let extra = FixedFocusMetrics.boxWidth - card
+        frames = (0..<count).map { i in
+            var x = Self.overscan + FixedFocusMetrics.inset + CGFloat(i) * pitch
+            if let wide, i > wide { x += extra }
+            let width = i == wide ? FixedFocusMetrics.boxWidth : card
+            return CGRect(x: x, y: 0, width: width, height: FixedFocusMetrics.height)
+        }
+        // Room after the last title so it too can reach the spot.
+        contentWidth = (frames.last?.maxX ?? 0) + 1920 + 2 * Self.overscan
+    }
+
+    override var collectionViewContentSize: CGSize {
+        CGSize(width: contentWidth, height: FixedFocusMetrics.height)
+    }
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        frames.indices.compactMap { i in
+            frames[i].intersects(rect) ? attributes(i) : nil
+        }
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        frames.indices.contains(indexPath.item) ? attributes(indexPath.item) : nil
+    }
+
+    private func attributes(_ i: Int) -> UICollectionViewLayoutAttributes {
+        let a = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: i, section: 0))
+        a.frame = frames[i]
+        return a
+    }
+}
+
+
+/// The row list's layout: no scrolling — every row placed around the
+/// focused one. The focused row at the fixed spot; the row above so its
+/// posters' lower third shows at the top; the row below so the original
+/// preview height shows at the bottom; the rest off screen, a row apart.
+/// On Up/Down the layout is recomputed and the rows glide to their places.
+final class FixedFocusRowsLayout: UICollectionViewLayout {
+    var focusedRow: () -> Int = { 0 }
+    /// The list extends this far beyond the screen, above and below (see
+    /// the controller's `viewDidLayoutSubviews`); rows are placed in screen
+    /// coordinates shifted by it.
+    static let overscan: CGFloat = 1100
+    private var frames: [CGRect] = []
+
+    override func prepare() {
+        super.prepare()
+        let count = collectionView?.numberOfItems(inSection: 0) ?? 0
+        let f = focusedRow()
+        let rowHeight = FixedFocusMetrics.titleHeight + FixedFocusMetrics.height
+        let pitch = FixedFocusMetrics.rowPitch
+        let focusY = FixedFocusMetrics.rowTop
+        let aboveY = FixedFocusMetrics.aboveVisible - rowHeight
+        let belowY = 1080 - FixedFocusMetrics.belowVisible - FixedFocusMetrics.titleHeight
+        frames = (0..<count).map { r in
+            let y: CGFloat
+            switch r - f {
+            case 0: y = focusY
+            case ..<0: y = aboveY - CGFloat(f - r - 1) * pitch
+            default: y = belowY + CGFloat(r - f - 1) * pitch
+            }
+            return CGRect(x: 0, y: y + Self.overscan, width: 1920, height: rowHeight)
+        }
+    }
+
+    override var collectionViewContentSize: CGSize {
+        CGSize(width: 1920, height: 1080 + 2 * Self.overscan)
+    }
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        frames.indices.compactMap { frames[$0].intersects(rect) ? attributes($0) : nil }
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        frames.indices.contains(indexPath.item) ? attributes(indexPath.item) : nil
+    }
+
+    private func attributes(_ r: Int) -> UICollectionViewLayoutAttributes {
+        let a = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: r, section: 0))
+        a.frame = frames[r]
+        return a
+    }
+}
+
+
+
+
+/// Continue Watching's state line on a card, as on the original Home:
+/// "S1:E5" · progress bar · "20 min left" — or, not started, "Up Next".
+final class FixedFocusProgressView: UIView {
+    private let episode = UILabel()
+    private let remaining = UILabel()
+    private let track = UIView()
+    private let fill = UIView()
+    private var fraction: CGFloat = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for label in [episode, remaining] {
+            label.font = .systemFont(ofSize: Spotlight.continueStateSize, weight: .semibold)
+            label.textColor = .white
+            label.layer.shadowColor = UIColor.black.cgColor
+            label.layer.shadowOpacity = 0.6
+            label.layer.shadowRadius = 6
+            label.layer.shadowOffset = CGSize(width: 0, height: 1)
+            addSubview(label)
+        }
+        track.backgroundColor = UIColor.white.withAlphaComponent(0.3)
+        track.layer.cornerRadius = Spotlight.continueProgressBarHeight / 2
+        fill.backgroundColor = .white
+        fill.layer.cornerRadius = Spotlight.continueProgressBarHeight / 2
+        track.addSubview(fill)
+        addSubview(track)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ entry: WatchProgress?) {
+        guard let entry else { return }
+        episode.text = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
+        let started = entry.fraction > 0.02
+        remaining.text = started ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress") : "Up Next"
+        fraction = started ? CGFloat(entry.fraction) : 0
+        track.isHidden = !started
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let gap = Spotlight.continueStateGap
+        episode.sizeToFit()
+        remaining.sizeToFit()
+        let h = bounds.height
+        episode.frame = CGRect(x: 0, y: (h - episode.bounds.height) / 2,
+                               width: episode.text == nil ? 0 : episode.bounds.width,
+                               height: episode.bounds.height)
+        remaining.frame = CGRect(x: bounds.width - remaining.bounds.width,
+                                 y: (h - remaining.bounds.height) / 2,
+                                 width: remaining.bounds.width, height: remaining.bounds.height)
+        let barX = episode.frame.maxX + (episode.text == nil ? 0 : gap)
+        let barWidth = max(remaining.frame.minX - gap - barX, 0)
+        let barH = Spotlight.continueProgressBarHeight
+        track.frame = CGRect(x: barX, y: (h - barH) / 2, width: barWidth, height: barH)
+        fill.frame = CGRect(x: 0, y: 0, width: max(barWidth * fraction, barH), height: barH)
+    }
+}
+
+
+/// The Left/Right and Up/Down curves (Render Lab → Motion). All through
+/// `UIView.animate` — the only animation collection views follow for their
+/// cells' size changes.
+@MainActor
+enum FixedFocusMotion {
+    enum Curve: String, CaseIterable {
+        case spring, easeOut, easeInOut
+        var displayName: String {
+            switch self {
+            case .spring: return "Spring (no bounce)"
+            case .easeOut: return "Ease-out"
+            case .easeInOut: return "Ease-in-out"
+            }
+        }
+    }
+
+    static var curve: Curve { Curve(rawValue: RenderProbe.shared.flags.horizontalCurve) ?? .easeInOut }
+    static var verticalCurve: Curve { Curve(rawValue: RenderProbe.shared.flags.verticalCurve) ?? .easeInOut }
+
+    /// A focus movement on its curve (Left/Right or Up/Down, each chosen in
+    /// Render Lab). Ease-in-out gives the movement weight: it has to get
+    /// going and it brakes — snappier curves made the UI feel light.
+    static func run(vertical: Bool, duration: Double, damping: Double,
+                    animations: @escaping () -> Void,
+                    completion: @escaping (Bool) -> Void) {
+        let chosen = vertical ? verticalCurve : curve
+        // Always UIView.animate: collection views only animate their cells'
+        // size changes inside it (under a property animator they jumped).
+        if chosen == .spring {
+            UIView.animate(withDuration: duration, delay: 0,
+                           usingSpringWithDamping: vertical ? damping : 1, initialSpringVelocity: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction],
+                           animations: animations, completion: completion)
+            return
+        }
+        let curveOption: UIView.AnimationOptions = chosen == .easeOut ? .curveEaseOut : .curveEaseInOut
+        UIView.animate(withDuration: duration, delay: 0,
+                       options: [curveOption, .beginFromCurrentState, .allowUserInteraction],
+                       animations: animations, completion: completion)
+    }
+
+    /// Left/Right, for things moving with the row (the box's drift).
+    static func horizontal(_ animations: @escaping () -> Void, completion: @escaping () -> Void) {
+        run(vertical: false, duration: Motion.durations.move, damping: 1,
+            animations: animations, completion: { _ in completion() })
+    }
+}
+
+
+/// The rim, drawn ONCE per size as a white gradient ring (bright at the
+/// top-right, fading around, gone at the bottom-left) and used as a
+/// template image — each poster tints it with its own colour. A picture that
+/// moves with its poster: no per-frame drawing (a live gradient stroke on
+/// moving cards is what cost the old Home its frames).
+@MainActor
+enum FixedFocusRim {
+    enum Size { case poster, box }
+
+    /// Render Lab → Rim: the title's colour, or glass-like — white over the
+    /// poster's own edge (light: plain blend; vivid: overlay blend, which
+    /// brightens the edge colours without washing them out).
+    enum Style: String, CaseIterable {
+        case titleColor, light, vivid, glass
+        var displayName: String {
+            switch self {
+            case .titleColor: return "Title colour"
+            case .light: return "Light (glass)"
+            case .vivid: return "Vivid (glass)"
+            case .glass: return "Vivid glass (depth)"
+            }
+        }
+    }
+
+    static var style: Style { Style(rawValue: RenderProbe.shared.flags.rimStyle) ?? .light }
+
+    /// The posters' rim strength (the box's is full).
+    static var posterAlpha: CGFloat {
+        switch style {
+        case .titleColor: return 0.8
+        case .light: return 0.45
+        case .vivid: return 0.9
+        case .glass: return 0.95
+        }
+    }
+
+    /// Vivid / vivid glass: the rim is blended with what's beneath
+    /// (overlay) — it brightens the edge's own colours (and the glass's dark
+    /// counter-edge deepens them). Same cost for both.
+    static func apply(_ style: Style, to layer: CALayer) {
+        layer.compositingFilter = style == .vivid || style == .glass ? "overlayBlendMode" : nil
+    }
+    private static var cache: [String: UIImage] = [:]
+
+    static func image(_ size: Size, lineWidth: CGFloat) -> UIImage {
+        if style == .glass { return glassImage(size, lineWidth: lineWidth) }
+        let w = size == .box ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
+        let h = FixedFocusMetrics.height
+        let key = "\(size)-\(lineWidth)"
+        if let hit = cache[key] { return hit }
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        let image = UIGraphicsImageRenderer(size: rect.size).image { ctx in
+            let cg = ctx.cgContext
+            let inset = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+            let path = UIBezierPath(roundedRect: inset,
+                                    cornerRadius: max(Spotlight.cornerRadius - lineWidth / 2, 0))
+            cg.addPath(path.cgPath)
+            cg.setLineWidth(lineWidth)
+            cg.replacePathWithStrokedPath()
+            cg.clip()
+            // Pure directional light from the TOP RIGHT (the dark fade on the
+            // left reads as shadow, so the scene is lit from the right):
+            // peak there, fading steadily around the frame, gone at the
+            // bottom-left.
+            let colors = [1.0, 0.45, 0.12, 0.0].map { UIColor(white: 1, alpha: $0).cgColor } as CFArray
+            let locations: [CGFloat] = [0, 0.3, 0.6, 1]
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                         colors: colors, locations: locations) {
+                cg.drawLinearGradient(gradient, start: CGPoint(x: w, y: 0), end: CGPoint(x: 0, y: h), options: [])
+            }
+        }.withRenderingMode(.alwaysTemplate)
+        cache[key] = image
+        return image
+    }
+}
+
+extension FixedFocusRim {
+    /// GLASS (depth): an edge that looks physical, all baked into one image
+    /// per size (so it costs the same as the flat rim):
+    /// - a soft specular sheen INSIDE the lit (top-right) corner, over the art;
+    /// - a fine dark counter-edge on the shadow side (bottom-left);
+    /// - a fine light line all around, fading from the lit corner;
+    /// - the edge THICKER where the light hits, thinning out around it.
+    /// Not a template: its light and shadow are baked in.
+    static func glassImage(_ size: Size, lineWidth: CGFloat) -> UIImage {
+        let w = size == .box ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
+        let h = FixedFocusMetrics.height
+        let key = "glass-\(size)-\(lineWidth)"
+        if let hit = cache[key] { return hit }
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        let radius = Spotlight.cornerRadius
+        let space = CGColorSpaceCreateDeviceRGB()
+        let light = CGPoint(x: w, y: 0)
+        let reach = max(w, h)
+
+        func ring(_ cg: CGContext, width: CGFloat) {
+            let inset = rect.insetBy(dx: width / 2, dy: width / 2)
+            cg.addPath(UIBezierPath(roundedRect: inset, cornerRadius: max(radius - width / 2, 0)).cgPath)
+            cg.setLineWidth(width)
+            cg.replacePathWithStrokedPath()
+            cg.clip()
+        }
+        func gradient(_ colors: [UIColor], _ locations: [CGFloat]) -> CGGradient? {
+            CGGradient(colorsSpace: space, colors: colors.map(\.cgColor) as CFArray, locations: locations)
+        }
+
+        // Soft INNER edge: the light is brightest right at the edge and
+        // fades into the image over `feather` points (a hard inner boundary
+        // read as a line painted on top). Wider on the box.
+        let feather: CGFloat = size == .box ? 12 : 6
+        let outer = UIBezierPath(roundedRect: rect, cornerRadius: radius)
+
+        /// Masks must cover the WHOLE image: a gradient only paints between
+        /// its ends, and `.destinationIn` leaves unpainted pixels untouched —
+        /// the glow stayed at full strength beyond the mask's radius (a hard
+        /// cut-off on the box's top and bottom edges).
+        let extend: CGGradientDrawingOptions = [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+
+        /// An inner glow (or shadow) of `color`, feathered inward, masked by
+        /// `mask` (the directional falloff).
+        func innerGlow(_ cg: CGContext, color: UIColor, blur: CGFloat, passes: Int = 1,
+                       mask: () -> Void) {
+            cg.saveGState()
+            cg.beginTransparencyLayer(auxiliaryInfo: nil)
+            cg.addPath(outer.cgPath)
+            cg.clip()
+            // Fill everything OUTSIDE the shape with a shadow: only the
+            // shadow falls inside — soft, from the edge inward.
+            let frame = UIBezierPath(rect: rect.insetBy(dx: -blur * 4, dy: -blur * 4))
+            frame.append(outer)
+            frame.usesEvenOddFillRule = true
+            // (A soft shadow is only about half as strong right at the edge:
+            // drawn several times to bring the edge up to full light.)
+            cg.setShadow(offset: .zero, blur: blur, color: color.cgColor)
+            cg.setFillColor(color.cgColor)
+            for _ in 0..<passes {
+                cg.addPath(frame.cgPath)
+                cg.fillPath(using: .evenOdd)
+            }
+            cg.setShadow(offset: .zero, blur: 0, color: nil)
+            // Keep it only where the light (or shadow) falls.
+            cg.setBlendMode(.destinationIn)
+            mask()
+            cg.endTransparencyLayer()
+            cg.restoreGState()
+        }
+
+        let image = UIGraphicsImageRenderer(size: rect.size).image { ctx in
+            let cg = ctx.cgContext
+            // Sheen inside the lit corner.
+            cg.saveGState()
+            cg.addPath(outer.cgPath)
+            cg.clip()
+            if let g = gradient([UIColor(white: 1, alpha: 0.06), UIColor(white: 1, alpha: 0)], [0, 1]) {
+                cg.drawRadialGradient(g, startCenter: light, startRadius: 0,
+                                      endCenter: light, endRadius: reach * 0.55, options: [])
+            }
+            cg.restoreGState()
+            // Shadow side: a soft dark inner edge, strongest at the bottom-left.
+            innerGlow(cg, color: UIColor(white: 0, alpha: 0.5), blur: feather * 0.7, passes: 2) {
+                if let g = gradient([UIColor(white: 0, alpha: 0), UIColor(white: 0, alpha: 0),
+                                     UIColor(white: 0, alpha: 1)], [0, 0.5, 1]) {
+                    cg.drawLinearGradient(g, start: light, end: CGPoint(x: 0, y: h), options: extend)
+                }
+            }
+            // Light side: a soft light inner edge — widest and brightest at the
+            // top-right corner, fading around the frame.
+            innerGlow(cg, color: UIColor(white: 1, alpha: 1), blur: feather,
+                      passes: size == .box ? 4 : 3) {
+                if let g = gradient([UIColor(white: 1, alpha: 1), UIColor(white: 1, alpha: 0.4),
+                                     UIColor(white: 1, alpha: 0)], [0, 0.35, 1]) {
+                    cg.drawRadialGradient(g, startCenter: light, startRadius: 0,
+                                          endCenter: light, endRadius: reach * 0.75, options: extend)
+                }
+            }
+            // The very edge: a fine crisp catch-light, fading from the corner.
+            cg.saveGState()
+            ring(cg, width: size == .box ? 2 : 1)
+            if let g = gradient([UIColor(white: 1, alpha: 0.9), UIColor(white: 1, alpha: 0.3),
+                                 UIColor(white: 1, alpha: 0)], [0, 0.45, 0.75]) {
+                cg.drawLinearGradient(g, start: light, end: CGPoint(x: 0, y: h), options: [])
+            }
+            cg.restoreGState()
+        }
+        cache[key] = image
+        return image
+    }
+}
+
+/// Each title's colour (from `SpotlightTint`, cached), lifted so it reads as
+/// light on the dark background rather than muddy.
+@MainActor
+enum FixedFocusColors {
+    private static var cache: [String: UIColor] = [:]
+
+    static func color(for url: String, _ done: @escaping (UIColor) -> Void) {
+        if let hit = cache[url] { done(hit); return }
+        Task { @MainActor in
+            guard let base = await SpotlightTint.color(for: url) else { return }
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(base).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            let lifted = UIColor(hue: h, saturation: min(max(s * 1.15, 0.35), 0.9),
+                                 brightness: max(b, 0.9), alpha: 1)
+            cache[url] = lifted
+            done(lifted)
+        }
+    }
+}

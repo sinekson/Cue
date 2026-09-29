@@ -2,12 +2,13 @@ import SwiftUI
 
 /// Settings categories, each a pushed pane on the Settings screen.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case account, layout, contentDiscovery, integration, playback, performance, about
+    case renderLab, account, layout, contentDiscovery, integration, playback, performance, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .renderLab: return "Render Lab"
         case .account: return "Account"
         case .layout: return "Layout"
         case .contentDiscovery: return "Content & Discovery"
@@ -20,6 +21,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .renderLab: return "FPS counter and render bisect switches"
         case .account: return "Nuvio account and profiles"
         case .layout: return "Home structure and poster styles"
         case .contentDiscovery: return "Add-ons, catalogs, and collections"
@@ -33,6 +35,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     // SF Symbols matched to the APK's Material icons.
     var icon: String {
         switch self {
+        case .renderLab: return "gauge.with.dots.needle.67percent"
         case .account: return "person.crop.circle.fill"
         case .layout: return "square.grid.2x2.fill"
         case .contentDiscovery: return "safari.fill"
@@ -50,6 +53,7 @@ struct SettingsCategoryPane: View {
 
     var body: some View {
         switch category {
+        case .renderLab:         RenderLabDetail()
         case .account:           AccountSettingsDetail()
         case .layout:            LayoutSettingsDetail()
         case .contentDiscovery:  ContentDiscoveryDetail()

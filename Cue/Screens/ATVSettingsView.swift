@@ -13,7 +13,7 @@ struct ATVSettingsView: View {
     /// Categories that get a plain pushed row, in tvOS-Settings-ish order.
     /// Account has its own section up top.
     private var generalCategories: [SettingsCategory] {
-        SettingsCategory.allCases.filter { $0 != .account }
+        SettingsCategory.allCases.filter { $0 != .account && $0 != .renderLab }
     }
 
     var body: some View {
@@ -23,6 +23,13 @@ struct ATVSettingsView: View {
                     .font(FusionType.pageTitle(theme.font))
                     .foregroundStyle(theme.palette.textPrimary)
                     .padding(.top, CueSpacing.xl)
+
+                ATVSettingsSection(title: "Developer") {
+                    NavigationLink(value: SettingsCategory.renderLab) {
+                        ATVRowLabel(title: SettingsCategory.renderLab.title)
+                    }
+                    .buttonStyle(ATVRowButtonStyle())
+                }
 
                 ATVSettingsSection(title: "Users & Accounts") {
                     NavigationLink(value: SettingsCategory.account) {

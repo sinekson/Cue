@@ -113,7 +113,10 @@ enum PerformanceProfile {
     /// the panel, upscaled by the compositor) is ~15 MB and indistinguishable
     /// under those scrims. The HD is already capped at its 1920 panel; the
     /// 4 GB boxes keep the full framebuffer.
-    static var backdropPixelCap: CGFloat? { isMidPower ? 2560 : nil }
+    @MainActor
+    static var backdropPixelCap: CGFloat? {
+        isMidPower || RenderProbe.shared.flags.capBackdrop ? 2560 : nil
+    }
 
     /// Decoded-pixel memory-cache budget, sized to what the box can spare.
     /// Invisible — evicted images just re-decode from the disk cache.
