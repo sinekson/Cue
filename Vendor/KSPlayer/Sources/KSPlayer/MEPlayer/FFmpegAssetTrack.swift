@@ -216,7 +216,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             }
             let format = AVPixelFormat(rawValue: codecpar.format)
             bitDepth = format.bitDepth
-            // Orivio: recover missing colour signalling from the BITSTREAM.
+            // Cue: recover missing colour signalling from the BITSTREAM.
             //
             // The demuxer's codecpar can say UNSPECIFIED for primaries /
             // transfer / matrix even when the SPS VUI carries the real values
@@ -274,7 +274,7 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             dic[kCVImageBufferColorPrimariesKey] = colorPrimaries.colorPrimaries as String?
             dic[kCVImageBufferTransferFunctionKey] = colorTrc.transferFunction as String?
             dic[kCVImageBufferYCbCrMatrixKey] = colorSpace.ycbcrMatrix as String?
-            // Orivio probe: the SOURCE of every colour decision downstream.
+            // Cue probe: the SOURCE of every colour decision downstream.
             // Each tag is reported as the raw ffmpeg enum AND what it mapped
             // to — a raw 2 (UNSPECIFIED) mapping to nil is the case that
             // silently becomes BT.601 + sRGB further down.

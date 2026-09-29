@@ -1,4 +1,4 @@
-# Orivio TV — Settings Reference
+# Cue — Settings Reference
 
 Every pane, card, switch, dropdown and button in Settings, what it does, and
 whether it is actually wired to anything.
@@ -50,7 +50,7 @@ Appearance → Experience Mode is **Advanced**.
 
 | Category | Subtitle |
 | --- | --- |
-| Account | Orivio account and profiles |
+| Account | Nuvio account and profiles |
 | Appearance | Theme, accent color, and font |
 | Layout | Home structure and poster styles |
 | Content & Discovery | Add-ons, catalogs, and collections |
@@ -67,7 +67,7 @@ Appearance → Experience Mode is **Advanced**.
 
 | Control | Type | What it does | Works? |
 | --- | --- | --- | --- |
-| Accounts | Value card | Opens sign-in / account status for the Orivio account | Wired |
+| Accounts | Value card | Opens sign-in / account status for the Nuvio account | Wired |
 | Manage Profiles | Action | Add, rename, recolor, PIN-lock and remove profiles | Wired |
 
 ### Separate per profile
@@ -92,7 +92,7 @@ back on finds each profile's own state where it was.
 
 | Control | Type | What it does | Works? |
 | --- | --- | --- | --- |
-| Accent Color | Swatch row | Highlight color across the app. One swatch per palette in `OrivioThemes.all` | Wired |
+| Accent Color | Swatch row | Highlight color across the app. One swatch per palette in `CueThemes.all` | Wired |
 | Black Background | Switch | Flat black stage (AMOLED) — drops both the grey depth wash and the accent bloom, and the Detail hero scrim fades to the same black | Wired |
 | Font | Chips | Typeface across the app (`AppFont.allCases`) | Wired |
 | Experience Mode | Chips | **Essential** / **Advanced**. Essential hides the Plugins section and the advanced Playback cards (auto-play source, player engine, on-screen display, audio) | Wired |
@@ -524,7 +524,7 @@ removes the pool entirely, at the cost of instant seeking.
 
 - Control inventory extracted from the Settings view sources by parsing the
   balanced argument list of every row constructor (`SettingsToggleCard`,
-  `SettingsGroupCard`, `PerfToggleRow`, `PlaybackToggleRow`, `OrivioDropdown`,
+  `SettingsGroupCard`, `PerfToggleRow`, `PlaybackToggleRow`, `CueDropdown`,
   `SettingsActionRow`, `SettingsValueCard` and the bespoke key/provider rows),
   then read back against the source for the panes the parser handled poorly.
 - Wiring determined by tracing each stored property to a reader outside its own

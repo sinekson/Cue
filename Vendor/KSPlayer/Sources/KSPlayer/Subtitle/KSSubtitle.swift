@@ -170,7 +170,7 @@ extension KSSubtitle: KSSubtitleProtocol {
 public extension KSSubtitle {
     func parse(url: URL, userAgent: String? = nil, encoding: String.Encoding? = nil) async throws {
         let data = try await url.data(userAgent: userAgent)
-        // ORIVIO PATCH: parse where we are (this runs off a background task),
+        // CUE PATCH: parse where we are (this runs off a background task),
         // but PUBLISH the cue list on the main thread — `search(for:)` reads
         // `parts` there on every clock tick, and swapping the array under it
         // mid-search was a data race.
@@ -341,7 +341,7 @@ open class SubtitleModel: ObservableObject {
         }
     }
 
-    /// ORIVIO PATCH: drop tracks, so a reload can add them back as FRESH
+    /// CUE PATCH: drop tracks, so a reload can add them back as FRESH
     /// objects — `addSubtitle` de-duplicates by id, which otherwise kept a
     /// track whose download or parse had failed.
     public func removeSubtitles(where shouldRemove: (any SubtitleInfo) -> Bool) {

@@ -230,7 +230,7 @@ public class YouTube {
     /// If the streams have not been initialized, finds all relevant streams and initializes them.
     public var streams: [Stream] {
         get async throws {
-            // ORIVIO PATCH: an unreadable watch page must not abort extraction.
+            // CUE PATCH: an unreadable watch page must not abort extraction.
             //
             // `checkAvailability()` parses youtube.com's watch page, and it
             // runs BEFORE the method list below — so whatever it throws takes

@@ -309,7 +309,7 @@ open class KSOptions {
      */
     open func process(assetTrack: some MediaPlayerTrack) {
         if assetTrack.mediaType == .video {
-            // Orivio: gated on `autoDeInterlace` like the rest of the
+            // Cue: gated on `autoDeInterlace` like the rest of the
             // deinterlace machinery. Unconditionally, any track merely TAGGED
             // interlaced (mis-flagged remuxes included) lost VideoToolbox and
             // got a software decode plus a software yadif — a slideshow on
@@ -512,7 +512,7 @@ public extension KSOptions {
         // the session from that system default, so sound stayed on HDMI while
         // other video apps followed the HomePods.
         try? AVAudioSession.sharedInstance().setCategory(category, mode: .moviePlayback)
-        // Orivio: declare multichannel. It defaults to FALSE, which entitles
+        // Cue: declare multichannel. It defaults to FALSE, which entitles
         // the session to hand the route a stereo fold — so every KSPlayer
         // session (native AVPlayer included, which is the app's Dolby
         // bitstream path for MP4/HLS) asked for stereo before it started.
@@ -530,7 +530,7 @@ public extension KSOptions {
     static func isSpatialAudioEnabled(channelCount _: AVAudioChannelCount) -> Bool {
         if #available(tvOS 15.0, iOS 15.0, *) {
             let isSpatialAudioEnabled = AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.isSpatialAudioEnabled }
-            // Orivio: was `setSupportsMultichannelContent(isSpatialAudioEnabled)`,
+            // Cue: was `setSupportsMultichannelContent(isSpatialAudioEnabled)`,
             // which TURNED MULTICHANNEL OFF on every route that does its own
             // Dolby decoding — an HDMI receiver reports no spatial audio, so
             // asking it about spatialization and then using the answer to

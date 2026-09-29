@@ -54,7 +54,7 @@ public final class MetalPlayView: UIView, VideoOutput {
     }
 
     public private(set) var pixelBuffer: PixelBufferProtocol?
-    /// Orivio diagnostics: how often the display link fires, how many frames
+    /// Cue diagnostics: how often the display link fires, how many frames
     /// reached the display layer, and whether it was ready for them.
     public private(set) var diagDisplayLinkTicks = 0
     public private(set) var diagFramesEnqueued = 0
@@ -191,7 +191,7 @@ extension MetalPlayView {
             let cmtime = frame.cmtime
             let par = pixelBuffer.size
             let sar = pixelBuffer.aspectRatio
-            // Orivio probe: the last point before the pixels leave KSPlayer.
+            // Cue probe: the last point before the pixels leave KSPlayer.
             // Whatever the decode path was, these are the tags the display
             // layer (or the shader) is handed — and which of the two gets them.
             KSColorProbe.once("render") {
@@ -299,7 +299,7 @@ class MetalView: UIView {
         metalLayer.drawableSize = size
         metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
         let colorspace = pixelBuffer.colorspace
-        // Orivio probe: the layer colourspace is what CoreAnimation colour-
+        // Cue probe: the layer colourspace is what CoreAnimation colour-
         // matches FROM. Wrong here and the shader's output is reinterpreted.
         KSColorProbe.once("metalLayer") {
             "metal layer pixelFormat=\(metalLayer.pixelFormat.rawValue)"

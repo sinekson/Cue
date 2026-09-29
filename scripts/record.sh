@@ -14,7 +14,7 @@
 #   scripts/probe.sh 10.0.0.19 mark "froze right here"
 set -u
 
-HOST="${1:-${ORIVIO_TV:-}}"
+HOST="${1:-${CUE:-}}"
 OUT="${2:-probe-$(date +%Y%m%d-%H%M%S).log}"
 
 if [ -z "$HOST" ]; then

@@ -179,7 +179,7 @@ private extension KSMEPlayer {
         guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else {
             return
         }
-        // ORIVIO PATCH (side-button desync): this guard was commented out, so
+        // CUE PATCH (side-button desync): this guard was commented out, so
         // `reason` was decoded and then thrown away and EVERY route
         // notification ran the body — including the `.categoryChange` and
         // `.override` that a volume press, a Siri panel or any other system
@@ -413,7 +413,7 @@ extension KSMEPlayer: MediaPlayerProtocol {
     }
 
     public func pause() {
-        // ORIVIO PATCH: only symbolicate when a trail sink is installed.
+        // CUE PATCH: only symbolicate when a trail sink is installed.
         if let trail = KSOptions.hostTrail {
             trail("KSMEPlayer.pause from: " + Thread.callStackSymbols.dropFirst().prefix(6).map { String($0.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3).prefix(2).joined(separator: " ")) }.joined(separator: " | "))
         }

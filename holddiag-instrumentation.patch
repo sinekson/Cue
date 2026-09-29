@@ -1,7 +1,7 @@
-diff --git a/OrivioTV/Components/Components.swift b/OrivioTV/Components/Components.swift
+diff --git a/Cue/Components/Components.swift b/Cue/Components/Components.swift
 index 0e53d65..e0b2d97 100644
---- a/OrivioTV/Components/Components.swift
-+++ b/OrivioTV/Components/Components.swift
+--- a/Cue/Components/Components.swift
++++ b/Cue/Components/Components.swift
 @@ -944,6 +944,7 @@ struct GridPosterCell: View {
      @State private var focused = false
  
@@ -10,22 +10,22 @@ index 0e53d65..e0b2d97 100644
          VStack(alignment: .leading, spacing: 0) {
              button
  
-diff --git a/OrivioTV/OrivioTVApp.swift b/OrivioTV/OrivioTVApp.swift
+diff --git a/Cue/CueApp.swift b/Cue/CueApp.swift
 index 785ff8c..bbb5be2 100644
---- a/OrivioTV/OrivioTVApp.swift
-+++ b/OrivioTV/OrivioTVApp.swift
+--- a/Cue/CueApp.swift
++++ b/Cue/CueApp.swift
 @@ -163,6 +163,7 @@ struct RootView: View {
              .task { await debrid.refreshRealDebridIfNeeded() }
              .onAppear {
-                 NSLog("[OrivioPlayer] RootView content onAppear")
+                 NSLog("[CuePlayer] RootView content onAppear")
 +                HoldDiag.install()
                  startPlayerDemoIfRequested()
                  startDetailDemoIfRequested()
                  ScrubThumbnailer.runSelfTestIfRequested()
-diff --git a/OrivioTV/Screens/DetailView.swift b/OrivioTV/Screens/DetailView.swift
+diff --git a/Cue/Screens/DetailView.swift b/Cue/Screens/DetailView.swift
 index f235616..3a3c6cf 100644
---- a/OrivioTV/Screens/DetailView.swift
-+++ b/OrivioTV/Screens/DetailView.swift
+--- a/Cue/Screens/DetailView.swift
++++ b/Cue/Screens/DetailView.swift
 @@ -243,6 +243,7 @@ struct DetailView: View {
      private var autoLinkOn: Bool { profiles.activeAutoLink.enabled }
  
@@ -34,10 +34,10 @@ index f235616..3a3c6cf 100644
          ZStack {
              ATVBackground()
              backdrop
-diff --git a/OrivioTV/Screens/DiscoverView.swift b/OrivioTV/Screens/DiscoverView.swift
+diff --git a/Cue/Screens/DiscoverView.swift b/Cue/Screens/DiscoverView.swift
 index 8c6d7e9..53eb4e1 100644
---- a/OrivioTV/Screens/DiscoverView.swift
-+++ b/OrivioTV/Screens/DiscoverView.swift
+--- a/Cue/Screens/DiscoverView.swift
++++ b/Cue/Screens/DiscoverView.swift
 @@ -68,6 +68,7 @@ struct DiscoverView: View {
      }
  
@@ -46,10 +46,10 @@ index 8c6d7e9..53eb4e1 100644
          ZStack {
              ATVBackground()
              ScrollViewReader { proxy in
-diff --git a/OrivioTV/Screens/HoldMenu.swift b/OrivioTV/Screens/HoldMenu.swift
+diff --git a/Cue/Screens/HoldMenu.swift b/Cue/Screens/HoldMenu.swift
 index 269bb4d..0140812 100644
---- a/OrivioTV/Screens/HoldMenu.swift
-+++ b/OrivioTV/Screens/HoldMenu.swift
+--- a/Cue/Screens/HoldMenu.swift
++++ b/Cue/Screens/HoldMenu.swift
 @@ -207,3 +207,179 @@ private struct HoldMenuRowStyle: ButtonStyle {
          }
      }
@@ -230,10 +230,10 @@ index 269bb4d..0140812 100644
 +                           shouldRequireFailureOf other: UIGestureRecognizer) -> Bool { false }
 +}
 +#endif
-diff --git a/OrivioTV/Screens/HomeView.swift b/OrivioTV/Screens/HomeView.swift
+diff --git a/Cue/Screens/HomeView.swift b/Cue/Screens/HomeView.swift
 index fe33153..78e92c8 100644
---- a/OrivioTV/Screens/HomeView.swift
-+++ b/OrivioTV/Screens/HomeView.swift
+--- a/Cue/Screens/HomeView.swift
++++ b/Cue/Screens/HomeView.swift
 @@ -909,6 +909,7 @@ struct HomeView: View {
  
      @ViewBuilder
@@ -247,7 +247,7 @@ index fe33153..78e92c8 100644
  
      var body: some View {
 +        let _ = HoldDiag.log("BODY HomePosterRow \(row.title)")
-         VStack(alignment: .leading, spacing: OrivioSpacing.md) {
+         VStack(alignment: .leading, spacing: CueSpacing.md) {
              header
              ScrollViewReader { proxy in
 @@ -1379,6 +1381,7 @@ private struct HomePosterCell: View, Equatable {
@@ -265,7 +265,7 @@ index fe33153..78e92c8 100644
 +        let _ = HoldDiag.log("BODY ContinueWatchingRow")
          // Focus model mirrors HomePosterRow (plain @FocusState, no .focusScope /
          // .focusSection).
-         VStack(alignment: .leading, spacing: OrivioSpacing.md) {
+         VStack(alignment: .leading, spacing: CueSpacing.md) {
 @@ -1540,6 +1544,7 @@ private struct ContinueWatchingCell: View, Equatable {
      }
  
@@ -274,10 +274,10 @@ index fe33153..78e92c8 100644
          VStack(alignment: .leading, spacing: 0) {
              Button {
                  onResume(progress)
-diff --git a/OrivioTV/Screens/LibraryView.swift b/OrivioTV/Screens/LibraryView.swift
+diff --git a/Cue/Screens/LibraryView.swift b/Cue/Screens/LibraryView.swift
 index 9d09e18..0e2b319 100644
---- a/OrivioTV/Screens/LibraryView.swift
-+++ b/OrivioTV/Screens/LibraryView.swift
+--- a/Cue/Screens/LibraryView.swift
++++ b/Cue/Screens/LibraryView.swift
 @@ -71,6 +71,7 @@ struct LibraryView: View {
      }
  
@@ -286,10 +286,10 @@ index 9d09e18..0e2b319 100644
          ZStack {
              ATVBackground()
              ScrollViewReader { proxy in
-diff --git a/OrivioTV/Screens/PosterHoldMenu.swift b/OrivioTV/Screens/PosterHoldMenu.swift
+diff --git a/Cue/Screens/PosterHoldMenu.swift b/Cue/Screens/PosterHoldMenu.swift
 index ea306f0..15f8714 100644
---- a/OrivioTV/Screens/PosterHoldMenu.swift
-+++ b/OrivioTV/Screens/PosterHoldMenu.swift
+--- a/Cue/Screens/PosterHoldMenu.swift
++++ b/Cue/Screens/PosterHoldMenu.swift
 @@ -21,6 +21,7 @@ struct PosterHoldMenu: ViewModifier {
      let onDetails: () -> Void
  
@@ -306,15 +306,15 @@ index ea306f0..15f8714 100644
          content.contextMenu {
              Button { onDetails() } label: { Label("Go to Details", systemImage: "info.circle") }
              Button { onPlayManually() } label: { Label("Play Manually", systemImage: "list.and.film") }
-diff --git a/OrivioTV/Screens/SearchView.swift b/OrivioTV/Screens/SearchView.swift
+diff --git a/Cue/Screens/SearchView.swift b/Cue/Screens/SearchView.swift
 index 94bd92f..6e2c30d 100644
---- a/OrivioTV/Screens/SearchView.swift
-+++ b/OrivioTV/Screens/SearchView.swift
+--- a/Cue/Screens/SearchView.swift
++++ b/Cue/Screens/SearchView.swift
 @@ -83,6 +83,7 @@ struct SearchView: View {
-     private var columns: [GridItem] { [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth, maximum: posterLayout.posterSize.posterWidth), spacing: OrivioSpacing.lg, alignment: .top)] }
+     private var columns: [GridItem] { [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth, maximum: posterLayout.posterSize.posterWidth), spacing: CueSpacing.lg, alignment: .top)] }
  
      var body: some View {
 +        let _ = HoldDiag.log("BODY SearchView")
          ZStack {
              ATVBackground()
-             VStack(alignment: .leading, spacing: OrivioSpacing.lg) {
+             VStack(alignment: .leading, spacing: CueSpacing.lg) {

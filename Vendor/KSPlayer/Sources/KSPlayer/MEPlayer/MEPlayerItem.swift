@@ -58,7 +58,7 @@ public final class MEPlayerItem: Sendable {
         }
     }
 
-    // ORIVIO PATCH (wedged seek): true only while the read thread is inside
+    // CUE PATCH (wedged seek): true only while the read thread is inside
     // av_read_frame. Read/written on the read thread only — FFmpeg invokes
     // the interrupt callback on the thread executing the blocking call, so
     // no lock is needed. Lets the callback abort a BLOCKED read when a seek
@@ -185,7 +185,7 @@ extension MEPlayerItem {
             case .finished, .closed, .failed:
                 return 1
             case .seeking:
-                // ORIVIO PATCH (wedged seek): seeks are serviced BY the read
+                // CUE PATCH (wedged seek): seeks are serviced BY the read
                 // thread between reads, and a read blocked on a stalled
                 // connection (no rw_timeout + reconnect=1 means potentially
                 // minutes inside one av_read_frame) never yields — so a seek
@@ -464,7 +464,7 @@ extension MEPlayerItem {
         allPlayerItemTracks.forEach { $0.decode() }
         while [MESourceState.paused, .seeking, .reading].contains(state) {
             if state == .paused {
-                // ORIVIO PATCH (lost-wakeup): the check-then-wait here is not
+                // CUE PATCH (lost-wakeup): the check-then-wait here is not
                 // atomic against shutdown()'s single condition.signal() — a
                 // signal landing between the check and the wait() parked this
                 // thread FOREVER with state == .closed. Because closeOperation
@@ -550,7 +550,7 @@ extension MEPlayerItem {
         guard let corePacket = packet.corePacket else {
             return 0
         }
-        // ORIVIO PATCH (wedged seek): see the interrupt callback — the flag
+        // CUE PATCH (wedged seek): see the interrupt callback — the flag
         // scopes its .seeking abort to exactly this blocking call.
         inAVRead = true
         let readResult = av_read_frame(formatCtx, corePacket)
@@ -606,7 +606,7 @@ extension MEPlayerItem {
                     state = .finished
                 }
             } else if state == .seeking {
-                // ORIVIO PATCH (wedged seek): this read was aborted by the
+                // CUE PATCH (wedged seek): this read was aborted by the
                 // interrupt callback because a seek is pending — not a source
                 // failure. The seek resets the demuxer; if the source really
                 // is dead, the first read AFTER the seek reports it.

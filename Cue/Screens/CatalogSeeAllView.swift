@@ -1,0 +1,114 @@
+import SwiftUI
+
+@MainActor
+final class CatalogSeeAllViewModel: ObservableObject {
+    @Published var items: [MetaItem] = []
+    @Published var isLoading = false
+    @Published var reachedEnd = false
+
+    let addon: InstalledAddon
+    let catalog: ManifestCatalog
+    private var seenIDs = Set<String>()
+
+    init(addon: InstalledAddon, catalog: ManifestCatalog) {
+        self.addon = addon
+        self.catalog = catalog
+    }
+
+    /// Load the next page. Stremio paginates via `skip`; we advance by however
+    /// many items we already have and stop when a page adds nothing new.
+    func loadMore() async {
+        guard !isLoading, !reachedEnd else { return }
+        isLoading = true
+        defer { isLoading = false }
+        // An error is NOT the end of the catalog. `try?` folded a timeout into
+        // an empty page and `reachedEnd` latched: one blip on the FIRST page
+        // showed "no titles" for a full catalog with no way to retry, and one
+        // mid-scroll ended infinite scroll for the visit. A failed page just
+        // leaves the trigger cell in place to try again.
+        guard let page = try? await StremioAPI.catalog(addon: addon, catalog: catalog, skip: items.count)
+        else { return }
+        let fresh = page.filter { seenIDs.insert($0.id).inserted }
+        if fresh.isEmpty {
+            reachedEnd = true
+        } else {
+            items.append(contentsOf: fresh)
+        }
+    }
+}
+
+/// A full, paginated grid for a single catalog — the "See All" destination from
+/// a home row. Mirrors Android's `CatalogSeeAllScreen`.
+struct CatalogSeeAllView: View {
+    @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var posterLayout: HomeCatalogSettingsStore
+    @StateObject private var viewModel: CatalogSeeAllViewModel
+
+    let title: String
+    let onSelect: (MetaItem) -> Void
+
+    /// Bound to the poster-size setting, like Home, Search, Library and
+    /// Discover. A hardcoded 220pt column clipped: `PosterCard` draws at the
+    /// user's chosen 180/220/264, so at Large the card was 44pt wider than its
+    /// column and neighbouring cards overlapped, while at Small it left 40pt of
+    /// dead gutter.
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth,
+                            maximum: posterLayout.posterSize.posterWidth),
+                  spacing: CueSpacing.lg, alignment: .top)]
+    }
+
+    init(addon: InstalledAddon, catalog: ManifestCatalog, title: String, onSelect: @escaping (MetaItem) -> Void) {
+        _viewModel = StateObject(wrappedValue: CatalogSeeAllViewModel(addon: addon, catalog: catalog))
+        self.title = title
+        self.onSelect = onSelect
+    }
+
+    var body: some View {
+        ZStack {
+            ATVBackground()
+            if viewModel.items.isEmpty && viewModel.isLoading {
+                CueLoadingView(label: "Loading \(title)", holdsFocus: true)
+            } else if viewModel.items.isEmpty {
+                CueEmptyState(icon: "square.stack.3d.up.slash", title: title, message: "No titles in this catalog.", holdsFocus: true)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: CueSpacing.xl) {
+                        Text(title)
+                            .font(.system(size: 52, weight: .heavy))
+                            .foregroundStyle(theme.palette.textPrimary)
+                            .padding(.leading, CueSpacing.huge)
+                            .padding(.top, CueSpacing.xxl)
+
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: CueSpacing.xl) {
+                            ForEach(viewModel.items) { item in
+                                Button {
+                                    onSelect(item)
+                                } label: {
+                                    PosterCard(item: item)
+                                }
+                                .mediaCardButtonStyle()
+                                .onAppear {
+                                    // Prefetch the next page as the tail comes into view.
+                                    if item.id == viewModel.items.last?.id {
+                                        Task { await viewModel.loadMore() }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, CueSpacing.huge)
+
+                        if viewModel.isLoading {
+                            ProgressView().tint(theme.palette.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.bottom, CueSpacing.huge)
+                        }
+                    }
+                    .padding(.bottom, CueSpacing.huge)
+                }
+                .scrollClipDisabled()
+            }
+        }
+        .task { if viewModel.items.isEmpty { await viewModel.loadMore() } }
+    }
+}

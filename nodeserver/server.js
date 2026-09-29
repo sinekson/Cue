@@ -1,4 +1,4 @@
-// OrivioTV on-device torrent streaming server.
+// Cue on-device torrent streaming server.
 //
 // Runs IN-PROCESS inside the tvOS app via nodejs-mobile (the same technique
 // Stremio uses: Node linked as a framework, no subprocess). Exposes a tiny
@@ -20,13 +20,13 @@
 const http = require('http');
 const torrentStream = require('torrent-stream');
 
-// A bad ORIVIO_STREAM_PORT used to reach server.listen() unvalidated: a
+// A bad CUE_STREAM_PORT used to reach server.listen() unvalidated: a
 // non-numeric value throws ERR_SOCKET_BAD_PORT synchronously at load (taking the
 // in-process app down with it), and a whitespace value silently becomes 0,
 // binding an ephemeral port while the Swift side still dials 11470. Clamp to a
 // valid TCP port.
 const DEFAULT_PORT = 11470;
-const configuredPort = Number(process.env.ORIVIO_STREAM_PORT);
+const configuredPort = Number(process.env.CUE_STREAM_PORT);
 const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
   ? configuredPort
   : DEFAULT_PORT;
@@ -314,7 +314,7 @@ const server = http.createServer(async (req, res) => {
   // This server runs IN-PROCESS: an unhandled 'error' event on the response
   // (client hung up mid-pipe, socket torn down under a write) would take the
   // whole app down, not just one request.
-  res.on('error', (e) => console.error('[orivio-stream] response error:', (e && e.message) || e));
+  res.on('error', (e) => console.error('[cue-stream] response error:', (e && e.message) || e));
   try {
     const url = new URL(req.url, `http://${HOST}:${PORT}`);
     const parts = url.pathname.split('/').filter(Boolean);
@@ -368,7 +368,7 @@ const server = http.createServer(async (req, res) => {
     // time anything downstream can throw, and writeHead(500) on that response
     // threw ERR_HTTP_HEADERS_SENT out of an async handler — an unhandled
     // rejection that killed the process (and the app hosting it).
-    console.error('[orivio-stream] request failed:', (e && e.message) || e);
+    console.error('[cue-stream] request failed:', (e && e.message) || e);
     if (res.headersSent) { res.destroy(); return; }
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end(String((e && e.message) || e));
@@ -379,9 +379,9 @@ const server = http.createServer(async (req, res) => {
 // With no listener that becomes an uncaught exception, and because this server
 // runs in-process inside nodejs-mobile it would take the whole tvOS app down.
 server.on('error', (e) => {
-  console.error('[orivio-stream] server error:', (e && e.message) || e);
+  console.error('[cue-stream] server error:', (e && e.message) || e);
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[orivio-stream] listening on http://${HOST}:${PORT}`);
+  console.log(`[cue-stream] listening on http://${HOST}:${PORT}`);
 });

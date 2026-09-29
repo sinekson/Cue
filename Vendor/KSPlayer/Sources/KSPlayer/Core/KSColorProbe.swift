@@ -2,7 +2,7 @@
 //  KSColorProbe.swift
 //  KSPlayer
 //
-//  Orivio diagnostics. Not upstream.
+//  Cue diagnostics. Not upstream.
 //
 
 import CoreVideo

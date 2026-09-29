@@ -9,10 +9,10 @@
 #   scripts/probe.sh 192.168.1.42 health     # just the counters
 #   scripts/probe.sh 192.168.1.42 mark "froze here"   # anchor the live tail
 #
-# Set ORIVIO_TV to skip the argument:  export ORIVIO_TV=192.168.1.42
+# Set CUE to skip the argument:  export CUE=192.168.1.42
 set -u
 
-HOST="${1:-${ORIVIO_TV:-}}"
+HOST="${1:-${CUE:-}}"
 MODE="${2:-live}"
 
 # Percent-encode a query value byte-for-byte. The old mark route only replaced
@@ -33,7 +33,7 @@ urlencode() {
 
 if [ -z "$HOST" ]; then
     echo "usage: $0 <apple-tv-ip> [live|events|once|health|trail|mark <note>]" >&2
-    echo "  (or export ORIVIO_TV=<ip>)" >&2
+    echo "  (or export CUE=<ip>)" >&2
     exit 64
 fi
 

@@ -90,7 +90,7 @@ public class AudioRendererPlayer: AudioOutput {
             }
             self.request()
         }
-        // ORIVIO PATCH: a play() landing while already playing (autoplay after
+        // CUE PATCH: a play() landing while already playing (autoplay after
         // a seek racing a user press) stacked a SECOND periodic observer —
         // and pause() removes only the last one, so the stale observer kept
         // re-stamping the clock forever.

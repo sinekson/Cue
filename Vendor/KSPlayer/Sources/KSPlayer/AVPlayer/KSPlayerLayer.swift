@@ -114,7 +114,7 @@ open class KSPlayerLayer: NSObject {
                     ])
                 }
                 oldValue.view?.removeFromSuperview()
-                // ORIVIO PATCH (display-link retain chain): the Metal view's
+                // CUE PATCH (display-link retain chain): the Metal view's
                 // CADisplayLink is created with `target: self` and only ever
                 // invalidated in KSMEPlayer.deinit — but the runloop retains
                 // the link, the link retains the view, and the view retains
@@ -190,7 +190,7 @@ open class KSPlayerLayer: NSObject {
             // 一个兜底保护，正常不能走到这里
             self.state = .bufferFinished
         }
-        // ORIVIO PATCH (stutter): this used to run on every 0.1s tick. The
+        // CUE PATCH (stutter): this used to run on every 0.1s tick. The
         // subscript is a read-modify-write of the WHOLE now-playing dictionary
         // — which, on this layer, holds the artwork and the
         // MPNowPlayingInfoLanguageOptionGroup arrays built at `.readyToPlay` —
@@ -333,7 +333,7 @@ open class KSPlayerLayer: NSObject {
     }
 
     open func pause() {
-        // ORIVIO PATCH: symbolicating the call stack costs milliseconds; only
+        // CUE PATCH: symbolicating the call stack costs milliseconds; only
         // pay it when a trail sink is installed (`-pipProbe`).
         if let trail = KSOptions.hostTrail {
             trail("KSPlayerLayer.pause from: " + Thread.callStackSymbols.dropFirst().prefix(6).map { String($0.split(separator: " ", omittingEmptySubsequences: true).dropFirst(3).prefix(2).joined(separator: " ")) }.joined(separator: " | "))
@@ -684,7 +684,7 @@ extension KSPlayerLayer {
         if #available(tvOS 14.0, *), player.pipController?.isPictureInPictureActive == true {
             return
         }
-        // Orivio: the host app drives PiP with its own controller (the engine's
+        // Cue: the host app drives PiP with its own controller (the engine's
         // own pipController above is never used there), so ask it too.
         if KSOptions.hostPictureInPictureActive?() == true {
             return

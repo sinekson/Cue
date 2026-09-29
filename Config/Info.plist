@@ -22,16 +22,16 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>tv.orivio.deeplink</string>
+			<string>app.cue.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>orivio</string>
+				<string>cue</string>
 				<string>stremio</string>
 			</array>
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>tv.orivio.callback</string>
+			<string>app.cue.callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>

@@ -1,27 +1,16 @@
-# Orivio TV
+# Cue
 
-A native tvOS media player, rebuilt in SwiftUI with an Apple-TV-premium feel. Orivio TV
-is a from-scratch Apple TV port of [Orivio](https://github.com/OrivioMedia/OrivioTV) — the
-Android TV Stremio-addon player — and syncs with the same account. Licensed GPLv3,
-matching the upstream project.
-
-## ❤️ Support Orivio TV
-
-Orivio TV is free and open-source. I'm raising funds to put it on **TestFlight** so it can
-be installed without sideloading — if you'd like to help make that happen, donations are
-hugely appreciated:
-
-**→ [ko-fi.com/oriviotv](https://ko-fi.com/oriviotv)**
+A native tvOS media player, built in SwiftUI. Cue is a fork of
+[Orivio TV](https://github.com/prehakanson-art/OrivioTVAppleTV), the Apple TV port of the
+Android TV Stremio-addon player, and syncs with a Nuvio account. Licensed GPLv3,
+matching the upstream projects.
 
 ## Install
 
-Grab the latest `.ipa` from [Releases](../../releases):
+Grab the latest `Cue-V<ver>.Sideload.ipa` from [Releases](../../releases) and install it
+with **Sideloadly** or a similar sideloader.
 
-- **`OrivioTV-V2(Sideloady).ipa`** — for **Sideloadly** and similar sideloaders.
-- **`OrivioTV-0.7.15-tvos.ipa`** — for **Xcode** (Devices & Simulators) or **Apple
-  Configurator**.
-
-Both are the same unsigned arm64 tvOS build (Apple TV HD / 4K, tvOS 17+); the sideload tool
+It is an unsigned arm64 tvOS build (Apple TV HD / 4K, tvOS 17+); the sideload tool
 re-signs with your Apple ID on install.
 
 The upstream app is Kotlin + Jetpack Compose + ExoPlayer/mpv, so nothing could be reused
@@ -29,7 +18,7 @@ directly; this is a from-scratch reimplementation of the same product:
 
 - **Stremio addon ecosystem** — Cinemeta ships installed; add any addon by pasting its
   `manifest.json` URL in Settings (`stremio://` links accepted).
-- **Orivio design system** — the full color token set (all 7 accent themes: Crimson, Ocean,
+- **Cue design system** — the full color token set (all 7 accent themes: Crimson, Ocean,
   Violet, Emerald, Amber, Rose, White), near-black surfaces, accent focus rings.
 - **Home** — hero backdrop that follows card focus (logo, IMDb badge, meta, description),
   addon catalog rows, Continue Watching row with resume.
@@ -49,7 +38,7 @@ Dual-engine playback with a fully custom UI:
   PGS/VobSub bitmap cues). If the native engine rejects a stream, playback fails over
   to FFmpeg automatically; the active engine shows in the "via" line of the controls.
 
-- **Orivio-style controls** — title/episode/via lines, accent progress bar with buffered
+- **Cue-style controls** — title/episode/via lines, accent progress bar with buffered
   fill that thickens on focus, circular icon buttons (play, next episode, subtitles,
   audio, sources, episodes, speed, aspect), elapsed/total readout.
 - **Infuse-style touchpad scrubbing** — with controls hidden, swipe the Siri remote
@@ -79,18 +68,18 @@ Requires Xcode 16+ with the tvOS platform installed, plus [XcodeGen](https://git
 Provider keys are kept out of source control (like the Android app's
 `local.properties`). Before building, copy the template and fill in any keys you
 have — all are optional; with them blank the app still browses and plays via
-addons, only the Orivio account, Trakt, and TMDB enrichment need them:
+addons, only the Nuvio account, Trakt, and TMDB enrichment need them:
 
 ```bash
 cp Secrets.example.swift NuvioTV/Secrets.swift   # then edit NuvioTV/Secrets.swift
 xcodegen generate
-xcodebuild -project OrivioTV.xcodeproj -scheme OrivioTV \
+xcodebuild -project Cue.xcodeproj -scheme Cue \
   -destination 'generic/platform=tvOS Simulator' build
 ```
 
 `NuvioTV/Secrets.swift` is gitignored, so your keys never enter the repo.
 
-To run on a real Apple TV, open `OrivioTV.xcodeproj` in Xcode, pick your signing team,
+To run on a real Apple TV, open `Cue.xcodeproj` in Xcode, pick your signing team,
 and run on the device. Dev flags: launch with `-playerDemo` to open the player against
 Apple's public HLS test stream (`-playerDemoTour` walks the overlay states); `-detailDemo`
 jumps straight to a Detail screen so cast/trailers/more-like-this enrichment is visible

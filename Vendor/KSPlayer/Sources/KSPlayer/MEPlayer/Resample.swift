@@ -114,7 +114,7 @@ class VideoSwresample: FrameChange {
             // AV_PIX_FMT_VIDEOTOOLBOX格式是无法进行swscale的
             imgConvertCtx = sws_getCachedContext(imgConvertCtx, width, height, self.format, dstWidth, dstHeight, dstFormat, SWS_FAST_BILINEAR, nil, nil, nil)
         }
-        // Orivio probe: the pool's pixel format decides the RANGE the renderer
+        // Cue probe: the pool's pixel format decides the RANGE the renderer
         // infers, and `osType()` is called here without a fullRange argument —
         // so a full-range source lands in a video-range buffer type.
         KSColorProbe.once("swpool") {
@@ -128,7 +128,7 @@ class VideoSwresample: FrameChange {
         let format = AVPixelFormat(rawValue: frame.format)
         let width = frame.width
         let height = frame.height
-        // Orivio probe: software decode reached — so this is NOT the
+        // Cue probe: software decode reached — so this is NOT the
         // VideoToolbox path, and the frame's own tags (not the codecpar's)
         // are what get attached below.
         KSColorProbe.once("swframe") {
@@ -158,7 +158,7 @@ class VideoSwresample: FrameChange {
                 CVBufferSetAttachment(pbuf, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
             }
             pbuf.colorspace = KSOptions.colorSpace(ycbcrMatrix: pbuf.yCbCrMatrix, transferFunction: pbuf.transferFunction)
-            // Orivio probe: what actually ended up ON the buffer. A nil matrix
+            // Cue probe: what actually ended up ON the buffer. A nil matrix
             // here means no attachment was written at all (the setter skips
             // nil), and the CGColorSpace is whatever the `default:` arm chose.
             KSColorProbe.once("swattach") {

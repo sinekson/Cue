@@ -134,7 +134,7 @@ class MetalRender {
                 // by anything whose matrix tag is missing.
                 matrixName = yCbCrMatrix == nil ? "BT.601 (FALLBACK — no matrix tag)" : "BT.601"
             }
-            // Orivio probe: the actual arithmetic. This is the ground truth for
+            // Cue probe: the actual arithmetic. This is the ground truth for
             // "is the shader using the right matrix and the right range".
             KSColorProbe.once("shader") {
                 "shader matrix=\(matrixName) range=\(isFullRangeVideo ? "full" : "video")"
