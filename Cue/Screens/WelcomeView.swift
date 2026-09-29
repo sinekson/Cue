@@ -86,7 +86,7 @@ struct WelcomeView: View {
                 // address plus the code shown separately. Printing the full
                 // webURL was unreadable — it embeds the code, so the line then
                 // said "go to …?code=e9cd… and enter e9cd…".
-                Text("Scan the code with your phone, or go to \(Self.displayHost) and enter the code below.")
+                Text("Sign in to your Nuvio account: scan the code with your phone, or go to \(Self.displayHost) and enter the code below.")
                     .font(FusionType.bodyText(theme.font))
                     .foregroundStyle(theme.palette.textSecondary)
                     .multilineTextAlignment(.center)
@@ -127,7 +127,7 @@ struct WelcomeView: View {
 
             HStack(spacing: CueSpacing.md) {
                 if NuvioConfig.isConfigured {
-                    Button("Sign in with email") {
+                    Button("Sign in to Nuvio with email") {
                         account.errorMessage = nil
                         step = .email
                     }
@@ -168,7 +168,7 @@ struct WelcomeView: View {
 
     private var emailForm: some View {
         VStack(spacing: CueSpacing.md) {
-            Text("Sign in")
+            Text("Sign in to Nuvio")
                 .font(FusionType.pageTitle(theme.font))
                 .foregroundStyle(theme.palette.textPrimary)
 

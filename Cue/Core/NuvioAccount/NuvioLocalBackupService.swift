@@ -71,7 +71,7 @@ enum NuvioLocalBackupService {
         // build imported "successfully" while silently dropping whatever it
         // added. Refuse it instead of half-restoring the user's data.
         guard backup.version > 0, backup.version <= currentVersion else {
-            return "This backup was made by a newer version of Nuvio (format \(backup.version)) — update the app first."
+            return "This backup was made by a newer version of Cue (format \(backup.version)) — update the app first."
         }
 
         var addonInstalled = 0
