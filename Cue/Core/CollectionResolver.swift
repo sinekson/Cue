@@ -63,8 +63,8 @@ enum CollectionResolver {
         case needsTrakt
         /// Has both kinds, and neither service is connected.
         case needsEither
-        /// Add-on catalogs only, and no installed, switched-on add-on on this
-        /// profile serves any of them.
+        /// Add-on catalogs only, and none of their add-ons is installed and
+        /// switched on on this profile.
         case needsAddon
         /// No TMDB, Trakt or add-on source this app can resolve.
         case unsupportedSources
@@ -109,16 +109,22 @@ enum CollectionResolver {
     /// can stand as a plain Home row: Xperience marks every one of its catalogs'
     /// genre as required (which keeps them off Stremio boards) and still
     /// answers the bare catalog URL with the full list.
+    ///
+    /// A catalog the manifest doesn't list is asked for all the same: a
+    /// configurable add-on's manifest lists only the catalogs picked as Home
+    /// rows (Xperience: 19 of its hundreds), yet it serves every one of them
+    /// — and a collection pack names those. Nuvio's apps ask the same way.
     static func addonCatalog(for source: CollectionSourceDTO,
                              addons: [InstalledAddon]) -> AddonCatalog? {
         guard source.isAddonSource,
               let addonID = source.addonId,
               let type = source.type,
               let catalogID = source.catalogId,
-              let addon = addons.first(where: { $0.enabled && $0.manifest.id == addonID }),
-              let catalog = (addon.manifest.catalogs ?? [])
-                .first(where: { $0.type == type && $0.id == catalogID })
+              let addon = addons.first(where: { $0.enabled && $0.manifest.id == addonID })
         else { return nil }
+        let catalog = (addon.manifest.catalogs ?? []).first(where: { $0.type == type && $0.id == catalogID })
+            ?? ManifestCatalog(type: type, id: catalogID, name: source.title, extra: nil,
+                               extraRequired: nil, extraSupported: nil)
         return AddonCatalog(addon: addon, catalog: catalog, genre: source.genre)
     }
 
@@ -136,8 +142,7 @@ enum CollectionResolver {
         /// "continue a streaming load", so addon/Trakt sources — which aren't
         /// paged — are skipped to avoid re-returning what earlier windows
         /// already delivered.
-        tmdbStartPage: Int = 1,
-        hideUnreleased: Bool = false
+        tmdbStartPage: Int = 1
     ) async -> [MetaItem] {
         // Only a CONNECTED service resolves, and TMDB wins OUTRIGHT: when TMDB
         // can serve this folder, its Trakt sources aren't consulted at all —
@@ -199,7 +204,96 @@ enum CollectionResolver {
         for batch in await tmdbResults + traktResults + addonResults {
             for item in batch where seen.insert(item.id).inserted { items.append(item) }
         }
-        return hideUnreleased ? items.filter { !$0.isUnreleased } : items
+        return items
+    }
+
+    /// One of a folder's catalogs, resolved: its name and titles.
+    struct FolderCatalog: Identifiable, Sendable {
+        let id: String
+        let title: String
+        let items: [MetaItem]
+    }
+
+    /// A folder's catalogs EACH ON ITS OWN, in the folder's order — what
+    /// the folder page shows as rows or tabs (`resolveFolder` merges them).
+    /// The same rules for which sources resolve; empty ones are left out.
+    static func catalogs(
+        of folder: CueCollectionFolder,
+        addonManager: AddonManager,
+        addons: [InstalledAddon],
+        providers: CollectionProviders,
+        tmdbLanguage: String,
+        maxTmdbPages: Int = 2
+    ) async -> [FolderCatalog] {
+        let tmdbSources = providers.tmdb ? folder.effectiveSources.filter(\.isTMDBSource) : []
+        let traktSources = (providers.trakt && tmdbSources.isEmpty)
+            ? folder.effectiveSources.filter(\.isUsableTraktSource) : []
+        let isAddonOnly = !folder.effectiveSources.contains(where: \.isTMDBSource)
+            && !folder.effectiveSources.contains(where: \.isUsableTraktSource)
+        let addonCatalogs = isAddonOnly
+            ? folder.addonSources.compactMap { addonCatalog(for: $0, addons: addons) } : []
+
+        /// A catalog's name: the source's own title, else the add-on's name
+        /// for it, else its id made readable.
+        func name(_ title: String?, fallback: String) -> String {
+            if let title, !title.isEmpty { return title }
+            return fallback.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        var jobs: [(String, @Sendable () async -> [MetaItem])] = []
+        /// Packs often name every catalog of a folder after the folder
+        /// ("Netflix", "Netflix", …): those get a name from the catalog's
+        /// id instead (`streaming_netflix_top10_movies` → "Top 10 Movies").
+        var ids: [String?] = []
+        for source in tmdbSources {
+            ids.append(nil)
+            jobs.append((name(source.title, fallback: source.tmdbSourceType ?? "TMDB"), {
+                await TMDBService.resolve(source: source, language: tmdbLanguage, maxPages: maxTmdbPages)
+            }))
+        }
+        for source in traktSources {
+            ids.append(nil)
+            jobs.append((name(source.title, fallback: "Trakt"), {
+                await resolveTrakt(source: source, addonManager: addonManager)
+            }))
+        }
+        for entry in addonCatalogs {
+            ids.append(entry.catalog.id)
+            jobs.append((name(entry.catalog.name, fallback: entry.catalog.id), {
+                (try? await StremioAPI.catalog(addon: entry.addon, catalog: entry.catalog, genre: entry.genre)) ?? []
+            }))
+        }
+        // Side by side; kept in the folder's order.
+        var results = [[MetaItem]](repeating: [], count: jobs.count)
+        await withTaskGroup(of: (Int, [MetaItem]).self) { group in
+            for (index, job) in jobs.enumerated() { group.addTask { (index, await job.1()) } }
+            for await (index, items) in group { results[index] = items }
+        }
+        let names = jobs.map(\.0)
+        func title(_ index: Int) -> String {
+            let own = names[index]
+            let unclear = own.caseInsensitiveCompare(folder.title) == .orderedSame
+                || names.filter { $0.caseInsensitiveCompare(own) == .orderedSame }.count > 1
+            guard unclear, let id = ids[index], let derived = readableName(id, folder: folder.title) else { return own }
+            return derived
+        }
+        return jobs.indices.compactMap { index in
+            results[index].isEmpty ? nil
+                : FolderCatalog(id: "\(folder.id)#\(index)", title: title(index), items: results[index])
+        }
+    }
+
+    /// A catalog id as a name: its words, without the pack's prefixes and
+    /// the folder's own name ("snoak_latest_netflix_series" in Netflix →
+    /// "Latest Series").
+    static func readableName(_ id: String, folder: String) -> String? {
+        let skip: Set<String> = ["streaming", "snoak", "fp", "studio", "genre", "themed", "collection", "discover"]
+        let folderWords = Set(folder.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+        let words: [String: String] = ["top10": "Top 10", "toprated": "Top Rated", "tv": "TV", "mcu": "MCU",
+                                       "dc": "DC", "dceu": "DCEU", "dcu": "DCU", "scifi": "Sci-Fi"]
+        let parts = id.lowercased().split(whereSeparator: { $0 == "_" || $0 == "-" || $0 == "." }).map(String.init)
+            .filter { !skip.contains($0) && !folderWords.contains($0) }
+        guard !parts.isEmpty else { return nil }
+        return parts.map { words[$0] ?? $0.capitalized }.joined(separator: " ")
     }
 
     /// Trakt list items arrive with no artwork — enrich the first N via the

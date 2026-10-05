@@ -83,22 +83,10 @@ struct CollectionSourcePickerView: View {
 }
 
 private struct SourcePickerTabPill: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
     let label: String
     let selected: Bool
 
-    var body: some View {
-        Text(label)
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(selected ? theme.palette.onSecondary : theme.palette.textSecondary)
-            .padding(.horizontal, CueSpacing.lg)
-            .padding(.vertical, CueSpacing.sm)
-            .background(Capsule().fill(selected ? theme.palette.secondary
-                        : (isFocused ? theme.palette.focusBackground : Color.white.opacity(0.08))))
-            .overlay(Capsule().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.card, isFocused)
-    }
+    var body: some View { FlatChip(label: label, selected: selected) }
 }
 
 // MARK: - Presets

@@ -595,8 +595,8 @@ struct CollectionView: View {
     /// Bound to the poster-size setting — an `.adaptive(minimum: 220)` column
     /// let a 264pt Large card overflow its own track.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: layoutSettings.posterSize.posterWidth,
-                            maximum: layoutSettings.posterSize.posterWidth),
+        [GridItem(.adaptive(minimum: GridPoster.width,
+                            maximum: GridPoster.width),
                   spacing: CueSpacing.lg)]
     }
 
@@ -695,8 +695,7 @@ struct CollectionView: View {
                     providers: CollectionProviders(tmdb: tmdbSettings.isEnabled,
                                                    trakt: TraktService.isConfigured),
                     tmdbLanguage: tmdbSettings.settings.language,
-                    maxTmdbPages: 3,
-                    hideUnreleased: layoutSettings.hideUnreleasedContent
+                    maxTmdbPages: 3
                 )
                 onDemandFolders.remove(folderID)
                 // The queued fill may have landed first; don't overwrite a
@@ -845,6 +844,7 @@ struct CollectionView: View {
                             PosterCard(item: item)
                         }
                         .mediaCardButtonStyle()
+                        .titleMenu(item)
                     }
                 }
                 .padding(.horizontal, CueSpacing.huge)
@@ -991,7 +991,6 @@ struct CollectionView: View {
         let tmdbLanguage = tmdbSettings.settings.language
         let manager = addonManager
         let addons = addonManager.addons
-        let hideUnreleased = layoutSettings.hideUnreleasedContent
         var blockers: [String: CollectionResolver.FolderBlocker] = [:]
         for folder in collection.folders {
             let blocker = CollectionResolver.blocker(for: folder, providers: providers, addons: addons)
@@ -1007,8 +1006,7 @@ struct CollectionView: View {
                         let items = await CollectionResolver.resolveFolder(
                             folder, addonManager: manager, addons: addons,
                             providers: providers, tmdbLanguage: tmdbLanguage,
-                            maxTmdbPages: maxTmdbPages, tmdbStartPage: tmdbStartPage,
-                            hideUnreleased: hideUnreleased
+                            maxTmdbPages: maxTmdbPages, tmdbStartPage: tmdbStartPage
                         )
                         return (folder.id, items)
                     }
@@ -1181,25 +1179,10 @@ struct CollectionLayoutPicker: View {
     }
 }
 
-/// Folder tab pill with the app's standard selected/focused treatment
-/// (secondary fill when selected, focus ring + slight scale when focused).
+/// Folder tab pill: the app's flat pill (`FlatChip`).
 struct FolderTabPill: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
     let label: String
     let selected: Bool
 
-    var body: some View {
-        Text(label)
-            .font(.system(size: 26, weight: .semibold))
-            .foregroundStyle(selected ? theme.palette.onSecondary : theme.palette.textSecondary)
-            .padding(.horizontal, CueSpacing.lg)
-            .padding(.vertical, CueSpacing.sm)
-            .background(
-                Capsule().fill(selected ? theme.palette.secondary
-                               : (isFocused ? theme.palette.focusBackground : Color.white.opacity(0.08)))
-            )
-            .overlay(Capsule().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.card, isFocused)
-    }
+    var body: some View { FlatChip(label: label, selected: selected) }
 }

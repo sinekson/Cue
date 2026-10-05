@@ -675,11 +675,13 @@ final class CollectionsStore: ObservableObject {
 
     /// Apply already-decoded remote collections (from the tvOS preferences
     /// blob). Same empty-preserve / no-op-on-identical rules as the JSON path.
+    /// `allowEmpty`: an empty remote is a real "everything was deleted" (the
+    /// account's own collections row says so), not a missing blob.
     @discardableResult
-    func applyRemote(collections remote: [CueCollection]) -> Bool {
+    func applyRemote(collections remote: [CueCollection], allowEmpty: Bool = false) -> Bool {
         // Applies to the shared LIBRARY. Same guards as before: an empty remote
         // while we hold data is a race, not a clear-all; identical is a no-op.
-        if remote.isEmpty && !library.isEmpty { return false }
+        if remote.isEmpty && !library.isEmpty && !allowEmpty { return false }
         expireRemovedTombstones()
         pruneRemovedTombstones(against: remote)
         let suppressed = removedIDs
