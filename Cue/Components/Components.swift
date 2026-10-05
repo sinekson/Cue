@@ -394,6 +394,24 @@ final class ImageCache: @unchecked Sendable {
         }
     }
 
+    /// Get an image decoded into MEMORY under the key a `RemoteImage` with
+    /// the same `maxDimension` / `maxPixels` looks up, so it is on screen from
+    /// its first frame (no late fade-in). Returns once it is there, or at
+    /// once if it already was; false when it could not be loaded.
+    @discardableResult
+    func preload(_ value: String, maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil) async -> Bool {
+        let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: maxPixels)
+        if image(for: key) != nil { return true }
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: maxPixels)
+        if await diskImage(for: value, budget: budget, memoryKey: key) != nil { return true }
+        guard let url = URL(string: value), let data = try? await download(url),
+              let prepared = await Task.detached(priority: .userInitiated, operation: {
+                  ImageCache.decodeDownsampled(data, budget: budget)
+              }).value else { return false }
+        insert(prepared, for: value, data: data, memoryKey: key)
+        return true
+    }
+
     // MARK: Pre-blurred renditions (hero "progressive blur")
 
     /// Shared CIContext for the pre-blur path. Creating one per blur would
@@ -837,12 +855,9 @@ struct PosterCard: View {
     let item: MetaItem
     var progress: Double? = nil
 
-    private var cardWidth: CGFloat { layout.posterSize.posterWidth }
+    private var cardWidth: CGFloat { GridPoster.width }
     private var cardHeight: CGFloat { cardWidth * 3 / 2 }
-    /// Stremio uses generously rounded poster corners.
-    private var cornerRadius: CGFloat {
-        CGFloat(layout.posterCornerRadius)
-    }
+    private var cornerRadius: CGFloat { GridPoster.cornerRadius }
 
     /// Explicit progress wins; otherwise an O(1) Continue Watching lookup so
     /// a started movie/show carries its progress bar EVERYWHERE it appears
@@ -1242,9 +1257,17 @@ private struct SpoilerBlur: ViewModifier {
 enum AppGlass {
     static let focusTint = Color.white.opacity(0.92)
     static let currentTint = Color.white.opacity(0.18)
+    /// Glass that is an item itself (the billboard's dots): light enough to
+    /// read on any picture, clearly below the focus highlight.
+    static let idleTint = Color.white.opacity(0.4)
     static let text = Color.white
     static let textMuted = Color.white.opacity(0.62)
     static let textOnFocus = Color.black.opacity(0.85)
+    /// THE glass: every Liquid Glass surface in the app is this one —
+    /// `.regular`, darkened by this tint (text stays crisp over bright art).
+    /// Only floating things are glass (docs/UI-DESIGN.md §1).
+    static let surfaceTint = Color.black.opacity(0.3)
+
     /// Real Liquid Glass is used (tvOS 26+, boxes that can afford it).
     static var isReal: Bool {
         if #available(tvOS 26.0, *) {
@@ -1254,13 +1277,63 @@ enum AppGlass {
     }
 }
 
-extension View {
-    /// The glass material behind this view, in `shape`. As a BACKGROUND —
-    /// never wrapping focusable content (that hides it from the focus
-    /// engine).
-    @MainActor
-    func glassSurface<S: Shape>(in shape: S) -> some View {
-        background(Color.clear.liquidGlass(in: shape))
+/// THE FLAT CONTROL — everything in the page that you press (buttons,
+/// pills, tabs, keys, rows, tiles): translucent white at rest, solid white
+/// with dark content when focused. Each control keeps its own shape and
+/// size; these are its colours (docs/UI-DESIGN.md §1).
+enum FlatControl {
+    static let rest = Color.white.opacity(0.13)
+    /// Lists of many (Settings rows): fainter, or the page turns grey.
+    static let restSubtle = Color.white.opacity(0.07)
+    /// The current one of a set (a selected pill or tab).
+    static let selected = Color.white.opacity(0.28)
+    static let focus = Color.white
+    static let content = Color.white
+    static let contentMuted = AppGlass.textMuted
+    static let contentOnFocus = Color.black
+    static let focusChange: Animation = .easeOut(duration: 0.18)
+}
+
+/// A choice in the page as a pill (filters, tabs, shapes): the flat
+/// control — the selected one on the brighter fill. Put it in a Button's
+/// label; it reads the focus itself.
+struct FlatChip: View {
+    @Environment(\.isFocused) private var isFocused
+    let label: String
+    var selected = false
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 24, weight: .medium))
+            .lineLimit(1)
+            .padding(.horizontal, 22)
+            .frame(height: 52)
+            .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
+            .background(Capsule().fill(isFocused ? FlatControl.focus
+                                       : selected ? FlatControl.selected : FlatControl.rest))
+            .scaleEffect(isFocused ? 1.06 : 1)
+            .animation(FlatControl.focusChange, value: isFocused)
+    }
+}
+
+/// A round icon control in the page (move, rename, a check, a keypad key):
+/// the flat control as a circle.
+struct FlatIconCircle: View {
+    @Environment(\.isFocused) private var isFocused
+    let icon: String
+    var size: CGFloat = 56
+    var iconSize: CGFloat = 20
+    /// The icon's colour at rest (e.g. a ticked check), else white.
+    var restTint: Color = FlatControl.content
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: iconSize, weight: .semibold))
+            .foregroundStyle(isFocused ? FlatControl.contentOnFocus : restTint)
+            .frame(width: size, height: size)
+            .background(Circle().fill(isFocused ? FlatControl.focus : FlatControl.rest))
+            .scaleEffect(isFocused ? 1.08 : 1)
+            .animation(FlatControl.focusChange, value: isFocused)
     }
 }
 
@@ -1350,13 +1423,83 @@ struct GlassFocusRim: View {
 struct GlassHighlight<S: Shape>: View {
     let focused: Bool
     let shape: S
+    /// Another tint than the focus / current ones (e.g. `AppGlass.idleTint`
+    /// for glass that is an item itself, not a marker).
+    var tint: Color? = nil
+    /// Glass at all (false: a plain fill — for markers in the page, which
+    /// are flat).
+    var glass = true
 
     var body: some View {
-        if #available(tvOS 26.0, *), AppGlass.isReal, !RenderProbe.shared.flags.noGlass {
-            Color.clear.glassEffect(
-                .regular.tint(focused ? AppGlass.focusTint : AppGlass.currentTint), in: shape)
+        let tint = tint ?? (focused ? AppGlass.focusTint : AppGlass.currentTint)
+        if #available(tvOS 26.0, *), glass, AppGlass.isReal, !RenderProbe.shared.flags.noGlass {
+            Color.clear.glassEffect(.regular.tint(tint), in: shape)
         } else {
-            shape.fill(focused ? AppGlass.focusTint : AppGlass.currentTint)
+            shape.fill(tint)
+        }
+    }
+}
+
+/// THE APP'S CONTROL STYLE — the top bar's: items in one floating glass
+/// capsule, and ONE highlight that glides to the current item (bright white
+/// while the control has focus — dark content on it — faint otherwise).
+/// Everything button-like is built from this: the top navigation, the
+/// billboard's position dots, …
+///
+/// Use: lay the items out in an `HStack(spacing: 0)`, mark each with
+/// `.glassPillItem(id, in: namespace)`, and close the stack with
+/// `.glassPill(highlight: currentID, in: namespace, focused: …)`.
+enum GlassPill {
+    /// Sizes of a standard control (the top bar). Text on a TV shouldn't go
+    /// below ~23–25 pt (the system's caption sizes); 24 pt semibold in a
+    /// 48 pt item gives a 60 pt pill.
+    static let itemHeight: CGFloat = 48
+    static let textSize: CGFloat = 24
+    static let iconSize: CGFloat = 22
+    static let textPadding: CGFloat = 22
+    /// Between the pill's edge and its items (and their highlight).
+    static let inset: CGFloat = 6
+    /// The highlight gliding to another item, and changing with focus.
+    static let glide: Animation = .smooth(duration: 0.3)
+    static let focusChange: Animation = .easeOut(duration: 0.2)
+
+    /// An item's content colour: dark on the bright focus highlight, white
+    /// when current, muted otherwise.
+    static func contentColor(current: Bool, onFocusHighlight: Bool) -> Color {
+        onFocusHighlight ? AppGlass.textOnFocus : current ? AppGlass.text : AppGlass.textMuted
+    }
+}
+
+extension View {
+    /// One item of a glass pill: where the highlight goes when `id` is the
+    /// current one.
+    func glassPillItem<ID: Hashable>(_ id: ID, in namespace: Namespace.ID) -> some View {
+        matchedGeometryEffect(id: id, in: namespace, isSource: true)
+    }
+
+    /// Closes a row of `glassPillItem`s into the app's glass pill, with the
+    /// highlight on the item `id` (`inset`: `GlassPill.inset`, less for
+    /// small pills).
+    @MainActor
+    func glassPill<ID: Hashable>(highlight id: ID, in namespace: Namespace.ID, focused: Bool,
+                                 inset: CGFloat = GlassPill.inset) -> some View {
+        glassHighlight(on: id, in: namespace, focused: focused)
+            .padding(inset)
+            // The app's glass surface (see `AppGlass`).
+            .background { Color.clear.liquidGlass(in: Capsule()) }
+    }
+
+    /// Just the gliding highlight behind a row of `glassPillItem`s, without
+    /// the pill around them (for items that are glass themselves, like the
+    /// billboard's dots).
+    @MainActor
+    func glassHighlight<ID: Hashable>(on id: ID, in namespace: Namespace.ID, focused: Bool,
+                                      glass: Bool = true) -> some View {
+        background {
+            GlassHighlight(focused: focused, shape: Capsule(), glass: glass)
+                .matchedGeometryEffect(id: id, in: namespace, isSource: false)
+                .animation(GlassPill.glide, value: id)
+                .animation(GlassPill.focusChange, value: focused)
         }
     }
 }
@@ -1365,9 +1508,18 @@ struct GlassHighlight<S: Shape>: View {
 /// treatment every glass surface in the app goes through (rail, filter pills,
 /// search bar, detail icon circles, season chips).
 extension View {
-    @ViewBuilder
     @MainActor
     func liquidGlass<S: Shape>(in shape: S) -> some View {
+        modifier(GlassSurface(shape: shape))
+    }
+}
+
+/// `liquidGlass`: Liquid Glass — or, Surfaces set to Flat, the app's flat
+/// surface (it follows the setting live).
+private struct GlassSurface<S: Shape>: ViewModifier {
+    let shape: S
+
+    func body(content: Content) -> some View {
         // `atvGlass` has had a solid fallback for the slower boxes for a while;
         // this one — which is what the rail, the filter pills, the search bar,
         // the detail icon circles and EVERY unselected season chip actually call
@@ -1375,25 +1527,14 @@ extension View {
         // in one scroller, and the rail was a full-height live blur that
         // re-composited through its own expand/collapse animation.
         if RenderProbe.shared.flags.noGlass {
-            self.background(Color.white.opacity(0.14), in: shape)
+            content.background(Color.white.opacity(0.14), in: shape)
         } else if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
-            self.background(FusionMaterials.dialog, in: shape)
+            content.background(FusionMaterials.dialog, in: shape)
         } else if #available(tvOS 26.0, *) {
-            self.glassEffect(.regular, in: shape)
+            content.glassEffect(.regular.tint(AppGlass.surfaceTint), in: shape)
         } else {
-            self.background(.ultraThinMaterial, in: shape)
+            content.background(.ultraThinMaterial, in: shape)
         }
-    }
-}
-
-extension View {
-    /// `liquidGlass` only while `active` — for controls whose focused state
-    /// swaps the glass for a solid fill. Rendered as a BACKGROUND view, never
-    /// wrapping the content: a `glassEffect` wrapped around focusable content
-    /// hides it from the tvOS focus engine (the detail page's action row
-    /// became a focus trap that swallowed every direction).
-    func liquidGlassIf<S: Shape>(_ active: Bool, in shape: S) -> some View {
-        background { if active { Color.clear.liquidGlass(in: shape) } }
     }
 }
 
@@ -1452,6 +1593,8 @@ struct GridPosterCell: View {
     let captionWidth: CGFloat
     let onSelect: (MetaItem) -> Void
     var onPlayManually: (MetaItem, MetaVideo?) -> Void = { _, _ in }
+    /// Where the card is, for its hold menu (`TitleMenu`).
+    var menuPlace: TitleMenu.Place = .standard
     /// Optional external focus tracking (Discover's back-to-top uses it).
     var gridFocus: FocusState<String?>.Binding? = nil
     @State private var focused = false
@@ -1460,18 +1603,12 @@ struct GridPosterCell: View {
         VStack(alignment: .leading, spacing: 0) {
             button
 
-            // Settings → Layout → "Poster labels". The switch used to be wired
-            // to a branch inside `PosterCard` that a constant made unreachable,
-            // so it did nothing at all; this is the caption it was always meant
-            // to control.
-            if layout.showPosterLabels {
-                ATVCardCaption(
-                    title: item.name,
-                    subtitle: item.year,
-                    width: captionWidth,
-                    lowered: focused
-                )
-            }
+            ATVCardCaption(
+                title: item.name,
+                subtitle: item.year,
+                width: captionWidth,
+                lowered: focused
+            )
         }
     }
 
@@ -1490,7 +1627,7 @@ struct GridPosterCell: View {
                 }
         }
         .mediaCardButtonStyle()
-        .posterHoldMenu(item) { onSelect(item) }
+        .titleMenu(item, in: menuPlace)
         .onPlayPauseCommand { onPlayManually(item, nil) }
 
         if let gridFocus {
@@ -1802,6 +1939,25 @@ struct RatingBadge: View {
 struct MDBListRatingsRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let entries: [MDBListRatingEntry]
+    /// In a line of text (Home's billboard): the text's size and
+    /// brightness, icons a text line tall and a little less saturated.
+    var inline = false
+    /// As chips in the title badge's shape (`TitleBadge`), so they sit with
+    /// it as one row of equals: the source's short name in its brand colour,
+    /// then the score — the outline in the brand colour too, or neutral.
+    var chips: ChipStyle? = nil
+
+    /// Render Lab → Billboard ratings.
+    enum ChipStyle: String, CaseIterable {
+        case logos, chips, chipsNeutral
+        var displayName: String {
+            switch self {
+            case .logos: return "Logos"
+            case .chips: return "Chips, brand-coloured outline"
+            case .chipsNeutral: return "Chips, neutral outline"
+            }
+        }
+    }
 
     static let iconHeight: CGFloat = 34
 
@@ -1816,20 +1972,67 @@ struct MDBListRatingsRow: View {
         return entries
     }
 
+    private func chip(_ entry: MDBListRatingEntry, brandOutline: Bool) -> some View {
+        let brand = entry.provider.badgeStyle(score: Double(entry.text)).fill
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        return HStack(spacing: 6) {
+            if let stacked = entry.provider.stackedLabel {
+                // Two small lines in the height of one: a long name stays
+                // readable without widening the chip.
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(stacked.top).foregroundStyle(brand)
+                    Text(stacked.bottom).foregroundStyle(stacked.bottomFill ?? brand)
+                }
+                .font(.system(size: 8.5, weight: .heavy))
+                .tracking(0.4)
+            } else {
+                Text(entry.provider.label)
+                    .font(.system(size: 17, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(brand)
+            }
+            Text(entry.text)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.85))
+        }
+        // (One height for every chip, stacked name or not.)
+        .frame(height: 21)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .overlay {
+            if brandOutline {
+                shape.stroke(brand, lineWidth: 1.25).opacity(0.7)
+            } else {
+                shape.stroke(Color.white.opacity(0.4), lineWidth: 1.25)
+            }
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 26) {
+        if let chips, chips != .logos {
+            HStack(spacing: 10) {
+                ForEach(entries) { chip($0, brandOutline: chips == .chips) }
+            }
+        } else {
+            logos
+        }
+    }
+
+    private var logos: some View {
+        HStack(spacing: inline ? 18 : 26) {
             ForEach(entries) { entry in
-                HStack(spacing: 9) {
+                HStack(spacing: inline ? 7 : 9) {
                     if let icon = entry.provider.iconAsset {
                         Image(icon)
                             .resizable()
                             .scaledToFit()
-                            .frame(height: Self.iconHeight)
+                            .frame(height: inline ? 24 : Self.iconHeight)
+                            .saturation(inline ? 0.8 : 1)
                     } else {
                         label(entry)
                     }
                     Text(entry.text)
-                        .font(.system(size: 26))
+                        .font(.system(size: inline ? 24 : 26))
                         .foregroundStyle(Color.white.opacity(0.62))
                 }
             }
@@ -1854,6 +2057,35 @@ struct RatingBadgeStyle {
 }
 
 extension MDBListProvider {
+    /// Rotten Tomatoes' two scores, named in two small lines on a chip
+    /// (their short labels — "RT", "RT🍿" — don't sit well next to the
+    /// others).
+    /// Each source is recreated from its own COLOURS (no drawings): the
+    /// bottom line can carry a second one — the tomato's leaf green, the
+    /// popcorn bucket's red and white stripes.
+    var stackedLabel: (top: String, bottom: String, bottomFill: AnyShapeStyle?)? {
+        func rgb(_ hex: UInt32) -> Color {
+            Color(red: Double((hex >> 16) & 0xFF) / 255,
+                  green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255)
+        }
+        switch self {
+        case .tomatoes:
+            return ("ROTTEN", "TOMATOES", AnyShapeStyle(rgb(0x3FB34F)))
+        case .audience:
+            // Hard-edged stripes across the word, like the bucket.
+            let red = rgb(0xE8392B), white = Color.white, stripes = 8
+            let stops = (0..<stripes).flatMap { i -> [Gradient.Stop] in
+                let color = i.isMultiple(of: 2) ? red : white
+                return [.init(color: color, location: Double(i) / Double(stripes)),
+                        .init(color: color, location: Double(i + 1) / Double(stripes))]
+            }
+            return ("POPCORN", "METER", AnyShapeStyle(LinearGradient(
+                stops: stops, startPoint: .leading, endPoint: .trailing)))
+        default: return nil
+        }
+    }
+
     /// The source's icon in the asset catalog (nil: none — a text chip).
     var iconAsset: String? {
         switch self {
@@ -2219,9 +2451,7 @@ struct FusionToastHost: View {
                 }
                 .padding(.horizontal, CueSpacing.xl)
                 .padding(.vertical, CueSpacing.md)
-                .atvGlass(in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
+                .liquidGlass(in: Capsule())
                 .padding(.bottom, CueSpacing.huge)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -2269,4 +2499,36 @@ extension View {
     }
 }
 
+/// A small pill — Search's recent searches, a folder's tabs: a faint
+/// platter (lighter when `selected`), the light platter with dark text when
+/// focused, a little lift.
+struct PillButtonStyle: ButtonStyle {
+    var quiet = false
+    var selected = false
 
+    func makeBody(configuration: Configuration) -> some View {
+        Pill(configuration: configuration, quiet: quiet, selected: selected)
+    }
+
+    private struct Pill: View {
+        @Environment(\.isFocused) private var isFocused
+        let configuration: ButtonStyle.Configuration
+        let quiet: Bool
+        let selected: Bool
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 24, weight: .medium))
+                .lineLimit(1)
+                .padding(.horizontal, 22)
+                .frame(height: 52)
+                .foregroundStyle(isFocused ? FlatControl.contentOnFocus
+                                 : quiet ? FlatControl.contentMuted : FlatControl.content)
+                .background(Capsule().fill(isFocused ? FlatControl.focus
+                                           : selected ? FlatControl.selected
+                                           : quiet ? FlatControl.restSubtle : FlatControl.rest))
+                .scaleEffect(isFocused ? (configuration.isPressed ? 1.02 : 1.06) : 1)
+                .animation(.smooth(duration: 0.18), value: isFocused)
+        }
+    }
+}

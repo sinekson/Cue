@@ -113,8 +113,8 @@ enum FusionFocus {
 
 // MARK: - Materials (§11)
 
-/// Translucent material tones for Fusion floating layers. Paired with
-/// `.atvGlass` (Liquid Glass on tvOS 26, material fallback below).
+/// Solid tones for floating layers where live glass is too costly (the
+/// slower boxes' stand-in for `liquidGlass`).
 enum FusionMaterials {
     static let sidebar = Color(hex: 0x080A0D, alpha: 0.88)
     static let dialog = Color(hex: 0x14171D, alpha: 0.94)

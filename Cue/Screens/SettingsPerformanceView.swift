@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Settings → Performance: per-effect switches so slower Apple TVs (HD,
+/// Settings → Developer, second half: per-effect switches so slower Apple TVs (HD,
 /// 4K 1st gen) can turn off exactly the things causing lag — each row says
 /// what the effect costs and what OFF looks like. All ON = the full look.
-struct PerformanceSettingsDetail: View {
+struct PerformanceSettings: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var playerStore: PlayerSettingsStore
     @ObservedObject private var store = PerformanceSettingsStore.shared
@@ -18,8 +18,7 @@ struct PerformanceSettingsDetail: View {
     }
 
     var body: some View {
-        DetailScaffold(title: SettingsCategory.performance.title,
-                       subtitle: SettingsCategory.performance.subtitle) {
+        VStack(alignment: .leading, spacing: CueSpacing.xl) {
 
             if store.reduceMotion { reduceMotionBanner }
 
@@ -300,9 +299,9 @@ private struct PerfRowLabel<Accessory: View>: View {
 }
 
 
-/// Settings → Render Lab (top of Settings): the FPS overlay and the render
-/// bisect switches in one place, for quick A/B runs while tuning Home.
-struct RenderLabDetail: View {
+/// Settings → Developer, first half (Render Lab): the FPS overlay and the
+/// render bisect switches in one place, for quick A/B runs while tuning.
+struct RenderLabSettings: View {
     @ObservedObject private var store = PerformanceSettingsStore.shared
     @ObservedObject private var probe = RenderProbe.shared
 
@@ -311,15 +310,8 @@ struct RenderLabDetail: View {
     }
 
     var body: some View {
-        DetailScaffold(title: SettingsCategory.renderLab.title,
-                       subtitle: SettingsCategory.renderLab.subtitle) {
+        VStack(alignment: .leading, spacing: CueSpacing.xl) {
             SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
-                PerfToggleRow(
-                    icon: "square.stack.3d.up",
-                    title: "New Home",
-                    subtitle: "Rows in UIKit: native focus, our own movement to the fixed box. Off: the previous Home, kept for reference.",
-                    isOn: Binding(get: { probe.flags.uikitHome }, set: { probe.flags.uikitHome = $0 })
-                )
                 PerfToggleRow(
                     icon: "paintpalette",
                     title: "Poster rims",
@@ -373,6 +365,215 @@ struct RenderLabDetail: View {
                     options: [0.2, 0.25, 0.3, 0.4, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
                 ) { raw in
                     if let v = Double(raw) { probe.flags.tintFade = v }
+                }
+                CueDropdown(
+                    title: "Tint strength",
+                    subtitle: "Title colour: how strongly the colour covers the background.",
+                    icon: "drop.fill",
+                    selection: String(probe.flags.tintStrength),
+                    options: [0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0].map { CueDropdownOption(String($0), "\(Int(($0 * 100).rounded())) %") }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintStrength = v }
+                }
+                CueDropdown(
+                    title: "Tint colour",
+                    subtitle: "Title colour: the artwork's average colour, its dominant colour, or its two strongest colours blended across the screen.",
+                    icon: "eyedropper",
+                    selection: probe.flags.tintMode,
+                    options: FixedFocusTint.Mode.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.tintMode = raw
+                }
+                CueDropdown(
+                    title: "Tint brightness",
+                    subtitle: "Title colour: how bright the colour is before it is laid over the dark base.",
+                    icon: "sun.min",
+                    selection: String(probe.flags.tintBrightness),
+                    options: [0.45, 0.55, 0.65, 0.75, 0.85, 1.0].map { CueDropdownOption(String($0), "\(Int(($0 * 100).rounded())) %") }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintBrightness = v }
+                }
+                PerfToggleRow(
+                    icon: "flame",
+                    title: "Tint: brighter warm colours",
+                    subtitle: "Yellow and orange get extra brightness, so they read as gold instead of brown.",
+                    isOn: Binding(get: { probe.flags.tintWarmBoost }, set: { probe.flags.tintWarmBoost = $0 })
+                )
+                PerfToggleRow(
+                    icon: "shadow",
+                    title: "Box shadow",
+                    subtitle: "A soft shadow behind and below the fixed box.",
+                    isOn: Binding(get: { probe.flags.boxShadow }, set: { probe.flags.boxShadow = $0 })
+                )
+                PerfToggleRow(
+                    icon: "sparkle",
+                    title: "Box glow",
+                    subtitle: "A halo around the fixed box in the title's colour.",
+                    isOn: Binding(get: { probe.flags.boxGlow }, set: { probe.flags.boxGlow = $0 })
+                )
+                PerfToggleRow(
+                    icon: "circle.dashed",
+                    title: "Vignette",
+                    subtitle: "The background's corners and edges a little darker.",
+                    isOn: Binding(get: { probe.flags.vignette }, set: { probe.flags.vignette = $0 })
+                )
+                CueDropdown(
+                    title: "Grain",
+                    subtitle: "Fine static grain over the background (behind the posters).",
+                    icon: "aqi.medium",
+                    selection: String(probe.flags.grain),
+                    options: [(0.0, "Off"), (0.05, "Light"), (0.1, "Medium"), (0.16, "Strong"), (0.25, "Very strong")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.grain = v }
+                }
+                PerfToggleRow(
+                    icon: "circle.dashed.inset.filled",
+                    title: "Billboard vignette",
+                    subtitle: "The billboard's edges and corners darker (stronger than the rows' vignette), so the dots read on any picture.",
+                    isOn: Binding(get: { probe.flags.billboardVignette }, set: { probe.flags.billboardVignette = $0 })
+                )
+                CueDropdown(
+                    title: "Details: picture edge",
+                    subtitle: "The picture's bottom edge as it scrolls away: melting into the colours, or a plain edge with a shadow.",
+                    icon: "square.3.layers.3d.down.right",
+                    selection: probe.flags.detailsPictureEdge,
+                    options: [CueDropdownOption("melt", "Melts into the colours"),
+                              CueDropdownOption("shadow", "Plain edge, shadow")]
+                ) { raw in
+                    probe.flags.detailsPictureEdge = raw
+                }
+                CueDropdown(
+                    title: "Details: picture dim below",
+                    subtitle: "How much the picture darkens on Episodes and More (the left fade stays).",
+                    icon: "circle.lefthalf.filled",
+                    selection: String(probe.flags.detailsPictureDim),
+                    options: [0.0, 0.3, 0.45, 0.6, 0.75].map {
+                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
+                    }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.detailsPictureDim = v }
+                }
+                PerfToggleRow(
+                    icon: "captions.bubble",
+                    title: "Button captions",
+                    subtitle: "Details: the focused icon button's name, small, under it.",
+                    isOn: Binding(get: { probe.flags.buttonCaptions }, set: { probe.flags.buttonCaptions = $0 })
+                )
+                PerfToggleRow(
+                    icon: "network.slash",
+                    title: "MDBList off",
+                    subtitle: "No MDBList requests at all (its daily limit, while developing). Cached ratings still show; otherwise the catalog's IMDb score.",
+                    isOn: Binding(get: { probe.flags.noMDBList }, set: { probe.flags.noMDBList = $0 })
+                )
+                CueDropdown(
+                    title: "Card edge",
+                    subtitle: "How the posters, cards and the box stand off the background.",
+                    icon: "rectangle.on.rectangle",
+                    selection: probe.flags.cardEdge,
+                    options: FixedFocusCardEdge.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.cardEdge = raw
+                }
+                CueDropdown(
+                    title: "Left fade: Episodes",
+                    subtitle: "The left fade on the Detail page's Episodes and More, compared to the overview's.",
+                    icon: "rectangle.lefthalf.inset.filled",
+                    selection: String(probe.flags.episodesLeftFade),
+                    options: [0.0, 0.4, 0.6, 0.8, 0.9, 1.0].map {
+                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
+                    }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.episodesLeftFade = v }
+                }
+                CueDropdown(
+                    title: "Left fade: Home rows",
+                    subtitle: "The billboard's left fade behind Home's rows, compared to the billboard's.",
+                    icon: "rectangle.lefthalf.inset.filled",
+                    selection: String(probe.flags.homeLeftFade),
+                    options: [0.0, 0.2, 0.3, 0.4, 0.6, 0.8, 0.9, 1.0].map {
+                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
+                    }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.homeLeftFade = v }
+                }
+                CueDropdown(
+                    title: "Details: picture blur below",
+                    subtitle: "How much the picture blurs on Episodes and More — and Home's \"Artwork, blurred\" background (a still, made once).",
+                    icon: "drop.halffull",
+                    selection: String(probe.flags.detailsPictureBlur),
+                    options: [(0.0, "Off"), (6.0, "Light"), (12.0, "Medium"), (20.0, "Strong"), (32.0, "Very strong")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.detailsPictureBlur = v }
+                }
+                CueDropdown(
+                    title: "Focus outline",
+                    subtitle: "The focused box's outline: the top bar's light (brightest top and bottom), or plain white.",
+                    icon: "square.dashed",
+                    selection: probe.flags.focusOutline,
+                    options: [CueDropdownOption("light", "Top bar's light"), CueDropdownOption("white", "White")]
+                ) { raw in
+                    probe.flags.focusOutline = raw
+                }
+                CueDropdown(
+                    title: "Billboard ratings",
+                    subtitle: "The ratings next to the badge: the sources' logos, or chips in the badge's shape with the source's name in its colour.",
+                    icon: "star.leadinghalf.filled",
+                    selection: probe.flags.billboardRatings,
+                    options: MDBListRatingsRow.ChipStyle.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.billboardRatings = raw
+                }
+                CueDropdown(
+                    title: "Badge",
+                    subtitle: "The ENDED / ONGOING badge on the billboard and on Details.",
+                    icon: "capsule",
+                    selection: probe.flags.badgeStyle,
+                    options: TitleBadge.Style.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.badgeStyle = raw
+                }
+                PerfToggleRow(
+                    icon: "rectangle.grid.1x2",
+                    title: "Details: rows",
+                    subtitle: "Details built like Home: the billboard, then the seasons' episodes and More Like This as Home's rows, with Home's scroll. Off: the old pages.",
+                    isOn: Binding(get: { probe.flags.detailsOnRows }, set: { probe.flags.detailsOnRows = $0 })
+                )
+                PerfToggleRow(
+                    icon: "text.justify",
+                    title: "Summary: justified",
+                    subtitle: "Billboard and Details: the summary's lines filled to the full width (word gaps stretched, long words hyphenated). Off: ragged right.",
+                    isOn: Binding(get: { probe.flags.summaryJustified }, set: { probe.flags.summaryJustified = $0 })
+                )
+                CueDropdown(
+                    title: "Billboard bottom fade",
+                    subtitle: "How far up the billboard's picture fades into the colours at its bottom — where it melts away scrolling down.",
+                    icon: "rectangle.bottomhalf.inset.filled",
+                    selection: String(probe.flags.billboardBottomFade),
+                    options: [(0.0, "Off (plain edge)"), (120.0, "120 pt"), (200.0, "200 pt"), (300.0, "300 pt"), (420.0, "420 pt")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.billboardBottomFade = v }
+                }
+                CueDropdown(
+                    title: "Billboard scrim",
+                    subtitle: "What darkens the billboard's artwork behind the text: the whole left and bottom, or only around the text — in black or in the title's own colour.",
+                    icon: "text.below.photo",
+                    selection: probe.flags.billboardScrim,
+                    options: FixedFocusBillboardScrim.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.billboardScrim = raw
+                }
+                CueDropdown(
+                    title: "Previous poster",
+                    subtitle: "The poster left of the box in the focused row: how visible it stays.",
+                    icon: "rectangle.portrait.lefthalf.inset.filled",
+                    selection: String(probe.flags.previousPosterAlpha),
+                    options: [(0.3, "30 %"), (0.45, "45 %"), (0.6, "60 %"), (0.75, "75 %"), (1.0, "Not dimmed")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.previousPosterAlpha = v }
                 }
                 PerfToggleRow(
                     icon: "sun.max",
@@ -442,6 +643,44 @@ struct RenderLabDetail: View {
                     title: "Box change: drift",
                     subtitle: "Home: the box's new title fades in while shifting a little in the direction you move. Off: plain crossfade.",
                     isOn: Binding(get: { probe.flags.boxDrift }, set: { probe.flags.boxDrift = $0 })
+                )
+                CueDropdown(
+                    title: "Billboard scroll",
+                    subtitle: "Home: the scroll between the billboard and the rows (both ways). Auto: from Up / Down, a little longer for the longer distance.",
+                    icon: "rectangle.portrait.and.arrow.forward",
+                    selection: String(probe.flags.billboardScrollDuration),
+                    options: [(0.0, "Auto (≈ 0.7 s at 0.5 s Up / Down)"), (0.4, "0.4 s"), (0.45, "0.45 s"), (0.5, "0.5 s"),
+                              (0.55, "0.55 s"), (0.6, "0.6 s"), (0.65, "0.65 s"), (0.7, "0.7 s"), (0.8, "0.8 s")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.billboardScrollDuration = v }
+                }
+                PerfToggleRow(
+                    icon: "text.line.first.and.arrowtriangle.forward",
+                    title: "Next row's name: same pace",
+                    subtitle: "Home, between the billboard and the rows: the name moves the whole way, slower than the cards, and they meet at the row's place. Off: it holds on the billboard until the cards reach it, then moves with them.",
+                    isOn: Binding(get: { probe.flags.nextNameSamePace }, set: { probe.flags.nextNameSamePace = $0 })
+                )
+                PerfToggleRow(
+                    icon: "rectangle.portrait.and.arrow.forward",
+                    title: "Continue Watching, Saved for Later: moving focus",
+                    subtitle: "Home: the rows stay and focus moves across their cards, a caption under each (as collections). Off: the fixed box, at the cards' own size.",
+                    isOn: Binding(get: { probe.flags.rowsMovingFocus }, set: { probe.flags.rowsMovingFocus = $0 })
+                )
+                CueDropdown(
+                    title: "Moving focus: lift",
+                    subtitle: "Home, rows with moving focus (collections; Continue Watching and Saved for Later when switched): how much the focused card grows, with a shadow under it. Off: it keeps its size, only outlined — as the fixed box.",
+                    icon: "arrow.up.left.and.arrow.down.right",
+                    selection: String(probe.flags.movingFocusLift),
+                    options: (0...8).map { CueDropdownOption(String($0), $0 == 0 ? "Off (outline only)" : "\($0) %") }
+                ) { raw in
+                    if let v = Int(raw) { probe.flags.movingFocusLift = v }
+                }
+                PerfToggleRow(
+                    icon: "shadow",
+                    title: "Moving focus: shadow",
+                    subtitle: "Home, rows with moving focus: a soft shadow under the lifted card.",
+                    isOn: Binding(get: { probe.flags.movingFocusShadow }, set: { probe.flags.movingFocusShadow = $0 })
                 )
                 CueDropdown(
                     title: "Up / Down curve",

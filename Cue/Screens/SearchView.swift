@@ -4,19 +4,18 @@ import SwiftUI
 final class SearchViewModel: ObservableObject {
     @Published var query = ""
     @Published var results: [MetaItem] = []
+    /// How well known the titles of this search are (TMDB) — for the order.
+    @Published var fame: [TMDBService.SearchFame] = []
     @Published var isSearching = false
-    /// Shown while the query is empty — the tab opens onto something browseable
-    /// (Apple TV style) instead of a bare "start typing" void. Loaded once.
-    @Published var trending: [MetaItem] = []
 
     private var searchTask: Task<Void, Never>?
-    private var loadedTrending = false
 
     func search(addonManager: AddonManager) {
         searchTask?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2 else {
             results = []
+            fame = []
             isSearching = false
             return
         }
@@ -25,6 +24,8 @@ final class SearchViewModel: ObservableObject {
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
+            // TMDB's view of the same search, side by side with the add-ons'.
+            async let fame = TMDBService.searchFame(trimmed)
 
             // Collect by target INDEX, not by completion. `for await` on a task
             // group yields in the order tasks finish, so the merged list was
@@ -62,6 +63,9 @@ final class SearchViewModel: ObservableObject {
                     merged.append(item)
                 }
             }
+            let known = await fame
+            guard !Task.isCancelled else { return }
+            self.fame = known
             results = merged
             isSearching = false
         }
@@ -115,212 +119,261 @@ final class SearchViewModel: ObservableObject {
         if addon.manifest.providesStreams { return 2 }
         return 1
     }
-
-    /// First extra-free catalog's top titles, fetched once per session.
-    func loadTrendingIfNeeded(addonManager: AddonManager) async {
-        guard !loadedTrending else { return }
-        loadedTrending = true
-        // Same ordering problem as search: "the first add-on with an
-        // extra-free catalog" made a torrent aggregator's release listing the
-        // Trending shelf whenever one happened to be installed above Cinemeta.
-        let ranked = addonManager.catalogAddons
-            .enumerated()
-            .sorted { a, b in
-                let (ra, rb) = (Self.searchRank(a.element), Self.searchRank(b.element))
-                return ra == rb ? a.offset < b.offset : ra < rb
-            }
-            .map(\.element)
-        for addon in ranked {
-            guard let catalog = (addon.manifest.catalogs ?? []).first(where: { !$0.requiresExtra })
-            else { continue }
-            if let items = try? await StremioAPI.catalog(addon: addon, catalog: catalog),
-               !items.isEmpty {
-                trending = Array(items.deduplicatedByID().prefix(18))
-                return
-            }
-        }
-    }
 }
 
+/// SEARCH: Apple's own search field and keyboard at the top (dictation with
+/// the remote's mic); below it — recent searches while it's empty — in a fixed
+/// area (nothing scrolls — the keyboard stays where it is), the results on
+/// Home's rows:
+/// - TOP RESULT first: a small billboard (logo, facts, chips, summary over
+///   its backdrop — see `FixedFocusBannerCell`);
+/// - then Movies and Series (the top result's kind first): posters at a
+///   glance, name and year under each (Home's destination rows).
+/// One row view: Up and Down between them are the rows' own moves.
 struct SearchView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var posterLayout: HomeCatalogSettingsStore
     @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var mdblist: MDBListSettingsStore
     // Owned by RootView so the query + results PERSIST across tab switches.
-    // A local @StateObject would be rebuilt (and cleared) every time the Search
-    // tab is re-entered.
     @ObservedObject var viewModel: SearchViewModel
+    /// Its tab is in front (the rows leave the focus engine otherwise).
+    var active = true
 
     let onSelect: (MetaItem) -> Void
-    var onOpenDiscover: () -> Void = {}
+    /// Details, pushed without the system's slide (the Top Result's window
+    /// has already brought it in).
+    var onOpenInPlace: (MetaItem) -> Void = { _ in }
 
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth, maximum: posterLayout.posterSize.posterWidth), spacing: CueSpacing.lg, alignment: .top)] }
+    /// Recent searches (newest first), shown while the field is empty.
+    @AppStorage("cue.search.recent") private var recentStorage = ""
+    private var recent: [String] { recentStorage.split(separator: "\n").map(String.init) }
+
+    static let topRowID = "search.top"
+    static let moviesRowID = "search.movies"
+    static let seriesRowID = "search.series"
+
+    /// The focused row's name, in the area below the keyboard.
+    private static let rowsTop: CGFloat = 24
+    /// Posters here: smaller than Home's — about half its space is the
+    /// keyboard's — seven across.
+    private static let posterHeight: CGFloat = 330
+    /// The gap between a row (with its captions) and the next one's name.
+    private static let rowGap: CGFloat = 48
+
+    /// The top result's banner: at most the usual banner's height, less
+    /// when the area is tight (the next row's name still shows).
+    private static func topResultHeight(area: CGFloat) -> CGFloat {
+        min(FixedFocusMetrics.bannerHeight, area - rowsTop - 2 * FixedFocusMetrics.titleHeight - rowGap - 40)
+    }
+
+    /// The next row starts right under the focused one (the taller of the
+    /// banner and a poster row with its captions, then the gap): its name
+    /// and the top of its posters show — no empty band.
+    private static func belowVisible(area: CGFloat) -> CGFloat {
+        let tallest = max(topResultHeight(area: area), posterHeight + FixedFocusMetrics.captionRoom)
+        let nextTop = rowsTop + FixedFocusMetrics.titleHeight + tallest + rowGap
+        return max(18, area - nextTop - FixedFocusMetrics.titleHeight)
+    }
+
+    /// The system's search field is sized for a whole screen of search;
+    /// here it sits above results: a calmer size (the text it shows — the
+    /// keyboard is the system's own).
+    private static func styleSearchField() {
+        UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).font =
+            .systemFont(ofSize: 40, weight: .medium)
+    }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             ATVBackground()
-            VStack(alignment: .leading, spacing: CueSpacing.lg) {
-                // Above the grid in z as well as in layout: the scroller below
-                // is deliberately unclipped (see `scrollClipDisabled`), so a
-                // row riding up used to draw straight over the field.
-                searchBar
-                    .zIndex(1)
-                ScrollView(.vertical) {
-                    if viewModel.isSearching && viewModel.results.isEmpty {
-                        CueLoadingView(label: "Searching").frame(height: 480)
-                    } else if !viewModel.results.isEmpty {
-                        // Results split by type: Movies on top, Shows below.
-                        VStack(alignment: .leading, spacing: CueSpacing.xl) {
-                            if !movieResults.isEmpty {
-                                resultSection(title: "Movies", items: movieResults)
-                            }
-                            if !showResults.isEmpty {
-                                resultSection(title: "Shows", items: showResults)
-                            }
-                        }
-                        .padding(.top, CueSpacing.sm)
-                        .padding(.bottom, CueSpacing.huge)
-                    } else if viewModel.query.count >= 2 {
-                        CueEmptyState(
-                            icon: "magnifyingglass",
-                            title: "No results",
-                            message: "Nothing matched “\(viewModel.query)”."
-                        )
-                        .frame(height: 480)
-                    } else if !viewModel.trending.isEmpty {
-                        // Idle: something to browse instead of an empty void.
-                        resultSection(title: "Trending", items: viewModel.trending)
-                            .padding(.top, CueSpacing.sm)
-                            .padding(.bottom, CueSpacing.huge)
-                    } else {
-                        CueEmptyState(
-                            icon: "magnifyingglass",
-                            title: "Start Searching",
-                            message: "Enter at least 2 characters"
-                        )
-                        .frame(height: 480)
-                    }
-                }
-                // Unclipped so a focused poster's platter and lift are not
-                // sheared off at the left and right ends of the grid.
-                .scrollClipDisabled()
-                // …but that let rows travel straight up the page and over the
-                // search field. This mask puts the ceiling back WITHOUT
-                // restoring the side clipping: black (keep) everywhere the
-                // scroller draws, extended far past its left, right and bottom
-                // edges, and faded out across the top so a row scrolling away
-                // dissolves just under the field instead of being cut. The
-                // headroom above the fade is the focus lift of the first row,
-                // which has to stay whole.
-                .mask(alignment: .top) {
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [.clear, .black],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: 34)
-                        Color.black
-                    }
-                    .padding(.top, -18)
-                    .padding(.horizontal, -600)
-                    .padding(.bottom, -600)
-                }
+            // The full width and down to the bottom edge, as on Home: the
+            // rows place themselves in screen coordinates.
+            GeometryReader { geo in
+                results(area: geo.size.height)
             }
-            .padding(.top, CueSpacing.xl)
+            .ignoresSafeArea(edges: [.horizontal, .bottom])
         }
-        .task { await viewModel.loadTrendingIfNeeded(addonManager: addonManager) }
+        .searchable(text: $viewModel.query, prompt: "Movies and series")
+        .onAppear(perform: Self.styleSearchField)
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search(addonManager: addonManager)
         }
     }
 
-    private var searchBar: some View {
-        HStack(spacing: CueSpacing.md) {
-            SearchField(text: $viewModel.query)
-            Button(action: onOpenDiscover) { SearchBarIcon(systemName: "square.grid.2x2") }
-                .buttonStyle(PlainCardButtonStyle())
+    @ViewBuilder
+    private func results(area: CGFloat) -> some View {
+        let rows = Self.rows(Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
+            .map(Self.withArt))
+        if !rows.isEmpty {
+            FixedFocusRows(rows: rows, featuredRowID: "", continueRowID: "", active: active,
+                           billboardStepIn: false, progress: [:],
+                           // Movies and Series: posters at a glance, Home's
+                           // destination rows (Saved for Later's look).
+                           destinationRowIDs: [Self.moviesRowID, Self.seriesRowID],
+                           // The Top Result: a small billboard.
+                           bannerRowIDs: [Self.topRowID],
+                           bannerHeight: Self.topResultHeight(area: area),
+                           destinationPosterHeight: Self.posterHeight,
+                           rowTop: Self.rowsTop,
+                           // Rows above: entirely out of the area, the name
+                           // and facts under their cards too.
+                           aboveVisible: -(FixedFocusMetrics.infoHeight + 24),
+                           belowVisible: Self.belowVisible(area: area),
+                           ringOnlyWithFocus: true,
+                           startsOverOnChange: true,
+                           onSelect: select, onSelectFeatured: select,
+                           onResume: { _ in },
+                           onOpenWindow: openThroughWindow,
+                           titleMenu: { item, _ in TitleMenu.shared.entries(for: item) }) { _, _ in }
+                .frame(width: 1920, height: area)
+                // Nothing slides over the keyboard.
+                .clipped()
+        } else if viewModel.isSearching {
+            CueLoadingView(label: "Searching").frame(maxWidth: .infinity).frame(height: 420)
+        } else if viewModel.query.count >= 2 {
+            CueEmptyState(icon: "magnifyingglass", title: "No results",
+                          message: "Nothing matched “\(viewModel.query)”.")
+                .frame(maxWidth: .infinity).frame(height: 420)
+        } else if viewModel.query.isEmpty, !recent.isEmpty {
+            recentSearches
+        } else {
+            Text("Search for a movie or a series — or hold the microphone button and say it.")
+                .font(.system(size: FixedFocusMetrics.textSize))
+                .foregroundStyle(AppGlass.textMuted)
+                .padding(.leading, FixedFocusMetrics.titleInset)
+                .padding(.top, 64)
         }
-        .padding(.horizontal, CueSpacing.huge)
-        .focusSection()
     }
 
-    private var movieResults: [MetaItem] {
-        viewModel.results.filter { !$0.isSeries }
-    }
-
-    private var showResults: [MetaItem] {
-        viewModel.results.filter(\.isSeries)
-    }
-
-    /// One titled grid section ("Movies" / "Shows" / "Trending"), its own focus
-    /// section so up/down moves cleanly between the groups.
-    private func resultSection(title: String, items: [MetaItem]) -> some View {
-        VStack(alignment: .leading, spacing: CueSpacing.md) {
-            RowHeader(title: title)
-                .padding(.leading, -CueSpacing.huge)   // RowHeader pads itself
-            LazyVGrid(columns: columns, alignment: .leading, spacing: CueSpacing.xl) {
-                ForEach(items) { item in
-                    GridPosterCell(
-                        item: item,
-                        captionWidth: posterLayout.posterSize.posterWidth,
-                        onSelect: onSelect
-                    )
+    /// The field empty: the recent searches (newest first) as small pills —
+    /// Select searches again — and Clear. Ours, not the system's
+    /// suggestions (those can't be sized: they were huge above results).
+    private var recentSearches: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Recent searches")
+                .font(.system(size: FixedFocusMetrics.textSize, weight: .semibold))
+                .foregroundStyle(AppGlass.textMuted)
+            HStack(spacing: 16) {
+                ForEach(recent, id: \.self) { search in
+                    Button { viewModel.query = search } label: {
+                        Label(search, systemImage: "clock.arrow.circlepath")
+                    }
+                    .buttonStyle(PillButtonStyle())
                 }
+                Button { recentStorage = "" } label: {
+                    Label("Clear", systemImage: "xmark")
+                }
+                .buttonStyle(PillButtonStyle(quiet: true))
             }
         }
-        .padding(.horizontal, CueSpacing.huge)
+        .padding(.leading, FixedFocusMetrics.titleInset)
+        .padding(.top, 48)
         .focusSection()
     }
-}
 
-
-/// Round glass icon button in the Search top bar (opens Discover).
-private struct SearchBarIcon: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let systemName: String
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 26, weight: .semibold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
-            .frame(width: 74, height: 74)
-            .background {
-                if isFocused { Circle().fill(theme.palette.secondary) }
-            }
-            .liquidGlassIf(!isFocused, in: Circle())
-            .overlay(Circle().strokeBorder(isFocused ? Color.white.opacity(0.95) : .clear, lineWidth: 3))
-            .focusLift(CueFocus.card, isFocused)
-            .animation(PerformanceSettingsStore.shared.buttonMotion(FusionMotion.focusEntry),
-                       value: isFocused)
+    /// A result's Select: Details opens through a window from its card (see
+    /// `DetailWindow`), and the query joins the recent ones.
+    private func openThroughWindow(_ item: MetaItem, source: TitleMorphSource) {
+        remember()
+        DetailWindow.open(item, from: source, settings: mdblist.settings, push: onOpenInPlace)
     }
-}
 
-/// The pill search field on glass. A plain `TextField` in a frosted resting
-/// capsule; on focus tvOS draws its own light editing surface, and we DON'T add
-/// a competing ring — otherwise the system fill sits inset inside our ring with
-/// a dark gap between them (the "weird bar" the user saw). Letting the system
-/// focus be the sole highlight means the highlight and the field are one shape.
-private struct SearchField: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @FocusState private var focused: Bool
-    @Binding var text: String
+    /// The query joins the recent ones.
+    private func remember() {
+        let query = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else { return }
+        let list = [query] + recent.filter { $0.caseInsensitiveCompare(query) != .orderedSame }
+        recentStorage = list.prefix(8).joined(separator: "\n")
+    }
 
-    var body: some View {
-        HStack(spacing: CueSpacing.sm) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(theme.palette.textTertiary)
-            TextField("Search movies & series", text: $text)
-                .textFieldStyle(.plain)
-                .focused($focused)
-                .font(.system(size: 26))
-                .foregroundStyle(theme.palette.textPrimary)
-                .tint(theme.palette.secondary)
+    /// Selecting a result: it opens, and the query joins the recent ones.
+    private func select(_ item: MetaItem) {
+        remember()
+        onSelect(item)
+    }
+
+    /// Top Result, then Movies and Series — the top result's kind first.
+    static func rows(_ ranked: [MetaItem]) -> [HomeRow] {
+        guard let top = ranked.first else { return [] }
+        let rest = ranked.dropFirst()
+        // Under each poster: its year.
+        let years = Dictionary(rest.compactMap { item in item.year.map { (item.id, $0) } },
+                               uniquingKeysWith: { first, _ in first })
+        let movies = HomeRow(id: moviesRowID, title: "Movies", items: rest.filter { $0.type == "movie" },
+                             subtitles: years)
+        let series = HomeRow(id: seriesRowID, title: "Series", items: rest.filter { $0.type != "movie" },
+                             subtitles: years)
+        let kinds = top.type == "movie" ? [movies, series] : [series, movies]
+        return [HomeRow(id: topRowID, title: "Top Result", items: [top])] + kinds.filter { !$0.items.isEmpty }
+    }
+
+    /// The order: how well the NAME matches what was typed (exactly, from
+    /// its start, anywhere, not at all), then — within each — how well known
+    /// the title is: TMDB's votes and popularity (`fame`, matched by name,
+    /// year and kind); titles TMDB doesn't know after those, rated before
+    /// unrated, by rating. The add-ons' own order only breaks ties: theirs is
+    /// a text match, blind to fame.
+    static func ranked(_ items: [MetaItem], for query: String,
+                       fame: [TMDBService.SearchFame]) -> [MetaItem] {
+        func norm(_ s: String) -> String {
+            s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        .padding(.horizontal, CueSpacing.xl)
-        .frame(height: 74)
-        .frame(maxWidth: .infinity)
-        .background(Color.clear.liquidGlass(in: Capsule()))
-        // No auto-focus: merely moving focus over the Search tab must not pop
-        // the keyboard. Focus the field only when the user actually selects it.
+        /// For matching names across sources: letters and digits only.
+        func key(_ s: String) -> String { String(norm(s).unicodeScalars.filter(CharacterSet.alphanumerics.contains)) }
+        func year(_ item: MetaItem) -> Int? {
+            item.releaseInfo.flatMap { $0.firstMatch(of: /\d{4}/) }.flatMap { Int($0.output) }
+        }
+        var fameByName: [String: [TMDBService.SearchFame]] = [:]
+        for entry in fame {
+            for name in Set([entry.name, entry.originalName].compactMap { $0 }.map(key)) {
+                fameByName[name, default: []].append(entry)
+            }
+        }
+        func score(_ item: MetaItem) -> Double? {
+            let isMovie = item.type == "movie"
+            let itemYear = year(item)
+            return fameByName[key(item.name)]?
+                .filter { $0.isMovie == isMovie }
+                .filter { entry in
+                    guard let a = entry.year, let b = itemYear else { return true }
+                    return abs(a - b) <= 1
+                }
+                .map(\.score).max()
+        }
+        let q = norm(query)
+        let scored = items.enumerated().map { offset, item -> (item: MetaItem, tier: Int, fame: Double?,
+                                                               rating: Double?, offset: Int) in
+            let name = norm(item.name)
+            let tier = name == q ? 0 : name.hasPrefix(q) ? 1 : name.contains(q) ? 2 : 3
+            return (item, tier, score(item), item.imdbRating.flatMap(Double.init), offset)
+        }
+        return scored.sorted { a, b in
+            if a.tier != b.tier { return a.tier < b.tier }
+            switch (a.fame, b.fame) {
+            case let (x?, y?) where x != y: return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: break
+            }
+            switch (a.rating, b.rating) {
+            case let (x?, y?) where x != y: return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return a.offset < b.offset
+            }
+        }.map(\.item)
+    }
+
+    /// Search results often come without a backdrop or logo: MetaHub's for
+    /// IMDb titles (a card without one shows the poster).
+    private static func withArt(_ item: MetaItem) -> MetaItem {
+        guard item.id.hasPrefix("tt"), item.background == nil || item.logo == nil else { return item }
+        return MetaItem(id: item.id, type: item.type, name: item.name, poster: item.poster,
+                        background: item.background
+                            ?? "https://images.metahub.space/background/medium/\(item.id)/img",
+                        logo: item.logo ?? "https://images.metahub.space/logo/medium/\(item.id)/img",
+                        description: item.description, releaseInfo: item.releaseInfo,
+                        imdbRating: item.imdbRating, runtime: item.runtime, genres: item.genres,
+                        cast: item.cast, videos: item.videos)
     }
 }

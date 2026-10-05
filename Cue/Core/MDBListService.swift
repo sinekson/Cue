@@ -15,12 +15,21 @@ struct MDBListSettings: Codable, Equatable {
     var showAudience = true
     var showMetacritic = true
     var showMyAnimeList = true
+    /// The sources' order (raw values): ratings show in it, and the billboard
+    /// shows the first three.
+    var order: [String] = MDBListSettings.defaultOrder.map(\.rawValue)
+
+    /// IMDb first; MyAnimeList second — only anime have one, so it shows for
+    /// them and everything else falls through to the next.
+    static let defaultOrder: [MDBListProvider] = [
+        .imdb, .myanimelist, .tomatoes, .letterboxd, .metacritic, .audience, .tmdb, .trakt,
+    ]
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case enabled, apiKey, showTrakt, showImdb, showTmdb, showLetterboxd
-        case showTomatoes, showAudience, showMetacritic, showMyAnimeList
+        case showTomatoes, showAudience, showMetacritic, showMyAnimeList, order
     }
 
     /// Tolerant per-field decode, exactly like `PlayerSettingsStore`: adding a
@@ -40,11 +49,58 @@ struct MDBListSettings: Codable, Equatable {
         showAudience = (try? c.decode(Bool.self, forKey: .showAudience)) ?? d.showAudience
         showMetacritic = (try? c.decode(Bool.self, forKey: .showMetacritic)) ?? d.showMetacritic
         showMyAnimeList = (try? c.decode(Bool.self, forKey: .showMyAnimeList)) ?? d.showMyAnimeList
+        order = (try? c.decode([String].self, forKey: .order)) ?? d.order
     }
 
     static let `default` = MDBListSettings()
 
-    var isConfigured: Bool { enabled && !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// A key means on (there's no separate switch).
+    var isConfigured: Bool { !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// Every source, in the chosen order (ones the order doesn't name yet at
+    /// the end).
+    var orderedProviders: [MDBListProvider] {
+        let listed = order.compactMap(MDBListProvider.init(rawValue:))
+        return listed + MDBListProvider.allCases.filter { !listed.contains($0) }
+    }
+
+    /// The sources that show, in order.
+    var shownProviders: [MDBListProvider] { orderedProviders.filter(isShown) }
+
+    func isShown(_ provider: MDBListProvider) -> Bool {
+        switch provider {
+        case .trakt: return showTrakt
+        case .imdb: return showImdb
+        case .tmdb: return showTmdb
+        case .letterboxd: return showLetterboxd
+        case .tomatoes: return showTomatoes
+        case .audience: return showAudience
+        case .metacritic: return showMetacritic
+        case .myanimelist: return showMyAnimeList
+        }
+    }
+
+    mutating func setShown(_ provider: MDBListProvider, _ shown: Bool) {
+        switch provider {
+        case .trakt: showTrakt = shown
+        case .imdb: showImdb = shown
+        case .tmdb: showTmdb = shown
+        case .letterboxd: showLetterboxd = shown
+        case .tomatoes: showTomatoes = shown
+        case .audience: showAudience = shown
+        case .metacritic: showMetacritic = shown
+        case .myanimelist: showMyAnimeList = shown
+        }
+    }
+
+    /// One step up (−1) or down (+1).
+    mutating func move(_ provider: MDBListProvider, by step: Int) {
+        var providers = orderedProviders
+        guard let index = providers.firstIndex(of: provider),
+              providers.indices.contains(index + step) else { return }
+        providers.swapAt(index, index + step)
+        order = providers.map(\.rawValue)
+    }
 }
 
 @MainActor
@@ -78,7 +134,7 @@ final class MDBListSettingsStore: ObservableObject {
 /// Aggregate ratings across sources (0–10 for imdb/tmdb/letterboxd/trakt-ish,
 /// (and MyAnimeList, 0–10), 0–100 percentages for tomatoes/audience/metacritic — MDBList returns them
 /// pre-scaled per source).
-struct MDBListRatings: Equatable {
+struct MDBListRatings: Equatable, Codable, Sendable {
     var trakt: Double?
     var imdb: Double?
     var tmdb: Double?
@@ -95,20 +151,22 @@ struct MDBListRatings: Equatable {
 
     /// Ordered, display-ready entries (matches the Android hero ratings row).
     func entries(settings: MDBListSettings) -> [MDBListRatingEntry] {
-        var out: [MDBListRatingEntry] = []
-        func add(_ provider: MDBListProvider, _ value: Double?, _ show: Bool) {
-            guard show, let value else { return }
-            out.append(MDBListRatingEntry(provider: provider, text: provider.format(value)))
+        settings.shownProviders.compactMap { provider in
+            value(of: provider).map { MDBListRatingEntry(provider: provider, text: provider.format($0)) }
         }
-        add(.trakt, trakt, settings.showTrakt)
-        add(.imdb, imdb, settings.showImdb)
-        add(.tmdb, tmdb, settings.showTmdb)
-        add(.letterboxd, letterboxd, settings.showLetterboxd)
-        add(.tomatoes, tomatoes, settings.showTomatoes)
-        add(.audience, audience, settings.showAudience)
-        add(.metacritic, metacritic, settings.showMetacritic)
-        add(.myanimelist, myanimelist, settings.showMyAnimeList)
-        return out
+    }
+
+    func value(of provider: MDBListProvider) -> Double? {
+        switch provider {
+        case .trakt: return trakt
+        case .imdb: return imdb
+        case .tmdb: return tmdb
+        case .letterboxd: return letterboxd
+        case .tomatoes: return tomatoes
+        case .audience: return audience
+        case .metacritic: return metacritic
+        case .myanimelist: return myanimelist
+        }
     }
 }
 
@@ -167,10 +225,54 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Usage
+
+/// MDBList's daily request limit as its last answer reported it (every
+/// answer carries it in its headers — knowing it costs no request). Shown on
+/// Settings → Developer.
+@MainActor
+final class MDBListUsage: ObservableObject {
+    static let shared = MDBListUsage()
+
+    struct Snapshot: Codable, Equatable {
+        var limit: Int
+        var remaining: Int
+        var resetsAt: Date?
+        var seenAt: Date
+    }
+
+    @Published private(set) var snapshot: Snapshot?
+    private static let key = "cue.mdblist.usage"
+
+    private init() {
+        snapshot = UserDefaults.standard.data(forKey: Self.key)
+            .flatMap { try? JSONDecoder().decode(Snapshot.self, from: $0) }
+    }
+
+    nonisolated static func note(_ response: HTTPURLResponse) {
+        func header(_ name: String) -> Double? {
+            response.value(forHTTPHeaderField: name).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        }
+        guard let limit = header("X-RateLimit-Limit"), let remaining = header("X-RateLimit-Remaining") else { return }
+        // The reset as a time stamp, or as seconds from now.
+        let resetsAt = header("X-RateLimit-Reset").map { value in
+            value > 1_000_000_000 ? Date(timeIntervalSince1970: value) : Date().addingTimeInterval(value)
+        }
+        let snapshot = Snapshot(limit: Int(limit), remaining: Int(remaining), resetsAt: resetsAt, seenAt: Date())
+        Task { @MainActor in
+            shared.snapshot = snapshot
+            if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: key) }
+        }
+    }
+}
+
 // MARK: - Service
 
-/// MDBList ratings client. `POST /rating/{mediaType}/{ratingType}?apikey=` with
-/// a body of imdb ids; one call per rating source, fanned out in parallel.
+/// MDBList ratings client. ONE request gives a title's every rating
+/// (`GET /imdb/{movie|show}/{id}`), and one request gives up to 200 titles'
+/// (`POST /imdb/{movie|show}`, for the billboard's picks). All sources are
+/// kept; which show, and in what order, is decided when they're shown — so
+/// a source switched on later needs no new request.
 enum MDBListService {
     private static let base = "https://api.mdblist.com"
 
@@ -180,14 +282,32 @@ enum MDBListService {
         return URLSession(configuration: config)
     }()
 
-    // 30-minute rating cache, keyed by imdb id + api key.
     private struct CacheEntry { let ratings: MDBListRatings; let expiresAt: Date }
     // Guarded by `cacheLock`: `ratings(...)` runs concurrently across catalog
     // items, and a plain Dictionary is not safe under concurrent mutation.
     private static let cacheLock = NSLock()
+
+    /// MDBList said "too many requests" (429): no more requests until this
+    /// time — its Retry-After, else a quarter of an hour.
+    nonisolated(unsafe) private static var limitedUntil: Date?
+    private static let backoff: TimeInterval = 15 * 60
+    private static var isLimited: Bool {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        return limitedUntil.map { $0 > Date() } ?? false
+    }
+    private static func markLimited(_ response: HTTPURLResponse) {
+        let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        limitedUntil = Date().addingTimeInterval(retryAfter ?? backoff)
+    }
     private static var cache: [String: CacheEntry] = [:]
+    /// Ratings for a day, in memory and on disk: they don't need to change
+    /// mid-day, and every request counts against a daily limit.
+    private static let disk = DiskCache<MDBListRatings>(name: "mdblist-ratings-v2")
+    private static let ttl: TimeInterval = 24 * 60 * 60
     private static let cacheLimit = 512
-    private static let ttl: TimeInterval = 30 * 60
+
+    private static func cacheKey(_ imdbID: String, _ mediaType: String) -> String { "\(mediaType):\(imdbID)" }
 
     private static func cachedEntry(_ key: String) -> CacheEntry? {
         cacheLock.lock(); defer { cacheLock.unlock() }
@@ -195,14 +315,41 @@ enum MDBListService {
     }
     private static func storeEntry(_ entry: CacheEntry, for key: String) {
         cacheLock.lock(); defer { cacheLock.unlock() }
-        // Expired entries were never evicted and there was no cap, so every
-        // distinct (media, id, key) accumulated for the process lifetime.
         if cache.count > cacheLimit {
             for key in Array(cache.keys.prefix(cache.count - cacheLimit / 2)) {
                 cache.removeValue(forKey: key)
             }
         }
         cache[key] = entry
+    }
+
+    /// Remembered for a day — an empty answer too (MDBList knows no ratings
+    /// for it), so it isn't asked again.
+    private static func store(_ ratings: MDBListRatings, for key: String) async {
+        storeEntry(CacheEntry(ratings: ratings, expiresAt: Date().addingTimeInterval(ttl)), for: key)
+        await disk.store(ratings, for: key)
+    }
+
+    /// Cached ratings: `.some(nil)` = known to have none; nil = not cached.
+    private static func cached(_ key: String) async -> MDBListRatings?? {
+        if let hit = cachedEntry(key), hit.expiresAt > Date() {
+            return .some(hit.ratings.isEmpty ? nil : hit.ratings)
+        }
+        if let stored = await disk.value(for: key, ttl: ttl) {
+            storeEntry(CacheEntry(ratings: stored, expiresAt: Date().addingTimeInterval(ttl)), for: key)
+            return .some(stored.isEmpty ? nil : stored)
+        }
+        return nil
+    }
+
+    /// No requests: no key, limited, or Render Lab → MDBList off.
+    private static func mayAsk(_ settings: MDBListSettings) async -> Bool {
+        guard settings.isConfigured, !isLimited else { return false }
+        return await !MainActor.run(body: { RenderProbe.shared.flags.noMDBList })
+    }
+
+    private static func mediaType(_ type: String) -> String {
+        (type == "series" || type == "tv") ? "show" : "movie"
     }
 
     /// Validate an API key via `GET /user`.
@@ -214,6 +361,7 @@ enum MDBListService {
         guard let url = comps.url else { return false }
         guard let (_, response) = try? await session.data(from: url),
               let http = response as? HTTPURLResponse else { return false }
+        MDBListUsage.note(http)
         return (200..<300).contains(http.statusCode)
     }
 
@@ -233,77 +381,95 @@ enum MDBListService {
         return await ratings(imdbID: imdbID, type: meta.type, settings: settings)
     }
 
-    /// Fetch all enabled ratings for a title. Needs an imdb `tt…` id.
+    /// A title's ratings, every source. Needs an imdb `tt…` id.
     static func ratings(imdbID: String, type: String, settings: MDBListSettings) async -> MDBListRatings? {
         guard settings.isConfigured, imdbID.hasPrefix("tt") else { return nil }
-        let apiKey = settings.apiKey.trimmingCharacters(in: .whitespaces)
-        let mediaType = (type == "series" || type == "tv") ? "show" : "movie"
-        let cacheKey = "\(mediaType):\(imdbID):\(apiKey.hashValue)"
-        if let hit = cachedEntry(cacheKey), hit.expiresAt > Date() {
-            return hit.ratings.isEmpty ? nil : hit.ratings
-        }
-
-        let providers = enabledProviders(settings)
-        var values: [MDBListProvider: Double] = [:]
-        var anySucceeded = false
-        await withTaskGroup(of: (MDBListProvider, Double?, Bool).self) { group in
-            for provider in providers {
-                group.addTask {
-                    let result = await fetchProvider(imdbID: imdbID, mediaType: mediaType, provider: provider, apiKey: apiKey)
-                    return (provider, result.rating, result.ok)
-                }
-            }
-            for await (provider, value, ok) in group {
-                if ok { anySucceeded = true }
-                if let value { values[provider] = value }
-            }
-        }
-
-        let ratings = MDBListRatings(
-            trakt: values[.trakt], imdb: values[.imdb], tmdb: values[.tmdb],
-            letterboxd: values[.letterboxd], tomatoes: values[.tomatoes],
-            audience: values[.audience], metacritic: values[.metacritic],
-            myanimelist: values[.myanimelist]
-        )
-        // Only a DEFINITIVE answer is cached. If every provider FAILED
-        // (offline, 429), an empty result was cached for 30 minutes and the
-        // title stayed ratings-less long after the network recovered.
-        if anySucceeded {
-            storeEntry(CacheEntry(ratings: ratings, expiresAt: Date().addingTimeInterval(ttl)), for: cacheKey)
-        }
+        let mediaType = mediaType(type)
+        let key = cacheKey(imdbID, mediaType)
+        if let known = await cached(key) { return known }
+        guard await mayAsk(settings),
+              let url = url("/imdb/\(mediaType)/\(imdbID)", apiKey: settings.apiKey),
+              let (data, response) = try? await session.data(from: url),
+              let http = response as? HTTPURLResponse else { return nil }
+        MDBListUsage.note(http)
+        if http.statusCode == 429 { markLimited(http) }
+        // Only a definitive answer is remembered; a failure is asked again.
+        guard (200..<300).contains(http.statusCode) else { return nil }
+        let ratings = (try? JSONDecoder().decode(Media.self, from: data))?.ratings ?? MDBListRatings()
+        await store(ratings, for: key)
         return ratings.isEmpty ? nil : ratings
     }
 
-    private static func enabledProviders(_ s: MDBListSettings) -> [MDBListProvider] {
-        var out: [MDBListProvider] = []
-        if s.showTrakt { out.append(.trakt) }
-        if s.showImdb { out.append(.imdb) }
-        if s.showTmdb { out.append(.tmdb) }
-        if s.showLetterboxd { out.append(.letterboxd) }
-        if s.showTomatoes { out.append(.tomatoes) }
-        if s.showAudience { out.append(.audience) }
-        if s.showMetacritic { out.append(.metacritic) }
-        if s.showMyAnimeList { out.append(.myanimelist) }
-        return out
+    /// Fetches the ratings of many titles at once — one request per 200 of
+    /// a kind — so the ones shown next (the billboard's picks) are already
+    /// there. Titles without an imdb id, or already cached, are skipped.
+    static func prefetch(_ metas: [MetaItem], settings: MDBListSettings) async {
+        guard settings.isConfigured else { return }
+        var wanted: [String: [String]] = [:]
+        for meta in metas where meta.id.hasPrefix("tt") {
+            let mediaType = mediaType(meta.type)
+            guard await cached(cacheKey(meta.id, mediaType)) == nil,
+                  wanted[mediaType]?.contains(meta.id) != true else { continue }
+            wanted[mediaType, default: []].append(meta.id)
+        }
+        for (mediaType, ids) in wanted {
+            for start in stride(from: 0, to: ids.count, by: 200) {
+                let batch = Array(ids[start..<min(start + 200, ids.count)])
+                guard await mayAsk(settings),
+                      let url = url("/imdb/\(mediaType)", apiKey: settings.apiKey) else { return }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try? JSONSerialization.data(withJSONObject: ["ids": batch])
+                guard let (data, response) = try? await session.data(for: request),
+                      let http = response as? HTTPURLResponse else { return }
+                MDBListUsage.note(http)
+                if http.statusCode == 429 { markLimited(http) }
+                guard (200..<300).contains(http.statusCode),
+                      let items = try? JSONDecoder().decode([Media].self, from: data) else { return }
+                var byID: [String: MDBListRatings] = [:]
+                for item in items { if let id = item.ids?.imdb { byID[id] = item.ratings } }
+                // Asked for and not in the answer: MDBList doesn't know it.
+                for id in batch {
+                    await store(byID[id] ?? MDBListRatings(), for: cacheKey(id, mediaType))
+                }
+            }
+        }
     }
 
-    private static func fetchProvider(imdbID: String, mediaType: String, provider: MDBListProvider, apiKey: String) async -> (rating: Double?, ok: Bool) {
-        guard var comps = URLComponents(string: "\(base)/rating/\(mediaType)/\(provider.rawValue)") else { return (nil, false) }
-        comps.queryItems = [URLQueryItem(name: "apikey", value: apiKey)]
-        guard let url = comps.url else { return (nil, false) }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["ids": [imdbID], "provider": "imdb"])
-        struct Response: Decodable {
-            struct Item: Decodable { let rating: Double? }
-            let ratings: [Item]?
+    private static func url(_ path: String, apiKey: String) -> URL? {
+        var comps = URLComponents(string: base + path)
+        comps?.queryItems = [URLQueryItem(name: "apikey", value: apiKey.trimmingCharacters(in: .whitespaces))]
+        return comps?.url
+    }
+
+    /// A title as MDBList describes it — only what's needed: its imdb id and
+    /// its ratings (`source` + `value`, on each source's own scale).
+    private struct Media: Decodable {
+        struct IDs: Decodable { let imdb: String? }
+        struct Rating: Decodable { let source: String; let value: Double? }
+        let ids: IDs?
+        private let ratingList: [Rating]?
+
+        enum CodingKeys: String, CodingKey { case ids, ratingList = "ratings" }
+
+        var ratings: MDBListRatings {
+            var out = MDBListRatings()
+            for rating in ratingList ?? [] {
+                guard let value = rating.value else { continue }
+                switch rating.source {
+                case "imdb": out.imdb = value
+                case "tmdb": out.tmdb = value
+                case "trakt": out.trakt = value
+                case "letterboxd": out.letterboxd = value
+                case "tomatoes": out.tomatoes = value
+                case "popcorn", "audience": out.audience = value
+                case "metacritic": out.metacritic = value
+                case "myanimelist", "mal": out.myanimelist = value
+                default: break
+                }
+            }
+            return out
         }
-        guard let (data, response) = try? await session.data(for: request),
-              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let body = try? JSONDecoder().decode(Response.self, from: data) else { return (nil, false) }
-        // `ok` distinguishes "the provider answered, there is no rating" from
-        // "the request failed" — only the former should be cached.
-        return (body.ratings?.first?.rating, true)
     }
 }

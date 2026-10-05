@@ -98,12 +98,12 @@ extension Route {
         switch self {
         case .detail: return "Detail"
         case .collection: return "Collection"
+        case .folder: return "Folder"
+        case .folderPart: return "Folder Part"
         case .person: return "Cast"
         case .tmdbCompany: return "Studio"
         case .catalogSeeAll: return "See All"
-        case .discover: return "Discover"
         case .streams: return "Sources"
-        case .streamsManual: return "Sources (manual)"
         case .streamsFromStart: return "Sources (from start)"
         case .streamsResume: return "Sources (resume)"
         }
@@ -113,11 +113,12 @@ extension Route {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
         case .collection(let c): return c.title
+        case .folder(let c, let f): return "\(c.title) → \(f.title)"
+        case .folderPart(let c, let f, let part): return "\(c.title) → \(f.title) → \(part)"
         case .person(_, let name): return name
-        case .tmdbCompany(_, let name): return name
+        case .tmdbCompany(_, let name, _): return name
         case .catalogSeeAll(_, _, let title): return title
         case .streams(let meta, let video),
-             .streamsManual(let meta, let video),
              .streamsFromStart(let meta, let video),
              .streamsResume(let meta, let video, _):
             return meta.name + (video.map { " S\($0.season ?? 0)E\($0.episode ?? 0)" } ?? "")
@@ -129,9 +130,6 @@ extension Route {
 enum Route: Hashable {
     case detail(MetaItem)
     case streams(MetaItem, MetaVideo?)
-    /// Source picker forced into manual mode (hold-Play / "Play Manually"):
-    /// always shows the list, even when Auto Link Selector is on.
-    case streamsManual(MetaItem, MetaVideo?)
     /// Source picker that plays from 0:00 (the Detail page's Start Over).
     case streamsFromStart(MetaItem, MetaVideo?)
     /// Continue Watching resume: re-scrape fresh sources and auto-play the one
@@ -139,15 +137,21 @@ enum Route: Hashable {
     /// Over) instead of the saved position.
     case streamsResume(MetaItem, MetaVideo?, fromStart: Bool)
     case collection(CueCollection)
+    /// A folder of a collection, opened from its Home row.
+    case folder(CueCollection, CueCollectionFolder)
+    /// One catalog of a folder, in full (its part's "See All").
+    case folderPart(CueCollection, CueCollectionFolder, String)
     case person(id: Int, name: String)
-    case tmdbCompany(id: Int, name: String)
+    /// A studio's titles — or a network's (`network`), its shows.
+    case tmdbCompany(id: Int, name: String, network: Bool = false)
     case catalogSeeAll(addon: InstalledAddon, catalog: ManifestCatalog, title: String)
-    case discover
 }
 
 struct RootView: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var modeSwap = ModeSwap.shared
+    @ObservedObject private var sourcePicker = SourcePicker.shared
+    @ObservedObject private var launcher = PlayLauncher.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
@@ -168,6 +172,21 @@ struct RootView: View {
     @State private var homePath = NavigationPath()
     @State private var searchPath = NavigationPath()
     @State private var libraryPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
+    @State private var moviesPath = NavigationPath()
+    @State private var seriesPath = NavigationPath()
+
+    /// The navigation stack of the Home-like tab in front (Home, Movies,
+    /// Series): plays and sources opened from its rows are pushed there.
+    private var homeLikePath: Binding<NavigationPath> {
+        switch selectedTab {
+        case AppTab.movies.rawValue: return $moviesPath
+        case AppTab.series.rawValue: return $seriesPath
+        default: return $homePath
+        }
+    }
+
+    private var onHomeLikeTab: Bool { AppTab(rawValue: selectedTab)?.isHomeLike ?? false }
     // Persisted here (not inside HomeView) so switching tabs and coming back
     // doesn't rebuild it and re-trigger the catalog load / loading spinner.
     @StateObject private var homeViewModel = HomeViewModel()
@@ -235,9 +254,52 @@ struct RootView: View {
     /// The rail is briefly non-focusable at launch so initial focus lands in
     /// the CONTENT (the app boots with the rail collapsed and a card focused).
     @State private var sidebarEnabled = false
+    /// Settings lists lock the top bar out while an entry is moved.
+    @ObservedObject private var topBarLock = TopBarLock.shared
 
     var body: some View {
         content
+            // While the source picker (or a search) is up, nothing under it
+            // takes focus.
+            .disabled(sourcePicker.request != nil || launcher.search?.overlay == true)
+            // Play from a card or an episode: finding its source, over the
+            // app (Back cancels — see `PlayLauncher`).
+            .overlay {
+                if let search = launcher.search, search.overlay {
+                    ZStack {
+                        Color.black.opacity(0.45).ignoresSafeArea()
+                        FindingSourceCard(search: search) { launcher.cancel() }
+                            .transition(.scale(scale: 0.96).combined(with: .opacity))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: launcher.search?.overlay == true)
+            // The source picker, over everything (`SourcePicker`): pops in
+            // like a menu over the app; plays what's picked.
+            .overlay {
+                if let request = sourcePicker.request {
+                    ZStack {
+                        // (No dimming behind it — the panel's glass is enough.)
+                        SourcePanel(meta: request.meta, video: request.video, onPlay: { entry, all in
+                            sourcePicker.close()
+                            play(request.meta, request.video, entry, all, fromStart: request.fromStart)
+                        }, onClose: { sourcePicker.close() })
+                        .id(request.id)
+                        .ignoresSafeArea()
+                        .transition(.scale(scale: 0.96, anchor: .trailing).combined(with: .opacity))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: sourcePicker.request?.id)
+            // A card morphing into Details (and back), over everything (see
+            // `TitleMorphOverlay`).
+            .overlay {
+                if let window = modeSwap.windowOpen {
+                    TitleMorphOverlay(open: window).id(window.id)
+                }
+            }
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -261,6 +323,14 @@ struct RootView: View {
                 startPlayerDemoIfRequested()
                 startDetailDemoIfRequested()
                 ScrubThumbnailer.runSelfTestIfRequested()
+                PlayLauncher.shared.configure(.init(
+                    addonManager: addonManager, progress: progressStore, watched: watched,
+                    settings: { [playerSettings] in playerSettings.settings },
+                    start: { meta, video, entry, all, fromStart in
+                        play(meta, video, entry, all, fromStart: fromStart)
+                    }))
+                TitleMenu.shared.configure(library: library, watched: watched, progress: progressStore,
+                                           addonManager: addonManager)
             }
             .task {
                 if sync == nil {
@@ -294,9 +364,6 @@ struct RootView: View {
                         themeManager: theme
                     )
                     sync = nuvioSync
-                    nuvioSync.enrichContinueWatchingEnabled = { [tmdbSettings] in
-                        tmdbSettings.settings.enrichContinueWatching
-                    }
                     // Everything personal rescopes on a switch, even when
                     // signed out of Cue (the sync manager only runs while
                     // signed in): add-ons (honouring the
@@ -390,7 +457,7 @@ struct RootView: View {
                     AppProbe.life("root appeared — tab=\(Self.tabName(selectedTab))")
                     // Skipped in the demo modes so the screen isn't covered.
                     let args = ProcessInfo.processInfo.arguments
-                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-accountDemo", "-settingsTabDemo"]
+                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-accountDemo", "-settingsTabDemo", "-settingsPage"]
                     let demoMode = demoArgs.contains { args.contains($0) }
                     // -welcomeDemo forces it regardless of the completed flag
                     // or an already-restored session, which is the only way to
@@ -404,11 +471,30 @@ struct RootView: View {
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
                     if args.contains("-settingsTabDemo") { selectedTab = 3 }
+                    // A Settings page, opened the real way (Back returns to
+                    // Settings): -accountDemo, or -settingsPage <category>.
+                    if args.contains("-accountDemo") {
+                        selectedTab = 3
+                        settingsPath.append(SettingsCategory.account)
+                    }
+                    if let flag = args.firstIndex(of: "-settingsPage"), flag + 1 < args.count,
+                       let category = SettingsCategory(rawValue: args[flag + 1]) {
+                        selectedTab = 3
+                        settingsPath.append(category)
+                    }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
-                    if args.contains("-discoverDemo") {
-                        selectedTab = 1
-                        searchPath.append(Route.discover)
+                    // A collection's folder, opened from Home (the simulator can't
+                    // select): `-folderDemo <n>` — the n-th collection's first.
+                    if let flag = args.firstIndex(of: "-folderDemo") {
+                        let n = flag + 1 < args.count ? Int(args[flag + 1]) ?? 0 : 0
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(2))
+                            let shelves = collections.collections.filter { !$0.folders.isEmpty }
+                            if shelves.indices.contains(n), let folder = shelves[n].folders.first {
+                                homePath.append(Route.folder(shelves[n], folder))
+                            }
+                        }
                     }
                     // Dev: run the add-on import server standalone and log
                     // its address, so the HTTP path can be exercised without
@@ -506,7 +592,11 @@ struct RootView: View {
                         }
                     }
                     // Dev: jump straight to the profile gate.
-                    if args.contains("-profileGateDemo") { showProfileGate = true }
+                    // As opened from the top bar's avatar (with Edit).
+                    if args.contains("-profileGateDemo") {
+                        profileGateCancellable = true
+                        showProfileGate = true
+                    }
                     // Dev/recovery: run the account-wide watch-history clear on
                     // launch (same code path as the Settings button) — lets a
                     // flooded device be repaired over devicectl without driving
@@ -560,9 +650,9 @@ struct RootView: View {
                 .environmentObject(theme)
             }
             .fullScreenCover(isPresented: $showProfileGate) {
-                // The gate now only SELECTS a profile; account + Manage Profiles
-                // live in Settings → Account. The design is an independent look
-                // axis (Settings → Themes → Profile Screen).
+                // Choosing a profile — and, opened from the top bar's avatar,
+                // editing them (its Edit tile). The Nuvio account lives in
+                // Settings → Account.
                 ProfileGateView(
                     onSelected: { showProfileGate = false; deferSidebarAfterProfileGate() },
                     onCancel: profileGateCancellable
@@ -572,6 +662,7 @@ struct RootView: View {
                 .environmentObject(theme)
                 .environmentObject(profiles)
                 .environmentObject(account)
+                .environmentObject(addonManager)
             }
             // Returning to the app pulls the latest Continue Watching so changes
             // made on another device show up without a relaunch (local edits
@@ -669,8 +760,10 @@ struct RootView: View {
         let args = ProcessInfo.processInfo.arguments
         // `-detailDemoSeries` opens a known series so the episode browser +
         // Episode Details drawer can be screenshot-verified.
-        if args.contains("-detailDemoSeries") {
-            let meta = MetaItem(id: "tt0903747", type: "series", name: "Breaking Bad")
+        // (An IMDb id after it opens that series instead.)
+        if let at = args.firstIndex(of: "-detailDemoSeries") {
+            let id = args.indices.contains(at + 1) && args[at + 1].hasPrefix("tt") ? args[at + 1] : "tt0903747"
+            let meta = MetaItem(id: id, type: "series", name: id == "tt0903747" ? "Breaking Bad" : "")
             if homePath.isEmpty { homePath.append(Route.detail(meta)) }
             return
         }
@@ -695,17 +788,9 @@ struct RootView: View {
                             ? MetaItem(id: "tt0903747", type: "series", name: "Breaking Bad",
                                        description: "A chemistry teacher turns to making meth.")
                             : MetaItem(id: "tt0111161", type: "movie", name: "The Shawshank Redemption",
-                                       description: "Two imprisoned men bond over a number of years."),
-                        onPlay: { _, _ in },
-                        onPlayManually: { _, _ in },
-                        onPlayFromBeginning: { _, _ in }
+                                       description: "Two imprisoned men bond over a number of years.")
                     )
                 }
-            )
-        }
-        if ProcessInfo.processInfo.arguments.contains("-accountDemo") {
-            return AnyView(
-                ZStack { theme.palette.background.ignoresSafeArea(); AccountView() }
             )
         }
         return AnyView(mainContent)
@@ -736,8 +821,7 @@ struct RootView: View {
                 request: request,
                 addonManager: addonManager,
                 progressStore: progressStore,
-                playerSettings: playerSettings.settings,
-                allowUnairedNextUp: homeCatalogSettings.showUnairedNextUp
+                playerSettings: playerSettings.settings
             ) {
                 // Just dismiss the cover; the auto-play pop runs in onDismiss.
                 playback = nil
@@ -770,6 +854,8 @@ struct RootView: View {
         case 0: return homePath.isEmpty
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
+        case 4: return moviesPath.isEmpty
+        case 5: return seriesPath.isEmpty
         default: return true   // Settings keeps the rail
         }
     }
@@ -798,15 +884,23 @@ struct RootView: View {
     /// separate presses on the clickpad are far slower than this), long enough
     /// to cover the tail of ONE swipe on the old remote's touch surface.
     private static let sidebarExitEchoWindow: TimeInterval = 0.3
+    /// A Back right after a pop: tvOS sometimes delivers the pop's Back a
+    /// second time, within a frame or two — a real second press comes later.
+    private static let popEchoWindow: TimeInterval = 0.25
+    /// The top bar non-focusable for a moment, so the engine seeds focus in
+    /// the content (after a tab switch, leaving the bar, a pop): as short as
+    /// focus needs to settle — every Up in it is lost.
+    private static let railSettle: Double = 0.25
 
     /// The top bar is out for the billboard ⇄ Details swap — Home's tab only
     /// (another tab's bar is never part of it).
     private var homeChromeOut: Bool {
-        (modeSwap.homeChromeOut || modeSwap.trailerChromeOut) && selectedTab == 0
+        (modeSwap.homeChromeOut || modeSwap.trailerChromeOut) && onHomeLikeTab
     }
 
     private var showSidebar: Bool {
-        guard atTabRoot else { return false }
+        // (Billboard → Details: the bar stays for its lift-away.)
+        guard atTabRoot || (modeSwap.chromeHeld && onHomeLikeTab) else { return false }
         return !sidebarAutoHides || sidebarRevealed
     }
 
@@ -866,18 +960,10 @@ struct RootView: View {
                 // has no transparent frame at all, which is also what the
                 // system tvOS apps do when moving between tabs.
                 //
-                // `.id` still forces a fresh view per tab, so the outgoing
-                // hierarchy is torn down rather than updated in place.
-                .id(selectedTab)
-                .transition(.identity)
+                // (No `.id(selectedTab)` any more: it tore each tab down and
+                // rebuilt it on every switch — below 10 fps, and every page
+                // started over. Tabs now stay alive; see `selectedContent`.)
                 .animation(nil, value: selectedTab)
-                // The bar FLOATS over Home, so the hero is never pushed down.
-                // The other tabs get a SAFE-AREA inset rather than a plain one
-                // — see `topBarClearance`: plain padding cut the page off
-                // under the bar, so scrolled rows hit a black band instead of
-                // sliding under the glass.
-                .safeAreaPadding(.top, showSidebar && selectedTab != 0
-                                 ? GlassSidebar.topBarClearance : 0)
                 .focusSection()
                 // Summon a hidden bar — but ONLY from the top edge. A
                 // section's move handler fires on EVERY press anywhere in the
@@ -930,10 +1016,9 @@ struct RootView: View {
                              // `GlassSidebar.swapAway`).
                              swapAway: homeChromeOut)
                     .opacity(homeChromeOut ? 0 : 1)
-                    .animation(homeChromeOut ? ModeSwap.fadeOut : ModeSwap.fadeIn,
-                               value: homeChromeOut)
+                    .animation(ModeSwap.swap, value: homeChromeOut)
                     .focusSection()
-                    .disabled(!sidebarEnabled || homeChromeOut)
+                    .disabled(!sidebarEnabled || homeChromeOut || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
                     // of falling through to the system (which quit the app).
                     .onExitCommand { collapseSidebarFromExit() }
@@ -975,7 +1060,7 @@ struct RootView: View {
                                 collapseSidebarFromExit()
                             } else {
                                 if sidebarAutoHides { sidebarRevealed = false }
-                                setSidebarEnabled(false, reenableAfter: 0.4)
+                                setSidebarEnabled(false, reenableAfter: Self.railSettle)
                             }
                         }
                     }
@@ -1013,53 +1098,105 @@ struct RootView: View {
     /// so per-tab back-stacks stay independent. Back at a tab ROOT moves focus
     /// to the rail (expanding it); pushed screens hold focus themselves, so
     /// their Back pops the NavigationStack instead.
-    @ViewBuilder
     private var selectedContent: some View {
-        switch selectedTab {
-        case 1:
+        ZStack {
+            // EVERY tab stays ALIVE once opened: switching only shows another
+            // — instant, and each keeps its place (row, title, a pushed
+            // Details, the search typed). Rebuilding the page on every switch
+            // dropped below 10 fps.
+            ForEach(AppTab.allCases.filter {
+                visitedTabs.contains($0.rawValue) || selectedTab == $0.rawValue
+            }) { tab in
+                let active = selectedTab == tab.rawValue
+                tabContent(tab, active: active)
+                    // The bar FLOATS over Home (and Movies / Series), so the
+                    // billboard is never pushed down. The other tabs get a
+                    // SAFE-AREA inset rather than a plain one — see
+                    // `topBarClearance`: plain padding cut the page off under
+                    // the bar, so scrolled rows hit a black band instead of
+                    // sliding under the glass.
+                    .safeAreaPadding(.top, !tab.isHomeLike && tab != .search && (showSidebar || !active)
+                                     ? GlassSidebar.topBarClearance : 0)
+                    .opacity(active ? 1 : 0)
+                    .disabled(!active)
+                    .accessibilityHidden(!active)
+                    .zIndex(active ? 1 : 0)
+            }
+        }
+        .onChange(of: selectedTab) { _, tab in visitedTabs.insert(tab) }
+    }
+
+    /// Tabs opened so far (kept alive — see above).
+    @State private var visitedTabs: Set<Int> = [AppTab.home.rawValue]
+
+    @ViewBuilder
+    private func tabContent(_ tab: AppTab, active: Bool) -> some View {
+        switch tab {
+        case .search:
             NavigationStack(path: $searchPath) {
-                searchRoot
+                searchRoot(active: active)
                     .onExitCommand { focusSidebar(1) }
                     .navigationDestination(for: Route.self) { destination(for: $0, path: $searchPath) }
             }
-        case 2:
+            // Apple's search field and keyboard (UISearchController) ignore
+            // the safe-area inset, and sat under the bar — a plain one here.
+            // (The results scroll under the keyboard, never under the bar.)
+            .padding(.top, searchPath.isEmpty ? GlassSidebar.topBarClearance : 0)
+        case .library:
             NavigationStack(path: $libraryPath) {
                 libraryRoot
                     .onExitCommand { focusSidebar(2) }
                     .navigationDestination(for: Route.self) { destination(for: $0, path: $libraryPath) }
             }
-        case 3:
-            NavigationStack {
-                ATVSettingsView(onOpenProfiles: { profileGateCancellable = true; showProfileGate = true })
+        case .settings:
+            NavigationStack(path: $settingsPath) {
+                ATVSettingsView()
                     .onExitCommand { focusSidebar(3) }
                     .probeScreen("Settings")
             }
-        default:
-            NavigationStack(path: $homePath) {
-                homeRoot
-                    .onExitCommand {
-                        // Ignore a Menu that lands right after popping back from
-                        // a pushed screen — tvOS sometimes delivers a lingering
-                        // second Menu, which would spuriously open the rail.
-                        if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < 1.0 { return }
-                        focusSidebar(0)
+        case .movies:
+            homeLikeStack(.movies, path: $moviesPath, active: active)
+        case .series:
+            homeLikeStack(.series, path: $seriesPath, active: active)
+        case .home:
+            homeLikeStack(.home, path: $homePath, active: active)
+        }
+    }
+
+    /// Home, or its filtered twins Movies / Series: each in its own stack.
+    private func homeLikeStack(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+        NavigationStack(path: path) {
+            homeRoot(filter: tab.typeFilter, path: path, active: active)
+                .onExitCommand {
+                    // Handing over to Details: this Back is Details' (it
+                    // takes the swap straight back).
+                    if modeSwap.handingOver { modeSwap.heldPress = .back; return }
+                    // Ignore a Menu that lands right after popping back from
+                    // a pushed screen — tvOS sometimes delivers a lingering
+                    // second Menu, which would spuriously open the rail.
+                    if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
+                    focusSidebar(tab.rawValue)
+                }
+                .onChange(of: path.wrappedValue.count) { oldCount, newCount in
+                    // Only a pop that lands ON the page matters here.
+                    guard newCount < oldCount, newCount == 0 else { return }
+                    // Back from Details opened on the billboard: the page's
+                    // half of the swap, the other way in.
+                    if modeSwap.homeChromeOut {
+                        withAnimation(ModeSwap.swap) { modeSwap.homeChromeOut = false }
                     }
-                    .onChange(of: homePath.count) { oldCount, newCount in
-                        // Only a pop that lands ON Home matters here.
-                        guard newCount < oldCount, newCount == 0 else { return }
-                        // Back from Details opened on the billboard: Home's
-                        // half of the swap, the other way in.
-                        if modeSwap.homeChromeOut {
-                            withAnimation(ModeSwap.in) { modeSwap.homeChromeOut = false }
-                        }
-                        lastHomePopAt = Date()
-                        // Popping all the way back to Home: keep the rail
-                        // non-focusable for a beat so focus lands on a card
-                        // instead of the rail springing open.
-                        setSidebarEnabled(false, reenableAfter: 0.9)
+                    // (Held until the bar is back in place.)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(ModeSwap.swapDuration))
+                        if !modeSwap.homeChromeOut { modeSwap.chromeHeld = false }
                     }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: $homePath) }
-            }
+                    lastHomePopAt = Date()
+                    // Popping all the way back: keep the rail non-focusable
+                    // for a beat so focus lands on a card instead of the rail
+                    // springing open.
+                    setSidebarEnabled(false, reenableAfter: Self.railSettle)
+                }
+                .navigationDestination(for: Route.self) { destination(for: $0, path: path) }
         }
     }
 
@@ -1070,6 +1207,8 @@ struct RootView: View {
         case 1: return "Search"
         case 2: return "Library"
         case 3: return "Settings"
+        case 4: return "Movies"
+        case 5: return "Series"
         default: return "Home"
         }
     }
@@ -1127,7 +1266,7 @@ struct RootView: View {
         // focusability and the rail would reclaim focus).
         sidebarAwaitingContent = enteringHomeFresh
         guard enteringHomeFresh else {
-            setSidebarEnabled(false, reenableAfter: 0.4)
+            setSidebarEnabled(false, reenableAfter: Self.railSettle)
             return
         }
     }
@@ -1161,12 +1300,12 @@ struct RootView: View {
         if ContentFocusRouter.shared.focusLastRowStart() {
             DispatchQueue.main.async {
                 sidebarFocus = nil   // a no-op once the tile holds focus
-                setSidebarEnabled(false, reenableAfter: 0.4)
+                setSidebarEnabled(false, reenableAfter: Self.railSettle)
             }
             return
         }
         sidebarFocus = nil
-        setSidebarEnabled(false, reenableAfter: 0.4)
+        setSidebarEnabled(false, reenableAfter: Self.railSettle)
     }
 
     /// The ONE owner of every timed rail re-enable. Five independent timers
@@ -1218,30 +1357,28 @@ struct RootView: View {
     /// would land on the rail and pop it open. Briefly disable it again so
     /// focus goes to Home's content first.
     private func deferSidebarAfterProfileGate() {
-        setSidebarEnabled(false, reenableAfter: 0.8)
+        setSidebarEnabled(false, reenableAfter: Self.railSettle)
     }
 
     // MARK: - Tab roots
 
-    private var homeRoot: some View {
+    private func homeRoot(filter: String?, path: Binding<NavigationPath>, active: Bool) -> some View {
         HomeView(
             viewModel: homeViewModel,
-            onSelect: { homePath.append(Route.detail($0)) },
+            typeFilter: filter,
+            active: active,
+            onSelect: { path.wrappedValue.append(Route.detail($0)) },
             // From the billboard: no slide. It already looks like the Detail
             // page's top, so the page just takes over in place.
             onSelectFeatured: { item in
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                withTransaction(transaction) { homePath.append(Route.detail(item)) }
+                withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
             },
             onResume: { resume($0) },
-            onResumeFromStart: { resume($0, fromBeginning: true) },
-            onPlayManually: { meta, video in playManually(meta, video) },
-            onPlayManuallyProgress: { playManuallyFromProgress($0) },
-            onOpenCollection: { homePath.append(Route.collection($0)) },
-            onSeeAll: { addon, catalog, title in
-                homePath.append(Route.catalogSeeAll(addon: addon, catalog: catalog, title: title))
-            },
+            onStartOver: { resume($0, fromBeginning: true) },
+            onChooseSource: { playManuallyFromProgress($0) },
+            onOpenFolder: { path.wrappedValue.append(Route.folder($0, $1)) },
             onContentReady: {
                 // Give the freshly-loaded rows a beat to render and take
                 // initial focus before the rail becomes focusable. This must
@@ -1249,21 +1386,21 @@ struct RootView: View {
                 // refresh, and disabling first would kick focus off an OPEN
                 // rail whenever a background sync reloaded Home.
                 scheduleSidebarReenable(after: 0.8)
-            },
-            // Back at the start of a row opens the rail.
-            onHomeBack: {
-                if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < 1.0 { return }
-                focusSidebar(0)
             }
         )
         .probeScreen("Home")
     }
 
-    private var searchRoot: some View {
+    private func searchRoot(active: Bool) -> some View {
         SearchView(
             viewModel: searchViewModel,
+            active: active,
             onSelect: { searchPath.append(Route.detail($0)) },
-            onOpenDiscover: { searchPath.append(Route.discover) }
+            onOpenInPlace: { item in
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { searchPath.append(Route.detail(item)) }
+            }
         )
         .probeScreen("Search")
     }
@@ -1286,21 +1423,46 @@ struct RootView: View {
             .probeScreen(route.probeName) { route.probeDetail }
     }
 
+    /// A collection's folder (or one of its parts, in full).
+    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, part: String?,
+                            path: Binding<NavigationPath>) -> some View {
+        FolderView(collection: collection, folder: folder, part: part,
+                   onSelect: { path.wrappedValue.append(Route.detail($0)) },
+                   onOpenInPlace: { item in
+                       var transaction = Transaction()
+                       transaction.disablesAnimations = true
+                       withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
+                   },
+                   onSeeAll: { path.wrappedValue.append(Route.folderPart(collection, folder, $0)) })
+    }
+
     @ViewBuilder
     private func destinationBody(for route: Route, path: Binding<NavigationPath>) -> some View {
         switch route {
         case .detail(let item):
             DetailView(
                     item: item,
-                    onPlay: { meta, video in path.wrappedValue.append(Route.streams(meta, video)) },
-                    onPlayManually: { meta, video in path.wrappedValue.append(Route.streamsManual(meta, video)) },
-                    onPlayFromBeginning: { meta, video in path.wrappedValue.append(Route.streamsFromStart(meta, video)) },
                     onSelectItem: { path.wrappedValue.append(Route.detail($0)) },
                     onSelectPerson: { id, name in path.wrappedValue.append(Route.person(id: id, name: name)) },
-                    onSelectCompany: { id, name in path.wrappedValue.append(Route.tmdbCompany(id: id, name: name)) },
+                    onSelectCompany: { company in
+                        path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
+                                                                   network: company.isNetwork))
+                    },
                     // Back to the billboard: Details has played its half of
                     // the swap; Home plays the rest — no system slide.
                     onReturnToBillboard: {
+                        // Opened through a window (Search's Top Result): it
+                        // closes back into the banner as the page goes.
+                        if let window = ModeSwap.shared.openedThrough, window.item.id == item.id {
+                            ModeSwap.shared.openedThrough = nil
+                            var closing = ModeSwap.WindowOpen(item: window.item, source: window.source)
+                            closing.closing = true
+                            ModeSwap.shared.windowOpen = closing
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(ModeSwap.swapDuration + 0.05))
+                                if ModeSwap.shared.windowOpen?.id == closing.id { ModeSwap.shared.windowOpen = nil }
+                            }
+                        }
                         var transaction = Transaction()
                         transaction.disablesAnimations = true
                         withTransaction(transaction) {
@@ -1310,14 +1472,16 @@ struct RootView: View {
             )
         case .collection(let collection):
             CollectionView(collection: collection) { path.wrappedValue.append(Route.detail($0)) }
+        case .folder(let collection, let folder):
+            folderView(collection, folder, part: nil, path: path)
+        case .folderPart(let collection, let folder, let part):
+            folderView(collection, folder, part: part, path: path)
         case .person(let id, let name):
             CastDetailView(personID: id, personName: name) { path.wrappedValue.append(Route.detail($0)) }
-        case .tmdbCompany(let id, let name):
-            TMDBBrowseView(companyID: id, title: name) { path.wrappedValue.append(Route.detail($0)) }
+        case .tmdbCompany(let id, let name, let network):
+            TMDBBrowseView(companyID: id, title: name, network: network) { path.wrappedValue.append(Route.detail($0)) }
         case .catalogSeeAll(let addon, let catalog, let title):
             CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { path.wrappedValue.append(Route.detail($0)) }
-        case .discover:
-            DiscoverView { path.wrappedValue.append(Route.detail($0)) }
         case .streams(let meta, let video):
             StreamsView(
                 meta: meta, video: video,
@@ -1326,17 +1490,6 @@ struct RootView: View {
                 // never while this view's resolve Task is still running.
                 onAutoDismiss: { pendingAutoPlayPop = true }
             ) { entry, all in
-                let key = ProgressStore.key(metaID: meta.id, video: video)
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: progressStore.progress(for: key)?.positionSeconds
-                ))
-            }
-        case .streamsManual(let meta, let video):
-            StreamsView(meta: meta, video: video, forceManual: true) { entry, all in
                 let key = ProgressStore.key(metaID: meta.id, video: video)
                 startPlayback(PlaybackRequest(
                     meta: meta,
@@ -1395,8 +1548,18 @@ struct RootView: View {
         case 0: if !homePath.isEmpty { homePath.removeLast() }
         case 1: if !searchPath.isEmpty { searchPath.removeLast() }
         case 2: if !libraryPath.isEmpty { libraryPath.removeLast() }
+        case 4: if !moviesPath.isEmpty { moviesPath.removeLast() }
+        case 5: if !seriesPath.isEmpty { seriesPath.removeLast() }
         default: break
         }
+    }
+
+    /// Plays a picked link — from its saved position, or from the start.
+    private func play(_ meta: MetaItem, _ video: MetaVideo?, _ entry: StreamEntry, _ all: [StreamEntry],
+                      fromStart: Bool) {
+        let key = ProgressStore.key(metaID: meta.id, video: video)
+        startPlayback(PlaybackRequest(meta: meta, video: video, entry: entry, allEntries: all,
+                                      resumePosition: fromStart ? nil : progressStore.progress(for: key)?.positionSeconds))
     }
 
     private func startPlayback(_ request: PlaybackRequest) {
@@ -1486,17 +1649,6 @@ struct RootView: View {
     }
 
 
-    /// Route to the Sources page (manual), resolving a tmdb: identity first.
-    /// Always the manual list — this is the "Play Manually" affordance, so it
-    /// bypasses the Auto Link Selector even when a profile has it on.
-    private func playManually(_ meta: MetaItem, _ video: MetaVideo?) {
-        // Navigate immediately — don't block the transition on a tmdb→tt
-        // lookup. StreamsView canonicalizes the id itself (effectiveStreamID),
-        // so pushing the raw meta opens the Sources screen at once (with its
-        // own loading state) instead of leaving the card on screen for ~2s.
-        homePath.append(Route.streamsManual(meta, video))
-    }
-
     /// Continue Watching resume. TMDB-sourced items are stored as `tmdb:<n>`
     /// (and episodes as `tmdb:<n>:<s>:<e>`), but Cinemeta and Torrentio only
     /// speak IMDb `tt` ids — so resuming one directly found no metadata and no
@@ -1513,20 +1665,17 @@ struct RootView: View {
         // the source picker, which auto-plays the link best matching what was
         // last watched, with the full list as failover. Start Over takes the
         // same matched-link path but plays from 0:00.
-        homePath.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
+        homeLikePath.wrappedValue.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
     }
 
-    /// Continue Watching hold → "Play Manually". The manual source list, but
-    /// through the SAME identity repair as a resume: this route used to push
-    /// the raw stored row (Home built a MetaItem straight off it), so every id
-    /// shape `resumeResolved` had learned to fix — `tmdb:` metaIDs, rows typed
-    /// "tv", synced rows whose season/episode columns were dropped — reached
-    /// the picker unrepaired and produced the same empty Sources page the
-    /// automatic path was cured of.
+    /// Continue Watching hold → "Choose Source": the source picker, through
+    /// the SAME identity repair as a resume (`tmdb:` metaIDs, rows typed "tv",
+    /// synced rows missing season/episode) — the raw stored row found no
+    /// sources.
     private func playManuallyFromProgress(_ progress: WatchProgress) {
         Task { @MainActor in
             let (meta, video) = await canonicalResumeIdentity(progress)
-            homePath.append(Route.streamsManual(meta, video))
+            SourcePicker.shared.open(meta, video)
         }
     }
 

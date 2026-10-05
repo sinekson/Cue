@@ -19,28 +19,48 @@ type, grain) — looked wrong; fancier poster hairlines — not needed.
 profile); a white capsule glides to the focused tab (dark text). The flat
 tab names and the dark top fade were tried and removed.
 
-## 1. Glass language — one set of parts, used everywhere
+## 1. Glass and flat — one rule (locked 2026-10-03)
 
-Defined once in `Components.swift` (`AppGlass`, `GlassHighlight`, `GlassRim`,
-`GlassFocusRim`) and `TitleBlock.swift` (`GlassChevron`, `SectionHint`).
+**Glass only for what floats above the page; everything in the page is
+flat.** (A fully flat look — our own hold menu, a loose top bar — was built
+and compared, then dropped: the system's menus are glass anyway.)
 
-- **Surface**: `glassSurface(in:)` — real Liquid Glass (`glassEffect`) on
-  tvOS 26+ capable boxes, frosted material otherwise (`AppGlass.isReal` is the
-  one rule). Always as a BACKGROUND: a `glassEffect` wrapped around focusable
-  content hides it from the focus engine.
-- **Highlight on glass** (`GlassHighlight`): itself tinted glass — bright when
-  focused (dark text, the tvOS focus look), faint when merely current.
-- **Text on glass**: `AppGlass.text` (white), `.textMuted`, `.textOnFocus`.
-- **Artwork carries no line** (locked 2026-09-28): posters, cards and the
-  box are artwork + rounded corners only — no rim, no glow. The glass rim
-  (`GlassRim`) is gone from Home's posters and box.
-- **Only focus gets a line**: `GlassFocusRim` is a solid white outline, no
-  glow, no gradient. One meaning, everywhere.
-- **Glass is for controls, never content**: top bar, buttons, chips,
-  chevrons. Anything that slides with content stays flat.
+- **Glass** (`liquidGlass(in:)`, `Components.swift`) — the ONE glass: Liquid
+  Glass `.regular` tinted `AppGlass.surfaceTint` (black 30%), nothing added
+  on top (no extra tint layer, border or shadow per surface). The slower
+  boxes get `FusionMaterials.dialog` instead (`AppGlass.isReal`). Always as a
+  BACKGROUND: a `glassEffect` wrapped around focusable content hides it
+  from the focus engine. Used by: the top bar, the system hold menus (the
+  system's own), the source picker, dropdowns' lists, the "Finding a
+  source" card, overlays (About's full text), toasts. ONE exception in the
+  page: Details' action buttons (Play, Library, Trailer) — the top bar's
+  look, glass at rest and the bright glass highlight focused (decided
+  2026-10-04; watch the billboard ⇄ Details swap: glass renders differently
+  below full opacity, which is why they had gone flat once).
+- **Highlight on glass** (`GlassHighlight`): tinted glass — bright when
+  focused (dark text), faint when merely current (the top bar's).
+- **Flat** (`FlatControl`, `Components.swift`) — every control in the page:
+  `rest` translucent white (`restSubtle` for long lists like Settings rows),
+  `selected` brighter, `focus` solid white with dark content, a small grow.
+  Each control keeps its own shape and size; the colours come from here.
+  Shared parts: `FlatChip` (pills: filters, tabs, shapes), `FlatIconCircle`
+  (round icon controls), `PillButtonStyle`, the
+  Settings rows, the source picker's rows, tiles ("See All", About's card).
+  Page markers are flat too: the billboard's and the seasons' dots.
+- **Settings rows** (`SettingsKit`): fully rounded like Apple TV's own
+  Settings; a faint fill at rest, the top bar's bright glass highlight
+  when focused (decided 2026-10-04). The info pane on the right has no
+  box: the category's symbol large in its own soft colour
+  (`SettingsCategory.tint`), its name and the description centred below
+  (a preview, like the account card, keeps a rounded card). The older pages still on
+  `SettingsRowBackground` (Playback, Performance) aren't converted yet.
+- **Text**: `AppGlass.text` (white), `.textMuted`, `.textOnFocus`.
+- **Artwork** keeps its own focus: `GlassFocusRim`, a solid white outline
+  (no glow, no gradient), and a small grow. One meaning, everywhere.
+
 - **Buttons** (Detail): exactly three, always there — Play, Add to
   Library, Watch Trailer (without a trailer: a toast). `DetailActionButton`:
-  a circle with its icon at rest (plain fill + glass rim, not glass); the
+  a circle with its icon at rest (glass, as the top bar); the
   row's ONE pill (the focused button — or, focus elsewhere, the last
   focused, in the rest colours) is always as wide as the widest title needs,
   with its icon + title centred; the other two are circles. So the group's
@@ -144,8 +164,93 @@ curves or timings, the tokens win.
   Nothing vanishes before the first video frame (a failed load changes
   nothing). No billboard → Details handoff of a playing trailer yet.
 - **Detail page sections**: fast-then-slow page scroll (`detailPageScroll`).
-  Within More, each row scrolls the same way to ONE spot (its title where
-  the first row's is, below the hint).
+  The overview is its own screen; below it ONE list of rows, no page break:
+  a show's Episodes (the box at Home's box spot), then the More rows right
+  under it — the collection, More Like This, Cast & Crew, About (only those
+  with content; About always). More Like This, the collection and Cast
+  scroll the system's way (`MoreScrollRow`: focus moves along, rim + small
+  grow, captions below) — not Home's fixed spot. The season progress
+  (label, then ticks) sits above the season names. Rows scrolled above the
+  current one fade out. Each More row scrolls the same way to ONE
+  spot (its title below the hint); the "▴" hint shows on the first row
+  only. The overview's "▾" hint names the first row below it.
+- **Details: billboard → rows** (decided 2026-10-05, `rigidRest` +
+  `rigidNameY`): ONE PLAIN SCROLL where the name and its row MEET. On the
+  billboard only the first row's name shows — Home's next-row look: 75%,
+  ⌄ after it, dimmed — at the bottom left; the row itself waits at the
+  bottom edge (as Home's: only the sliver tvOS needs on screen, contents
+  hidden). Down moves everything up by one distance; the name rides
+  lifted above its cards and the lift shrinks to nothing on the row's own
+  curve (Home's `liftNextTitle`, same Render Lab choice: hold-then-join or
+  same pace), growing to full size while its ⌄ turns into the season
+  control's ›. The cards switch on at once as they start to rise; on the
+  way up they stay until they're back at the edge. The billboard dims and
+  stays above (a sliver of its buttons at the top). The season progress
+  sits after the row's name (see below). Tried and dropped: the full-size name
+  under the buttons; an "▾ EPISODES" hint with fading cards; a peek of
+  the cards. Focus back on the billboard settles on Play from the window,
+  sent by Details once its text is back in place (`settleOutside`). The
+  picture stays (SwiftUI, behind the rows): sharp under the overview;
+  below it its blurred copy fades in, dimmed, the shade lighter.
+- **Details' billboard text is the engine's** (2026-10-05,
+  `billboardOverlay`): the logo, summary, facts and buttons are SwiftUI
+  hosted INSIDE the rows engine and moved (and dimmed) in the same Core
+  Animation block as the rows — as a SwiftUI layer on top they were
+  animated on the main thread and fell behind the rows whenever the page
+  was busy (the "name pushes the text" look). The host reaches only down
+  to the buttons (over the rows it would hide them from focus). The
+  buttons' focus state lives with them (`FocusBridgeHost`; the page reads
+  and sets it through `FocusBridge` — SwiftUI focus state doesn't cross
+  hosts). Up into the billboard settles focus from the window; the
+  engine's preferred focus there is the overlay (Play).
+- **Details' rows at Home's spot, buttons in full above** (2026-10-06):
+  the scroll is as long as it takes to leave only the buttons at the top
+  (the screen's edge halfway between the badges and them, 15 pt) and to
+  bring the first row to Home's spot; so at rest its cards' top ~40 pt is
+  on the screen, cut off by a LINE (`concealTravel`): the conceal mask is
+  stretched past the cards inside the scroll, against the row's own move —
+  the line stays put on the screen and the cards rise out from under it
+  (no fade, no pop); Up the reverse. (Tried: the row 62 pt lower than
+  Home's spot — "further down than the catalogs".) Its name is there from
+  the first frame: before the list is in, the row exists with no cards and
+  the season Play
+  starts as the billboard handed it over ("Play S4:E19" → "Season 4");
+  the row then never says "Season 1" first (`rowSeason` falls back to
+  Play's season). Down from the buttons that the engine settles back on
+  the button (the current episode isn't under it) goes to the row's
+  current card (`shouldUpdateFocus`).
+- **Billboard → Details swap with rows**: Home's kicker ("NEW EPISODE …")
+  fades with the swap (Details has none); Home no longer shows a
+  "▾ Episodes" hint in the swap — Details' first row's name comes down
+  into place (`ModeSwap.lift`, the arriving curve) once its content is in.
+  The backdrop keeps the swap's step-in zoom and the box path's scrim.
+- **Season progress under the name** (decided 2026-10-06,
+  `rowTitleAccessories`): on its own line under "Season 1 ›" — the name
+  stays at Home's spot, the cards move 40 pt lower (`titleExtra`): its
+  ticks, at most 360 pt (over 30 episodes: one bar with a marker), then
+  "3 of 7" in the caption style. Part of the row in the engine (moves with
+  it, not scaled with the focused name); shown only while the row has
+  focus. Tried: under the captions (far from the name, crowded the next
+  row's peek); beside the name on its line (busy next to the ‹ ›).
+- **Season control** (Details, decided 2026-10-05; tabs and the white pill
+  were tried and dropped): the episode row's OWN NAME, in the engine
+  (`titleControlRowIDs`) — ‹ in the margin, › after the name, faint; no
+  arrow past the first / last season. Up from the episodes focuses it:
+  name and arrows white, the name a touch larger, no pill. Left / Right
+  step seasons (the row follows), Down into the row, Up to Play. One
+  season: no control, Up goes to Play. The progress label under the row
+  drops the season name.
+- **Into a moving-focus row from outside**, only its current card can take
+  focus, and it's the strip's preferred card (no remembered index path).
+  The nearest card is often the previous one's sliver, the engine's
+  redirect fails when focus comes from SwiftUI, and a remembered card that
+  is no longer current left focus on the strip itself — Down did nothing.
+- **About** (`DetailAbout`): the full description in a focusable card
+  (Select: the whole text over Details), the facts in two label/value
+  columns (released/aired, runtime/episodes, genres, director/creator;
+  original title, language, countries, rated, network, budget, box office),
+  every shown rating source as chips, studios as logo plates that open
+  their titles (replaces the old Production row).
 
 - **Timing trap**: `.animation(_:value:)` re-times EVERY change in its
   view — size and position too, not just the modifier beside it. For a
@@ -224,9 +329,10 @@ curves or timings, the tokens win.
 
 ## 5. Open / next
 
-- More page: hold menu (on the whole row, content follows the current
-  poster) and the per-row scroll (`MoreRowAnchor`) are built — check both on
-  a device, in particular what the menu's lift preview looks like.
+- More rows: hold menu (on the whole row, content follows the current
+  poster; `TitleMenu`'s items) and the per-row scroll (`MoreRowAnchor` — a
+  real strip above the row; as a background moved by an alignment guide
+  it scrolled to the row itself) — check both on a device.
 - The zoom transition Home box → Detail (system `navigationTransition(.zoom)`
   plus the logo gliding) — discussed, not built.
 - Back from a Detail page NOT opened from the billboard still uses the

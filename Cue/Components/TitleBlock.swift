@@ -75,14 +75,17 @@ enum TitleBlock {
     /// fetches it from TMDB for catalog entries without an episode list).
     /// `includesRating`: off in the title block (its ratings row has them).
     static func metaSegments(for item: MetaItem, seriesSize: String? = nil,
-                             includesRating: Bool = true) -> [String] {
+                             includesRating: Bool = true, startYearOnly: Bool = false) -> [String] {
         var segments: [String] = []
         segments.append(item.isSeries ? "Series"
                         : item.type == "movie" ? "Movie" : item.type.capitalized)
         if let genre = primaryGenre(item) { segments.append(genre) }
         // Series keep their range — it says whether the show is still
         // running — but tidied up (see `yearText`).
-        if let year = yearText(item.releaseInfo) { segments.append(year) }
+        if startYearOnly, let years = catalogYears(item) {
+            // (The status badge carries the rest: ONGOING / ENDED + year.)
+            segments.append(years.start)
+        } else if let year = yearText(item.releaseInfo) { segments.append(year) }
         if item.isSeries {
             if let size = seriesSize ?? seriesSizeText(item) { segments.append(size) }
         } else if let runtime = item.runtime, !runtime.isEmpty {
@@ -106,6 +109,29 @@ enum TitleBlock {
     static func primaryGenre(_ item: MetaItem) -> String? {
         guard let genres = item.genres, !genres.isEmpty else { return nil }
         return genres.first { !genericGenres.contains($0) } ?? genres.first
+    }
+
+    /// A series' status from the catalog's year field (there at once, no
+    /// request): "2016-" → RETURNING, "2016-2020" → ENDED 2020. Nil for
+    /// movies and anything that isn't a clear range. Only the stand-in until
+    /// the real status is known (`FixedFocusShowInfo.status`): the catalog's
+    /// last year is when episodes last aired, so a show between seasons can
+    /// read as ended here.
+    static func catalogStatus(_ item: MetaItem) -> String? {
+        guard let years = catalogYears(item) else { return nil }
+        return years.end.map { "ENDED \($0)" } ?? "RETURNING"
+    }
+
+    /// A series' years from the catalog: its first, and its last if the
+    /// range is closed (nil: open). Nil when the field isn't a clear range.
+    static func catalogYears(_ item: MetaItem) -> (start: String, end: String?)? {
+        guard item.isSeries, let raw = item.releaseInfo?.trimmingCharacters(in: .whitespaces) else { return nil }
+        let parts = raw.split(omittingEmptySubsequences: false,
+                              whereSeparator: { "-–—".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, parts[0].count == 4, Int(parts[0]) != nil else { return nil }
+        if parts[1].isEmpty { return (parts[0], nil) }
+        return parts[1].count == 4 && Int(parts[1]) != nil ? (parts[0], parts[1]) : nil
     }
 
     /// Tidies the catalog's year field:
@@ -166,7 +192,10 @@ struct SectionHint: View {
     /// Left-aligned (the chevron at the content margin, the text after
     /// it) or centred on screen. Every hint follows this.
     static let leftAligned = true
-    static let size: CGFloat = 18
+    /// Subtle through its weight and brightness, not by being tiny: small
+    /// spaced capitals read about a size larger than their point size.
+    static let size: CGFloat = 21
+    static let weight: Font.Weight = .medium
     static let tracking: CGFloat = 2.5
     static let opacity: Double = 0.55
     /// The idle bob: how far, how often.
@@ -181,7 +210,7 @@ struct SectionHint: View {
         HStack(spacing: 12) {
             chevron
             Text(title.uppercased())
-                .font(.system(size: Self.size, weight: .semibold))
+                .font(.system(size: Self.size, weight: Self.weight))
                 .tracking(Self.tracking)
                 .lineLimit(1)
         }
@@ -210,31 +239,9 @@ struct SectionHint: View {
     private var chevron: some View {
         let push = (bobbing ? Self.bob : 0) + (pressed ? Self.bob * 1.4 : 0)
         return Image(systemName: up ? "chevron.up" : "chevron.down")
-            .font(.system(size: Self.size, weight: .semibold))
+            .font(.system(size: Self.size, weight: Self.weight))
             .offset(y: up ? -push : push)
             .animation(.easeOut(duration: 0.12), value: pressed)
-    }
-}
-
-/// The rows' ‹ › (Home and the Detail page's episodes alike): a small
-/// glass circle; pressed, it gives a little and brightens.
-struct GlassChevron: View {
-    let symbol: String
-    var pressed = false
-    var size: CGFloat = Spotlight.chevronCircle
-    var icon: CGFloat = Spotlight.chevronIcon
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: icon, weight: .bold))
-            .foregroundStyle(AppGlass.text)
-            .frame(width: size, height: size)
-            .glassSurface(in: Circle())
-            .overlay {
-                Circle().fill(Color.white.opacity(pressed ? Spotlight.chevronPressGlow : 0))
-            }
-            .scaleEffect(pressed ? Spotlight.chevronPressScale : 1)
-            .allowsHitTesting(false)
     }
 }
 
@@ -276,6 +283,13 @@ final class ModeSwap: ObservableObject {
 
     /// Home's top bar is out (Details, opened from the billboard, is up).
     @Published var homeChromeOut = false
+    /// Billboard → Details: keep the top bar on screen although a page was
+    /// pushed — it lifts away once Details is up (normally a pushed page
+    /// removes it at once: nothing was left to animate).
+    @Published var chromeHeld = false
+    /// What Details' Play says, as the billboard knew it ("Play S2:E3"):
+    /// until its own episode list is in, Play doesn't change its label.
+    var billboardPlayTitle: String?
     /// Home's top bar is out for the billboard's trailer (see `TrailerMode`).
     /// It can't take focus then either: Up brings the page back instead.
     @Published var trailerChromeOut = false
@@ -292,6 +306,34 @@ final class ModeSwap: ObservableObject {
     var billboardFacts: TMDBService.TitleFacts?
     /// The meta line's series size as the billboard showed it.
     var billboardSeriesSize: String?
+    /// The background's colours under the billboard — Details starts on them.
+    var billboardTint: (first: Color?, second: Color?) = (nil, nil)
+
+    /// A card opening into Details: Details zooms out of it to the whole
+    /// screen (`TitleMorphOverlay`); Details takes over as it ends. Back
+    /// plays it backwards.
+    struct WindowOpen: Identifiable {
+        let id = UUID()
+        let item: MetaItem
+        /// The card it opens from: where it is and where its parts are.
+        let source: TitleMorphSource
+        var closing = false
+        var frame: CGRect { source.frame }
+    }
+    /// The window opening or closing, over everything.
+    @Published var windowOpen: WindowOpen?
+
+    /// From Select on the billboard or a card until Details is up: Home
+    /// holds still (no focus moves), and a Select, Back or Down pressed
+    /// meanwhile waits for Details (`heldPress`) — none is lost, none acts
+    /// on Home underneath.
+    var handingOver = false {
+        didSet { if handingOver { heldPress = nil } }
+    }
+    enum HeldPress { case play, back, down }
+    var heldPress: HeldPress?
+    /// The window Details was opened through — Back closes it again.
+    var openedThrough: WindowOpen?
 
     /// Going: quick, getting out of the way at once (not an ease-in — that
     /// crept, then shot away at the very end).
@@ -315,7 +357,32 @@ final class ModeSwap: ObservableObject {
     /// Depth: Details is a step "into" the title — its backdrop leans in
     /// (scales up) and darkens a step on arrival, and back out on the way
     /// home. Billboard (lightest) → overview → Episodes (darkest).
-    static let depthScale: CGFloat = 1.04
+    static let depthScale: CGFloat = 1.06
+    /// Billboard → Details: the picture's step closer — slower and calmer
+    /// than the rest of the swap, so it reads as a move INTO the title.
+    static let stepIn: Animation = .timingCurve(0.2, 0.7, 0.2, 1, duration: 0.8)
+    static let stepOutDuration: Double = 0.3
+    static let stepOut: Animation = .easeInOut(duration: stepOutDuration)
+    /// The swap's moves are over by then: the page may load and re-render.
+    static let swapSettle: Double = 0.8
+
+    /// BILLBOARD ⇄ DETAILS, ONE TIMELINE: on the press, everything moves
+    /// together with this one curve and duration — the picture steps closer
+    /// (Core Animation, `StagePictureView`), the top bar lifts away, the hint
+    /// crossfades, the dots fade. Details takes over once that's done
+    /// (built while nothing moves), and only its buttons come in after.
+    static let swapDuration: Double = 0.5
+    static let swapControlPoints = (CGPoint(x: 0.35, y: 0), CGPoint(x: 0.15, y: 1))
+    static var swap: Animation {
+        .timingCurve(swapControlPoints.0.x, swapControlPoints.0.y,
+                     swapControlPoints.1.x, swapControlPoints.1.y, duration: swapDuration)
+    }
+    /// Details takes over this far into the swap (its tail is too small to
+    /// see, and the page's build spike lands where nothing visibly moves).
+    static let swapHandover: Double = swapDuration * 0.9
+    /// Details' buttons, after: a quick rise.
+    static let buttonsIn: Animation = .timingCurve(0.2, 0.7, 0.2, 1, duration: 0.35)
+    static let buttonsOut: Animation = .easeIn(duration: 0.14)
     static let depthDim: Double = 0.25
     /// The depth is ONE motion with the rest of the swap: it starts on the
     /// press and ends as the arriving parts land. It runs ACROSS the
@@ -445,16 +512,63 @@ struct TitleBlockView: View {
 
 /// One badge in the badges row: a small outlined chip.
 struct TitleBadge: View {
+    @ObservedObject private var probe = RenderProbe.shared
     let text: String
 
+    /// Render Lab → Badge: outlined (the original), the app's glass, or a
+    /// flat faint fill.
+    enum Style: String, CaseIterable {
+        case outline, glass, fill
+        var displayName: String {
+            switch self {
+            case .outline: return "Outlined"
+            case .glass: return "Liquid Glass"
+            case .fill: return "Flat fill"
+            }
+        }
+    }
+
     var body: some View {
-        Text(text)
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(0.88))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.45), lineWidth: 1.5))
+        let style = Style(rawValue: probe.flags.badgeStyle) ?? .outline
+        // No taller than a line of the text beside it: capitals as high
+        // as that text's lowercase letters, in a box of about 28 pt.
+        let label = Text(text)
+            .font(.system(size: 17, weight: .semibold))
+            .tracking(0.5)
+            .foregroundStyle(Color.white.opacity(0.85))
+            // (The rating chips' height — see `MDBListRatingsRow`.)
+            .frame(height: 21)
+        switch style {
+        case .outline:
+            label
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.white.opacity(0.4), lineWidth: 1.25))
+        case .glass:
+            // (Was the top bar's glass; in the page everything is flat.)
+            label
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(FlatControl.rest, in: Capsule())
+        case .fill:
+            label
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
     }
 }
 
+/// A card as the start of the zoom into Details (`TitleMorphOverlay`): where
+/// it is on screen and how it looks.
+struct TitleMorphSource {
+    /// The card: the window starts here.
+    var frame: CGRect
+    /// The card as it looks (it zooms with Details; its text fades first).
+    var picture: UIImage?
+    /// Where the card draws the title's BACKDROP (aspect-filled), on screen —
+    /// Details' picture starts exactly there, so nothing changes in it. nil:
+    /// the card shows other art (a poster), which dissolves softly instead.
+    var backdrop: CGRect? = nil
+}

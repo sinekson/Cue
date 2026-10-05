@@ -35,14 +35,10 @@ struct TMDBSettings: Codable, Equatable {
         (apiKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// TMDB can actually answer: holding a key AND not switched off.
-    ///
-    /// A key is treated as consent — saving one turns `enabled` on (see
-    /// `TMDBSettingsStore.setAPIKey`), and installs that already had a key
-    /// from before this was true are migrated at launch. Otherwise every
-    /// collection stayed dark after the viewer did the one thing the screen
-    /// asked of them, because a second switch elsewhere was still off.
-    var isUsable: Bool { enabled && !trimmedAPIKey.isEmpty }
+    /// TMDB can answer: a key means on. (`enabled` and the `use…` switches
+    /// are only kept for the account's settings round-trip — Cue has no
+    /// switches for them.)
+    var isUsable: Bool { !trimmedAPIKey.isEmpty }
 }
 
 @MainActor
@@ -71,19 +67,6 @@ final class TMDBSettingsStore: ObservableObject {
     /// Integrations → TMDB (Trakt-switch semantics).
     private(set) var profileID: Int
 
-    /// Separate-vs-shared switch (Trakt-style). Shared = one TMDB setup
-    /// (key, language, enrichment switches) for the whole device.
-    static let feature = "tmdb"
-    var perProfileEnabled: Bool { ProfileScopedDefaults.isSeparate(Self.feature) }
-
-    func setPerProfile(_ on: Bool) {
-        guard on != perProfileEnabled else { return }
-        ProfileScopedDefaults.setSeparate(Self.feature, on)
-        applyingRemote = true
-        settings = Self.load(profile: profileID)
-        applyingRemote = false
-    }
-
     init() {
         profileID = ProfileScopedDefaults.activeProfileID
         settings = Self.load(profile: profileID)
@@ -97,7 +80,7 @@ final class TMDBSettingsStore: ObservableObject {
     }
 
     private static func load(profile: Int) -> TMDBSettings {
-        if let data = ProfileScopedDefaults.data(key, feature: feature, profile),
+        if let data = ProfileScopedDefaults.data(key, profile),
            let decoded = try? JSONDecoder().decode(TMDBSettings.self, from: data) {
             return decoded
         }
@@ -168,7 +151,7 @@ final class TMDBSettingsStore: ObservableObject {
     private func save() {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         UserDefaults.standard.set(
-            data, forKey: ProfileScopedDefaults.writeKey(Self.key, feature: Self.feature, profileID))
+            data, forKey: ProfileScopedDefaults.key(Self.key, profileID))
     }
 }
 
@@ -1022,29 +1005,16 @@ enum TMDBService {
         let id: Int
         let name: String
         let logoURL: String
+        /// A TV network (its id is a network's, not a company's).
+        var isNetwork = false
     }
 
     /// Season and episode counts of a series, for compact meta lines.
-    struct ShowSize: Hashable {
+    struct ShowSize: Hashable, Codable, Sendable {
         let seasons: Int
         let episodes: Int
     }
 
-    /// Season/episode counts from TMDB. Nil without a key, for movies, or
-    /// when TMDB doesn't know the show. Best-effort, one light request.
-    static func showSize(imdbID: String, type: String) async -> ShowSize? {
-        guard hasAPIKey,
-              let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type),
-              !isMovie else { return nil }
-        struct Body: Decodable {
-            let number_of_seasons: Int?
-            let number_of_episodes: Int?
-        }
-        guard let body: Body = try? await get("/tv/\(tmdbID)") else { return nil }
-        return ShowSize(seasons: body.number_of_seasons ?? 0,
-                        episodes: body.number_of_episodes ?? 0)
-    }
-    
     /// Per-episode extras (rating, air date, better still) keyed by episode
     /// number, resolved from a TMDB season.
     struct EpisodeExtra: Hashable {
@@ -1078,12 +1048,30 @@ enum TMDBService {
         var contentRating: String?        // US certification/rating, e.g. PG-13, R, TV-MA
         /// The title block's facts (creator line, status, runtime, …).
         var facts = TitleFacts()
+        /// Details' About section: what the title block leaves out.
+        var about = About()
+    }
+
+    /// Details' About section's facts beyond the title block's.
+    struct About: Equatable {
+        /// The title in its own language, when it differs.
+        var originalTitle: String?
+        /// Every production country.
+        var countries: [String] = []
+        /// Production companies (with or without a logo), and a show's networks.
+        var studios: [String] = []
+        var networks: [String] = []
+        /// A film's, in US dollars (0 / unknown: nil).
+        var budget: Int?
+        var revenue: Int?
+        /// A show's first and last air dates (ISO).
+        var lastAirDate: String?
     }
 
     /// What the title block (Detail overview and Home's billboard) shows
     /// beyond the catalog's own fields: "Creator: …", ENDED / ONGOING,
     /// certification, runtime, country, language.
-    struct TitleFacts: Equatable {
+    struct TitleFacts: Equatable, Codable, Sendable {
         var creatorLine: String?
         var contentRating: String?
         /// "ENDED" / "ONGOING" — series only.
@@ -1124,6 +1112,8 @@ enum TMDBService {
         factsLock.lock(); defer { factsLock.unlock() }
         return factsCache[key]
     }
+    private static let factsDisk = DiskCache<TitleFacts>(name: "tmdb-facts")
+
     private static func storeFacts(_ facts: TitleFacts, for key: String) {
         factsLock.lock(); defer { factsLock.unlock() }
         factsCache[key] = facts
@@ -1135,6 +1125,11 @@ enum TMDBService {
     static func facts(for meta: MetaItem) async -> TitleFacts? {
         let key = "\(meta.type):\(meta.id):\(preferredLanguage)"
         if let hit = cachedFacts(key) { return hit }
+        // On disk for a day: a relaunch doesn't ask again.
+        if let stored = await factsDisk.value(for: key, ttl: 24 * 60 * 60) {
+            storeFacts(stored, for: key)
+            return stored
+        }
         guard hasAPIKey,
               let (tmdbID, isMovie) = await resolveTMDBID(from: meta.id, type: meta.type) else { return nil }
         struct Response: Decodable {
@@ -1186,6 +1181,7 @@ enum TMDBService {
             facts.contentRating = rating?.isEmpty == false ? rating : nil
         }
         storeFacts(facts, for: key)
+        await factsDisk.store(facts, for: key)
         return facts
     }
 
@@ -1283,6 +1279,12 @@ enum TMDBService {
             let original_language: String?
             let release_date: String?
             let first_air_date: String?
+            let last_air_date: String?
+            let original_title: String?
+            let original_name: String?
+            let budget: Int?
+            let revenue: Int?
+            let networks: [CompanyDTO]?
             let videos: Videos?
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
@@ -1417,7 +1419,21 @@ enum TMDBService {
             detail.collection = CollectionRef(id: bt.id, name: bt.name,
                                               backdropURL: imageURL(bt.backdrop_path, size: "w780"))
         }
-        detail.companies = (body.production_companies ?? []).compactMap { c in
+        let originalTitle = isMovie ? body.original_title : body.original_name
+        detail.about = About(
+            originalTitle: originalTitle,
+            countries: (body.production_countries ?? []).compactMap(\.name),
+            studios: (body.production_companies ?? []).map(\.name),
+            networks: (body.networks ?? []).map(\.name),
+            budget: body.budget.flatMap { $0 > 0 ? $0 : nil },
+            revenue: body.revenue.flatMap { $0 > 0 ? $0 : nil },
+            lastAirDate: isMovie ? nil : body.last_air_date)
+        // A show's networks first (where it airs), then the studios.
+        let networks = (body.networks ?? []).compactMap { n -> Company? in
+            guard let logo = imageURL(n.logo_path, size: "w300") else { return nil }
+            return Company(id: n.id, name: n.name, logoURL: logo, isNetwork: true)
+        }
+        detail.companies = networks + (body.production_companies ?? []).compactMap { c in
             guard let logo = imageURL(c.logo_path, size: "w300") else { return nil }
             return Company(id: c.id, name: c.name, logoURL: logo)
         }
@@ -1711,6 +1727,14 @@ enum TMDBService {
         return await mapToMetaItems(Array(sorted.prefix(40)))
     }
 
+    /// A network's shows, best rated first.
+    static func browseNetwork(id: Int, language: String = preferredLanguage) async -> [MetaItem] {
+        let raw = await discover(path: "/discover/tv", with: ["with_networks": String(id)], isMovie: false,
+                                 language: language)
+        let sorted = raw.sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
+        return await mapToMetaItems(Array(sorted.prefix(40)))
+    }
+
     /// Whether a genre NAME is known for movies / TV (so callers can decide which
     /// media type(s) to query for a Categories genre).
     static func hasMovieGenre(_ name: String) -> Bool { movieGenres.values.contains(name) }
@@ -1785,4 +1809,120 @@ enum TMDBService {
             }
         return await mapToMetaItems(Array(raw.prefix(40)))
     }
+}
+
+// MARK: - Billboard picks (see `BillboardPicks`)
+
+extension TMDBService {
+    /// TMDB's recommendations for a title ("Because you watched …"), as titles
+    /// with IMDb ids. Light: just the list, not the full detail call.
+    static func recommendations(imdbID: String, type: String, limit: Int = 6) async -> [MetaItem] {
+        guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type) else { return [] }
+        let path = isMovie ? "/movie/\(tmdbID)/recommendations" : "/tv/\(tmdbID)/recommendations"
+        guard let body: PickList = try? await get(path, query: ["language": preferredLanguage]) else { return [] }
+        return await mapToMetaItems(body.raw(defaultMovie: isMovie, limit: limit))
+    }
+
+    /// What's trending today, films and series together.
+    static func trending(limit: Int = 15) async -> [MetaItem] {
+        guard let body: PickList = try? await get("/trending/all/day",
+                                                  query: ["language": preferredLanguage]) else { return [] }
+        return await mapToMetaItems(body.raw(defaultMovie: true, limit: limit))
+    }
+
+    /// How well known a title is, from TMDB's own search: to rank an add-on's
+    /// search results (those are text matches, blind to fame — an unrated
+    /// variety show above the series everyone means).
+    struct SearchFame: Sendable {
+        let name: String
+        let originalName: String?
+        let year: Int?
+        let isMovie: Bool
+        let popularity: Double
+        let votes: Int
+
+        /// One number: votes (lasting fame) and popularity (right now),
+        /// both on a log scale.
+        var score: Double { log1p(Double(votes)) + log1p(popularity) }
+    }
+
+    /// TMDB's films and series for a search, with their fame — two requests
+    /// side by side (one page each). Empty without a key.
+    static func searchFame(_ query: String) async -> [SearchFame] {
+        guard hasAPIKey else { return [] }
+        struct Page: Decodable {
+            struct Result: Decodable {
+                let title: String?
+                let name: String?
+                let original_title: String?
+                let original_name: String?
+                let release_date: String?
+                let first_air_date: String?
+                let popularity: Double?
+                let vote_count: Int?
+            }
+            let results: [Result]?
+        }
+        func search(_ kind: String) async -> [SearchFame] {
+            let isMovie = kind == "movie"
+            guard let page: Page = try? await get("/search/\(kind)", query: ["query": query, "language": preferredLanguage])
+            else { return [] }
+            return (page.results ?? []).compactMap { result in
+                guard let name = result.title ?? result.name else { return nil }
+                let date = result.release_date ?? result.first_air_date
+                return SearchFame(name: name, originalName: result.original_title ?? result.original_name,
+                                  year: date.flatMap { Int($0.prefix(4)) }, isMovie: isMovie,
+                                  popularity: result.popularity ?? 0, votes: result.vote_count ?? 0)
+            }
+        }
+        async let movies = search("movie")
+        async let series = search("tv")
+        return await movies + series
+    }
+
+    /// A TMDB result list (recommendations, trending).
+    private struct PickList: Decodable {
+        struct Result: Decodable {
+            let id: Int
+            let title: String?
+            let name: String?
+            let media_type: String?
+            let poster_path: String?
+            let backdrop_path: String?
+            let overview: String?
+            let release_date: String?
+            let first_air_date: String?
+            let vote_average: Double?
+            let genre_ids: [Int]?
+        }
+        let results: [Result]?
+
+        /// Films and series only (trending also lists people), up to `limit`.
+        func raw(defaultMovie: Bool, limit: Int) -> [TMDBRawItem] {
+            (results ?? []).compactMap { result -> TMDBRawItem? in
+                let isMovie: Bool
+                switch result.media_type {
+                case "movie": isMovie = true
+                case "tv": isMovie = false
+                case nil: isMovie = defaultMovie
+                default: return nil
+                }
+                guard let name = isMovie ? result.title : result.name, !name.isEmpty else { return nil }
+                let date = isMovie ? result.release_date : result.first_air_date
+                let genres = (result.genre_ids ?? []).compactMap { isMovie ? movieGenres[$0] : tvGenres[$0] }
+                return TMDBRawItem(
+                    tmdbID: result.id, isMovie: isMovie, name: name,
+                    poster: imageURL(result.poster_path, size: "w500"),
+                    background: imageURL(result.backdrop_path, size: "w1280"),
+                    description: result.overview,
+                    releaseInfo: date.map { String($0.prefix(4)) },
+                    rating: result.vote_average,
+                    genres: genres.isEmpty ? nil : genres
+                )
+            }
+            .prefix(limit)
+            .map { $0 }
+        }
+    }
+
 }

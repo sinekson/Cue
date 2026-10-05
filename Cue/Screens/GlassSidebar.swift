@@ -3,11 +3,25 @@ import SwiftUI
 /// The primary navigation destinations. The app keys tab state off these raw
 /// ints in many places, so don't renumber them.
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, search, library, settings
+    case home, search, library, settings, movies, series
     var id: Int { rawValue }
 
-    /// The top navigation: the search icon first, left of Home.
-    static let topBarOrder: [AppTab] = [.search, .home, .library, .settings]
+    /// The top navigation: the search icon first, left of Home. Movies and
+    /// Series are Home filtered to one type; the library is a row on Home
+    /// ("My List") — its old tab stays reachable only from within the app.
+    static let topBarOrder: [AppTab] = [.search, .home, .movies, .series, .settings]
+
+    /// Home and its filtered twins: the same page (see `HomeView.typeFilter`).
+    var isHomeLike: Bool { self == .home || self == .movies || self == .series }
+
+    /// Movies / Series: the content type the tab shows (nil: everything).
+    var typeFilter: String? {
+        switch self {
+        case .movies: return "movie"
+        case .series: return "series"
+        default: return nil
+        }
+    }
 
     var label: String {
         switch self {
@@ -15,6 +29,8 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .search: return "Search"
         case .library: return "Library"
         case .settings: return "Settings"
+        case .movies: return "Movies"
+        case .series: return "Series"
         }
     }
 
@@ -24,6 +40,8 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .search: return "magnifyingglass"
         case .library: return "bookmark.fill"
         case .settings: return "gearshape.fill"
+        case .movies: return "film.fill"
+        case .series: return "tv.fill"
         }
     }
 }
@@ -85,7 +103,7 @@ struct GlassSidebar: View {
                     } label: {
                         TopNavLabel(tab: tab, lit: lit == tab.rawValue,
                                     focusPlatter: navFocused && lit == tab.rawValue)
-                            .matchedGeometryEffect(id: tab.rawValue, in: navHighlight, isSource: true)
+                            .glassPillItem(tab.rawValue, in: navHighlight)
                     }
                     .buttonStyle(PlainCardButtonStyle())
                     .focused(focusBinding, equals: tab.rawValue)
@@ -96,7 +114,7 @@ struct GlassSidebar: View {
                     // As large as on the tvOS home screen: nearly the pill's height.
                     ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
                         .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
-                        .matchedGeometryEffect(id: -1, in: navHighlight, isSource: true)
+                        .glassPillItem(-1, in: navHighlight)
                 }
                 .buttonStyle(PlainCardButtonStyle())
                 .focused(focusBinding, equals: -1)
@@ -106,15 +124,8 @@ struct GlassSidebar: View {
             // focus look), a subtle light one on the current tab otherwise.
             // (A capsule: on the square slots — search, profile — a circle;
             // it morphs between the two as it glides.)
-            .background {
-                GlassHighlight(focused: navFocused, shape: Capsule())
-                    .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
-                    .animation(.smooth(duration: 0.3), value: lit)
-                    .animation(.easeOut(duration: 0.2), value: navFocused)
-            }
-            .padding(Self.pillInset)
-            // The app's glass surface (see `AppGlass`).
-            .background { Color.clear.liquidGlass(in: Capsule()) }
+            // (The app's control style — see `GlassPill`.)
+            .glassPill(highlight: lit, in: navHighlight, focused: navFocused)
             .defaultFocus(focusBinding, selected)
             // Focused, the pill grows a little (like the system tab bar).
             .scaleEffect(navFocused ? Self.focusedScale : 1, anchor: .top)
@@ -122,7 +133,7 @@ struct GlassSidebar: View {
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .offset(y: swapAway ? -ModeSwap.chromeTravel : 0)
-        .animation(swapAway ? ModeSwap.out : ModeSwap.in, value: swapAway)
+        .animation(ModeSwap.swap, value: swapAway)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
@@ -147,10 +158,8 @@ struct GlassSidebar: View {
         }
     }
 
-    /// The tab pill: how much it grows while the navigation has focus, and
-    /// the room between its edge and the tabs' highlight.
+    /// The tab pill: how much it grows while the navigation has focus.
     static let focusedScale: CGFloat = 1.06
-    static let pillInset: CGFloat = 8
     /// The highlight gliding between the tabs.
     @Namespace private var navHighlight
 
@@ -158,8 +167,8 @@ struct GlassSidebar: View {
     /// avatar's right edge mirrors Home's left content margin.
     static let topBarInset: CGFloat = 84
     static let topBarTop: CGFloat = 40
-    /// Height of the top navigation's items.
-    static let topBarItemHeight: CGFloat = 60
+    /// Height of the top navigation's items (the standard glass control).
+    static let topBarItemHeight: CGFloat = GlassPill.itemHeight
 }
 
 /// One tab in the top navigation: its name, grey — white when it's the
@@ -178,16 +187,15 @@ private struct TopNavLabel: View {
             if tab == .search {
                 // A square slot, so the highlight is a circle here.
                 Image(systemName: tab.icon)
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: GlassPill.iconSize, weight: .semibold))
                     .frame(width: GlassSidebar.topBarItemHeight)
             } else {
                 Text(tab.label)
-                    .font(.system(size: 28, weight: .semibold))
-                    .padding(.horizontal, 26)
+                    .font(.system(size: GlassPill.textSize, weight: .semibold))
+                    .padding(.horizontal, GlassPill.textPadding)
             }
         }
-        .foregroundStyle(focusPlatter ? AppGlass.textOnFocus
-                         : lit ? AppGlass.text : AppGlass.textMuted)
+        .foregroundStyle(GlassPill.contentColor(current: lit, onFocusHighlight: focusPlatter))
         .frame(height: GlassSidebar.topBarItemHeight)
         .animation(.easeOut(duration: 0.18), value: lit)
         .animation(.easeOut(duration: 0.18), value: focusPlatter)
