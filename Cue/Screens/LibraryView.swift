@@ -20,7 +20,7 @@ struct LibraryView: View {
     @State private var sort = "Added"              // Added / Name / Recently Watched
     @FocusState private var focusedID: String?
 
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth, maximum: posterLayout.posterSize.posterWidth), spacing: CueSpacing.lg, alignment: .top)] }
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: GridPoster.width, maximum: GridPoster.width), spacing: CueSpacing.lg, alignment: .top)] }
 
     private var sorted: [SavedLibraryItem] {
         var items = library.sorted
@@ -94,8 +94,9 @@ struct LibraryView: View {
                             ForEach(visibleItems, id: \.key) { item in
                                 GridPosterCell(
                                     item: item.metaItem,
-                                    captionWidth: posterLayout.posterSize.posterWidth,
+                                    captionWidth: GridPoster.width,
                                     onSelect: onSelect,
+                                    menuPlace: .library,
                                     gridFocus: $focusedID
                                 )
                                 .id(item.id)
@@ -161,7 +162,7 @@ struct LibraryView: View {
         HStack(spacing: CueSpacing.md) {
             ForEach(LibraryFilter.allCases, id: \.self) { f in
                 Button { filter = f } label: {
-                    LibraryChip(title: f.rawValue, selected: filter == f)
+                    FlatChip(label: f.rawValue, selected: filter == f)
                 }
                 .buttonStyle(PlainCardButtonStyle())
             }
@@ -182,33 +183,3 @@ struct LibraryView: View {
     }
 }
 
-/// A Liquid Glass filter chip: glass in every state, accent tint + accent ring
-/// when selected, white ring + lift while focused.
-private struct LibraryChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let selected: Bool
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 24, weight: .semibold))
-            .foregroundStyle(selected ? theme.palette.onAccentTint : theme.palette.textSecondary)
-            .padding(.horizontal, CueSpacing.xl)
-            .padding(.vertical, CueSpacing.sm)
-            .background {
-                if selected {
-                    Capsule().fill(theme.palette.secondary.opacity(0.30))
-                }
-            }
-            .liquidGlassIf(!selected, in: Capsule())
-            .overlay(Capsule().strokeBorder(
-                isFocused ? Color.white.opacity(0.9)
-                          : (selected ? theme.palette.secondary.opacity(0.7) : .clear),
-                lineWidth: 3))
-            .shadow(color: isFocused ? .black.opacity(0.35) : .clear, radius: isFocused ? 16 : 0, y: 6)
-            .focusLift(CueFocus.card, isFocused)
-            .animation(PerformanceSettingsStore.shared.buttonMotion(FusionMotion.focusEntry),
-                       value: isFocused)
-    }
-}

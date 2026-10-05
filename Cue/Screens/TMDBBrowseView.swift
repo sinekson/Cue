@@ -9,17 +9,21 @@ final class TMDBBrowseViewModel: ObservableObject {
 
     let companyID: Int
     let title: String
+    /// A network (its shows), not a studio.
+    let network: Bool
 
-    init(companyID: Int, title: String) {
+    init(companyID: Int, title: String, network: Bool = false) {
         self.companyID = companyID
         self.title = title
+        self.network = network
     }
 
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true
         defer { isLoading = false }
-        items = await TMDBService.browseCompany(id: companyID)
+        items = network ? await TMDBService.browseNetwork(id: companyID)
+                        : await TMDBService.browseCompany(id: companyID)
     }
 }
 
@@ -39,13 +43,14 @@ struct TMDBBrowseView: View {
     /// column and neighbouring cards overlapped, while at Small it left 40pt of
     /// dead gutter.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth,
-                            maximum: posterLayout.posterSize.posterWidth),
+        [GridItem(.adaptive(minimum: GridPoster.width,
+                            maximum: GridPoster.width),
                   spacing: CueSpacing.lg, alignment: .top)]
     }
 
-    init(companyID: Int, title: String, onSelect: @escaping (MetaItem) -> Void) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(companyID: companyID, title: title))
+    init(companyID: Int, title: String, network: Bool = false, onSelect: @escaping (MetaItem) -> Void) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(companyID: companyID, title: title,
+                                                                   network: network))
         self.onSelect = onSelect
     }
 
@@ -78,6 +83,7 @@ struct TMDBBrowseView: View {
                                     PosterCard(item: item)
                                 }
                                 .mediaCardButtonStyle()
+                                .titleMenu(item)
                             }
                         }
                         .padding(.horizontal, CueSpacing.huge)

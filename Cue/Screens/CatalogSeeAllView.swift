@@ -53,8 +53,8 @@ struct CatalogSeeAllView: View {
     /// column and neighbouring cards overlapped, while at Small it left 40pt of
     /// dead gutter.
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: posterLayout.posterSize.posterWidth,
-                            maximum: posterLayout.posterSize.posterWidth),
+        [GridItem(.adaptive(minimum: GridPoster.width,
+                            maximum: GridPoster.width),
                   spacing: CueSpacing.lg, alignment: .top)]
     }
 
@@ -88,6 +88,7 @@ struct CatalogSeeAllView: View {
                                     PosterCard(item: item)
                                 }
                                 .mediaCardButtonStyle()
+                                .titleMenu(item)
                                 .onAppear {
                                     // Prefetch the next page as the tail comes into view.
                                     if item.id == viewModel.items.last?.id {
