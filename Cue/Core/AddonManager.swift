@@ -39,27 +39,6 @@ final class AddonManager: ObservableObject {
 
     private static let activeProfileKey = "cue.profiles.active"
 
-    /// Feature name for the separate-vs-shared switch (see
-    /// `ProfileScopedDefaults.isSeparate`). Shared mode = every profile uses
-    /// one device-wide list, the pre-split behaviour.
-    static let feature = "addons"
-
-    /// Whether add-ons are kept separately per profile (the default) or as
-    /// one shared list, Trakt-switch style.
-    var perProfileEnabled: Bool { ProfileScopedDefaults.isSeparate(Self.feature) }
-
-    /// Flip separate ↔ shared and reload the visible list for the new mode.
-    /// Silent (no push armed): the LIST didn't change, only which copy is live.
-    func setPerProfile(_ on: Bool) {
-        guard on != perProfileEnabled else { return }
-        ProfileScopedDefaults.setSeparate(Self.feature, on)
-        suppressChange = true
-        defer { suppressChange = false }
-        addons = []
-        load()
-        ensureDefaults()
-    }
-
     /// Point the store at a profile: swap the previous profile's add-on list
     /// out for this one's. The primary profile inherits the legacy device-wide
     /// list; any other profile with no list of its own starts from the
@@ -97,11 +76,16 @@ final class AddonManager: ObservableObject {
         /// (gap 5) — a local disable is an overlay the wire cannot express, so
         /// it must survive a pull that has nothing to say about it.
         let enabledIsAuthoritative: Bool
+        /// The account row's name (Nuvio's website renames by it); nil: the
+        /// source has no names. Applied like `enabled` — only when
+        /// authoritative.
+        let name: String?
 
-        init(manifestURL: String, enabled: Bool, enabledIsAuthoritative: Bool = true) {
+        init(manifestURL: String, enabled: Bool, enabledIsAuthoritative: Bool = true, name: String? = nil) {
             self.manifestURL = manifestURL
             self.enabled = enabled
             self.enabledIsAuthoritative = enabledIsAuthoritative
+            self.name = name
         }
     }
 
@@ -205,7 +189,7 @@ final class AddonManager: ObservableObject {
             // enable/disable made on another device never reached it.
             let baseURL = InstalledAddon.baseURL(forManifestURL: manifestURL)
             return (manifestURL: manifestURL, baseURL: baseURL, enabled: state.enabled,
-                    authoritative: state.enabledIsAuthoritative)
+                    authoritative: state.enabledIsAuthoritative, name: state.name)
         }
         let existing = Set(addons.map { $0.baseURL })
         // Keep only genuinely-new addons, in their incoming order.
@@ -222,10 +206,20 @@ final class AddonManager: ObservableObject {
 
         var updatedEnabled = 0
         for state in normalizedStates where state.authoritative {
-            guard let index = addons.firstIndex(where: { $0.baseURL == state.baseURL }),
-                  addons[index].enabled != state.enabled else { continue }
-            addons[index].enabled = state.enabled
-            updatedEnabled += 1
+            guard let index = addons.firstIndex(where: { $0.baseURL == state.baseURL }) else { continue }
+            var changed = false
+            if addons[index].enabled != state.enabled {
+                addons[index].enabled = state.enabled
+                changed = true
+            }
+            if let name = state.name {
+                let custom = Self.customName(name, manifestName: addons[index].manifest.name)
+                if addons[index].customName != custom {
+                    addons[index].customName = custom
+                    changed = true
+                }
+            }
+            if changed { updatedEnabled += 1 }
         }
         if updatedEnabled > 0 { save() }
 
@@ -249,7 +243,8 @@ final class AddonManager: ObservableObject {
 
         var added = 0
         for (state, manifest) in fetched {
-            let addon = InstalledAddon(manifestURL: state.manifestURL, manifest: manifest, enabled: state.enabled)
+            let addon = InstalledAddon(manifestURL: state.manifestURL, manifest: manifest, enabled: state.enabled,
+                                       customName: state.name.flatMap { Self.customName($0, manifestName: manifest.name) })
             if let existing = addons.firstIndex(where: { $0.manifestURL == state.manifestURL }) {
                 addons[existing] = addon
             } else {
@@ -308,8 +303,13 @@ final class AddonManager: ObservableObject {
 
     private static let lastRefreshKey = "cue.addons.lastRefresh.v1"
 
+    /// The live instance, for code that isn't handed one (the facts line's
+    /// season count). Weak: RootView owns it.
+    private(set) static weak var shared: AddonManager?
+
     init() {
         profileID = UserDefaults.standard.object(forKey: Self.activeProfileKey) as? Int ?? 1
+        defer { Self.shared = self }
         load()
         ensureDefaults()
         // Manifests barely ever change — skip the launch refresh when the last
@@ -363,17 +363,77 @@ final class AddonManager: ObservableObject {
         return claiming + rest
     }
 
+    /// Install an add-on. A new link for an add-on installed exactly ONCE
+    /// (the same manifest id — configuring often changes the link) replaces
+    /// it in place, keeping its position, name and on/off; with two copies
+    /// it can't tell which, so it's added.
     func install(manifestURL rawURL: String) async throws {
         let urlString = Self.normalizeManifestURL(rawURL)
         let manifest = try await StremioAPI.manifest(url: urlString)
-        let addon = InstalledAddon(manifestURL: urlString, manifest: manifest)
         if let existing = addons.firstIndex(where: { $0.manifestURL == urlString }) {
-            addons[existing] = addon
+            addons[existing] = InstalledAddon(manifestURL: urlString, manifest: manifest,
+                                              enabled: addons[existing].enabled,
+                                              customName: addons[existing].customName)
+        } else if addons.filter({ $0.manifest.id == manifest.id }).count == 1,
+                  let same = addons.firstIndex(where: { $0.manifest.id == manifest.id }) {
+            addons[same] = InstalledAddon(manifestURL: urlString, manifest: manifest,
+                                          enabled: addons[same].enabled, customName: addons[same].customName)
         } else {
-            addons.append(addon)
+            addons.append(InstalledAddon(manifestURL: urlString, manifest: manifest))
         }
         save()
         notifyLocalChange()
+    }
+
+    enum ReplaceError: LocalizedError {
+        case differentAddon(expected: String, got: String)
+        var errorDescription: String? {
+            switch self {
+            case .differentAddon(let expected, let got):
+                return "That link is for \(got), not \(expected)."
+            }
+        }
+    }
+
+    /// A new link for this add-on (from configuring it): the same add-on —
+    /// its manifest id must match — in the same place, with its name and
+    /// on/off.
+    func replace(_ addon: InstalledAddon, withManifestURL rawURL: String) async throws {
+        let urlString = Self.normalizeManifestURL(rawURL)
+        let manifest = try await StremioAPI.manifest(url: urlString)
+        guard manifest.id == addon.manifest.id else {
+            throw ReplaceError.differentAddon(expected: addon.displayName, got: manifest.name)
+        }
+        guard let index = addons.firstIndex(where: { $0.id == addon.id }) else { return }
+        addons[index] = InstalledAddon(manifestURL: urlString, manifest: manifest,
+                                       enabled: addon.enabled, customName: addon.customName)
+        save()
+        notifyLocalChange()
+    }
+
+    /// Give an add-on its own name (nil or its manifest's name: the original).
+    func rename(_ addon: InstalledAddon, to name: String?) {
+        guard let index = addons.firstIndex(where: { $0.id == addon.id }) else { return }
+        let custom = name.flatMap { Self.customName($0, manifestName: addon.manifest.name) }
+        guard addons[index].customName != custom else { return }
+        addons[index].customName = custom
+        save()
+        notifyLocalChange()
+    }
+
+    /// Move an add-on to a position (the settings list's Move).
+    func move(_ addon: InstalledAddon, to target: Int) {
+        guard let index = addons.firstIndex(where: { $0.id == addon.id }),
+              addons.indices.contains(target), index != target else { return }
+        addons.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
+        save()
+        notifyLocalChange()
+    }
+
+    /// A name worth keeping: not empty, not just the manifest's own.
+    private static func customName(_ name: String, manifestName: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == manifestName ? nil : trimmed
     }
 
     /// Remove every installed add-on. For an ACCOUNT SWITCH only.
@@ -660,7 +720,7 @@ final class AddonManager: ObservableObject {
         // falls back to the legacy device-wide list (Trakt-switch semantics —
         // other profiles start fresh with the defaults). Shared mode: the
         // legacy list IS the list.
-        guard let data = ProfileScopedDefaults.data(Self.storageKey, feature: Self.feature, profileID),
+        guard let data = ProfileScopedDefaults.data(Self.storageKey, profileID),
               let decoded = try? JSONDecoder().decode([InstalledAddon].self, from: Self.inflated(data))
         else { return }
         addons = decoded
@@ -670,7 +730,7 @@ final class AddonManager: ObservableObject {
         guard let data = try? JSONEncoder().encode(addons) else { return }
         UserDefaults.standard.set(
             Self.deflated(data),
-            forKey: ProfileScopedDefaults.writeKey(Self.storageKey, feature: Self.feature, profileID)
+            forKey: ProfileScopedDefaults.key(Self.storageKey, profileID)
         )
     }
 
@@ -768,19 +828,17 @@ final class AddonManager: ObservableObject {
     /// reappear); other profiles start with the defaults present.
     private var forgottenDefaults: Set<String> {
         get {
-            if perProfileEnabled {
-                if let scoped = UserDefaults.standard.stringArray(
-                    forKey: ProfileScopedDefaults.key(Self.forgottenDefaultsKey, profileID)) {
-                    return Set(scoped)
-                }
-                guard profileID == 1 else { return [] }
+            if let scoped = UserDefaults.standard.stringArray(
+                forKey: ProfileScopedDefaults.key(Self.forgottenDefaultsKey, profileID)) {
+                return Set(scoped)
             }
+            guard profileID == 1 else { return [] }
             return Set(UserDefaults.standard.stringArray(forKey: Self.forgottenDefaultsKey) ?? [])
         }
         set {
             UserDefaults.standard.set(
                 Array(newValue),
-                forKey: ProfileScopedDefaults.writeKey(Self.forgottenDefaultsKey, feature: Self.feature, profileID)
+                forKey: ProfileScopedDefaults.key(Self.forgottenDefaultsKey, profileID)
             )
         }
     }

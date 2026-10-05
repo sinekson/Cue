@@ -125,9 +125,9 @@ private struct DropdownTrigger: View {
     @ViewBuilder
     private var dropdownBackground: some View {
         if compact {
-            // Liquid Glass in every state; focus is the bright ring + lift.
-            Color.clear
-                .liquidGlass(in: RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous))
+            // The flat control's rest (it's in the page); focus is the
+            // bright ring + lift.
+            RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous).fill(FlatControl.rest)
         } else {
             SettingsRowBackground(isFocused: isFocused)
         }

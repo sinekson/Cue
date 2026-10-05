@@ -1,292 +1,88 @@
 import SwiftUI
 
-// MARK: - Layout pane (home row customization)
+// MARK: - Home & Content
 
-/// One customizable home row as shown in the Layout pane.
-private struct LayoutRowInfo: Identifiable {
-    let key: String
-    let defaultTitle: String
-    let subtitle: String
-    let isCollection: Bool
-    var id: String { key }
-}
-
-/// Settings → Layout: reorder, rename, and show/hide the home screen rows
-/// (addon catalogs and collections), mirroring the Android Layout settings.
-/// All changes sync via `sync_push_home_catalog_settings`.
-struct LayoutSettingsDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var settings: HomeCatalogSettingsStore
-    @EnvironmentObject private var addonManager: AddonManager
-
-    /// Every catalog that can feed the hero, plus an Automatic entry.
-    ///
-    /// The same enumeration the row list further down this pane uses, so the
-    /// two agree about what a "catalog" is — every catalog an addon declares
-    /// that doesn't need extra parameters. Labelled "Catalog · Add-on" because
-    /// names like "Trending" repeat across add-ons and would otherwise be
-    /// indistinguishable in the picker.
-    private var heroSourceOptions: [CueDropdownOption] {
-        var options = [CueDropdownOption("", "Automatic (first row)")]
-        var seen = Set<String>()
-        for addon in addonManager.catalogAddons {
-            for catalog in (addon.manifest.catalogs ?? []) where !catalog.requiresExtra {
-                let key = HomeCatalogSettingsStore.catalogKey(
-                    addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id)
-                guard seen.insert(key).inserted else { continue }
-                options.append(CueDropdownOption(
-                    key, "\(catalog.displayName) · \(addon.manifest.name)"))
-            }
-        }
-        // A key saved earlier whose add-on has since been removed would other-
-        // wise not be in the list at all, and the dropdown would show the raw
-        // key as its value. Name it for what it is; picking anything else
-        // clears it.
-        if !settings.heroCatalogKey.isEmpty, !seen.contains(settings.heroCatalogKey) {
-            options.append(CueDropdownOption(settings.heroCatalogKey, "Unavailable catalog"))
-        }
-        return options
-    }
-
-    var body: some View {
-        DetailScaffold(title: SettingsCategory.layout.title, subtitle: SettingsCategory.layout.subtitle) {
-            SettingsGroupCard(title: "Home", subtitle: "What the Home screen shows") {
-                CueDropdown(
-                    title: "Hero source",
-                    subtitle: "Which catalog the hero shows. Automatic uses whichever row sits first in your Home order. A catalog you've switched off below — or one ranked too far down to be built — falls back to that first row.",
-                    icon: "square.stack.3d.down.right.fill",
-                    selection: settings.heroCatalogKey,
-                    options: heroSourceOptions
-                ) { settings.heroCatalogKey = $0 }
-
-                SettingsToggleCard(
-                    title: "Hide the top bar",
-                    subtitle: "Keep the navigation off screen until you press UP from the top of the page (or Menu); picking a tab hides it again. Settings always keeps it.",
-                    isOn: $settings.autoHideSidebar
-                )
-
-                SettingsToggleCard(
-                    title: "Hero trailers",
-                    subtitle: "With the hero pinned, play the highlighted title's trailer in the hero behind the name and details. Sitting on the hero itself cycles through the Top 10, trailer and all.",
-                    isOn: $settings.heroTrailersEnabled
-                )
-
-                SettingsToggleCard(
-                    title: "Hero trailer sound",
-                    subtitle: "Play the hero trailer with sound instead of muted.",
-                    isOn: $settings.heroTrailerSound
-                )
-
-                SettingsToggleCard(
-                    title: "Full stream names",
-                    subtitle: "On the source list, show every link's complete release name — wrapped across lines instead of cut off.",
-                    isOn: $settings.fullStreamTitles
-                )
-            }
-
-            SettingsGroupCard(title: "Posters", subtitle: "Card size and labels across the app") {
-                HStack(spacing: CueSpacing.md) {
-                    ForEach(PosterSize.allCases) { size in
-                        Button { settings.posterSize = size } label: {
-                            PosterSizeChip(title: size.displayName, selected: settings.posterSize == size)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                }
-
-                SettingsToggleCard(
-                    title: "Poster labels",
-                    subtitle: "Show the title and release year beneath poster cards, everywhere they appear — Home rows, Discover, Search and Library. Off leaves just the artwork. Continue Watching keeps its labels either way: those name the episode and how much is left, which is information rather than decoration.",
-                    isOn: $settings.showPosterLabels
-                )
-
-                SettingsToggleCard(
-                    title: "Poster banners",
-                    subtitle: "Show the tags some add-ons print across their poster artwork, like \"In Cinema\", \"#2 Today\" or \"New Movie\". Off swaps in the plain poster the add-on sends alongside, wherever it sends one; posters without a plain version stay as they are. Titles already in Continue Watching or your Library keep the artwork they were saved with.",
-                    isOn: $settings.showPosterBanners
-                )
-
-                CueDropdown(
-                    title: "Corner radius",
-                    subtitle: "Roundness of poster card corners",
-                    icon: "square.on.square.dashed",
-                    selection: String(settings.posterCornerRadius),
-                    options: HomeCatalogSettingsStore.posterCornerRadiusValues.map {
-                        CueDropdownOption(String($0), $0 == 0 ? "Square" : "\($0) pt")
-                    }
-                ) { settings.posterCornerRadius = Int($0) ?? 12 }
-
-                SettingsToggleCard(
-                    title: "Hide unreleased content",
-                    subtitle: "Keep titles that haven't aired yet out of catalog rows",
-                    isOn: $settings.hideUnreleasedContent
-                )
-            }
-
-            SettingsGroupCard(title: "Rows & Details", subtitle: "Row titles and detail-page fields") {
-                SettingsToggleCard(
-                    title: "Addon name in row titles",
-                    subtitle: "Append the source addon's name to each catalog row header",
-                    isOn: $settings.catalogAddonNameEnabled
-                )
-                SettingsToggleCard(
-                    title: "Type suffix in row titles",
-                    subtitle: "Append “- Movie” / “- Series” to catalog row headers",
-                    isOn: $settings.catalogTypeSuffixEnabled
-                )
-            }
-
-            SettingsGroupCard(title: "Details Page",
-                              subtitle: "Which sections appear below a title's artwork") {
-                SettingsToggleCard(
-                    title: "Creator and Cast",
-                    subtitle: "The row of directors, writers and cast members.",
-                    isOn: $settings.detailShowCast
-                )
-                SettingsToggleCard(
-                    title: "Collection",
-                    subtitle: "The “part of…” row for a title that belongs to a series of films, listing the others in it.",
-                    isOn: $settings.detailShowCollection
-                )
-                SettingsToggleCard(
-                    title: "More Like This",
-                    subtitle: "Recommended titles based on the one you're looking at.",
-                    isOn: $settings.detailShowMoreLikeThis
-                )
-                SettingsToggleCard(
-                    title: "Production",
-                    subtitle: "The studios and production companies behind the title.",
-                    isOn: $settings.detailShowProduction
-                )
-            }
-
-            SettingsGroupCard(title: "Continue Watching", subtitle: "How the resume row behaves") {
-                CueDropdown(
-                    title: "Sort order",
-                    subtitle: settings.continueWatchingSortMode.summary,
-                    icon: "arrow.up.arrow.down",
-                    selection: settings.continueWatchingSortMode.rawValue,
-                    options: ContinueWatchingSortMode.allCases.map {
-                        CueDropdownOption($0.rawValue, $0.displayName)
-                    }
-                ) { settings.continueWatchingSortMode = ContinueWatchingSortMode(rawValue: $0) ?? .recentlyWatched }
-
-                SettingsToggleCard(
-                    title: "Episode thumbnails",
-                    subtitle: "Show the episode still on Continue Watching cards instead of the show poster",
-                    isOn: $settings.useEpisodeThumbnailsInCw
-                )
-
-                SettingsToggleCard(
-                    title: "Next up from furthest episode",
-                    subtitle: "Resume a series after the furthest episode you've watched, not the most recently played one",
-                    isOn: $settings.nextUpFromFurthestEpisode
-                )
-
-                SettingsToggleCard(
-                    title: "Show unaired next up",
-                    subtitle: "Allow an episode that hasn't aired yet to be the next-up target",
-                    isOn: $settings.showUnairedNextUp
-                )
-
-                SettingsToggleCard(
-                    title: "Blur unwatched episodes",
-                    subtitle: "Spoiler-blur episode thumbnails you haven't watched (focus a card to reveal it)",
-                    isOn: $settings.blurUnwatchedEpisodes
-                )
-            }
-
-            CatalogOrderSection()
-        }
-    }
-}
-
-/// Poster-size selector chip. Reads `\.isFocused` (only resolves inside the
-/// focusable Button's subtree) so it lights up on focus, and keeps readable
-/// contrast in every state: focused = filled accent + onSecondary text,
-/// selected = accent-tinted + white text, idle = card + secondary text.
-private struct PosterSizeChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let selected: Bool
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(foreground)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, CueSpacing.md)
-            .background(
-                RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous).fill(background)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : (selected ? theme.palette.secondary : .clear),
-                                  lineWidth: isFocused ? 4 : 2)
-            )
-            .focusLift(CueFocus.card, isFocused)
-    }
-
-    private var foreground: Color {
-        if isFocused { return theme.palette.onSecondary }
-        if selected { return theme.palette.onAccentTint }
-        return theme.palette.textSecondary
-    }
-    private var background: Color {
-        if isFocused { return theme.palette.secondary }
-        if selected { return theme.palette.secondary.opacity(0.28) }
-        return theme.palette.backgroundCard.opacity(0.85)
-    }
-}
-
-/// The reorder / rename / show-hide list of home catalog rows, shown at the
-/// bottom of the Layout pane. (There used to be a second, identical drill-in
-/// under Add-ons → Catalog Order; this is now the only one.)
-struct CatalogOrderSection: View {
+/// Settings → Home & Content: Home's rows (their order, names, which show),
+/// Continue Watching's order, TMDB's language, and the add-ons.
+struct HomeContentSettingsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
+    @EnvironmentObject private var tmdb: TMDBSettingsStore
 
-    @State private var renamingRow: LayoutRowInfo?
-    @State private var renameText = ""
+    var body: some View {
+        let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
+        let hidden = rows.filter { !$0.isShown(settings: settings) }.count
+        SettingsPage(place: SettingsCategory.homeContent.place, subtitle: SettingsCategory.homeContent.subtitle) {
+            SettingsSection(title: "Home") {
+                SettingsLinkRow(
+                    title: "Rows",
+                    description: "Home's rows: their order, their names, and which ones show.",
+                    value: hidden > 0 ? "\(rows.count) · \(hidden) hidden" : "\(rows.count)"
+                ) { HomeRowsPage() }
 
-    /// Says how many of these rows Home will actually build, but only when
-    /// that is fewer than there are.
-    ///
-    /// Home caps the rows it renders (`maxHomeRows` — they are built eagerly,
-    /// so hundreds of them would take the focus engine down with them). The cap
-    /// cuts in THIS list's order, so the rows a viewer ranked highest are the
-    /// ones that survive — but nothing said so anywhere, and an account with a
-    /// hundred-plus catalogs (an order set up on the phone, say) just looked
-    /// like the order had been ignored.
-    /// Takes the rows the body already built. `rows` rebuilds the whole
-    /// display list — every add-on's catalogs, then a merged order over them —
-    /// and the body caches it in a local for exactly that reason; reading
-    /// `self.rows` again here would do all of it twice on every body pass, on
-    /// the screen whose whole job is a list that can be hundreds long.
-    private func rowsSubtitle(_ rows: [LayoutRowInfo]) -> String {
-        let enabled = rows.filter { row in
-            row.key == HomeCatalogSettingsStore.collectionsUnit
-                ? collectionsEnabled : settings.isEnabled(key: row.key)
-        }.count
-        let cap = AddonSweepLimits.maxHomeRows
-        guard enabled > cap else { return "Reorder, rename and hide your catalog rows" }
-        return "Reorder, rename and hide your catalog rows. Home builds the first \(cap) "
-            + "of your \(enabled) shown rows — the rest keep their place here and stay "
-            + "reachable from Discover."
-    }
+                // Two options: Select switches between them in place.
+                SettingsButtonRow(
+                    title: "Continue Watching order",
+                    description: "Recently watched: the title you played last comes first.\n\n"
+                        + "Streaming style: titles you're in the middle of come first, newest first; "
+                        + "ones you've barely started follow.",
+                    value: settings.continueWatchingSortMode.displayName
+                ) {
+                    settings.continueWatchingSortMode =
+                        settings.continueWatchingSortMode == .recentlyWatched ? .streamingStyle : .recentlyWatched
+                }
+            }
 
-    /// Keep a just-moved row in view (runs after the reorder re-lays-out).
-    private func follow(_ proxy: ScrollViewProxy, _ key: String) {
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(key, anchor: .center) }
+            SettingsSection(title: "Content") {
+                SettingsChoiceRow(
+                    title: "Language",
+                    description: "The language of titles, summaries and artwork from TMDB.",
+                    options: TMDBLanguages.options.map { SettingsOption(id: $0, label: TMDBLanguages.displayName($0)) },
+                    selection: tmdb.settings.language
+                ) { tmdb.settings.language = $0 }
+            }
+
+            SettingsSection(title: "Add-ons") {
+                SettingsLinkRow(
+                    title: "Add-ons",
+                    description: "Where Home's rows, the sources and subtitles come from: add one, and their order, names and settings.",
+                    value: "\(addonManager.addons.count)"
+                ) { AddonsPage() }
+
+            }
         }
     }
+}
 
-    /// Real catalog keys, in nothing-special order (used for the block reorder).
-    private var catalogKeys: [String] {
+// MARK: - Rows
+
+/// One of Home's rows, as the Rows page lists it: a catalog or a
+/// collection (each its own row on Home).
+private struct HomeRowEntry: Identifiable {
+    let key: String
+    let defaultTitle: String
+    /// The add-on it comes from.
+    let source: String
+    var id: String { key }
+
+    @MainActor
+    func title(settings: HomeCatalogSettingsStore) -> String {
+        settings.customTitle(for: key) ?? defaultTitle
+    }
+
+    @MainActor
+    func isShown(settings: HomeCatalogSettingsStore) -> Bool { settings.isEnabled(key: key) }
+
+    @MainActor
+    static func collectionKeys(_ collections: CollectionsStore) -> [String] {
+        collections.collections.map { HomeCatalogSettingsStore.collectionKey($0.id) }
+    }
+
+    /// Every catalog an add-on offers as a plain row (no required extras).
+    @MainActor
+    static func catalogKeys(_ addonManager: AddonManager) -> [String] {
         var keys: [String] = []
         var seen = Set<String>()
         for addon in addonManager.catalogAddons {
@@ -299,190 +95,186 @@ struct CatalogOrderSection: View {
         return keys
     }
 
-    private var collectionKeys: [String] {
-        collections.collections.map { HomeCatalogSettingsStore.collectionKey($0.id) }
-    }
-
-    /// Display rows: catalog rows plus ONE "Collections" row (all collections
-    /// fold into it), positioned where the collections block sits.
-    private var rows: [LayoutRowInfo] {
-        var byKey: [String: LayoutRowInfo] = [:]
+    /// The rows in Home's order.
+    @MainActor
+    static func all(addonManager: AddonManager, collections: CollectionsStore,
+                    settings: HomeCatalogSettingsStore) -> [HomeRowEntry] {
+        var byKey: [String: HomeRowEntry] = [:]
         for addon in addonManager.catalogAddons {
             for catalog in (addon.manifest.catalogs ?? []) where !catalog.requiresExtra {
                 let key = HomeCatalogSettingsStore.catalogKey(
                     addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id)
                 if byKey[key] == nil {
-                    byKey[key] = LayoutRowInfo(key: key, defaultTitle: catalog.displayName,
-                                               subtitle: addon.manifest.name, isCollection: false)
+                    byKey[key] = HomeRowEntry(key: key, defaultTitle: catalog.displayName, source: addon.displayName)
                 }
             }
         }
-        let cKeys = collectionKeys
-        let collectionsRow = LayoutRowInfo(
-            key: HomeCatalogSettingsStore.collectionsUnit,
-            defaultTitle: "Collections",
-            subtitle: "\(collections.collections.count) collection\(collections.collections.count == 1 ? "" : "s") · one Home row",
-            isCollection: true
-        )
-        var result: [LayoutRowInfo] = []
-        var insertedCollections = false
-        for key in settings.mergedOrder(catalogKeys: catalogKeys, collectionKeys: cKeys) {
-            if cKeys.contains(key) {
-                if !insertedCollections && !collections.collections.isEmpty {
-                    result.append(collectionsRow); insertedCollections = true
-                }
-            } else if let r = byKey[key] {
-                result.append(r)
-            }
+        for collection in collections.collections {
+            let key = HomeCatalogSettingsStore.collectionKey(collection.id)
+            byKey[key] = HomeRowEntry(key: key, defaultTitle: collection.title, source: "Collection")
+        }
+        var result: [HomeRowEntry] = []
+        for key in settings.mergedOrder(catalogKeys: catalogKeys(addonManager),
+                                        collectionKeys: collectionKeys(collections)) {
+            if let entry = byKey[key] { result.append(entry) }
         }
         return result
     }
+}
 
-    private var collectionsEnabled: Bool {
-        collectionKeys.contains { settings.isEnabled(key: $0) }
-    }
+/// Settings → Home & Content → Rows: Home's rows in order, each one line —
+/// Rename (the keyboard at once), Move, and a switch for showing it.
+private struct HomeRowsPage: View {
+    @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var collections: CollectionsStore
+    @EnvironmentObject private var settings: HomeCatalogSettingsStore
+    @State private var moving: String?
+    @State private var keyboard: KeyboardRequest?
 
     var body: some View {
-        let rows = self.rows
-        let catalogKeys = self.catalogKeys
-        let collectionKeys = self.collectionKeys
-        // The proxy drives the enclosing DetailScaffold scroll, so after a
-        // move we scroll the row back into view — otherwise moving up pushed
-        // the row off the top of the screen.
-        ScrollViewReader { proxy in
-            SettingsGroupCard(title: "Home Rows", subtitle: rowsSubtitle(rows)) {
-                ForEach(rows) { row in
-                    let isCollectionsUnit = row.key == HomeCatalogSettingsStore.collectionsUnit
-                    LayoutRowView(
-                        row: row,
-                        title: isCollectionsUnit ? row.defaultTitle : (settings.customTitle(for: row.key) ?? row.defaultTitle),
-                        isRenamed: !isCollectionsUnit && settings.customTitle(for: row.key) != nil,
-                        enabled: isCollectionsUnit ? collectionsEnabled : settings.isEnabled(key: row.key),
-                        onMoveUp: {
-                            settings.moveHomeUnit(up: true, unitKey: row.key, catalogKeys: catalogKeys, collectionKeys: collectionKeys)
-                            follow(proxy, row.key)
+        let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
+        SettingsManagePage(title: "Home rows", subtitle: "Rename, move or hide Home's rows.") {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                let shown = row.isShown(settings: settings)
+                SettingsEntryRow(
+                    title: row.title(settings: settings),
+                    scrollID: row.id,
+                    dimmed: !shown,
+                    actions: actions(for: row),
+                    toggle: SettingsEntrySwitch(isOn: shown, title: shown ? "Hide" : "Show") {
+                        settings.setEnabled(!shown, key: row.key)
+                    },
+                    isMoving: moving == row.id,
+                    anyMoving: moving != nil,
+                    onMoveStep: { step in
+                        guard rows.indices.contains(index + step) else { return }
+                        settings.move(key: row.key, up: step < 0,
+                                      within: HomeRowEntry.catalogKeys(addonManager)
+                                          + HomeRowEntry.collectionKeys(collections))
+                    },
+                    onDrop: { moving = nil }
+                )
+            }
+        }
+        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        .onChange(of: moving) { _, id in TopBarLock.shared.locked = id != nil }
+        .onDisappear { TopBarLock.shared.locked = false }
+    }
+
+    private func actions(for row: HomeRowEntry) -> [SettingsEntryAction] {
+        var actions: [SettingsEntryAction] = []
+        actions.append(SettingsEntryAction(id: "rename", icon: "pencil", title: "Rename") {
+            keyboard = KeyboardRequest(text: row.title(settings: settings), placeholder: row.defaultTitle) { text in
+                // Empty or the original: its own name again.
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                settings.setCustomTitle(trimmed == row.defaultTitle ? nil : trimmed, key: row.key)
+            }
+        })
+        actions.append(SettingsEntryAction(id: "move", icon: "arrow.up.arrow.down", title: "Move") {
+            moving = row.id
+        })
+        return actions
+    }
+}
+
+// MARK: - Add-ons
+
+/// Settings → Home & Content → Add-ons: a round + by the heading (adding,
+/// from your phone), then the add-ons in order, each one line — Configure
+/// (when it has settings), Rename, Move, a switch for on / off, Remove.
+private struct AddonsPage: View {
+    @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var addonManager: AddonManager
+    @State private var moving: String?
+    @State private var keyboard: KeyboardRequest?
+    @State private var adding = false
+    @State private var configuring: InstalledAddon?
+    @State private var removing: InstalledAddon?
+
+    var body: some View {
+        let configurable = addonManager.addons.contains { $0.configureURL != nil }
+        SettingsManagePage(
+            title: "Add-ons",
+            subtitle: "Higher ones come first for sources. Add one with + (from your phone).",
+            headerAction: SettingsEntryAction(id: "add", icon: "plus", title: "Add an add-on") { adding = true }
+        ) {
+            ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
+                SettingsEntryRow(
+                    title: addon.displayName,
+                    scrollID: addon.id,
+                    dimmed: !addon.enabled,
+                    leading: AnyView(AddonLogo(addon: addon)),
+                    extra: addon.configureURL == nil ? nil
+                        : SettingsEntryAction(id: "configure", icon: "slider.horizontal.3", title: "Configure") {
+                            configuring = addon
                         },
-                        onMoveDown: {
-                            settings.moveHomeUnit(up: false, unitKey: row.key, catalogKeys: catalogKeys, collectionKeys: collectionKeys)
-                            follow(proxy, row.key)
-                        },
-                        onToggle: {
-                            if isCollectionsUnit {
-                                settings.setCollectionsEnabled(!collectionsEnabled, collectionKeys: collectionKeys)
-                            } else {
-                                settings.setEnabled(!settings.isEnabled(key: row.key), key: row.key)
+                    reservesExtra: configurable,
+                    actions: [
+                        SettingsEntryAction(id: "rename", icon: "pencil", title: "Rename") {
+                            keyboard = KeyboardRequest(text: addon.displayName, placeholder: addon.manifest.name) {
+                                addonManager.rename(addon, to: $0)
                             }
                         },
-                        onRename: {
-                            guard !isCollectionsUnit else { return }   // the Collections row keeps its name
-                            renameText = settings.customTitle(for: row.key) ?? ""
-                            renamingRow = row
-                        }
-                    )
-                    .id(row.key)
-                }
-
-                if rows.isEmpty {
-                    Text("No home rows yet — install a catalog add-on first.")
-                        .font(.system(size: 21))
-                        .foregroundStyle(theme.palette.textSecondary)
-                }
+                        SettingsEntryAction(id: "move", icon: "arrow.up.arrow.down", title: "Move") {
+                            moving = addon.id
+                        },
+                    ],
+                    toggle: SettingsEntrySwitch(isOn: addon.enabled, title: addon.enabled ? "Turn off" : "Turn on") {
+                        addonManager.setEnabled(addon, !addon.enabled)
+                    },
+                    remove: SettingsEntryAction(id: "remove", icon: "trash", title: "Remove") { removing = addon },
+                    isMoving: moving == addon.id,
+                    anyMoving: moving != nil,
+                    onMoveStep: { step in addonManager.move(addon, to: index + step) },
+                    onDrop: { moving = nil }
+                )
             }
         }
-        .fullScreenCover(item: $renamingRow) { row in
-            RenameRowView(
-                title: row.defaultTitle,
-                text: $renameText,
-                onSave: {
-                    settings.setCustomTitle(renameText, key: row.key)
-                    renamingRow = nil
-                },
-                onClear: {
-                    settings.setCustomTitle(nil, key: row.key)
-                    renamingRow = nil
-                },
-                onCancel: { renamingRow = nil }
-            )
-            .environmentObject(theme)
+        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        .onChange(of: moving) { _, id in TopBarLock.shared.locked = id != nil }
+        .onDisappear { TopBarLock.shared.locked = false }
+        .fullScreenCover(isPresented: $adding) {
+            AddonPhoneAddView(addonManager: addonManager) { adding = false }
+                .environmentObject(theme)
+        }
+        .fullScreenCover(item: $configuring) { addon in
+            AddonPhoneAddView(addonManager: addonManager, configuring: addon) { configuring = nil }
+                .environmentObject(theme)
+        }
+        .alert("Remove \(removing?.displayName ?? "")?",
+               isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+               presenting: removing) { addon in
+            Button("Remove", role: .destructive) {
+                addonManager.remove(addon)
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: { _ in
+            Text("It's removed from this device and your account. You can add it back later with its link.")
         }
     }
 }
 
-private struct LayoutRowView: View {
-    @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @EnvironmentObject private var theme: ThemeManager
-
-    let row: LayoutRowInfo
-    let title: String
-    let isRenamed: Bool
-    let enabled: Bool
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
-    let onToggle: () -> Void
-    let onRename: () -> Void
-
-    // Highlight the WHOLE catalog row while any of its controls is focused —
-    // the row is a group of small buttons, so without this only the tiny
-    // circular control lit up and the catalog itself never highlighted.
-    @State private var focusCount = 0
-    private var focused: Bool { focusCount > 0 }
+/// An add-on's logo, small, on the left of its row.
+private struct AddonLogo: View {
+    let addon: InstalledAddon
 
     var body: some View {
-        HStack(spacing: CueSpacing.lg) {
-            Image(systemName: row.isCollection ? "rectangle.stack.fill" : "square.grid.2x2.fill")
-                .font(.system(size: 22))
-                .foregroundStyle(enabled ? theme.palette.secondary : theme.palette.textTertiary)
-                .frame(width: 32)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: CueSpacing.sm) {
-                    Text(title)
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(enabled ? theme.palette.textPrimary : theme.palette.textTertiary)
-                        .lineLimit(1)
-                    if isRenamed {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 16))
-                            .foregroundStyle(theme.palette.textTertiary)
-                    }
-                }
-                Text(row.subtitle)
-                    .font(.system(size: 18))
-                    .foregroundStyle(theme.palette.textTertiary)
-                    .lineLimit(1)
+        ZStack {
+            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white.opacity(0.08))
+            if let logo = addon.manifest.logo {
+                RemoteImage(url: logo, contentMode: .fit, maxDimension: 80, showsPlaceholder: false)
+                    .padding(4)
+            } else {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.white.opacity(0.7))
             }
-
-            Spacer()
-
-            controlButton(icon: "chevron.up", action: onMoveUp)
-            controlButton(icon: "chevron.down", action: onMoveDown)
-            controlButton(icon: "pencil", action: onRename)
-            controlButton(icon: enabled ? "eye.fill" : "eye.slash.fill", action: onToggle)
         }
-        .padding(.horizontal, CueSpacing.lg)
-        .frame(minHeight: 76)
-        .background(
-            RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .fill(focused ? theme.palette.focusBackground
-                      : theme.palette.backgroundCard.opacity(enabled ? 0.5 : 0.25))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .strokeBorder(focused ? theme.palette.focusRing : .clear, lineWidth: 3)
-        )
-        .animation(perf.motion(FusionMotion.focusEntry), value: focused)
-    }
-
-    private func controlButton(icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            RowControlIcon(icon: icon)
-        }
-        .buttonStyle(PlainCardButtonStyle())
-        // Count focus across the row's controls so the row stays highlighted
-        // as focus moves between them (no flicker on the hand-off).
-        .onFocusChange { f in focusCount = max(0, focusCount + (f ? 1 : -1)) }
     }
 }
+
+// MARK: - Collections (the editor; its entries are hidden for now)
 
 /// On/off checkmark beside a collection or folder row.
 ///
@@ -497,70 +289,18 @@ private struct CheckToggleIcon: View {
     let isOn: Bool
 
     var body: some View {
-        Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: 26, weight: .semibold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary
-                             : (isOn ? theme.palette.focusRing : theme.palette.textTertiary))
-            .frame(width: 56, height: 56)
-            .background(Circle().fill(isFocused ? theme.palette.secondary : Color.white.opacity(0.1)))
-            .overlay(Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.control, isFocused)
+        // The flat control; ticked: white, else muted.
+        FlatIconCircle(icon: isOn ? "checkmark.circle.fill" : "circle", iconSize: 26,
+                       restTint: isOn ? FlatControl.content : FlatControl.contentMuted)
     }
 }
 
-/// Small circular icon control (move/rename/hide) with the app's focus look.
+/// Small circular icon control (move/rename/hide): the flat control.
 private struct RowControlIcon: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-
     let icon: String
 
-    var body: some View {
-        Image(systemName: icon)
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
-            .frame(width: 56, height: 56)
-            .background(Circle().fill(isFocused ? theme.palette.secondary : Color.white.opacity(0.1)))
-            .overlay(Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.control, isFocused)
-    }
+    var body: some View { FlatIconCircle(icon: icon) }
 }
-
-/// Simple rename entry cover (tvOS alerts can't host text fields).
-private struct RenameRowView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let title: String
-    @Binding var text: String
-    let onSave: () -> Void
-    let onClear: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            VStack(spacing: CueSpacing.xl) {
-                Text("Rename \"\(title)\"")
-                    .font(.system(size: 38, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
-
-                TextField("Custom title", text: $text)
-                    .font(.system(size: 26))
-                    .frame(maxWidth: 700)
-
-                HStack(spacing: CueSpacing.lg) {
-                    Button("Save", action: onSave)
-                    Button("Use Default", action: onClear)
-                    Button("Cancel", role: .cancel, action: onCancel)
-                }
-                .font(.system(size: 24, weight: .semibold))
-            }
-            .padding(CueSpacing.huge)
-        }
-        .onExitCommand { onCancel() }
-    }
-}
-
-// MARK: - Collections pane
 
 /// Settings → Collections: create and edit collections (custom home rows of
 /// folders, each backed by TMDB / Trakt sources). Synced whole as a JSON
@@ -1154,21 +894,10 @@ private struct FolderEditorView: View {
     }
 }
 
-/// Small selectable chip for the tile-shape picker.
+/// Small selectable chip for the tile-shape picker: the flat pill.
 private struct ShapeChip: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
     let label: String
     let selected: Bool
 
-    var body: some View {
-        Text(label)
-            .font(.system(size: 23, weight: .semibold))
-            .foregroundStyle(selected ? theme.palette.onSecondary : theme.palette.textSecondary)
-            .padding(.horizontal, CueSpacing.lg)
-            .padding(.vertical, CueSpacing.md)
-            .background(Capsule().fill(selected ? theme.palette.secondary
-                                      : (isFocused ? theme.palette.focusBackground : Color.white.opacity(0.08))))
-            .overlay(Capsule().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-    }
+    var body: some View { FlatChip(label: label, selected: selected) }
 }

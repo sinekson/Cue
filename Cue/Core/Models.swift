@@ -85,9 +85,22 @@ struct AddonManifest: Codable, Identifiable, Hashable {
     let idPrefixes: [String]?
     let catalogs: [ManifestCatalog]?
     let resources: [ManifestResource]?
+    let behaviorHints: BehaviorHints?
+
+    /// The manifest's hints: `configurable` — the add-on has a settings page
+    /// (at its manifest URL with `manifest.json` → `configure`, the Stremio
+    /// convention; see `InstalledAddon.configureURL`).
+    struct BehaviorHints: Codable, Hashable {
+        var configurable: Bool?
+        var configurationRequired: Bool?
+    }
+
+    var isConfigurable: Bool {
+        behaviorHints?.configurable == true || behaviorHints?.configurationRequired == true
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, version, description, logo, types, idPrefixes, catalogs, resources
+        case id, name, version, description, logo, types, idPrefixes, catalogs, resources, behaviorHints
     }
 
     /// Tolerant decode: real-world manifests routinely bend the spec (missing
@@ -119,11 +132,13 @@ struct AddonManifest: Codable, Identifiable, Hashable {
         // silently contributed nothing to Sources.
         catalogs = c.contains(.catalogs) ? c.lossyArrayHelper(ManifestCatalog.self, forKey: .catalogs) : nil
         resources = c.contains(.resources) ? c.lossyArrayHelper(ManifestResource.self, forKey: .resources) : nil
+        behaviorHints = (try? c.decodeIfPresent(BehaviorHints.self, forKey: .behaviorHints)) ?? nil
     }
 
     init(id: String, name: String, version: String?, description: String?,
          logo: String?, types: [String]?, idPrefixes: [String]?,
-         catalogs: [ManifestCatalog]?, resources: [ManifestResource]?) {
+         catalogs: [ManifestCatalog]?, resources: [ManifestResource]?,
+         behaviorHints: BehaviorHints? = nil) {
         self.id = id
         self.name = name
         self.version = version
@@ -133,6 +148,7 @@ struct AddonManifest: Codable, Identifiable, Hashable {
         self.idPrefixes = idPrefixes
         self.catalogs = catalogs
         self.resources = resources
+        self.behaviorHints = behaviorHints
     }
 
     private func provides(_ resource: String) -> Bool {
@@ -258,15 +274,30 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
     /// Disabled addons stay installed but contribute no catalogs/streams — the
     /// APK's per-addon on/off toggle.
     var enabled: Bool = true
+    /// The name it was given (here or on Nuvio's website — synced as the
+    /// account row's `name`); nil: the manifest's own.
+    var customName: String?
 
     var id: String { manifestURL }
+    /// What the add-on is called everywhere in Cue.
+    var displayName: String { customName ?? manifest.name }
 
-    private enum CodingKeys: String, CodingKey { case manifestURL, manifest, enabled }
+    /// Its settings page, for add-ons that have one: the manifest URL with
+    /// `manifest.json` replaced by `configure` (the Stremio convention), its
+    /// query kept.
+    var configureURL: String? {
+        guard manifest.isConfigurable else { return nil }
+        let (base, query) = Self.split(manifestURL: manifestURL)
+        return base + "/configure" + query
+    }
 
-    init(manifestURL: String, manifest: AddonManifest, enabled: Bool = true) {
+    private enum CodingKeys: String, CodingKey { case manifestURL, manifest, enabled, customName }
+
+    init(manifestURL: String, manifest: AddonManifest, enabled: Bool = true, customName: String? = nil) {
         self.manifestURL = manifestURL
         self.manifest = manifest
         self.enabled = enabled
+        self.customName = customName
     }
 
     init(from decoder: Decoder) throws {
@@ -275,6 +306,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         manifest = try c.decode(AddonManifest.self, forKey: .manifest)
         // Back-compat: addons saved before the toggle existed default to on.
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        customName = try c.decodeIfPresent(String.self, forKey: .customName)
     }
 
     /// THE single source of truth for splitting a manifest URL into the base
@@ -350,8 +382,7 @@ struct MetaItem: Codable, Identifiable, Hashable {
     let id: String
     let type: String
     let name: String
-    /// `var` only so `withPlainPoster()` can swap it on a copy.
-    var poster: String?
+    let poster: String?
     let background: String?
     let logo: String?
     let description: String?
@@ -361,14 +392,10 @@ struct MetaItem: Codable, Identifiable, Hashable {
     let genres: [String]?
     let cast: [String]?
     let videos: [MetaVideo]?
-    /// An undecorated poster some add-ons send beside `poster` — see
-    /// `withPlainPoster()`.
-    let posterFallback: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, type, name, poster, background, logo, description
         case releaseInfo, imdbRating, runtime, genres, cast, videos, year
-        case posterFallback
     }
 
     init(from decoder: Decoder) throws {
@@ -402,7 +429,6 @@ struct MetaItem: Codable, Identifiable, Hashable {
         // Element-wise: one episode with a numeric/missing id used to nil the
         // WHOLE list, so the Detail page showed no episodes for that show.
         videos = c.lossyArrayHelper(MetaVideo.self, forKey: .videos)
-        posterFallback = try? c.decode(String.self, forKey: .posterFallback)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -420,7 +446,6 @@ struct MetaItem: Codable, Identifiable, Hashable {
         try c.encodeIfPresent(genres, forKey: .genres)
         try c.encodeIfPresent(cast, forKey: .cast)
         try c.encodeIfPresent(videos, forKey: .videos)
-        try c.encodeIfPresent(posterFallback, forKey: .posterFallback)
     }
 
     init(
@@ -428,7 +453,7 @@ struct MetaItem: Codable, Identifiable, Hashable {
         poster: String? = nil, background: String? = nil, logo: String? = nil,
         description: String? = nil, releaseInfo: String? = nil, imdbRating: String? = nil,
         runtime: String? = nil, genres: [String]? = nil, cast: [String]? = nil,
-        videos: [MetaVideo]? = nil, posterFallback: String? = nil
+        videos: [MetaVideo]? = nil
     ) {
         self.id = id
         self.type = type
@@ -443,20 +468,8 @@ struct MetaItem: Codable, Identifiable, Hashable {
         self.genres = genres
         self.cast = cast
         self.videos = videos
-        self.posterFallback = posterFallback
     }
 
-    /// This title with the add-on's plain poster in place of its decorated one
-    /// (Settings → Layout → Posters → "Poster banners" off). Some add-ons print
-    /// tags such as "In Cinema" or "#2 Today" into the poster image itself —
-    /// Xperience's poster providers do — and send the undecorated art alongside
-    /// as `posterFallback`. Returns `self` when there is no such fallback.
-    func withPlainPoster() -> MetaItem {
-        guard let posterFallback, !posterFallback.isEmpty, posterFallback != poster else { return self }
-        var copy = self
-        copy.poster = posterFallback
-        return copy
-    }
 
     var year: String? {
         guard let releaseInfo, !releaseInfo.isEmpty else { return nil }
@@ -695,6 +708,18 @@ struct MetaVideo: Codable, Identifiable, Hashable {
         if let date = ReleaseDateParser.iso.date(from: released) { return date <= Date() }
         return true
     }
+
+    /// Next Up may point at it: it has aired, or airs within
+    /// `upcomingWindow` — a weekly show stays in Continue Watching between
+    /// episodes ("Airs Tuesday"); one on a long break (or with no date) drops
+    /// out, and comes back once its next episode is out.
+    var isNextUpCandidate: Bool {
+        if hasAired { return true }
+        guard let aired = airedDate else { return false }
+        return aired.timeIntervalSinceNow <= Self.upcomingWindow
+    }
+
+    static let upcomingWindow: TimeInterval = 14 * 24 * 60 * 60
 
     var seasonEpisodeCode: String {
         guard let season, let episode else { return "" }
@@ -1081,15 +1106,15 @@ struct Stream: Codable, Hashable {
         return magnet
     }
 
-    /// Addon-provided short label, e.g. "Torrentio\n4K".
+    /// Addon-provided short label, e.g. "Torrentio\n4K" — its own line
+    /// breaks kept (add-ons lay their labels out in lines).
     var displayName: String {
-        (name ?? "Stream").replacingOccurrences(of: "\n", with: " · ")
+        (name ?? "Stream").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Longer description lines with file / size details.
+    /// Longer description lines with file / size details, line breaks kept.
     var displayDetail: String {
-        let raw = title ?? description ?? ""
-        return raw.replacingOccurrences(of: "\n", with: " · ")
+        (title ?? description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var qualityTag: String? {

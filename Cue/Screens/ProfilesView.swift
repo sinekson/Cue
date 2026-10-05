@@ -83,15 +83,23 @@ struct ProfileAvatarView: View {
 
 // MARK: - "Who's watching?" gate
 
+/// "Who's watching?" — and, opened from the top bar's avatar, where
+/// profiles are managed: its Edit tile turns the same screen into "Edit
+/// Profiles" (pick one to rename it, change its picture or colour, PIN-lock
+/// or delete it; Add creates one and opens it).
 struct ProfileGateView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var profiles: ProfileStore
+    @EnvironmentObject private var addonManager: AddonManager
     let onSelected: () -> Void
-    /// Back handler when the gate is opened as a MODAL (rail profile chip,
-    /// Settings → Switch Profile). nil on cold launch, where Back is a no-op.
+    /// Back handler when the gate is opened as a MODAL (the top bar's
+    /// avatar). nil on cold launch, where Back is a no-op.
     var onCancel: (() -> Void)? = nil
 
     @State private var pinProfile: UserProfile?
+    /// Edit Profiles: picking a tile opens its editor instead.
+    @State private var editingProfiles = false
+    @State private var editing: UserProfile?
     // Open with focus on the profile you last used, so the trackpad starts on a
     // sensible tile rather than an arbitrary one.
     @FocusState private var focusedProfile: Int?
@@ -123,14 +131,15 @@ struct ProfileGateView: View {
                 )
             } else {
                 VStack(spacing: CueSpacing.huge) {
-                    Text("Who's watching?")
+                    Text(editingProfiles ? "Edit Profiles" : "Who's watching?")
                         .font(.system(size: 58, weight: .heavy))
                         .foregroundStyle(theme.palette.textPrimary)
 
                     HStack(alignment: .top, spacing: CueSpacing.xl) {
                         ForEach(profiles.profiles) { profile in
-                            Button { select(profile) } label: {
-                                GateTile(title: profile.name, locked: profile.pinEnabled) {
+                            Button { editingProfiles ? (editing = profile) : select(profile) } label: {
+                                GateTile(title: profile.name, locked: profile.pinEnabled && !editingProfiles,
+                                         editable: editingProfiles) {
                                     ProfileAvatarView(profile: profile)
                                 }
                             }
@@ -153,7 +162,16 @@ struct ProfileGateView: View {
                             }
                             .buttonStyle(PlainCardButtonStyle())
                         }
-                        // Manage Profiles and Cue Account moved to Settings → Account.
+                        // Editing: only opened from inside the app — on the
+                        // launch gate it would walk past a PIN lock.
+                        if onCancel != nil {
+                            Button { editingProfiles.toggle() } label: {
+                                GateTile(title: editingProfiles ? "Done" : "Edit") {
+                                    DashedCircle(systemName: editingProfiles ? "checkmark" : "pencil")
+                                }
+                            }
+                            .buttonStyle(PlainCardButtonStyle())
+                        }
                     }
                     .defaultFocus($focusedProfile, profiles.active.id)
                 }
@@ -164,8 +182,15 @@ struct ProfileGateView: View {
         // go back to, so Back is a no-op instead of falling through to the
         // system (which would otherwise exit the app). Opened from the rail
         // or Settings, Back closes it and keeps the current profile.
-        .onExitCommand { onCancel?() }
+        // Back leaves editing first, then the screen.
+        .onExitCommand { editingProfiles ? (editingProfiles = false) : onCancel?() }
         .task { await profiles.loadAvatarCatalog() }
+        .fullScreenCover(item: $editing) { profile in
+            ProfileEditView(profile: profile) { editing = nil }
+                .environmentObject(theme)
+                .environmentObject(profiles)
+                .environmentObject(addonManager)
+        }
     }
 
     private func select(_ profile: UserProfile) {
@@ -186,8 +211,13 @@ struct ProfileGateView: View {
 
     private func addProfile() {
         if let created = profiles.addProfile(name: "") {
-            profiles.setActive(created.id)
-            onSelected()
+            // Editing: open the new one; choosing: watch as it.
+            if editingProfiles {
+                editing = created
+            } else {
+                profiles.setActive(created.id)
+                onSelected()
+            }
         } else {
             // Every free slot has a deletion still syncing — say so instead
             // of a button that visibly does nothing.
@@ -203,6 +233,8 @@ private struct GateTile<Content: View>: View {
     @Environment(\.isFocused) private var isFocused
     let title: String
     var locked: Bool = false
+    /// Edit Profiles: a pencil badge.
+    var editable: Bool = false
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -212,8 +244,8 @@ private struct GateTile<Content: View>: View {
                     .overlay(
                         Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 6)
                     )
-                if locked {
-                    Image(systemName: "lock.fill")
+                if locked || editable {
+                    Image(systemName: editable ? "pencil" : "lock.fill")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(9)
@@ -399,80 +431,15 @@ private struct PinKeyStyle: ButtonStyle {
         // reached the glyph: a focused key drew white-on-0.9-white and the digit
         // vanished — on the keypad guarding a profile's PIN.
         configuration.label
-            .foregroundStyle(isFocused ? .black : .white)
+            .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
             .frame(width: 90, height: 90)
-            .background(Circle().fill(isFocused ? Color.white.opacity(0.9) : Color.white.opacity(0.12)))
+            .background(Circle().fill(isFocused ? FlatControl.focus : FlatControl.rest))
             .focusLift(CueFocus.control, isFocused)
             .cardPressDip(configuration.isPressed)
     }
 }
 
-// MARK: - Management
-
-struct ProfileManageView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var profiles: ProfileStore
-    @EnvironmentObject private var addonManager: AddonManager
-    let onDone: () -> Void
-
-    @State private var editing: UserProfile?
-    // Without an explicit focus binding the tiles' `@Environment(\.isFocused)`
-    // ring didn't light up inside this fullScreenCover — the "nothing is
-    // highlighted" bug. Driving focus explicitly (like the Who's-watching gate)
-    // makes the highlight reliable and lands focus on a tile.
-    @FocusState private var focusedTile: Int?
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            VStack(alignment: .leading, spacing: CueSpacing.xl) {
-                // No Done button: Menu/Back already dismisses this screen
-                // (`onExitCommand` below), and having it here put a focusable
-                // control above the tiles that the viewer had to step past.
-                Text("Manage Profiles")
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(alignment: .top, spacing: CueSpacing.xl) {
-                    ForEach(profiles.profiles) { profile in
-                        Button { editing = profile } label: {
-                            GateTile(title: profile.name, locked: profile.pinEnabled) {
-                                ProfileAvatarView(profile: profile, size: 120)
-                            }
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                        .focused($focusedTile, equals: profile.id)
-                    }
-                    if profiles.canAddProfile {
-                        Button {
-                            if profiles.addProfile(name: "") == nil {
-                                ToastCenter.shared.show("Can't add a profile just yet — try again in a moment",
-                                                        icon: "person.crop.circle.badge.exclamationmark")
-                            }
-                        } label: {
-                            GateTile(title: "Add") { DashedCircle(systemName: "plus") }
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                        .focused($focusedTile, equals: -1)
-                    }
-                }
-                .focusSection()
-                .defaultFocus($focusedTile, profiles.active.id)
-                Spacer()
-            }
-            .padding(CueSpacing.huge)
-        }
-        .onExitCommand { onDone() }
-        .task { await profiles.loadAvatarCatalog() }
-        .fullScreenCover(item: $editing) { profile in
-            ProfileEditView(profile: profile) { editing = nil }
-                .environmentObject(theme)
-                .environmentObject(profiles)
-                .environmentObject(addonManager)
-        }
-    }
-}
+// MARK: - Editing one profile
 
 struct ProfileEditView: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -590,9 +557,11 @@ struct ProfileEditView: View {
                             .foregroundStyle(theme.palette.textSecondary)
                     }
 
-                    autoLinkSection
-
                     collectionsSection
+
+                    if profile.id != 1 {
+                        sharedSetupSection
+                    }
 
                     if profile.id != 1 {
                         Button(role: .destructive) {
@@ -667,31 +636,6 @@ struct ProfileEditView: View {
         }
     }
 
-    // MARK: Auto Link Selector
-
-    /// Write-through binding to one field of this profile's auto-link prefs.
-    private func autoBind<T>(_ keyPath: WritableKeyPath<AutoLinkPreferences, T>) -> Binding<T> {
-        Binding(
-            get: { current.autoLinkPrefs[keyPath: keyPath] },
-            set: { newValue in
-                var prefs = current.autoLinkPrefs
-                prefs[keyPath: keyPath] = newValue
-                profiles.setAutoLink(id: profile.id, prefs)
-            }
-        )
-    }
-
-    /// Installed stream addons, as dropdown options (with a leading "Any"/"None").
-    private func addonOptions(includeNone: Bool) -> [CueDropdownOption] {
-        var names: [String] = []
-        for addon in addonManager.streamAddons {
-            let name = addon.manifest.name
-            if !name.isEmpty, !names.contains(name) { names.append(name) }
-        }
-        let head = CueDropdownOption("", includeNone ? "None" : "Any addon")
-        return [head] + names.map { CueDropdownOption($0) }
-    }
-
     /// Per-profile collection visibility, as a drill-down: pick a collection,
     /// then switch its individual FOLDERS on or off (keep Streaming Services
     /// but drop HBO Max). Folders also have an account-wide default in
@@ -751,82 +695,24 @@ struct ProfileEditView: View {
         return on == total ? "All \(total) folders" : "\(on) of \(total) folders"
     }
 
-    private var autoLinkSection: some View {
+    /// Nuvio's "Shared setup": a secondary profile can use the primary
+    /// profile's add-ons instead of its own.
+    private var sharedSetupSection: some View {
         VStack(alignment: .leading, spacing: CueSpacing.md) {
-            sectionLabel("Auto Link Selector")
-            Text("When on, pressing Play resolves and plays the best matching source directly — no source list. Hold Play to pick a source manually.")
+            sectionLabel("Shared setup")
+            Text("Use the primary profile's add-ons instead of keeping its own. Changes to them show up here too.")
                 .font(.system(size: 20))
                 .foregroundStyle(theme.palette.textSecondary)
                 .frame(maxWidth: 820, alignment: .leading)
 
-            Toggle("Auto Link Selector", isOn: Binding(
-                get: { current.autoLinkPrefs.enabled },
-                set: { on in
-                    var prefs = current.autoLinkPrefs
-                    // Turning the selector ON starts with DV allowed — the old
-                    // avoid-by-default survives in profiles saved back then,
-                    // and re-enabling is the natural moment to shed it. While
-                    // the selector stays on, the toggle below is authoritative.
-                    if on, !prefs.enabled { prefs.avoidDolbyVision = false }
-                    prefs.enabled = on
-                    profiles.setAutoLink(id: profile.id, prefs)
-                }
+            Toggle("Use primary profile's add-ons", isOn: Binding(
+                get: { current.usesPrimaryAddons },
+                set: { profiles.setUsesPrimaryAddons(id: profile.id, $0) }
             ))
                 .font(.system(size: 24, weight: .medium))
                 .tint(theme.palette.secondary)
                 .frame(maxWidth: 560)
-
-            if current.autoLinkPrefs.enabled {
-                CueDropdown(
-                    title: "Preferred addon",
-                    selection: current.autoLinkPrefs.preferredAddon,
-                    options: addonOptions(includeNone: false),
-                    onSelect: { autoBind(\.preferredAddon).wrappedValue = $0 }
-                )
-                CueDropdown(
-                    title: "Secondary addon",
-                    subtitle: "Used when the preferred addon has no match",
-                    selection: current.autoLinkPrefs.secondaryAddon,
-                    options: addonOptions(includeNone: true),
-                    onSelect: { autoBind(\.secondaryAddon).wrappedValue = $0 }
-                )
-                CueDropdown(
-                    title: "Minimum quality",
-                    selection: current.autoLinkPrefs.minResolution,
-                    options: [
-                        .init("", "Any"),
-                        .init("2160p", "4K (2160p)"),
-                        .init("1080p", "1080p"),
-                        .init("720p", "720p"),
-                        .init("480p", "480p")
-                    ],
-                    onSelect: { autoBind(\.minResolution).wrappedValue = $0 }
-                )
-                CueDropdown(
-                    title: "Maximum size",
-                    selection: String(Int(AutoLinkPreferences.sanitizedMaxSizeGB(current.autoLinkPrefs.maxSizeGB))),
-                    options: [
-                        .init("0", "No limit"),
-                        .init("5", "5 GB"),
-                        .init("10", "10 GB"),
-                        .init("20", "20 GB"),
-                        .init("40", "40 GB"),
-                        .init("60", "60 GB")
-                    ],
-                    onSelect: { autoBind(\.maxSizeGB).wrappedValue = Double(Int($0) ?? 0) }
-                )
-                Toggle("Cached sources only", isOn: autoBind(\.cachedOnly))
-                    .font(.system(size: 24, weight: .medium))
-                    .tint(theme.palette.secondary)
-                    .frame(maxWidth: 560)
-
-                Toggle("Avoid Dolby Vision", isOn: autoBind(\.avoidDolbyVision))
-                    .font(.system(size: 24, weight: .medium))
-                    .tint(theme.palette.secondary)
-                    .frame(maxWidth: 560)
-            }
         }
-        .padding(.top, CueSpacing.lg)
     }
 
     private func sectionLabel(_ text: String) -> some View {

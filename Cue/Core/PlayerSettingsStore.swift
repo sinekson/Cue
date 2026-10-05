@@ -279,12 +279,6 @@ struct PlayerSettings: Codable, Equatable {
     /// Optional case-insensitive regex the auto-played source's name/detail
     /// must match (e.g. "2160p|remux"). "" = first source in the sorted list.
     var autoPlaySourceRegex: String = ""
-    // --- Reuse last link ---
-    /// Replay the last successfully-played source for a title without
-    /// re-scraping, as long as it's within the cache window.
-    var reuseLastLinkEnabled: Bool = false
-    /// How long a remembered last link stays valid (hours).
-    var reuseLastLinkCacheHours: Int = 24
     /// OPT-IN HDR/frame-rate display-mode switching. Off (default) = the
     /// Apple TV stays in its home-screen format and tone-maps content into it
     /// (like the Android APK/Stremio). On = ask the TV to switch into the
@@ -440,8 +434,6 @@ struct PlayerSettings: Codable, Equatable {
     static let subtitleBackgroundOpacityValues: [Int] = [0, 15, 30, 45, 60, 80, 100]
     /// Selectable subtitle outline thicknesses (points).
     static let subtitleOutlineWidthValues: [Int] = [1, 2, 3, 4, 6]
-    /// Selectable reuse-last-link cache windows (hours).
-    static let reuseLastLinkHoursValues: [Int] = [1, 3, 6, 12, 24, 48, 72]
     /// Selectable default subtitle timing offsets (seconds).
     static let subtitleDelayValues: [Double] = [-5, -3, -2, -1, -0.5, 0, 0.5, 1, 2, 3, 5]
     /// Selectable per-press skip amounts (seconds).
@@ -540,8 +532,6 @@ struct PlayerSettings: Codable, Equatable {
         autoPlaySourceEnabled = (try? c.decode(Bool.self, forKey: .autoPlaySourceEnabled)) ?? d.autoPlaySourceEnabled
         autoPlaySourceCachedOnly = (try? c.decode(Bool.self, forKey: .autoPlaySourceCachedOnly)) ?? d.autoPlaySourceCachedOnly
         autoPlaySourceRegex = (try? c.decode(String.self, forKey: .autoPlaySourceRegex)) ?? d.autoPlaySourceRegex
-        reuseLastLinkEnabled = (try? c.decode(Bool.self, forKey: .reuseLastLinkEnabled)) ?? d.reuseLastLinkEnabled
-        reuseLastLinkCacheHours = (try? c.decode(Int.self, forKey: .reuseLastLinkCacheHours)) ?? d.reuseLastLinkCacheHours
         matchContentDisplayMode = (try? c.decode(Bool.self, forKey: .matchContentDisplayMode)) ?? d.matchContentDisplayMode
         matchFrameRate = (try? c.decode(Bool.self, forKey: .matchFrameRate)) ?? d.matchFrameRate
         atmosPassthrough = (try? c.decode(Bool.self, forKey: .atmosPassthrough)) ?? d.atmosPassthrough
@@ -575,19 +565,6 @@ final class PlayerSettingsStore: ObservableObject {
     /// defaults (Trakt-switch semantics).
     private(set) var profileID: Int
 
-    /// Separate-vs-shared switch (Trakt-style). Shared = one set of player +
-    /// subtitle settings for the whole device, the pre-split behaviour.
-    static let feature = "player"
-    var perProfileEnabled: Bool { ProfileScopedDefaults.isSeparate(Self.feature) }
-
-    func setPerProfile(_ on: Bool) {
-        guard on != perProfileEnabled else { return }
-        ProfileScopedDefaults.setSeparate(Self.feature, on)
-        applyingRemote = true
-        settings = Self.load(profile: profileID)
-        applyingRemote = false
-    }
-
     init() {
         profileID = ProfileScopedDefaults.activeProfileID
         settings = Self.load(profile: profileID)
@@ -603,7 +580,7 @@ final class PlayerSettingsStore: ObservableObject {
     private static let forcedFrameRateOffKey = "cue.player.matchFrameRateForcedOff.v2"
 
     private static func load(profile: Int) -> PlayerSettings {
-        if let data = ProfileScopedDefaults.data(key, feature: feature, profile),
+        if let data = ProfileScopedDefaults.data(key, profile),
            var decoded = try? JSONDecoder().decode(PlayerSettings.self, from: data) {
             decoded.migrateUpNextTimeout()
             if !UserDefaults.standard.bool(forKey: forcedFrameRateOffKey) {
@@ -616,7 +593,7 @@ final class PlayerSettingsStore: ObservableObject {
                 if let encoded = try? JSONEncoder().encode(decoded) {
                     UserDefaults.standard.set(
                         encoded,
-                        forKey: ProfileScopedDefaults.writeKey(key, feature: feature, profile))
+                        forKey: ProfileScopedDefaults.key(key, profile))
                 }
             }
             return decoded
@@ -674,6 +651,6 @@ final class PlayerSettingsStore: ObservableObject {
     private func save() {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         UserDefaults.standard.set(
-            data, forKey: ProfileScopedDefaults.writeKey(Self.key, feature: Self.feature, profileID))
+            data, forKey: ProfileScopedDefaults.key(Self.key, profileID))
     }
 }

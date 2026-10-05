@@ -255,6 +255,18 @@ final class ProfileStore: ObservableObject {
         notifyChange()
     }
 
+    /// Nuvio's "Use primary profile addons": the profile reads and writes the
+    /// primary profile's add-on list instead of its own (synced, as
+    /// `uses_primary_addons`). The active profile's add-ons re-point at once.
+    func setUsesPrimaryAddons(id: Int, _ on: Bool) {
+        guard id != 1, let idx = profiles.firstIndex(where: { $0.id == id }),
+              profiles[idx].usesPrimaryAddons != on else { return }
+        profiles[idx].usesPrimaryAddons = on
+        saveList()
+        notifyChange()
+        if id == activeProfileID { onSwitchLocal?(id) }
+    }
+
     func setColor(id: Int, hex: String) {
         guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return }
         profiles[idx].avatarColorHex = hex
@@ -615,47 +627,6 @@ enum ProfileScopedDefaults {
     }
 
     static func key(_ base: String, _ profile: Int) -> String { "\(base).p\(profile)" }
-
-    // MARK: Separate vs shared
-
-    /// Each split store can be flipped between SEPARATE per-profile state and
-    /// ONE shared device-wide copy — the same choice the Trakt pane's
-    /// "Separate Trakt per profile" switch offers, generalized. Defaults ON
-    /// (separate): that's the behaviour the split shipped with. Shared mode
-    /// reads and writes the bare legacy keys, so turning a switch off always
-    /// falls straight back to the device-wide copy — and turning it back on
-    /// finds each profile's own state (or the seed) exactly where it was.
-    static func isSeparate(_ feature: String) -> Bool {
-        (UserDefaults.standard.object(forKey: separateFlagKey(feature)) as? Bool) ?? true
-    }
-
-    static func setSeparate(_ feature: String, _ on: Bool) {
-        UserDefaults.standard.set(on, forKey: separateFlagKey(feature))
-    }
-
-    private static func separateFlagKey(_ feature: String) -> String {
-        "cue.perProfile.\(feature).v1"
-    }
-
-    /// The key WRITES go to under the feature's current mode.
-    static func writeKey(_ base: String, feature: String, _ profile: Int) -> String {
-        isSeparate(feature) ? key(base, profile) : base
-    }
-
-    /// Mode-aware reads: separate → scoped with the legacy seed fallback;
-    /// shared → the legacy key alone.
-    static func data(_ base: String, feature: String, _ profile: Int) -> Data? {
-        isSeparate(feature) ? data(base, profile) : UserDefaults.standard.data(forKey: base)
-    }
-
-    static func string(_ base: String, feature: String, _ profile: Int) -> String? {
-        isSeparate(feature) ? string(base, profile) : UserDefaults.standard.string(forKey: base)
-    }
-
-    static func bool(_ base: String, feature: String, _ profile: Int, default def: Bool = false) -> Bool {
-        isSeparate(feature) ? bool(base, profile, default: def)
-            : (UserDefaults.standard.object(forKey: base) as? Bool) ?? def
-    }
 
     static func data(_ base: String, _ profile: Int) -> Data? {
         if let scoped = UserDefaults.standard.data(forKey: key(base, profile)) {

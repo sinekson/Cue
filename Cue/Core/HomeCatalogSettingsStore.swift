@@ -1,24 +1,11 @@
 import Foundation
 
-/// Poster card size — drives the portrait card width everywhere it renders.
-enum PosterSize: String, CaseIterable, Identifiable, Codable {
-    case small, medium, large
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .small: return "Small"
-        case .medium: return "Medium"
-        case .large: return "Large"
-        }
-    }
-    /// Portrait poster width (points). Height is width × 3/2.
-    var posterWidth: CGFloat {
-        switch self {
-        case .small: return 180
-        case .medium: return 220
-        case .large: return 264
-        }
-    }
+/// The portrait poster grids (collections, See All, studio pages): one
+/// size and corner radius, until those screens get the new design.
+enum GridPoster {
+    /// Width in points; the height is width × 3/2.
+    static let width: CGFloat = 220
+    static let cornerRadius: CGFloat = 12
 }
 
 /// How the Continue Watching row is ordered (mirrors Android's
@@ -43,38 +30,11 @@ enum ContinueWatchingSortMode: String, CaseIterable, Identifiable, Codable {
 /// The device-local Home/Continue-Watching presentation prefs that ride in the
 /// tvOS-only sync blob (see NuvioSyncManager.AppPreferencesSnapshot).
 struct HomePresentationSnapshot: Codable, Equatable {
-    var posterSize: PosterSize = .medium
-    var showPosterLabels = true
-    var showPosterBanners = true
     var continueWatchingSortMode: ContinueWatchingSortMode = .recentlyWatched
-    var nextUpFromFurthestEpisode = true
-    var showUnairedNextUp = true
-    var useEpisodeThumbnailsInCw = true
-    var blurUnwatchedEpisodes = false
-    var posterCornerRadius = 12
-    var catalogAddonNameEnabled = false
-    var catalogTypeSuffixEnabled = true
-    // Which optional sections the details page shows. All default ON, so a
-    // viewer who never opens these settings sees exactly the page they always
-    // did. These are DISPLAY switches — independent of the per-section TMDB
-    // enrichment switches, which decide whether the data is fetched at all.
-    /// Details page: Creator and Cast.
-    var detailShowCast = true
-    /// Details page: the collection ("part of…") row.
-    var detailShowCollection = true
-    /// Details page: More Like This.
-    var detailShowMoreLikeThis = true
-    /// Details page: Production companies.
-    var detailShowProduction = true
     var autoHideSidebar = false
     var fullStreamTitles = false
     var heroTrailersEnabled = true
     var heroTrailerSound = false
-    /// Which catalog feeds the Home hero, as a `catalogKey`. Empty means
-    /// AUTOMATIC — the first row in Home's order, which is what the hero has
-    /// always used and stays the default, so nothing moves for anyone who
-    /// never opens this setting.
-    var heroCatalogKey = ""
 }
 
 /// Tolerant decoding (in an extension so the memberwise init survives): a blob
@@ -84,26 +44,11 @@ extension HomePresentationSnapshot {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = HomePresentationSnapshot()
-        posterSize = (try? c.decode(PosterSize.self, forKey: .posterSize)) ?? d.posterSize
-        showPosterLabels = (try? c.decode(Bool.self, forKey: .showPosterLabels)) ?? d.showPosterLabels
-        showPosterBanners = (try? c.decode(Bool.self, forKey: .showPosterBanners)) ?? d.showPosterBanners
         continueWatchingSortMode = (try? c.decode(ContinueWatchingSortMode.self, forKey: .continueWatchingSortMode)) ?? d.continueWatchingSortMode
-        nextUpFromFurthestEpisode = (try? c.decode(Bool.self, forKey: .nextUpFromFurthestEpisode)) ?? d.nextUpFromFurthestEpisode
-        showUnairedNextUp = (try? c.decode(Bool.self, forKey: .showUnairedNextUp)) ?? d.showUnairedNextUp
-        useEpisodeThumbnailsInCw = (try? c.decode(Bool.self, forKey: .useEpisodeThumbnailsInCw)) ?? d.useEpisodeThumbnailsInCw
-        blurUnwatchedEpisodes = (try? c.decode(Bool.self, forKey: .blurUnwatchedEpisodes)) ?? d.blurUnwatchedEpisodes
-        posterCornerRadius = (try? c.decode(Int.self, forKey: .posterCornerRadius)) ?? d.posterCornerRadius
-        catalogAddonNameEnabled = (try? c.decode(Bool.self, forKey: .catalogAddonNameEnabled)) ?? d.catalogAddonNameEnabled
-        catalogTypeSuffixEnabled = (try? c.decode(Bool.self, forKey: .catalogTypeSuffixEnabled)) ?? d.catalogTypeSuffixEnabled
-        detailShowCast = (try? c.decode(Bool.self, forKey: .detailShowCast)) ?? d.detailShowCast
-        detailShowCollection = (try? c.decode(Bool.self, forKey: .detailShowCollection)) ?? d.detailShowCollection
-        detailShowMoreLikeThis = (try? c.decode(Bool.self, forKey: .detailShowMoreLikeThis)) ?? d.detailShowMoreLikeThis
-        detailShowProduction = (try? c.decode(Bool.self, forKey: .detailShowProduction)) ?? d.detailShowProduction
         autoHideSidebar = (try? c.decode(Bool.self, forKey: .autoHideSidebar)) ?? d.autoHideSidebar
         fullStreamTitles = (try? c.decode(Bool.self, forKey: .fullStreamTitles)) ?? d.fullStreamTitles
         heroTrailersEnabled = (try? c.decode(Bool.self, forKey: .heroTrailersEnabled)) ?? d.heroTrailersEnabled
         heroTrailerSound = (try? c.decode(Bool.self, forKey: .heroTrailerSound)) ?? d.heroTrailerSound
-        heroCatalogKey = (try? c.decode(String.self, forKey: .heroCatalogKey)) ?? d.heroCatalogKey
     }
 }
 
@@ -161,32 +106,15 @@ final class HomeCatalogSettingsStore: ObservableObject {
     @Published private(set) var orderKeys: [String] = []
     @Published private(set) var disabledKeys: Set<String> = []
     @Published private(set) var customTitles: [String: String] = [:]
+    /// Nuvio's "hide unreleased content" — part of the home layout Nuvio's
+    /// apps share, so it's carried through sync untouched. Cue doesn't read
+    /// it (no setting, no filter): not sending it back would reset it on the
+    /// account's other devices.
     @Published var hideUnreleasedContent: Bool = false {
         didSet {
             guard hideUnreleasedContent != oldValue else { return }
             save()
             notifyLocalChange()
-        }
-    }
-    /// Poster card size across all grids/rows.
-    @Published var posterSize: PosterSize = .medium {
-        didSet { guard posterSize != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Show the title label beneath poster cards.
-    @Published var showPosterLabels: Bool = true {
-        didSet { guard showPosterLabels != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Keep the tags some add-ons print into their poster artwork ("In
-    /// Cinema", "#2 Today"). Off swaps in the plain poster the add-on sends
-    /// alongside (`MetaItem.withPlainPoster()`) as catalogs and details are
-    /// fetched. Written to `PosterBannerPreference` on EVERY assignment, ahead
-    /// of the no-change guard: the fetch path can't read this main-actor store,
-    /// and a profile switch or a sync pull has to reach it too.
-    @Published var showPosterBanners: Bool = true {
-        didSet {
-            PosterBannerPreference.showBanners = showPosterBanners
-            guard showPosterBanners != oldValue else { return }
-            save(); notifyPresentationChange()
         }
     }
     /// Keep the glass rail off screen until it's wanted. It reappears on a
@@ -208,75 +136,11 @@ final class HomeCatalogSettingsStore: ObservableObject {
     @Published var heroTrailerSound: Bool = false {
         didSet { guard heroTrailerSound != oldValue else { return }; save(); notifyPresentationChange() }
     }
-    /// Settings → Layout → Hero source: the `catalogKey` whose row feeds the
-    /// hero. Empty = the first row in Home's order, which is what it always
-    /// was. A key naming a row that is hidden (or ranked past Home's row cap)
-    /// resolves back to that same first row rather than leaving a blank hero
-    /// — see `HomeViewModel.heroCatalogRow`.
-    @Published var heroCatalogKey: String = "" {
-        didSet { guard heroCatalogKey != oldValue else { return }; save(); notifyPresentationChange() }
-    }
     /// Continue Watching row ordering.
     @Published var continueWatchingSortMode: ContinueWatchingSortMode = .recentlyWatched {
         didSet { guard continueWatchingSortMode != oldValue else { return }; save(); notifyPresentationChange() }
     }
-    /// Resume a series from the episode after the FURTHEST watched one rather
-    /// than the most recently played.
-    @Published var nextUpFromFurthestEpisode: Bool = true {
-        didSet { guard nextUpFromFurthestEpisode != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Allow an unaired episode to be the next-up target (off skips it).
-    @Published var showUnairedNextUp: Bool = true {
-        didSet { guard showUnairedNextUp != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Use the episode still (not the show poster) on Continue Watching cards.
-    @Published var useEpisodeThumbnailsInCw: Bool = true {
-        didSet { guard useEpisodeThumbnailsInCw != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Spoiler-blur episode thumbnails you haven't watched (focus reveals them).
-    @Published var blurUnwatchedEpisodes: Bool = false {
-        didSet { guard blurUnwatchedEpisodes != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Minutes between automatic Home catalog re-fetches while the app is
-    /// open (0 = off). Per-device (plain UserDefaults, not in the synced
-    /// snapshot): a refresh cadence tuned for one box shouldn't sync.
-    @Published var autoRefreshMinutes: Int = UserDefaults.standard.integer(forKey: "cue.home.autorefresh.v1") {
-        didSet {
-            guard autoRefreshMinutes != oldValue else { return }
-            UserDefaults.standard.set(autoRefreshMinutes, forKey: "cue.home.autorefresh.v1")
-        }
-    }
-    /// Poster card corner radius (points).
-    @Published var posterCornerRadius: Int = 12 {
-        didSet { guard posterCornerRadius != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Append the addon's name to catalog row titles.
-    @Published var catalogAddonNameEnabled: Bool = false {
-        didSet { guard catalogAddonNameEnabled != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Append the "- Movie/Series" type suffix to catalog row titles.
-    @Published var catalogTypeSuffixEnabled: Bool = true {
-        didSet { guard catalogTypeSuffixEnabled != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Details Page: show Creator and Cast.
-    @Published var detailShowCast: Bool = true {
-        didSet { guard detailShowCast != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Details Page: show the collection ("part of…") row.
-    @Published var detailShowCollection: Bool = true {
-        didSet { guard detailShowCollection != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Details Page: show More Like This.
-    @Published var detailShowMoreLikeThis: Bool = true {
-        didSet { guard detailShowMoreLikeThis != oldValue else { return }; save(); notifyPresentationChange() }
-    }
-    /// Settings → Layout → Details Page: show Production companies.
-    @Published var detailShowProduction: Bool = true {
-        didSet { guard detailShowProduction != oldValue else { return }; save(); notifyPresentationChange() }
-    }
 
-    /// Selectable poster corner radii (points).
-    static let posterCornerRadiusValues: [Int] = [0, 6, 12, 16, 22]
 
     var onLocalChange: (() -> Void)?
     /// Fired when a device-local presentation pref changes, so the tvOS sync
@@ -387,59 +251,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         setOrder(keys)
     }
 
-    /// Synthetic unit token for the single "Collections" reorder row — all
-    /// collections move together as one contiguous block on Home.
-    static let collectionsUnit = "COLLECTIONS"
-
-    /// Reorder Home treating every collection as ONE unit (they render as a
-    /// single row). `unitKey` is a catalog key or `collectionsUnit`.
-    func moveHomeUnit(up: Bool, unitKey: String, catalogKeys: [String], collectionKeys: [String]) {
-        let order = mergedOrder(catalogKeys: catalogKeys, collectionKeys: collectionKeys)
-        var units: [String] = []
-        var insertedCollections = false
-        for k in order {
-            if collectionKeys.contains(k) {
-                if !insertedCollections { units.append(Self.collectionsUnit); insertedCollections = true }
-            } else {
-                units.append(k)
-            }
-        }
-        guard let idx = units.firstIndex(of: unitKey) else { return }
-        let target = up ? idx - 1 : idx + 1
-        guard units.indices.contains(target) else { return }
-        units.swapAt(idx, target)
-        // The collections' own relative order has to come from the order being
-        // EDITED, not from `collectionKeys` — that argument is the store's
-        // array order (whatever sequence the collections happened to load in),
-        // and re-emitting it here overwrote an arrangement made elsewhere.
-        // Moving any row on this screen therefore re-sorted every collection,
-        // and the push that followed sent that re-sort back to the account, so
-        // an order set up on the phone was lost by touching the TV's list at
-        // all. A block move should move the block and nothing else.
-        let collectionKeySet = Set(collectionKeys)
-        var orderedCollectionKeys = order.filter { collectionKeySet.contains($0) }
-        // `mergedOrder` already contains every available collection key, so
-        // this is normally empty — it is here so a key that somehow isn't in
-        // `order` is appended rather than dropped from the layout entirely.
-        let placed = Set(orderedCollectionKeys)
-        orderedCollectionKeys += collectionKeys.filter { !placed.contains($0) }
-        var result: [String] = []
-        for u in units {
-            if u == Self.collectionsUnit { result.append(contentsOf: orderedCollectionKeys) }
-            else { result.append(u) }
-        }
-        setOrder(result)
-    }
-
-    /// Show/hide ALL collections at once (the single Collections row).
-    func setCollectionsEnabled(_ enabled: Bool, collectionKeys: [String]) {
-        for k in collectionKeys {
-            if enabled { disabledKeys.remove(k) } else { disabledKeys.insert(k) }
-        }
-        save()
-        notifyLocalChange()
-    }
-
     func setEnabled(_ enabled: Bool, key: String) {
         if enabled { disabledKeys.remove(key) } else { disabledKeys.insert(key) }
         save()
@@ -536,26 +347,11 @@ final class HomeCatalogSettingsStore: ObservableObject {
         var disabledKeys: [String]
         var customTitles: [String: String]
         var hideUnreleasedContent: Bool
-        var posterSize: PosterSize?
-        var showPosterLabels: Bool?
-        var showPosterBanners: Bool?
         var continueWatchingSortMode: ContinueWatchingSortMode?
-        var nextUpFromFurthestEpisode: Bool?
-        var showUnairedNextUp: Bool?
-        var useEpisodeThumbnailsInCw: Bool?
-        var blurUnwatchedEpisodes: Bool?
-        var posterCornerRadius: Int?
-        var catalogAddonNameEnabled: Bool?
-        var catalogTypeSuffixEnabled: Bool?
-        var detailShowCast: Bool?
-        var detailShowCollection: Bool?
-        var detailShowMoreLikeThis: Bool?
-        var detailShowProduction: Bool?
         var autoHideSidebar: Bool?
         var fullStreamTitles: Bool?
         var heroTrailersEnabled: Bool?
         var heroTrailerSound: Bool?
-        var heroCatalogKey: String?
     }
 
     private func notifyLocalChange() {
@@ -571,26 +367,11 @@ final class HomeCatalogSettingsStore: ObservableObject {
     /// The presentation prefs as a syncable snapshot.
     var presentationSnapshot: HomePresentationSnapshot {
         HomePresentationSnapshot(
-            posterSize: posterSize,
-            showPosterLabels: showPosterLabels,
-            showPosterBanners: showPosterBanners,
             continueWatchingSortMode: continueWatchingSortMode,
-            nextUpFromFurthestEpisode: nextUpFromFurthestEpisode,
-            showUnairedNextUp: showUnairedNextUp,
-            useEpisodeThumbnailsInCw: useEpisodeThumbnailsInCw,
-            blurUnwatchedEpisodes: blurUnwatchedEpisodes,
-            posterCornerRadius: posterCornerRadius,
-            catalogAddonNameEnabled: catalogAddonNameEnabled,
-            catalogTypeSuffixEnabled: catalogTypeSuffixEnabled,
-            detailShowCast: detailShowCast,
-            detailShowCollection: detailShowCollection,
-            detailShowMoreLikeThis: detailShowMoreLikeThis,
-            detailShowProduction: detailShowProduction,
             autoHideSidebar: autoHideSidebar,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
-            heroCatalogKey: heroCatalogKey
         )
     }
 
@@ -599,52 +380,22 @@ final class HomeCatalogSettingsStore: ObservableObject {
     /// profile we just switched away from.
     private func applyPresentationDefaults() {
         let d = HomePresentationSnapshot()
-        posterSize = d.posterSize
-        showPosterLabels = d.showPosterLabels
-        showPosterBanners = d.showPosterBanners
         continueWatchingSortMode = d.continueWatchingSortMode
-        nextUpFromFurthestEpisode = d.nextUpFromFurthestEpisode
-        showUnairedNextUp = d.showUnairedNextUp
-        useEpisodeThumbnailsInCw = d.useEpisodeThumbnailsInCw
-        blurUnwatchedEpisodes = d.blurUnwatchedEpisodes
-        posterCornerRadius = d.posterCornerRadius
-        catalogAddonNameEnabled = d.catalogAddonNameEnabled
-        catalogTypeSuffixEnabled = d.catalogTypeSuffixEnabled
-        detailShowCast = d.detailShowCast
-        detailShowCollection = d.detailShowCollection
-        detailShowMoreLikeThis = d.detailShowMoreLikeThis
-        detailShowProduction = d.detailShowProduction
         autoHideSidebar = d.autoHideSidebar
         fullStreamTitles = d.fullStreamTitles
         heroTrailersEnabled = d.heroTrailersEnabled
         heroTrailerSound = d.heroTrailerSound
-        heroCatalogKey = d.heroCatalogKey
     }
 
     /// Apply presentation prefs pulled from the account without echoing back up.
     func applyRemotePresentation(_ s: HomePresentationSnapshot) {
         guard s != presentationSnapshot else { return }
         suppressChange = true
-        posterSize = s.posterSize
-        showPosterLabels = s.showPosterLabels
-        showPosterBanners = s.showPosterBanners
         continueWatchingSortMode = s.continueWatchingSortMode
-        nextUpFromFurthestEpisode = s.nextUpFromFurthestEpisode
-        showUnairedNextUp = s.showUnairedNextUp
-        useEpisodeThumbnailsInCw = s.useEpisodeThumbnailsInCw
-        blurUnwatchedEpisodes = s.blurUnwatchedEpisodes
-        posterCornerRadius = s.posterCornerRadius
-        catalogAddonNameEnabled = s.catalogAddonNameEnabled
-        catalogTypeSuffixEnabled = s.catalogTypeSuffixEnabled
-        detailShowCast = s.detailShowCast
-        detailShowCollection = s.detailShowCollection
-        detailShowMoreLikeThis = s.detailShowMoreLikeThis
-        detailShowProduction = s.detailShowProduction
         autoHideSidebar = s.autoHideSidebar
         fullStreamTitles = s.fullStreamTitles
         heroTrailersEnabled = s.heroTrailersEnabled
         heroTrailerSound = s.heroTrailerSound
-        heroCatalogKey = s.heroCatalogKey
         suppressChange = false
         save()
     }
@@ -679,26 +430,11 @@ final class HomeCatalogSettingsStore: ObservableObject {
         customTitles = decoded.customTitles
         suppressChange = true
         hideUnreleasedContent = decoded.hideUnreleasedContent
-        posterSize = decoded.posterSize ?? .medium
-        showPosterLabels = decoded.showPosterLabels ?? true
-        showPosterBanners = decoded.showPosterBanners ?? true
         continueWatchingSortMode = decoded.continueWatchingSortMode ?? .recentlyWatched
-        nextUpFromFurthestEpisode = decoded.nextUpFromFurthestEpisode ?? true
-        showUnairedNextUp = decoded.showUnairedNextUp ?? true
-        useEpisodeThumbnailsInCw = decoded.useEpisodeThumbnailsInCw ?? true
-        blurUnwatchedEpisodes = decoded.blurUnwatchedEpisodes ?? false
-        posterCornerRadius = decoded.posterCornerRadius ?? 12
-        catalogAddonNameEnabled = decoded.catalogAddonNameEnabled ?? false
-        catalogTypeSuffixEnabled = decoded.catalogTypeSuffixEnabled ?? true
-        detailShowCast = decoded.detailShowCast ?? true
-        detailShowCollection = decoded.detailShowCollection ?? true
-        detailShowMoreLikeThis = decoded.detailShowMoreLikeThis ?? true
-        detailShowProduction = decoded.detailShowProduction ?? true
         autoHideSidebar = decoded.autoHideSidebar ?? false
         fullStreamTitles = decoded.fullStreamTitles ?? false
         heroTrailersEnabled = decoded.heroTrailersEnabled ?? true
         heroTrailerSound = decoded.heroTrailerSound ?? false
-        heroCatalogKey = decoded.heroCatalogKey ?? ""
         suppressChange = false
     }
 
@@ -715,26 +451,11 @@ final class HomeCatalogSettingsStore: ObservableObject {
             disabledKeys: Array(disabledKeys),
             customTitles: customTitles,
             hideUnreleasedContent: hideUnreleasedContent,
-            posterSize: posterSize,
-            showPosterLabels: showPosterLabels,
-            showPosterBanners: showPosterBanners,
             continueWatchingSortMode: continueWatchingSortMode,
-            nextUpFromFurthestEpisode: nextUpFromFurthestEpisode,
-            showUnairedNextUp: showUnairedNextUp,
-            useEpisodeThumbnailsInCw: useEpisodeThumbnailsInCw,
-            blurUnwatchedEpisodes: blurUnwatchedEpisodes,
-            posterCornerRadius: posterCornerRadius,
-            catalogAddonNameEnabled: catalogAddonNameEnabled,
-            catalogTypeSuffixEnabled: catalogTypeSuffixEnabled,
-            detailShowCast: detailShowCast,
-            detailShowCollection: detailShowCollection,
-            detailShowMoreLikeThis: detailShowMoreLikeThis,
-            detailShowProduction: detailShowProduction,
             autoHideSidebar: autoHideSidebar,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
-            heroCatalogKey: heroCatalogKey
         )
         guard let data = try? JSONEncoder().encode(persisted) else { return }
         UserDefaults.standard.set(data, forKey: storageKey)

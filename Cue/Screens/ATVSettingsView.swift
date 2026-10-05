@@ -1,159 +1,72 @@
 import SwiftUI
 
-/// The Apple TV theme's settings surface, styled like the tvOS Settings app:
-/// a single centered column of rows — label left, value + chevron right —
-/// grouped into glass section cards, with the white tvOS focus platter. Rows
-/// push the SAME detail panes Classic's two-pane settings uses, so every
-/// option stays available in both themes.
+/// The Settings screen: a `SettingsPage` — the categories as rows, the
+/// focused one described on the left — pushing each category's page.
 struct ATVSettingsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    /// Opens the "Who's watching?" profile gate (owned by the root view).
-    var onOpenProfiles: () -> Void = {}
 
-    /// Categories that get a plain pushed row, in tvOS-Settings-ish order.
-    /// Account has its own section up top.
+    @EnvironmentObject private var account: NuvioAccountManager
+    @EnvironmentObject private var tmdb: TMDBSettingsStore
+    @EnvironmentObject private var mdblist: MDBListSettingsStore
+
+    /// Categories under General (the accounts have their own section up
+    /// top, Developer its own at the bottom).
     private var generalCategories: [SettingsCategory] {
-        SettingsCategory.allCases.filter { $0 != .account && $0 != .renderLab }
+        SettingsCategory.allCases.filter { !SettingsCategory.accounts.contains($0) && $0 != .developer }
     }
+
+    /// Categories already on the new two-pane pages (`SettingsPage`); the
+    /// rest still get the old pane's frame and padding.
+    private static let twoPane: Set<SettingsCategory> = [.appearance, .account, .tmdb, .mdblist, .homeContent]
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: CueSpacing.xl) {
-                Text("Settings")
-                    .font(FusionType.pageTitle(theme.font))
-                    .foregroundStyle(theme.palette.textPrimary)
-                    .padding(.top, CueSpacing.xl)
-
-                ATVSettingsSection(title: "Developer") {
-                    NavigationLink(value: SettingsCategory.renderLab) {
-                        ATVRowLabel(title: SettingsCategory.renderLab.title)
-                    }
-                    .buttonStyle(ATVRowButtonStyle())
-                }
-
-                ATVSettingsSection(title: "Users & Accounts") {
-                    NavigationLink(value: SettingsCategory.account) {
-                        ATVRowLabel(title: "Account")
-                    }
-                    .buttonStyle(ATVRowButtonStyle())
-
-                    Button(action: onOpenProfiles) {
-                        ATVRowLabel(title: "Switch Profile", showChevron: false)
-                    }
-                    .buttonStyle(ATVRowButtonStyle())
-                }
-
-                ATVSettingsSection(title: "General") {
-                    ForEach(generalCategories) { category in
-                        NavigationLink(value: category) {
-                            ATVRowLabel(title: category.title)
-                        }
-                        .buttonStyle(ATVRowButtonStyle())
-                    }
-                }
+        SettingsPage(place: SettingsPlace(icon: "gearshape.fill", name: nil),
+                     subtitle: "Cue's preferences, by topic.") {
+            SettingsSection(title: "Accounts") {
+                ForEach(SettingsCategory.accounts) { categoryRow($0, value: state(of: $0)) }
             }
-            .frame(maxWidth: 1100)
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, CueSpacing.huge)
+            SettingsSection(title: "General") {
+                ForEach(generalCategories) { categoryRow($0) }
+            }
+            SettingsSection(title: "Developer") {
+                categoryRow(.developer)
+            }
         }
-        .background(ATVBackground())
-        .navigationDestination(for: SettingsCategory.self) { pane(for: $0) }
+        .navigationDestination(for: SettingsCategory.self) { category in
+            if Self.twoPane.contains(category) {
+                SettingsCategoryPane(category: category)
+            } else {
+                pane(SettingsCategoryPane(category: category))
+            }
+        }
+        .navigationDestination(for: PlaybackSection.self) { pane(PlaybackSettingsDetail(section: $0)) }
     }
 
+    /// An account's state, on its row.
+    private func state(of category: SettingsCategory) -> String? {
+        switch category {
+        case .account:
+            guard case .signedIn(_, let email) = account.authState else { return "Signed out" }
+            return email.isEmpty ? "Signed in" : email
+        case .tmdb: return tmdb.hasAPIKey ? "Connected" : "Add key"
+        case .mdblist: return mdblist.settings.isConfigured ? "Connected" : "Add key"
+        default: return nil
+        }
+    }
 
-    /// Pushed detail pages reuse Classic's panes over the ATV backdrop.
-    @ViewBuilder
-    private func pane(for category: SettingsCategory) -> some View {
-        SettingsCategoryPane(category: category)
+    private func categoryRow(_ category: SettingsCategory, value: String? = nil) -> some View {
+        NavigationLink(value: category) {
+            SettingsRowLabel(title: category.title, value: value, chevron: true,
+                             info: SettingsInfo(title: category.title, description: category.subtitle,
+                                                icon: category.icon, tint: category.tint))
+        }
+        .buttonStyle(SettingsRowStyle())
+    }
+
+    /// Pushed detail pages not yet on `SettingsPage`: the old pane's frame.
+    private func pane(_ content: some View) -> some View {
+        content
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, CueSpacing.huge)
             .background(ATVBackground())
-    }
-}
-
-/// A titled group of rows on one glass card (Liquid Glass on tvOS 26,
-/// translucent material earlier) — the tvOS Settings section look.
-private struct ATVSettingsSection<Content: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let title: String
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CueSpacing.sm) {
-            Text(title.uppercased())
-                .font(.system(size: 19, weight: .semibold))
-                .tracking(1.4)
-                .foregroundStyle(theme.palette.textTertiary)
-                .padding(.leading, CueSpacing.lg)
-            VStack(spacing: 4) {
-                content
-            }
-            .padding(CueSpacing.sm)
-            .atvGlass(in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        }
-        .focusSection()
-    }
-}
-
-/// Row content: label left, value + chevron right. Colors flip to dark text
-/// while the row is focused, because the focus platter is white.
-private struct ATVRowLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    var value: String? = nil
-    var showChevron: Bool = true
-
-    var body: some View {
-        HStack(spacing: CueSpacing.md) {
-            Text(title)
-                .font(.system(size: 29, weight: .medium))
-                .foregroundStyle(isFocused ? Color(hex: 0x1C1C1E) : theme.palette.textPrimary)
-                .lineLimit(1)
-            Spacer(minLength: CueSpacing.lg)
-            if let value, !value.isEmpty {
-                Text(value)
-                    .font(.system(size: 27))
-                    .foregroundStyle(isFocused ? Color(hex: 0x1C1C1E).opacity(0.6)
-                                               : theme.palette.textSecondary)
-                    .lineLimit(1)
-            }
-            if showChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(isFocused ? Color(hex: 0x1C1C1E).opacity(0.45)
-                                               : theme.palette.textTertiary)
-            }
-        }
-        .padding(.horizontal, CueSpacing.xl)
-        .frame(minHeight: 84)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-/// tvOS-Settings focus treatment: the focused row rises on a white platter
-/// with a soft shadow; idle rows are a whisper of fill so the section card
-/// reads as one grouped list.
-private struct ATVRowButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        ATVRowChrome(configuration: configuration)
-    }
-
-    private struct ATVRowChrome: View {
-        @EnvironmentObject private var theme: ThemeManager
-        @Environment(\.isFocused) private var isFocused
-        let configuration: ButtonStyle.Configuration
-
-        var body: some View {
-            configuration.label
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(isFocused ? Color.white : Color.white.opacity(0.05))
-                )
-                .shadow(color: .black.opacity(isFocused ? 0.28 : 0),
-                        radius: isFocused ? 18 : 0, y: 8)
-                .focusLift(CueFocus.row, isFocused)
-                .cardPressDip(configuration.isPressed)
-        }
     }
 }

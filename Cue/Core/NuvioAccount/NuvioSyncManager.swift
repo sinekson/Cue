@@ -15,9 +15,13 @@ import Foundation
 final class NuvioSyncManager: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSyncError: String?
+    /// When the last full sync finished without an error (Settings →
+    /// Account's "Sync now" shows it). Not persisted: nil until the first
+    /// sync of this launch, which runs on its own soon after it.
+    @Published private(set) var lastSyncedAt: Date?
 
-    /// The live instance, so views that aren't handed one (AccountView is used
-    /// from two places, neither of which owns it) can trigger a manual sync.
+    /// The live instance, so views that aren't handed one (Settings →
+    /// Account) can trigger a manual sync.
     /// Weak: RootView's `@State` owns the lifetime.
     private(set) static weak var shared: NuvioSyncManager?
 
@@ -35,9 +39,6 @@ final class NuvioSyncManager: ObservableObject {
     private let playerSettings: PlayerSettingsStore?
     private let tmdbSettings: TMDBSettingsStore?
     private let themeManager: ThemeManager?
-    /// Reads the "Enrich Continue Watching" TMDB setting (the store lives
-    /// outside this manager). nil → enrich (default).
-    var enrichContinueWatchingEnabled: (() -> Bool)?
 
     private var cancellables = Set<AnyCancellable>()
     private var pushAddonsTask: Task<Void, Never>?
@@ -1094,6 +1095,7 @@ final class NuvioSyncManager: ObservableObject {
             NuvioSyncDiagnostics.record(.failure, area: "Nuvio", lastSyncError ?? "Sync failed.")
             return
         }
+        lastSyncedAt = Date()
         NuvioSyncDiagnostics.record(.success, area: "Nuvio", "Full sync finished for profile \(pid).")
     }
 
@@ -1308,7 +1310,8 @@ final class NuvioSyncManager: ObservableObject {
                 "sort_order": index,
                 "enabled": addon.enabled
             ]
-            if !addon.manifest.name.isEmpty { obj["name"] = addon.manifest.name }
+            // Its own name if it has one — what Nuvio's website renames.
+            if !addon.displayName.isEmpty { obj["name"] = addon.displayName }
             return obj
         }
         // The REAL profile id. This was hardcoded to 1 (as was the pull's
@@ -1350,7 +1353,8 @@ final class NuvioSyncManager: ObservableObject {
             AddonManager.RemoteAddonState(
                 manifestURL: $0.url,
                 enabled: $0.enabled,
-                enabledIsAuthoritative: !localEditPending
+                enabledIsAuthoritative: !localEditPending,
+                name: $0.name
             )
         }
         // This account's own list has now been read, so a push may run.
@@ -1938,13 +1942,9 @@ final class NuvioSyncManager: ObservableObject {
         // A run of meta-addon requests. While a stream plays the sync stays
         // JSON-only; the next idle pass fills in titles and artwork.
         if Self.playbackActive { return entries }
-        // The "Enrich Continue Watching" setting gates ONLY the optional artwork
-        // backfill for rows that already have a real title (leaner: fewer
-        // meta-addon calls). A raw "tt…" id is never an acceptable card title,
-        // so rows still showing their IMDb id ALWAYS resolve — otherwise a row
-        // synced from another device (which arrives with no title) renders as
-        // "tt1234567". Locally-watched rows already carry name + art.
-        let enrichArtwork = enrichContinueWatchingEnabled?() ?? true
+        // Rows synced from another device arrive with no title or art (a raw
+        // "tt…" id is never an acceptable card title); locally-watched rows
+        // already carry both.
         // Match ProgressStore.continueWatching: any started, unfinished item is
         // visible (no lower bound), so all of them need title/artwork.
         let visible = entries.filter { $0.fraction < 0.95 }
@@ -1959,12 +1959,10 @@ final class NuvioSyncManager: ObservableObject {
         let rawTitleTokens = visible
             .filter { Self.isRawSyncTitle($0.name, id: $0.metaID) }
             .map { "\($0.metaID)|\($0.type)" }
-        // Artwork-only backfill for already-titled rows is what the setting gates.
-        let missingLocalTokens = enrichArtwork
-            ? visible
-                .filter { !localNamed.contains($0.metaID) }
-                .map { "\($0.metaID)|\($0.type)" }
-            : []
+        // …and the rest not on this TV yet, for their artwork.
+        let missingLocalTokens = visible
+            .filter { !localNamed.contains($0.metaID) }
+            .map { "\($0.metaID)|\($0.type)" }
         let ids = Array(NSOrderedSet(array: rawTitleTokens + missingLocalTokens).compactMap { $0 as? String }).prefix(30)
         let requests: [(id: String, type: String)] = ids.compactMap { token in
             let parts = token.split(separator: "|", maxSplits: 1).map(String.init)
@@ -2913,6 +2911,9 @@ final class NuvioSyncManager: ObservableObject {
         guard account.accessToken != nil else { return }
         try ensureProfile(profile)
         let data = try await authedPost(RPC.url(RPC.pullCollections), body: ["p_profile_id": profile])
+        // nil: the account has no collections row (or it didn't decode) —
+        // nothing to apply. An EMPTY list is a real answer: every collection
+        // was deleted (on the website, say), and this device follows.
         let decoded: [CueCollection]? = await Task.detached(priority: .utility) {
             guard let rows = try? JSONDecoder().decode([SupabaseCollectionsBlob].self, from: data),
                   let blob = rows.first,
@@ -2921,7 +2922,7 @@ final class NuvioSyncManager: ObservableObject {
             else { return nil }
             return lenient.compactMap(\.value)
         }.value
-        guard let decoded, !decoded.isEmpty else { return }
+        guard let decoded else { return }
         try ensureProfile(profile)
         // Same dirty guard as pullPlugins/pullAppPreferences: an edit whose
         // debounced push has not landed (or failed — the RPC is best-effort
@@ -2935,7 +2936,11 @@ final class NuvioSyncManager: ObservableObject {
             )
             return
         }
-        if collectionsStore.mergeIntoLibrary(decoded) { libraryGrewDuringSync = true }
+        // The account's list REPLACES this device's — Nuvio's collections row
+        // is the truth. Merging kept everything deleted elsewhere, and the
+        // push that follows a change then uploaded it again: deleted
+        // collections came back.
+        if collectionsStore.applyRemote(collections: decoded, allowEmpty: true) { libraryGrewDuringSync = true }
     }
 
     // MARK: - Home catalog settings
@@ -3349,11 +3354,9 @@ final class NuvioSyncManager: ObservableObject {
         /// Home/Continue-Watching presentation prefs. Optional so blobs written
         /// before this field decode cleanly.
         var home: HomePresentationSnapshot?
-        /// Custom collections (grouped catalog home rows). Synced HERE (not via
-        /// the dedicated sync_*_collections RPCs, which the shared backend
-        /// doesn't provide) so they round-trip through the same reliable
-        /// tvOS-preferences feature the rest of the port-only data uses.
-        /// Optional for backward-compat.
+        /// A copy of the collections older versions kept here. No longer
+        /// written or read: collections sync through the account's own
+        /// collections row only (this copy brought deleted ones back).
         var collections: [CueCollection]?
         /// Collection ids THIS profile has switched off. The collections above
         /// are the account-wide library; this is the per-profile opt-out, so a
@@ -3485,13 +3488,9 @@ final class NuvioSyncManager: ObservableObject {
         tmdbSettings.applyRemote(snapshot.tmdb)
         WatchHistoryClearState.adopt(snapshot.watchHistoryClearedAt)
         if let home = snapshot.home { homeCatalogSettings.applyRemotePresentation(home) }
-        if let collections = snapshot.collections, !collectionsDirty {
-            // Merge rather than replace: another profile's blob may carry packs
-            // this one has never seen, and the library is account-wide. Dirty-
-            // guarded like the pulls above: a blob fetched before a local edit
-            // must not clobber it.
-            if collectionsStore.mergeIntoLibrary(collections) { libraryGrewDuringSync = true }
-        }
+        // (The blob's old `collections` copy is ignored: the collections row
+        // is the one truth, and this second copy — which Nuvio's website
+        // never edits — brought deleted collections back.)
         collectionsStore.applyRemoteHidden(snapshot.hiddenCollectionIDs.map(Set.init))
         // Only apply when the remote blob actually CARRIES these keys. A blob
         // written before they existed decodes them as nil, and treating nil as
@@ -3519,10 +3518,9 @@ final class NuvioSyncManager: ObservableObject {
             tmdb: tmdbSettings.settings,
             theme: themeManager.snapshot,
             home: homeCatalogSettings.presentationSnapshot,
-            // The shared library (every profile's collections), plus THIS
-            // profile's opt-outs. Pushing the visible subset here would delete
-            // other profiles' collections from the account.
-            collections: collectionsStore.library,
+            // No copy of the collections (they sync through their own row),
+            // just THIS profile's opt-outs.
+            collections: nil,
             hiddenCollectionIDs: collectionsStore.hiddenIDsForSync,
             hiddenFolderIDs: collectionsStore.hiddenFolderIDsForSync,
             globalHiddenFolderIDs: collectionsStore.globalHiddenFolderIDsForSync,
@@ -3577,12 +3575,10 @@ final class NuvioSyncManager: ObservableObject {
         }
     }
 
-    /// A profile marked "use primary add-ons" —
-    /// or a device with the separate-add-ons switch off entirely — reads and
-    /// writes profile 1's list, locally and on the wire (the upstream
-    /// semantics of `uses_primary_addons` on the profile row).
+    /// A profile marked "use primary add-ons" reads and writes profile 1's
+    /// list, locally and on the wire (the upstream semantics of
+    /// `uses_primary_addons` on the profile row).
     private func addonPID(for profile: Int) -> Int {
-        guard ProfileScopedDefaults.isSeparate(AddonManager.feature) else { return 1 }
         let active = profileStore.allForSync().first { $0.id == profile }
         return (active?.usesPrimaryAddons ?? true) ? 1 : profile
     }

@@ -48,10 +48,12 @@ final class AddonImportServer: ObservableObject {
     /// so other paste-from-phone flows can reuse it by swapping these before
     /// `start()`.
     var pageTitle = "Add add-ons"
-    var pagePrompt = "Paste one manifest URL, or a whole Add-on Setup export — one URL per line. Scanning the Export Add-on Setup QR from another Cue gives you exactly that list."
+    var pagePrompt = "Paste an add-on's manifest URL — or several, one per line. A new link for an add-on you already have replaces it."
     var pagePlaceholder = "https://…/manifest.json"
     var pageButton = "Add to Cue"
     var pageEmptyMessage = "Enter a manifest URL."
+    /// A button above the field (configuring: the add-on's settings page).
+    var pageLink: (title: String, url: String)?
 
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
@@ -227,12 +229,13 @@ final class AddonImportServer: ObservableObject {
     private func page(accepted: [AddedAddon], message: String?) -> String {
         Self.page(accepted: accepted, message: message,
                   title: pageTitle, prompt: pagePrompt,
-                  placeholder: pagePlaceholder, button: pageButton)
+                  placeholder: pagePlaceholder, button: pageButton, link: pageLink)
     }
 
     private static func page(accepted: [AddedAddon], message: String?,
                              title: String, prompt: String,
-                             placeholder: String, button: String) -> String {
+                             placeholder: String, button: String,
+                             link: (title: String, url: String)?) -> String {
         // Logos load straight from the add-on's own host — the phone has
         // internet, and proxying them through the TV would mean this server
         // fetching arbitrary URLs on request, which it deliberately does not.
@@ -245,6 +248,11 @@ final class AddonImportServer: ObservableObject {
         let list = accepted.isEmpty ? ""
             : "<h2>Added</h2><ul class=addons>" + rows.joined() + "</ul>"
         let note = message.map { "<p class=note>\(escape($0))</p>" } ?? ""
+        // Only an http(s) link: it comes from a third-party manifest URL.
+        let linkButton = link.flatMap { link -> String? in
+            guard link.url.hasPrefix("https://") || link.url.hasPrefix("http://") else { return nil }
+            return "<a class=link href=\"\(escape(link.url))\" target=_blank rel=noopener>\(escape(link.title))</a>"
+        } ?? ""
         return """
         <!doctype html><html><head><meta charset=utf-8>
         <meta name=viewport content="width=device-width,initial-scale=1">
@@ -265,9 +273,12 @@ final class AddonImportServer: ObservableObject {
              object-fit:contain;background:#161923}
         ul.addons strong{font-size:17px}
         ul.addons p{margin:2px 0 0;font-size:14px;color:#9a9aa6}
+        a.link{display:block;margin:0 0 20px;padding:14px;text-align:center;font-size:17px;
+               font-weight:600;border-radius:12px;background:#f2f2f7;color:#0d0f14;text-decoration:none}
         </style></head><body>
         <h1>\(escape(title))</h1>
         <p>\(escape(prompt))</p>
+        \(linkButton)
         <form method=post action="/">
         <textarea name=url rows=6 autocapitalize=off autocorrect=off
                   spellcheck=false placeholder="\(escape(placeholder))" autofocus></textarea>

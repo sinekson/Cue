@@ -2,50 +2,69 @@ import SwiftUI
 
 /// Settings categories, each a pushed pane on the Settings screen.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case renderLab, account, layout, contentDiscovery, integration, playback, performance, about
+    case account, tmdb, mdblist, appearance, homeContent, playback, about, developer
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .renderLab: return "Render Lab"
-        case .account: return "Account"
-        case .layout: return "Layout"
-        case .contentDiscovery: return "Content & Discovery"
-        case .integration: return "Integrations"
+        case .account: return "Nuvio"
+        case .tmdb: return "TMDB"
+        case .mdblist: return "MDBList"
+        case .appearance: return "Appearance"
+        case .homeContent: return "Home & Content"
         case .playback: return "Playback"
-        case .performance: return "Performance"
         case .about: return "About"
+        case .developer: return "Developer"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .renderLab: return "FPS counter and render bisect switches"
-        case .account: return "Nuvio account and profiles"
-        case .layout: return "Home structure and poster styles"
-        case .contentDiscovery: return "Add-ons, catalogs, and collections"
-        case .integration: return "Manage available integrations"
-        case .playback: return "Auto-play and next-episode behavior"
-        case .performance: return "Turn effects off for a faster UI on older Apple TVs"
+        case .account: return "Your Nuvio account: syncing with your other devices, and your watch history."
+        case .tmdb: return ServiceKey.tmdb.about
+        case .mdblist: return ServiceKey.mdblist.about
+        case .appearance: return "Background colour and the top bar"
+        case .homeContent: return "Add-ons, Home's rows, Continue Watching and the Details page"
+        case .playback: return "Player, audio and subtitles, sources"
         case .about: return "App information, updates, and legal links"
+        case .developer: return "Render Lab, frame rate and performance switches"
+        }
+    }
+
+    /// The accounts and keys, in their own section up top.
+    static let accounts: [SettingsCategory] = [.account, .tmdb, .mdblist]
+
+    /// Its pages' place, for the settings box (see `SettingsPlace`).
+    var place: SettingsPlace { SettingsPlace(icon: icon, name: title, tint: tint) }
+
+    /// Its symbol's colour (Apple's Settings give each its own), soft.
+    var tint: Color {
+        switch self {
+        case .account: return Color(red: 0.35, green: 0.82, blue: 0.5)
+        case .tmdb: return Color(red: 0.25, green: 0.8, blue: 0.85)
+        case .mdblist: return Color(red: 1, green: 0.72, blue: 0.3)
+        case .appearance: return Color(red: 0.75, green: 0.55, blue: 1)
+        case .homeContent: return Color(red: 0.4, green: 0.65, blue: 1)
+        case .playback: return Color(red: 1, green: 0.45, blue: 0.45)
+        case .about: return Color(white: 0.8)
+        case .developer: return Color(red: 0.55, green: 0.6, blue: 1)
         }
     }
 
     // SF Symbols matched to the APK's Material icons.
     var icon: String {
         switch self {
-        case .renderLab: return "gauge.with.dots.needle.67percent"
         case .account: return "person.crop.circle.fill"
-        case .layout: return "square.grid.2x2.fill"
-        case .contentDiscovery: return "safari.fill"
-        case .integration: return "link"
+        case .tmdb: return "film.stack"
+        case .mdblist: return "star.circle.fill"
+        case .appearance: return "paintpalette.fill"
+        case .homeContent: return "square.grid.2x2.fill"
         case .playback: return "play.fill"
-        case .performance: return "speedometer"
         case .about: return "info.circle.fill"
+        case .developer: return "gauge.with.dots.needle.67percent"
         }
     }
-
 }
 
 struct SettingsCategoryPane: View {
@@ -53,15 +72,91 @@ struct SettingsCategoryPane: View {
 
     var body: some View {
         switch category {
-        case .renderLab:         RenderLabDetail()
-        case .account:           AccountSettingsDetail()
-        case .layout:            LayoutSettingsDetail()
-        case .contentDiscovery:  ContentDiscoveryDetail()
-        case .integration:       IntegrationsDetail()
-        case .playback:          PlaybackSettingsDetail()
-        case .performance:       PerformanceSettingsDetail()
-        case .about:             AboutDetail()
+        case .account:      AccountSettingsDetail()
+        case .tmdb:         TMDBServicePage()
+        case .mdblist:      MDBListServicePage()
+        case .appearance:   AppearanceSettingsDetail()
+        case .homeContent:  HomeContentSettingsDetail()
+        case .playback:     PlaybackSettingsDetail()
+        case .about:        AboutDetail()
+        case .developer:    DeveloperSettingsDetail()
         }
+    }
+}
+
+/// Settings → Developer: Render Lab (the design's switches and the frame
+/// rate), then the performance switches — one page.
+struct DeveloperSettingsDetail: View {
+    @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var addonManager: AddonManager
+    @State private var syncLog = NuvioSyncDiagnostics.entries()
+    @State private var showHealth = false
+
+    var body: some View {
+        DetailScaffold(title: SettingsCategory.developer.title, subtitle: SettingsCategory.developer.subtitle) {
+            RenderLabSettings()
+            PerformanceSettings()
+            SettingsGroupCard(title: "Add-ons") {
+                Button { showHealth = true } label: {
+                    SettingsActionRow(
+                        title: "Add-on Health",
+                        subtitle: "Measure manifest response time and find slow or dead providers",
+                        leadingIcon: "waveform.path.ecg"
+                    )
+                }
+                .buttonStyle(PlainCardButtonStyle())
+            }
+            SettingsGroupCard(title: "MDBList", subtitle: "Its daily request limit, as its last answer reported it") {
+                MDBListUsageLine(usage: MDBListUsage.shared)
+            }
+            // What account sync did recently — for when it misbehaves.
+            SettingsGroupCard(title: "Sync log", subtitle: "Recent account sync events, newest first") {
+                if syncLog.isEmpty {
+                    Text("Nothing logged yet.")
+                        .font(.system(size: 21))
+                        .foregroundStyle(Color.white.opacity(0.6))
+                } else {
+                    ForEach(syncLog.prefix(20)) { SyncLogRow(entry: $0) }
+                    Button("Clear log") {
+                        NuvioSyncDiagnostics.clear()
+                        syncLog = []
+                    }
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showHealth) {
+            AddonHealthView(onDone: { showHealth = false })
+                .environmentObject(theme)
+                .environmentObject(addonManager)
+        }
+    }
+}
+
+/// "412 of 1,000 left today · resets in 6 h · seen 2 min ago".
+private struct MDBListUsageLine: View {
+    @ObservedObject var usage: MDBListUsage
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            Text(text(now: context.date))
+                .font(.system(size: 21))
+                .foregroundStyle(Color.white.opacity(0.6))
+        }
+    }
+
+    private func text(now: Date) -> String {
+        guard let snapshot = usage.snapshot else {
+            return "Nothing seen yet — shows after Cue's next MDBList request."
+        }
+        let relative = RelativeDateTimeFormatter()
+        relative.unitsStyle = .short
+        var parts = ["\(snapshot.remaining.formatted()) of \(snapshot.limit.formatted()) requests left"]
+        if let resetsAt = snapshot.resetsAt {
+            parts.append(resetsAt > now ? "resets \(relative.localizedString(for: resetsAt, relativeTo: now))"
+                                        : "reset since")
+        }
+        parts.append("seen \(relative.localizedString(for: snapshot.seenAt, relativeTo: now))")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -379,198 +474,21 @@ struct SettingsValueCard: View {
 
 // MARK: - Add-ons detail
 
-/// Settings → Account: Nuvio account sign-in/status + Manage Profiles. Both
-/// were moved here from the "Who's watching" gate so account and profile
-/// management live in Settings.
-struct AccountSettingsDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var account: NuvioAccountManager
-    @EnvironmentObject private var profiles: ProfileStore
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var progressStore: ProgressStore
-    @EnvironmentObject private var watchedStore: WatchedStore
-    @EnvironmentObject private var playerSettings: PlayerSettingsStore
-    @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var streamBadges: StreamBadgeStore
-    @State private var showAccount = false
-    @State private var showProfiles = false
-
-    var body: some View {
-        DetailScaffold(title: SettingsCategory.account.title, subtitle: SettingsCategory.account.subtitle) {
-            SettingsGroupCard(title: "") {
-                Button { showAccount = true } label: {
-                    SettingsValueCard(
-                        title: "Accounts",
-                        subtitle: account.authState.isSignedIn
-                            ? "Manage Nuvio, sync status and backups"
-                            : "Sign in to Nuvio",
-                        value: accountStatus
-                    )
-                }
-                .buttonStyle(PlainCardButtonStyle())
-
-                Button { showProfiles = true } label: {
-                    SettingsActionRow(
-                        title: "Manage Profiles",
-                        subtitle: "Add, rename, recolor, PIN-lock and remove profiles",
-                        value: "\(profiles.profiles.count)",
-                        leadingIcon: "person.2.fill"
-                    )
-                }
-                .buttonStyle(PlainCardButtonStyle())
-
-            }
-
-            // Which pieces each profile keeps for itself vs. shares — the same
-            // choice the Trakt pane's "Separate Trakt per profile" switch
-            // offers, one switch per category. Only meaningful with 2+
-            // profiles. Watch data (progress, library, watched, collections,
-            // home layout) is ALWAYS per profile — profiles would be
-            // meaningless otherwise — and the Trakt & SIMKL switch stays in
-            // its own pane next to the logins it governs.
-            if profiles.profiles.count > 1 {
-                SettingsGroupCard(
-                    title: "Separate per profile",
-                    subtitle: "On: each profile keeps its own. Off: one shared copy for the whole device. Turning one off falls back to the shared copy; turning it back on finds each profile's own state where it was."
-                ) {
-                    separationToggles
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $showAccount) {
-            ZStack {
-                ATVBackground()
-                AccountView()
-            }
-            .environmentObject(theme)
-            .environmentObject(account)
-            .environmentObject(profiles)
-            .environmentObject(addonManager)
-            .environmentObject(library)
-            .environmentObject(progressStore)
-            .environmentObject(watchedStore)
-            .onExitCommand { showAccount = false }
-        }
-        .fullScreenCover(isPresented: $showProfiles) {
-            ProfileManageView { showProfiles = false }
-                .environmentObject(theme)
-                .environmentObject(profiles)
-                .environmentObject(addonManager)
-        }
-    }
-
-    private var accountStatus: String {
-        switch account.authState {
-        case .signedIn(_, let email): return email.isEmpty ? "Nuvio connected" : email
-        case .loading: return "..."
-        case .signedOut:
-            return ""
-        }
-    }
-
-    /// One switch per split category. Add-ons also resync so
-    /// the account converges on the new scope (shared = profile 1's rows).
-    @ViewBuilder
-    private var separationToggles: some View {
-        SettingsToggleCard(
-            title: "Add-ons",
-            subtitle: "Each profile installs and orders its own add-ons",
-            isOn: Binding(
-                get: { addonManager.perProfileEnabled },
-                set: { addonManager.setPerProfile($0); resyncAfterScopeChange() }
-            )
-        )
-        SettingsToggleCard(
-            title: "Player & subtitles",
-            subtitle: "Each profile keeps its own playback and caption settings",
-            isOn: Binding(
-                get: { playerSettings.perProfileEnabled },
-                set: { playerSettings.setPerProfile($0) }
-            )
-        )
-        SettingsToggleCard(
-            title: "TMDB",
-            subtitle: "Each profile brings its own TMDB key, language and enrichment choices",
-            isOn: Binding(
-                get: { tmdbSettings.perProfileEnabled },
-                set: { tmdbSettings.setPerProfile($0) }
-            )
-        )
-        SettingsToggleCard(
-            title: "Stream badges",
-            subtitle: "Each profile keeps its own badge pack and size",
-            isOn: Binding(
-                get: { streamBadges.perProfileEnabled },
-                set: { streamBadges.setPerProfile($0) }
-            )
-        )
-    }
-
-    private func resyncAfterScopeChange() {
-        SyncCoordinator.shared.requestFullSync("per-profile scope changed")
-    }
-}
-
 /// Content & Discovery — the APK folds add-ons, catalogs and collections into
 /// one section, so this pane hosts add-on management plus a Collections entry.
 /// Content & Discovery pane: a single "Addons" drill-in row (APK behavior).
-struct ContentDiscoveryDetail: View {
+/// Settings → Playback → Sources → Badges: Badger badge-pack import —
+/// paste a config URL (from the Badger editor's export / a community
+/// template), fetch + validate, show the live state, and allow removal. The
+/// chips then appear on Sources-page rows.
+struct StreamBadgeSettings: View {
     @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
-    @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
-    @State private var showAddons = false
     @State private var badgeURLInput = ""
     @State private var badgeImporting = false
 
-    var body: some View {
-        DetailScaffold(title: SettingsCategory.contentDiscovery.title, subtitle: SettingsCategory.contentDiscovery.subtitle) {
-            SettingsGroupCard(title: "") {
-                Button { showAddons = true } label: {
-                    SettingsValueCard(
-                        title: "Addons",
-                        subtitle: "Manage add-ons, catalog order, and collections",
-                        value: "\(addonManager.addons.count)"
-                    )
-                }
-                .buttonStyle(PlainCardButtonStyle())
-            }
-            SettingsGroupCard(title: "Catalogs") {
-                CueDropdown(
-                    title: "Auto-refresh",
-                    subtitle: "Re-fetch Home catalogs on a timer while the app is open, so new releases appear without relaunching",
-                    icon: "arrow.triangle.2.circlepath",
-                    selection: String(homeCatalogSettings.autoRefreshMinutes),
-                    options: [
-                        CueDropdownOption("0", "Off"),
-                        CueDropdownOption("15", "Every 15 minutes"),
-                        CueDropdownOption("30", "Every 30 minutes"),
-                        CueDropdownOption("60", "Every hour")
-                    ]
-                ) { homeCatalogSettings.autoRefreshMinutes = Int($0) ?? 0 }
-            }
-            SettingsGroupCard(title: "Badges", subtitle: "Badge packs from Badger (nintle.github.io/Badger) shown on source rows") {
-                badgeControls
-            }
-        }
-        .fullScreenCover(isPresented: $showAddons) {
-            ZStack {
-                ATVBackground()
-                AddonsManagementView()
-            }
-            .environmentObject(theme)
-            .environmentObject(addonManager)
-            .environmentObject(collections)
-            .environmentObject(homeCatalogSettings)
-            .onExitCommand { showAddons = false }
-        }
-    }
+    var body: some View { badgeControls }
 
-    /// Badger badge-pack import: paste a config URL (from the Badger editor's
-    /// export / a community template), fetch + validate, show the live state,
-    /// and allow removal. The chips then appear on Sources-page rows.
     @ViewBuilder
     private var badgeControls: some View {
         if streamBadges.isConfigured {
@@ -668,262 +586,7 @@ struct ContentDiscoveryDetail: View {
     }
 }
 
-/// Full add-ons management screen, opened from Content & Discovery. Structured
-/// to mirror the APK's Add-ons screen: Install card → Catalog Order → Collections
-/// → Refresh → Installed Add-ons list (with per-addon on/off, reorder, remove).
-private struct AddonsManagementView: View {
-    @State private var showPhoneAdd = false
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
-    @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
-
-    @State private var newAddonURL = ""
-    @State private var installing = false
-    @State private var installMessage: String?
-    @State private var showCollections = false
-    @State private var showDiscover = false
-    @State private var showCommunityCollections = false
-    @State private var refreshing = false
-    /// Bumped per refresh so a fast second sync can't have its status message
-    /// overwritten by the first one's trailing "idle" linger.
-    @State private var refreshGeneration = 0
-    @State private var showExport = false
-    @State private var showImport = false
-    @State private var showHealth = false
-    @State private var pendingRemoval: InstalledAddon?
-
-    private static let refreshIdle = "Two-way sync with your account — uploads your changes, pulls others' and removes add-ons deleted elsewhere"
-    @State private var refreshSubtitle = AddonsManagementView.refreshIdle
-
-    var body: some View {
-        DetailScaffold(title: "Add-ons", subtitle: "Manage add-ons, catalog order, and collections") {
-            // Install Add-on
-            SettingsGroupCard(title: "Install Add-on", subtitle: "Install add-ons by manifest URL") {
-                HStack(spacing: CueSpacing.md) {
-                    TextField("https://.../manifest.json", text: $newAddonURL)
-                        .font(.system(size: 23))
-                        .padding(.horizontal, CueSpacing.lg)
-                        .padding(.vertical, CueSpacing.md)
-                        .background(theme.palette.field, in: RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous))
-                        .frame(maxWidth: 640)
-                    Button { install() } label: {
-                        if installing {
-                            ProgressView().tint(theme.palette.onSecondary)
-                        } else {
-                            Text("Install").font(.system(size: 23, weight: .semibold))
-                        }
-                    }
-                    // Not disabled while installing: that disables the button
-                    // you just pressed and drops focus to an arbitrary row.
-                    // install() guards re-entry.
-                    .disabled(newAddonURL.isEmpty)
-                }
-
-                if let installMessage {
-                    Text(installMessage)
-                        .font(.system(size: 20))
-                        .foregroundStyle(installMessage.hasPrefix("Installed") ? CuePrimitives.success : CuePrimitives.error)
-                }
-            }
-
-            // Discover: curated one-tap-install directory.
-            Button { showDiscover = true } label: {
-                SettingsActionRow(
-                    title: "Discover Add-ons",
-                    subtitle: "Browse and install popular add-ons — streams, catalogs, metadata and subtitles",
-                    leadingIcon: "sparkle.magnifyingglass"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            // Collections
-            Button { showCollections = true } label: {
-                SettingsActionRow(
-                    title: "Collections",
-                    subtitle: "Group catalogs into custom home rows",
-                    value: collections.collections.isEmpty ? nil : "\(collections.collections.count)",
-                    leadingIcon: "rectangle.stack.fill"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            // Community Collections — curated, HQ, one-tap-install collections
-            // (major streaming services / studios) that need zero setup.
-            Button { showCommunityCollections = true } label: {
-                SettingsActionRow(
-                    title: "Community Collections",
-                    subtitle: "One-tap streaming-service and studio collections — install and go",
-                    leadingIcon: "square.stack.3d.up.fill"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            // Sync Add-ons (two-way)
-            Button { refresh() } label: {
-                SettingsActionRow(
-                    title: "Sync Add-ons",
-                    subtitle: refreshSubtitle,
-                    value: refreshing ? "…" : nil,
-                    leadingIcon: "arrow.clockwise"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-            .disabled(refreshing)
-
-            Button { showHealth = true } label: {
-                SettingsActionRow(
-                    title: "Add-on Health",
-                    subtitle: "Measure manifest response time and find slow or dead providers",
-                    leadingIcon: "waveform.path.ecg"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            // Export Setup: QR with every installed manifest URL — scan with a
-            // phone to keep your addon list for a fresh install.
-            Button { showPhoneAdd = true } label: {
-                SettingsActionRow(
-                    title: "Add Add-ons",
-                    subtitle: "Show a QR code that opens a page on your phone — paste manifest URLs there and they install here",
-                    leadingIcon: "qrcode"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            Button { showExport = true } label: {
-                SettingsActionRow(
-                    title: "Export Add-on Setup",
-                    subtitle: "Show a QR code containing every installed manifest URL",
-                    leadingIcon: "qrcode"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            Button { showImport = true } label: {
-                SettingsActionRow(
-                    title: "Import Add-on Setup",
-                    subtitle: "Paste exported manifest URLs to restore a setup",
-                    leadingIcon: "square.and.arrow.down"
-                )
-            }
-            .buttonStyle(PlainCardButtonStyle())
-
-            // Installed Add-ons
-            SettingsGroupCard(title: "Installed Add-ons") {
-                if addonManager.addons.isEmpty {
-                    Text("No add-ons installed yet.")
-                        .font(.system(size: 21))
-                        .foregroundStyle(theme.palette.textSecondary)
-                } else {
-                    ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
-                        AddonRowView(
-                            addon: addon,
-                            canMoveUp: index > 0,
-                            canMoveDown: index < addonManager.addons.count - 1,
-                            onMoveUp: { addonManager.moveUp(addon) },
-                            onMoveDown: { addonManager.moveDown(addon) },
-                            onToggle: { addonManager.setEnabled(addon, !addon.enabled) },
-                            onRemove: { pendingRemoval = addon }
-                        )
-                    }
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $showCollections) {
-            CollectionsCoverView { showCollections = false }
-                .environmentObject(theme)
-                .environmentObject(collections)
-                .environmentObject(addonManager)
-        }
-        .fullScreenCover(isPresented: $showCommunityCollections) {
-            CommunityCollectionsView { showCommunityCollections = false }
-                .environmentObject(theme)
-                .environmentObject(collections)
-        }
-        .fullScreenCover(isPresented: $showDiscover) {
-            AddonDiscoverView { showDiscover = false }
-                .environmentObject(theme)
-                .environmentObject(addonManager)
-        }
-        .alert("Remove Add-on?",
-               isPresented: Binding(get: { pendingRemoval != nil },
-                                    set: { if !$0 { pendingRemoval = nil } }),
-               presenting: pendingRemoval) { addon in
-            Button("Remove", role: .destructive) {
-                addonManager.remove(addon)
-                pendingRemoval = nil
-            }
-            Button("Cancel", role: .cancel) { pendingRemoval = nil }
-        } message: { addon in
-            Text("\"\(addon.manifest.name)\" will be removed from this device and your account. You can add it back later with its manifest URL.")
-        }
-        .fullScreenCover(isPresented: $showPhoneAdd) {
-            AddonPhoneAddView(addonManager: addonManager) { showPhoneAdd = false }
-                .environmentObject(theme)
-        }
-        .fullScreenCover(isPresented: $showExport) {
-            AddonExportView(
-                urls: addonManager.addons.map(\.manifestURL),
-                onDone: { showExport = false }
-            )
-            .environmentObject(theme)
-        }
-        .fullScreenCover(isPresented: $showImport) {
-            AddonImportView(onDone: { showImport = false })
-                .environmentObject(theme)
-                .environmentObject(addonManager)
-        }
-        .fullScreenCover(isPresented: $showHealth) {
-            AddonHealthView(onDone: { showHealth = false })
-                .environmentObject(theme)
-                .environmentObject(addonManager)
-        }
-    }
-
-    private func install() {
-        guard !installing else { return }
-        installing = true
-        installMessage = nil
-        let url = newAddonURL
-        Task {
-            do {
-                try await addonManager.install(manifestURL: url)
-                installMessage = "Installed successfully"
-                newAddonURL = ""
-            } catch {
-                installMessage = "Install failed: \(error.localizedDescription)"
-            }
-            installing = false
-        }
-    }
-
-    private func refresh() {
-        guard !refreshing else { return }
-        refreshing = true
-        refreshGeneration &+= 1
-        let generation = refreshGeneration
-        Task {
-            // Report what ACTUALLY happened. This used to say "Add-ons
-            // refreshed just now" unconditionally, including when the account
-            // pull had failed or been skipped entirely.
-            let outcome = await addonManager.syncWithAccount()
-            guard generation == refreshGeneration else { return }
-            refreshing = false
-            refreshSubtitle = outcome.message
-            // Leave a failure on screen longer than a success — it's the one
-            // the user needs to read.
-            let linger: UInt64 = { if case .failed = outcome { return 10 } else { return 4 } }()
-            try? await Task.sleep(nanoseconds: linger * 1_000_000_000)
-            // A second refresh may have started during the linger; its message
-            // owns the row now.
-            guard generation == refreshGeneration else { return }
-            refreshSubtitle = Self.refreshIdle
-        }
-    }
-}
-
-/// Full-screen Collections manager, opened from Content & Discovery. Menu/Back
+/// Full-screen Collections manager, opened from Home & Content. Menu/Back
 /// closes it back to the settings pane.
 private struct CollectionsCoverView: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -939,138 +602,6 @@ private struct CollectionsCoverView: View {
         .onExitCommand { onDone() }
     }
 }
-
-private struct AddonRowView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let addon: InstalledAddon
-    var canMoveUp: Bool = false
-    var canMoveDown: Bool = false
-    var onMoveUp: () -> Void = {}
-    var onMoveDown: () -> Void = {}
-    var onToggle: () -> Void = {}
-    let onRemove: () -> Void
-
-    private var isCinemeta: Bool { addon.manifestURL == AddonManager.cinemetaURL }
-
-    var body: some View {
-        HStack(spacing: CueSpacing.md) {
-            // On/off toggle (APK's per-addon switch).
-            Button(action: onToggle) { AddonToggle(isOn: addon.enabled) }
-                .buttonStyle(PlainCardButtonStyle())
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(addon.manifest.name)
-                    .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                HStack(spacing: CueSpacing.sm) {
-                    if let version = addon.manifest.version {
-                        Text("v\(version)").font(.system(size: 18)).foregroundStyle(theme.palette.textTertiary)
-                    }
-                    if addon.manifest.providesCatalogs { capability("Catalogs") }
-                    if addon.manifest.providesStreams { capability("Streams") }
-                    if addon.manifest.providesMeta { capability("Meta") }
-                }
-            }
-            // Dim the info when the addon is off.
-            .opacity(addon.enabled ? 1 : 0.45)
-
-            Spacer()
-
-            // Reorder controls (dimmed + non-focusable at the ends).
-            // Dimmed at the ends but never `.disabled`: moving an add-on to
-            // the top disabled the chevron you were standing on and dropped
-            // focus. The actions no-op at the bounds instead.
-            RowActionCircle(icon: "chevron.up", action: { if canMoveUp { onMoveUp() } })
-                .opacity(canMoveUp ? 1 : 0.3)
-            RowActionCircle(icon: "chevron.down", action: { if canMoveDown { onMoveDown() } })
-                .opacity(canMoveDown ? 1 : 0.3)
-
-            // Cinemeta is the bundled meta provider and can't be removed.
-            if !isCinemeta {
-                Button(action: onRemove) { TrashCircle() }
-                    .buttonStyle(PlainCardButtonStyle())
-            }
-        }
-        .padding(.horizontal, CueSpacing.lg)
-        .padding(.vertical, CueSpacing.sm)
-        .frame(minHeight: 84)
-        .background(
-            RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .fill(theme.palette.backgroundCard.opacity(0.5))
-        )
-    }
-
-    private func capability(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(theme.palette.secondary)
-            .padding(.horizontal, 10).padding(.vertical, 3)
-            .background(theme.palette.secondary.opacity(0.15), in: Capsule())
-    }
-}
-
-/// The addon on/off switch, with a focus ring so it reads as selectable.
-private struct AddonToggle: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let isOn: Bool
-
-    var body: some View {
-        CueSwitch(isOn: isOn)
-            .padding(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
-            )
-            .focusLift(CueFocus.control, isFocused)
-    }
-}
-
-/// A round reorder button (up/down chevron) for addon rows.
-private struct RowActionCircle: View {
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { RowActionCircleLabel(icon: icon) }
-            .buttonStyle(PlainCardButtonStyle())
-    }
-}
-
-private struct RowActionCircleLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let icon: String
-
-    var body: some View {
-        Image(systemName: icon)
-            .font(.system(size: 22, weight: .bold))
-            .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
-            .frame(width: 60, height: 60)
-            .background(Circle().fill(isFocused ? theme.palette.secondary : Color.white.opacity(0.12)))
-            .overlay(Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.control, isFocused)
-    }
-}
-
-/// Readable, clearly-focusable delete control for addon rows: a red trash
-/// circle that fills solid red with a ring on focus.
-private struct TrashCircle: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-
-    var body: some View {
-        Image(systemName: "trash.fill")
-            .font(.system(size: 24, weight: .semibold))
-            .foregroundStyle(isFocused ? .white : CuePrimitives.red300)
-            .frame(width: 64, height: 64)
-            .background(Circle().fill(isFocused ? CuePrimitives.red500 : CuePrimitives.red500.opacity(0.18)))
-            .overlay(Circle().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-            .focusLift(CueFocus.control, isFocused)
-    }
-}
-
-// MARK: - About detail
 
 struct AboutDetail: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -1192,72 +723,6 @@ private struct AboutInfoView: View {
             }
         }
         .onExitCommand { dismiss() }
-    }
-}
-
-private struct AddonImportView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var addonManager: AddonManager
-    let onDone: () -> Void
-
-    @State private var input = ""
-    @State private var importing = false
-    @State private var message: String?
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            DetailScaffold(title: "Import Add-ons", subtitle: "Paste manifest URLs from an exported setup") {
-                SettingsGroupCard(title: "Manifest URLs", subtitle: "One URL per line, or paste the full text from an export") {
-                    TextField("https://.../manifest.json", text: $input, axis: .vertical)
-                        .font(.system(size: 22))
-                        .lineLimit(5...10)
-                        .padding(CueSpacing.lg)
-                        .background(theme.palette.field, in: RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous))
-
-                    HStack(spacing: CueSpacing.md) {
-                        Button {
-                            importAddons()
-                        } label: {
-                            if importing {
-                                ProgressView().tint(theme.palette.onSecondary)
-                            } else {
-                                Text("Import").font(.system(size: 23, weight: .semibold))
-                            }
-                        }
-                        // Stays enabled while importing (disabling the focused
-                        // button drops focus); importAddons() guards re-entry.
-                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button("Done", action: onDone)
-                            .font(.system(size: 23, weight: .semibold))
-                    }
-
-                    if let message {
-                        Text(message)
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(message.hasPrefix("Imported") ? CuePrimitives.success : CuePrimitives.error)
-                    }
-                }
-            }
-        }
-        .onExitCommand(perform: onDone)
-    }
-
-    private func importAddons() {
-        guard !importing else { return }
-        importing = true
-        message = nil
-        Task {
-            let result = await addonManager.importManifestURLs(from: input)
-            importing = false
-            if result.installed == 0 && result.failed == 0 {
-                message = "No manifest URLs found."
-            } else {
-                message = "Imported \(result.installed), failed \(result.failed)."
-                if result.installed > 0 { input = "" }
-            }
-        }
     }
 }
 
@@ -1427,38 +892,5 @@ private struct AddonHealthRow: View {
         case .disabled: return theme.palette.textTertiary
         case .failed: return CuePrimitives.error
         }
-    }
-}
-
-
-/// Full-screen QR export of the installed addon manifest URLs — scan with a
-/// phone to carry the setup to a fresh install (one URL per line).
-private struct AddonExportView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let urls: [String]
-    let onDone: () -> Void
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            VStack(spacing: CueSpacing.xl) {
-                Text("Add-on Setup")
-                    .font(FusionType.pageTitle(theme.font))
-                    .foregroundStyle(theme.palette.textPrimary)
-                Text("Scan with your phone — one manifest URL per line. Paste them into any Cue install to restore your add-ons.")
-                    .font(FusionType.bodyText(theme.font))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 900)
-                QRCodeView(string: urls.joined(separator: "\n"))
-                    .frame(width: 460, height: 460)
-                Text("\(urls.count) add-on\(urls.count == 1 ? "" : "s")")
-                    .font(.system(size: 21, weight: .medium))
-                    .foregroundStyle(theme.palette.textTertiary)
-                Button("Done", action: onDone)
-            }
-            .padding(CueSpacing.huge)
-        }
-        .onExitCommand(perform: onDone)
     }
 }
