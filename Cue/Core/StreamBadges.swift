@@ -41,12 +41,11 @@ final class StreamBadgeStore: ObservableObject {
     /// defaults is always current, so scoping through it here is safe.
     static var sizeRaw: String {
         get {
-            ProfileScopedDefaults.string(sizeKey, feature: feature,
+            ProfileScopedDefaults.string(sizeKey,
                                          ProfileScopedDefaults.activeProfileID) ?? "medium"
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: ProfileScopedDefaults.writeKey(
-                sizeKey, feature: feature, ProfileScopedDefaults.activeProfileID))
+            UserDefaults.standard.set(newValue, forKey: ProfileScopedDefaults.key(sizeKey, ProfileScopedDefaults.activeProfileID))
         }
     }
     static var sizeScale: CGFloat {
@@ -71,10 +70,9 @@ final class StreamBadgeStore: ObservableObject {
     private var remoteRulesByPlatform: [String: String] = [:]
     private static let preferredPlatformKey = "cue.badges.platform.v1"
     var preferredRemoteProfileID: String {
-        get { ProfileScopedDefaults.string(Self.preferredPlatformKey, feature: Self.feature, profileID) ?? "" }
+        get { ProfileScopedDefaults.string(Self.preferredPlatformKey, profileID) ?? "" }
         set {
-            UserDefaults.standard.set(newValue, forKey: ProfileScopedDefaults.writeKey(
-                Self.preferredPlatformKey, feature: Self.feature, profileID))
+            UserDefaults.standard.set(newValue, forKey: ProfileScopedDefaults.key(Self.preferredPlatformKey, profileID))
         }
     }
     /// Expand every platform blob's imports into selectable profiles.
@@ -145,24 +143,11 @@ final class StreamBadgeStore: ObservableObject {
     /// scoped keys, or the legacy value would resurrect a removed pack.
     private(set) var profileID = ProfileScopedDefaults.activeProfileID
 
-    /// Separate-vs-shared switch (Trakt-style). Shared = one badge pack for
-    /// the whole device, the pre-split behaviour.
-    static let feature = "badges"
-    var perProfileEnabled: Bool { ProfileScopedDefaults.isSeparate(Self.feature) }
-
-    func setPerProfile(_ on: Bool) {
-        guard on != perProfileEnabled else { return }
-        ProfileScopedDefaults.setSeparate(Self.feature, on)
-        suppressChange = true
-        defer { suppressChange = false }
-        reload()
-    }
-
     private var scopedURLKey: String {
-        ProfileScopedDefaults.writeKey(Self.urlKey, feature: Self.feature, profileID)
+        ProfileScopedDefaults.key(Self.urlKey, profileID)
     }
     private var scopedPayloadKey: String {
-        ProfileScopedDefaults.writeKey(Self.payloadKey, feature: Self.feature, profileID)
+        ProfileScopedDefaults.key(Self.payloadKey, profileID)
     }
 
     init() {
@@ -170,8 +155,8 @@ final class StreamBadgeStore: ObservableObject {
     }
 
     private func reload() {
-        sourceURL = ProfileScopedDefaults.string(Self.urlKey, feature: Self.feature, profileID) ?? ""
-        if let payload = ProfileScopedDefaults.data(Self.payloadKey, feature: Self.feature, profileID),
+        sourceURL = ProfileScopedDefaults.string(Self.urlKey, profileID) ?? ""
+        if let payload = ProfileScopedDefaults.data(Self.payloadKey, profileID),
            !payload.isEmpty {
             compileFilters(from: payload)
         } else {
@@ -317,7 +302,7 @@ final class StreamBadgeStore: ObservableObject {
     /// other devices clear too).
     func syncRulesJSON() -> String? {
         guard isConfigured,
-              let payload = ProfileScopedDefaults.data(Self.payloadKey, feature: Self.feature, profileID),
+              let payload = ProfileScopedDefaults.data(Self.payloadKey, profileID),
               !payload.isEmpty,
               let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               let filters = root["filters"] as? [[String: Any]]

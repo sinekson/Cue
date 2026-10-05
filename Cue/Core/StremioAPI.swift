@@ -70,20 +70,6 @@ final class StremioResponseCache: @unchecked Sendable {
     }
 }
 
-/// Settings → Layout → Posters → "Poster banners", readable from the fetch
-/// paths below. They run off the main actor, so they can't read the
-/// `@MainActor` HomeCatalogSettingsStore that owns the setting; the store
-/// writes every assignment through here.
-enum PosterBannerPreference {
-    private static let lock = NSLock()
-    private static var storage = true
-
-    static var showBanners: Bool {
-        get { lock.lock(); defer { lock.unlock() }; return storage }
-        set { lock.lock(); storage = newValue; lock.unlock() }
-    }
-}
-
 enum StremioAPI {
     static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -268,7 +254,7 @@ enum StremioAPI {
         // De-dup by id: duplicate identifiers in a catalog crash the tvOS focus
         // engine when rendered in a ForEach (aggregator addons emit them).
         let metas = (response.metas ?? []).filter { !$0.name.isEmpty }.deduplicatedByID()
-        return PosterBannerPreference.showBanners ? metas : metas.map { $0.withPlainPoster() }
+        return metas
     }
 
     static func meta(addon: InstalledAddon, type: String, id: String) async throws -> MetaItem {
@@ -276,13 +262,12 @@ enum StremioAPI {
         // token) rides along after `.json` instead of being dropped.
         let url = addon.resourceURL("/meta/\(encodePathComponent(type))/\(encodePathComponent(id)).json")
         if let cached = await metaDiskCache.value(for: url, ttl: metaDiskTTL) {
-            return PosterBannerPreference.showBanners ? cached : cached.withPlainPoster()
+            return cached
         }
         let response: MetaResponse = try await get(url, ttl: 600)
         guard let meta = response.meta else { throw StremioAPIError.emptyBody }
-        // Cached as the add-on sent it, so turning banners back on restores them.
         await metaDiskCache.store(meta, for: url)
-        return PosterBannerPreference.showBanners ? meta : meta.withPlainPoster()
+        return meta
     }
 
     static func streams(addon: InstalledAddon, type: String, id: String,

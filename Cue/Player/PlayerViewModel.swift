@@ -1015,8 +1015,7 @@ final class PlayerViewModel: ObservableObject {
                 afterError: NSError(
                     domain: "Cue", code: -3,
                     userInfo: [NSLocalizedDescriptionKey: "Playback stalled for \(timeout)s."]
-                ),
-                preferResolution: self.currentEntry.resolutionLabel
+                )
             )
         }
     }
@@ -2931,20 +2930,17 @@ final class PlayerViewModel: ObservableObject {
 
     /// Mirrors "Show unaired next up" (Settings → Layout). Passed in rather than
     /// read from a store because the player owns no layout-settings dependency.
-    private let allowUnairedNextUp: Bool
 
     init(
         request: PlaybackRequest,
         addonManager: AddonManager,
         progressStore: ProgressStore,
-        settings: PlayerSettings = .default,
-        allowUnairedNextUp: Bool = true
+        settings: PlayerSettings = .default
     ) {
         Self.liveInstanceCounter.mutate { $0 += 1 }
         // Hand the poster cache's RAM back before the player allocates its
         // own. See ImageCache.dropDecoded().
         ImageCache.shared.dropDecoded()
-        self.allowUnairedNextUp = allowUnairedNextUp
         self.meta = request.meta
         self.currentVideo = request.video
         self.currentEntry = request.entry
@@ -8228,22 +8224,19 @@ final class PlayerViewModel: ObservableObject {
     }
 
     /// Fetch every stream for the current title from the installed stream
-    /// addons. Raw torrent entries are dropped: nothing here can resolve them.
+    /// addons, in installed order. Only playable links: cast rows and raw
+    /// torrents can't play here.
     private func fetchAvailableSources(forceRefresh: Bool = false) async -> [StreamEntry] {
         let id = currentVideo?.id ?? meta.id
         let type = meta.type
         var entries: [StreamEntry] = []
-        // Instant path: the Sources page caches the raw source list per title,
-        // so an in-player Sources open / failover re-uses it with no sweep.
+        // Instant path: this title was searched in the last few minutes
+        // (`SourceListCache`), so an in-player Sources open re-uses that list.
         // `forceRefresh` skips the cache so a failover can re-resolve FRESH
         // debrid links — the cached ones may be IP-locked/expired (the exact
         // "wrong IP, Comet won't play it" case).
-        if !forceRefresh,
-           let cached = await StreamsViewModel.sourceCache.value(for: id, ttl: StreamsViewModel.sourceCacheTTL),
-           !cached.isEmpty {
-            entries = cached
-                .map { StreamEntry(addonName: $0.addonName, stream: $0.stream) }
-                .filter { $0.stream.isPlayable }
+        if !forceRefresh, let (cached, _) = await SourceListCache.shared.list(for: id), !cached.isEmpty {
+            entries = cached.filter { $0.stream.isPlayable }
         } else {
             let addons = addonManager.streamAddons.filter { $0.handles(id: id) }
             // Windowed. This fires DURING playback (failover / Sources from the
@@ -8259,25 +8252,13 @@ final class PlayerViewModel: ObservableObject {
             }
             for batch in batches { entries.append(contentsOf: batch) }
             // Persist for instant re-open (mirrors the Sources page).
-            let snapshot = entries.map { CachedStreamSource(addonName: $0.addonName, stream: $0.stream) }
-            if !snapshot.isEmpty {
-                await StreamsViewModel.sourceCache.store(snapshot, for: id)
+            if !entries.isEmpty {
+                await SourceListCache.shared.store(entries, for: id)
             }
         }
-        // User stream filters (min resolution, exclude AV1, HDR/DV/cached) run
-        // first, then curation. Never let filters empty the list — if they
-        // remove everything, fall back to the unfiltered set so playback still
-        // has sources.
-        let filtered = SourceSelection.filter(entries, settings.streamFilterOptions)
-        let base = filtered.isEmpty ? entries : filtered
-        // Curate into size tiers with cached links first (same rule as the
-        // Sources page). Filters off → raw addon order (cached still first).
-        guard settings.sourceFiltersEnabled else {
-            return SourceSelection.selectUnfiltered(
-                base, cap: PlayerSettings.unfilteredPerAddonCap
-            )
-        }
-        return SourceSelection.select(base, perTier: settings.sourcesPerSizeTier)
+        // As the source picker shows them: the add-ons' own order, nothing
+        // filtered or re-sorted (an aggregator has already ranked its links).
+        return entries
     }
 
     /// Playback started from Continue Watching carries `allEntries: []` (only
@@ -8370,8 +8351,7 @@ final class PlayerViewModel: ObservableObject {
                 afterError: NSError(
                     domain: "Cue", code: -2,
                     userInfo: [NSLocalizedDescriptionKey: "The source didn't start within \(self.loadTimeoutSeconds) seconds."]
-                ),
-                preferResolution: self.currentEntry.resolutionLabel
+                )
             )
         }
     }
@@ -8442,8 +8422,7 @@ final class PlayerViewModel: ObservableObject {
                     domain: "Cue", code: -4,
                     userInfo: [NSLocalizedDescriptionKey:
                         "The source opened but never started playing."]
-                ),
-                preferResolution: self.currentEntry.resolutionLabel
+                )
             )
         }
     }
@@ -8480,8 +8459,7 @@ final class PlayerViewModel: ObservableObject {
         guard currentTime - baseline >= 2 else { return }
         playbackProgressConfirmed = true
         didFailoverRefetch = false
-        chainPreferredAddon = nil
-        chainPreferredResolution = nil
+        chainStartURL = nil
         // Playback has demonstrably moved onto the CURRENT source, so any
         // retired DV remuxer's segment directory is no longer being read and
         // can go now rather than at teardown. Each retired remux is a stream
@@ -8510,7 +8488,7 @@ final class PlayerViewModel: ObservableObject {
     /// answering HTTP 500 to range requests at scattered byte offsets; the
     /// cache failed five times, the player failed over three times, and all
     /// three hops landed on ANOTHER link from the same provider, because
-    /// `rankedCandidates` puts "same addon" first and a host being down is
+    /// failover then put "same addon" first and a host being down was
     /// invisible to a ranking built out of resolution and addon name.
     ///
     /// ONE failure is a bad link — a torrent that isn't really cached, one
@@ -8624,12 +8602,11 @@ final class PlayerViewModel: ObservableObject {
     /// chain, so exhausting the list re-resolves links exactly once — reset when
     /// a source successfully starts so the next stall can re-scrape again.
     private var didFailoverRefetch = false
-    /// The addon/quality of the link that started this failover chain (the
-    /// original one the user was on) — failover prefers the SAME addon first,
-    /// then the closest quality. Captured at chain start, cleared on a
-    /// successful load so a later stall re-captures.
-    private var chainPreferredAddon: String?
-    private var chainPreferredResolution: String?
+    /// The link that started this failover chain (the one the user was on):
+    /// failover tries the links after it in the list, then the ones before.
+    /// Captured at chain start, cleared on a successful load so a later stall
+    /// re-captures.
+    private var chainStartURL: String?
     private var isFailingOver = false {
         // Same re-arm rule as `pauseIntent`: the stall watchdog's fire path
         // stands down mid-failover, and with buffering writes deduped there
@@ -8642,11 +8619,9 @@ final class PlayerViewModel: ObservableObject {
 
     /// A stream died. Remember the survivors' position, pick the next viable
     /// source, and switch to it silently — the error overlay only appears when
-    /// every candidate is exhausted. `preferResolution` floats sources of the
-    /// same quality to the front (used by the load-timeout failover, so a slow
-    /// 4K link is replaced by another 4K link, not a random 480p one).
-    private func attemptFailover(afterError error: Error, preferResolution: String? = nil,
-                                 continuing generation: Int? = nil) {
+    /// every candidate is exhausted. The next source is the one after it in
+    /// the list (the add-ons' own order — see `rankedCandidates`).
+    private func attemptFailover(afterError error: Error, continuing generation: Int? = nil) {
         PlayerProbe.event("fail", "FAILOVER requested at \(String(format: "%.1f", position))"
             + " — \(error.localizedDescription)"
             + " (already failing over=\(isFailingOver.probe), dv=\(usingDVDirect.probe))")
@@ -8720,13 +8695,9 @@ final class PlayerViewModel: ObservableObject {
         // episode, they are watching it fail.
         countdownTask?.cancel()
         upNextCountdown = nil
-        // Capture what to aim for ONCE per chain (the link that just died is,
-        // on the first failure, the original the user was on): prefer the same
-        // addon, then the closest quality.
-        if chainPreferredAddon == nil {
-            chainPreferredAddon = currentEntry.sourceAddonName
-            chainPreferredResolution = preferResolution ?? currentEntry.resolutionLabel
-        }
+        // Where the chain starts, ONCE (the link that just died is, on the
+        // first failure, the one the user was on): it goes on from there.
+        if chainStartURL == nil { chainStartURL = currentEntry.stream.url ?? "" }
         failedSourceIDs.insert(currentEntry.id)
         if let deadURL = currentEntry.stream.url { failedSourceURLs.insert(deadURL) }
         // `position` is ~0 while a resume seek is still in flight and
@@ -8836,8 +8807,7 @@ final class PlayerViewModel: ObservableObject {
         failedSourceIDs.removeAll()
         failedSourceURLs.removeAll()
         didFailoverRefetch = false
-        chainPreferredAddon = nil
-        chainPreferredResolution = nil
+        chainStartURL = nil
         isFailingOver = false
         overlayBeforeSubMenu = nil
         overlay = .none
@@ -8859,10 +8829,8 @@ final class PlayerViewModel: ObservableObject {
         runStreamProbe()
     }
 
-    /// Sources not yet marked dead (by UUID or URL), ordered to match the
-    /// original link as closely as possible: SAME ADDON + same quality first,
-    /// then same addon (any quality), then same quality (other addons), then the
-    /// rest — stable within each tier so cached-first order survives.
+    /// Sources not yet marked dead (by UUID or URL), in the order
+    /// `rankedCandidates` gives.
     /// Addons an auto-advance may fall back onto, in order, when the Auto Link
     /// Selector is on: the preferred one, then the secondary one. Empty when
     /// the selector is off or names nothing, which means "no restriction".
@@ -8900,33 +8868,25 @@ final class PlayerViewModel: ObservableObject {
         return rankedCandidates(viable)
     }
 
-    /// Order candidates to match the original link as closely as possible.
+    /// The list's own order (the add-ons' — an aggregator has ranked its
+    /// links), going on from the link the chain started at, then wrapping
+    /// round to the ones before it.
     private func rankedCandidates(_ viable: [StreamEntry]) -> [StreamEntry] {
-        func rank(_ e: StreamEntry) -> Int {
-            // An addon that has served two notice clips this session is not a
-            // preference any more — "request this from the same IP" is a
-            // condition of its whole debrid session, not of one link, so its
-            // next link is a notice too. Demoted, not excluded: if nothing else
-            // plays, it is still better than the error overlay.
-            if noticeClipsByAddon[e.addonName, default: 0] >= 2 { return 4 }
-            // And an addon whose links keep dying under us. Two is the
-            // provider rather than the link — see `deadLinksByAddon`.
-            if deadLinksByAddon[e.sourceAddonName, default: 0] >= 2 { return 4 }
-            let sameAddon = chainPreferredAddon != nil && e.sourceAddonName == chainPreferredAddon
-            let sameRes = chainPreferredResolution != nil && e.resolutionLabel == chainPreferredResolution
-            switch (sameAddon, sameRes) {
-            case (true, true):   return 0
-            case (true, false):  return 1
-            case (false, true):  return 2
-            case (false, false): return 3
-            }
+        var ordered = viable
+        if let start = chainStartURL, !start.isEmpty,
+           let at = allEntries.firstIndex(where: { $0.stream.url == start }) {
+            let after = Set(allEntries[(at + 1)...].map(\.id))
+            ordered = viable.filter { after.contains($0.id) } + viable.filter { !after.contains($0.id) }
         }
-        return viable.enumerated()
-            .sorted { a, b in
-                let ra = rank(a.element), rb = rank(b.element)
-                return ra != rb ? ra < rb : a.offset < b.offset
-            }
-            .map(\.element)
+        // Last: an addon that has served two notice clips this session ("same
+        // IP" is its whole debrid session, not one link), or lost two links
+        // (the provider, not the link). Demoted, not excluded: if nothing else
+        // plays, it still beats the error overlay.
+        func failing(_ e: StreamEntry) -> Bool {
+            noticeClipsByAddon[e.addonName, default: 0] >= 2
+                || deadLinksByAddon[e.sourceAddonName, default: 0] >= 2
+        }
+        return ordered.filter { !failing($0) } + ordered.filter(failing)
     }
 
     /// Re-enter the failover after a candidate was consumed without a load.
@@ -8985,13 +8945,9 @@ final class PlayerViewModel: ObservableObject {
         }
         guard let index else { return nil }
         guard let next = ordered.dropFirst(index + 1).first else { return nil }
-        // "Show unaired next up" (Settings → Layout). This used to hard-require
-        // hasAired, so the player's Up Next disagreed with the detail page,
-        // which honours the setting. Note the setting is ON by default: an
-        // unaired episode CAN become the auto-advance target, and since it has
-        // no sources yet that advance will fail over and report no working
-        // source. Turn the setting off to keep the old skip-unaired behaviour.
-        return (allowUnairedNextUp || next.hasAired) ? next : nil
+        // Only an episode that has aired: one that hasn't has no sources yet,
+        // so auto-advancing into it would only fail.
+        return next.hasAired ? next : nil
     }
 
     // MARK: - Post-play / auto-next
@@ -9461,20 +9417,16 @@ final class PlayerViewModel: ObservableObject {
                 overlay = .error("No playable sources found for \(episode.seasonEpisodeCode).")
                 return
             }
-            // Curate the panel list (size tiers, cached first) like the Sources
-            // page; fall back to the raw list if curation drops everything.
-            let curated = settings.sourceFiltersEnabled
-                ? SourceSelection.select(entries, perTier: settings.sourcesPerSizeTier)
-                : SourceSelection.selectUnfiltered(entries, cap: PlayerSettings.unfilteredPerAddonCap)
-            let panelEntries = curated.isEmpty ? entries : curated
+            // As the source picker shows them: the add-ons' own order, nothing
+            // filtered or re-sorted.
+            let panelEntries = entries
 
             // Auto-pick must be directly playable (load() can't resolve a
             // torrent). Source selection honors the binge-group settings:
             //  • Prefer same source group ON  → same binge group first;
             //    with Reuse the same stream ON, restrict to the same ADDON's
             //    group (closest to "the same source"), else same addon.
-            //  • Prefer same source group OFF → just take the best-ranked
-            //    playable link (curation already put it first).
+            //  • Prefer same source group OFF → the first playable link.
             let playable = panelEntries.filter(\.stream.isPlayable)
             let curGroup = currentEntry.stream.behaviorHints?.bingeGroup
             let preferred: StreamEntry?

@@ -30,7 +30,6 @@ struct PlayerScreen: View {
         addonManager: AddonManager,
         progressStore: ProgressStore,
         playerSettings: PlayerSettings = .default,
-        allowUnairedNextUp: Bool = true,
         dismiss: @escaping () -> Void
     ) {
         // Coming back from Picture in Picture re-presents the cover for a
@@ -44,8 +43,7 @@ struct PlayerScreen: View {
                 request: request,
                 addonManager: addonManager,
                 progressStore: progressStore,
-                settings: playerSettings,
-                allowUnairedNextUp: allowUnairedNextUp
+                settings: playerSettings
             ))
         }
         self.request = request
@@ -983,17 +981,13 @@ struct UpNextOverlay: View {
                         .focused($playFocused)
                         // Same long-press actions as the Episodes list, for the
                         // queued next episode.
-                        .contextMenu {
-                            Button {
-                                viewModel.playUpNextChoosingSource()
-                            } label: {
-                                Label("Select Source", systemImage: "list.bullet")
-                            }
-                            Button {
-                                viewModel.markUpNextWatched()
-                            } label: {
-                                Label("Mark as Watched", systemImage: "checkmark.circle")
-                            }
+                        .holdMenu(focused: playFocused) {
+                            [MenuEntry(title: "Select Source", icon: "list.bullet") {
+                                 viewModel.playUpNextChoosingSource()
+                             },
+                             MenuEntry(title: "Mark as Watched", icon: "checkmark.circle") {
+                                 viewModel.markUpNextWatched()
+                             }]
                         }
                         Button("Cancel") { viewModel.dismissUpNext() }
                             .font(.system(size: 24, weight: .semibold))

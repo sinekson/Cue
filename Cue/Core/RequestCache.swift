@@ -120,11 +120,34 @@ actor DiskCache<Value: Codable & Sendable> {
     }
 }
 
-/// One addon's stream cached for a title (raw, pre-curation) so the Sources
-/// list can be rebuilt instantly on re-open. Debrid resolution still happens
-/// fresh on selection, and the player's failover re-fetches if a cached direct
-/// link has expired — so the short TTL is safe.
-struct CachedStreamSource: Codable, Sendable {
-    let addonName: String
-    let stream: Stream
+/// A title's last search, for a few minutes — search, back out, search again
+/// and the same list is there at once. In memory only, a fixed lifetime and
+/// nothing else: after it, every search asks every add-on again (old debrid
+/// links can stop working). Search Again skips it.
+actor SourceListCache {
+    static let shared = SourceListCache()
+    static let lifetime: TimeInterval = 5 * 60
+
+    private var lists: [String: (entries: [StreamEntry], time: Date)] = [:]
+
+    init() {
+        // The lists used to be kept on disk (and the last played link too):
+        // clear what's left of them.
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        Task.detached(priority: .utility) {
+            for name in ["sources", "lastlink"] {
+                try? FileManager.default.removeItem(at: base.appendingPathComponent("CueCache/\(name)"))
+            }
+        }
+    }
+
+    /// The title's list and when it was found, if still within `lifetime`.
+    func list(for id: String) -> (entries: [StreamEntry], time: Date)? {
+        lists = lists.filter { Date().timeIntervalSince($0.value.time) < Self.lifetime }
+        return lists[id]
+    }
+
+    func store(_ entries: [StreamEntry], for id: String) {
+        lists[id] = (entries, Date())
+    }
 }
