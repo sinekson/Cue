@@ -1,0 +1,45 @@
+# Drives the installed Cue app on the tvOS simulator with real Siri Remote
+# presses (XCUIRemote), so focus moves can be checked without a person at
+# the remote. Separate from Cue's project on purpose: regenerating that one
+# with xcodegen would wipe its Xcode-side edits. Not a test suite — one
+# method that plays the key sequence it's given. Run it with
+# Tools/RemoteDriver/remote.sh.
+name: RemoteDriver
+options:
+  deploymentTarget:
+    tvOS: "17.0"
+targets:
+  RemoteHost:
+    type: application
+    platform: tvOS
+    sources: [Host]
+    info:
+      path: Host/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.cue.remotehost
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "3"
+        GENERATE_INFOPLIST_FILE: YES
+  RemoteDriver:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources: [Driver]
+    dependencies:
+      - target: RemoteHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.cue.remotedriver
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "3"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: RemoteHost
+schemes:
+  RemoteDriver:
+    build:
+      targets:
+        RemoteHost: all
+    test:
+      targets: [RemoteDriver]
