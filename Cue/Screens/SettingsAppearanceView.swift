@@ -6,6 +6,7 @@ struct AppearanceSettingsDetail: View {
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
     @AppStorage(AppBackground.storageKey) private var background: AppBackground = .slate
     @AppStorage(AppBackground.homeFollowsTitleKey) private var homeFollowsTitle = true
+    @AppStorage(BillboardAutoPage.key) private var billboardAutoPage = true
 
     var body: some View {
         SettingsPage(place: SettingsCategory.appearance.place, subtitle: SettingsCategory.appearance.subtitle) {
@@ -25,6 +26,14 @@ struct AppearanceSettingsDetail: View {
                     title: "Home follows the title",
                     description: "Below the billboard, Home, Movies and Series take on the focused title's colours. Off: the background.",
                     isOn: $homeFollowsTitle
+                )
+            }
+
+            SettingsSection(title: "Billboard") {
+                SettingsToggleRow(
+                    title: "Billboard pages by itself",
+                    description: "Resting on the billboard, it moves on to the next title every \(Int(BillboardAutoPage.interval)) seconds, up to the last one — the bar under it fills as it goes. Any press starts it over. Off: it changes only when you press Left or Right.",
+                    isOn: $billboardAutoPage
                 )
             }
 

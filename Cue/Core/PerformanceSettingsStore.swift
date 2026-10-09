@@ -374,6 +374,10 @@ final class RenderProbe: ObservableObject {
         /// Details on Home's rows (the billboard, then a row per season, More
         /// Like This…); off: the old pages.
         var detailsOnRows = true
+        /// Home: billboard ⇄ rows as Details' — one rigid move (≈ 800 pt, the
+        /// dots end on the first row's name line), the picture stays, blurs
+        /// and gives way to the colours. Off: the picture scrolls away whole.
+        var homeBillboardRigid = true
         /// New Home: each poster's rim in its own colour (subtle).
         var posterRims = false
         /// New Home: the box's outline in the title's colour (off: white).
@@ -386,8 +390,26 @@ final class RenderProbe: ObservableObject {
         var backgroundStyle = "titleColor"
         /// New Home, title colour: how long to rest on a title before the
         /// background changes, and how long the change takes (seconds).
-        var tintDelay: Double = 0.12
-        var tintFade: Double = 0.25
+        var tintDelay: Double = 0.08
+        var tintFade: Double = 0.2
+        /// The background's colour change moves WITH the focus: no rest, on
+        /// the focus move's curve and duration, the neighbours' colours
+        /// ready beforehand; off: after `tintDelay`, over `tintFade`.
+        var tintFollowsFocus = false
+        /// With `tintFollowsFocus`: presses closer together than
+        /// `tintBurstGap` are a burst — the colours change at most every
+        /// `tintBurstEvery`, over a calm `tintBurstBlend`; on landing (no
+        /// press for a moment) the focus move's spring again.
+        /// Picture's colour layout: the grid ("3x3"), the saturation
+        /// multiplier, and how much of the picture's own light and dark is
+        /// kept (0: every cell equally bright).
+        var layoutGrid = "3x3"
+        var layoutSaturation: Double = 1.1
+        var layoutLightness: Double = 0
+        var tintBurstCalm = true
+        var tintBurstGap: Double = 0.3
+        var tintBurstEvery: Double = 0.3
+        var tintBurstBlend: Double = 0.5
         /// New Home: a soft glow in the background's colour.
         var backgroundGlow = false
         /// New Home, title colour: how strongly the colour covers the
@@ -397,6 +419,10 @@ final class RenderProbe: ObservableObject {
         /// (`FixedFocusTint.Mode`), how bright, and whether warm hues get
         /// extra brightness (dark yellow reads as brown).
         var tintMode = "twoColors"
+        /// Two colours: always a second one (from the picture, else made
+        /// from the first — `SpotlightTint.swatches`); off: only when the
+        /// picture clearly has one.
+        var tintAlwaysTwo = true
         var tintBrightness: Double = 0.45
         var tintWarmBoost = true
         /// New Home, background: a soft shadow and a halo (the title's
@@ -420,11 +446,33 @@ final class RenderProbe: ObservableObject {
         /// New Home: how the cards stand off the background
         /// (`FixedFocusCardEdge`).
         var cardEdge = "topLight"
-        /// New Home: the focus outline — "light" (the top bar's light) or "white".
-        var focusOutline = "light"
+        /// Every focused card's outline: "strong" (4 pt, 85 %) or "soft"
+        /// (3 pt, 75 %).
+        var focusOutline = "soft"
         /// Details: how strongly the picture blurs on Episodes / More (the
         /// blur's radius on a 640 px copy; 0: none).
         var detailsPictureBlur: Double = 12
+        /// Details: the blurred picture's brightness capped at this (a soft
+        /// shoulder, sRGB 0…1 — `BlurredBackdrop.capCurve`): bright pictures
+        /// come down, dark ones stay. 0: no cap.
+        var detailsBlurCap: Double = 0
+        /// Details: the rows' vignette over the blurred picture below the
+        /// billboard.
+        var detailsVignetteBelow = true
+        /// Details' buttons: how fast they light up and grow (0: the focus
+        /// motion's time — Motion: Focus).
+        var buttonFocusTime: Double = 0.15
+        /// The billboard's chips (status, ratings): "first" right under the
+        /// logo, "last" under the tagline.
+        var billboardChips = "first"
+        /// The billboard's Left/Right change: "drift" (text and picture
+        /// drift together) or "depthCascade" (the text further, the picture
+        /// less; the text's parts one after another).
+        var billboardChange = "drift"
+        /// The launch screen shows what it loaded and how long it took.
+        var launchNumbers = true
+        /// The billboard's picture zooms very slowly while it shows.
+        var billboardSlowZoom = false
         /// The left fade's strength on the Detail page's Episodes / More and
         /// behind Home's rows (0: none, 1: as on the overview / billboard).
         var episodesLeftFade: Double = 0.9
@@ -437,14 +485,16 @@ final class RenderProbe: ObservableObject {
         /// New Home: the billboard's own, stronger vignette.
         var billboardVignette = true
         /// New Home: the billboard's scrim (`FixedFocusBillboardScrim`).
-        var billboardScrim = "leftFade"
+        var billboardScrim = "blackTint"
         /// New Home: the posters left of the box in the focused row (1: not
         /// dimmed).
         var previousPosterAlpha: Double = 0.45
         /// New Home: the Left/Right curve (`FixedFocusMotion.Curve`).
         var horizontalCurve = "easeInOut"
         /// New Home: the Up/Down curve.
-        var verticalCurve = "easeInOut"
+        /// System spring (decided 2026-10-06): fast to react, smooth to land,
+        /// and a press during a move carries its speed on.
+        var verticalCurve = "systemSpring"
         /// The motion tokens' durations (see `Motion`).
         var motion = MotionDurations()
 
@@ -472,6 +522,7 @@ final class RenderProbe: ObservableObject {
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             summaryJustified = (try? c.decode(Bool.self, forKey: .summaryJustified)) ?? d.summaryJustified
             detailsOnRows = (try? c.decode(Bool.self, forKey: .detailsOnRows)) ?? d.detailsOnRows
+            homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
             boxRimColored = (try? c.decode(Bool.self, forKey: .boxRimColored)) ?? d.boxRimColored
             rimStyle = (try? c.decode(String.self, forKey: .rimStyle)) ?? d.rimStyle
@@ -480,6 +531,15 @@ final class RenderProbe: ObservableObject {
             backgroundGlow = (try? c.decode(Bool.self, forKey: .backgroundGlow)) ?? d.backgroundGlow
             tintStrength = (try? c.decode(Double.self, forKey: .tintStrength)) ?? d.tintStrength
             tintMode = (try? c.decode(String.self, forKey: .tintMode)) ?? d.tintMode
+            tintAlwaysTwo = (try? c.decode(Bool.self, forKey: .tintAlwaysTwo)) ?? d.tintAlwaysTwo
+            tintFollowsFocus = (try? c.decode(Bool.self, forKey: .tintFollowsFocus)) ?? d.tintFollowsFocus
+            tintBurstCalm = (try? c.decode(Bool.self, forKey: .tintBurstCalm)) ?? d.tintBurstCalm
+            layoutGrid = (try? c.decode(String.self, forKey: .layoutGrid)) ?? d.layoutGrid
+            layoutSaturation = (try? c.decode(Double.self, forKey: .layoutSaturation)) ?? d.layoutSaturation
+            layoutLightness = (try? c.decode(Double.self, forKey: .layoutLightness)) ?? d.layoutLightness
+            tintBurstGap = (try? c.decode(Double.self, forKey: .tintBurstGap)) ?? d.tintBurstGap
+            tintBurstEvery = (try? c.decode(Double.self, forKey: .tintBurstEvery)) ?? d.tintBurstEvery
+            tintBurstBlend = (try? c.decode(Double.self, forKey: .tintBurstBlend)) ?? d.tintBurstBlend
             tintBrightness = (try? c.decode(Double.self, forKey: .tintBrightness)) ?? d.tintBrightness
             tintWarmBoost = (try? c.decode(Bool.self, forKey: .tintWarmBoost)) ?? d.tintWarmBoost
             boxShadow = (try? c.decode(Bool.self, forKey: .boxShadow)) ?? d.boxShadow
@@ -494,6 +554,13 @@ final class RenderProbe: ObservableObject {
             cardEdge = (try? c.decode(String.self, forKey: .cardEdge)) ?? d.cardEdge
             focusOutline = (try? c.decode(String.self, forKey: .focusOutline)) ?? d.focusOutline
             detailsPictureBlur = (try? c.decode(Double.self, forKey: .detailsPictureBlur)) ?? d.detailsPictureBlur
+            detailsBlurCap = (try? c.decode(Double.self, forKey: .detailsBlurCap)) ?? d.detailsBlurCap
+            detailsVignetteBelow = (try? c.decode(Bool.self, forKey: .detailsVignetteBelow)) ?? d.detailsVignetteBelow
+            buttonFocusTime = (try? c.decode(Double.self, forKey: .buttonFocusTime)) ?? d.buttonFocusTime
+            billboardChips = (try? c.decode(String.self, forKey: .billboardChips)) ?? d.billboardChips
+            billboardChange = (try? c.decode(String.self, forKey: .billboardChange)) ?? d.billboardChange
+            launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
+            billboardSlowZoom = (try? c.decode(Bool.self, forKey: .billboardSlowZoom)) ?? d.billboardSlowZoom
             episodesLeftFade = (try? c.decode(Double.self, forKey: .episodesLeftFade)) ?? d.episodesLeftFade
             homeLeftFade = (try? c.decode(Double.self, forKey: .homeLeftFade)) ?? d.homeLeftFade
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade

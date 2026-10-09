@@ -281,12 +281,6 @@ enum TrailerMode {
 final class ModeSwap: ObservableObject {
     static let shared = ModeSwap()
 
-    /// Home's top bar is out (Details, opened from the billboard, is up).
-    @Published var homeChromeOut = false
-    /// Billboard → Details: keep the top bar on screen although a page was
-    /// pushed — it lifts away once Details is up (normally a pushed page
-    /// removes it at once: nothing was left to animate).
-    @Published var chromeHeld = false
     /// What Details' Play says, as the billboard knew it ("Play S2:E3"):
     /// until its own episode list is in, Play doesn't change its label.
     var billboardPlayTitle: String?
@@ -296,10 +290,6 @@ final class ModeSwap: ObservableObject {
     /// The title Details was opened for from the billboard — only that page
     /// plays its half of the swap (and returns with it).
     var billboardItemID: String?
-    /// …and it came from a catalog BOX, not the billboard: Details' title
-    /// block isn't on screen yet, so it fades in with the buttons (and out
-    /// again on Back — the box has none).
-    var arrivedFromBox = false
     /// What the billboard showed for it — Details starts with these, so its
     /// title block is identical from the first frame.
     var billboardRatings: MDBListRatings?
@@ -308,20 +298,6 @@ final class ModeSwap: ObservableObject {
     var billboardSeriesSize: String?
     /// The background's colours under the billboard — Details starts on them.
     var billboardTint: (first: Color?, second: Color?) = (nil, nil)
-
-    /// A card opening into Details: Details zooms out of it to the whole
-    /// screen (`TitleMorphOverlay`); Details takes over as it ends. Back
-    /// plays it backwards.
-    struct WindowOpen: Identifiable {
-        let id = UUID()
-        let item: MetaItem
-        /// The card it opens from: where it is and where its parts are.
-        let source: TitleMorphSource
-        var closing = false
-        var frame: CGRect { source.frame }
-    }
-    /// The window opening or closing, over everything.
-    @Published var windowOpen: WindowOpen?
 
     /// From Select on the billboard or a card until Details is up: Home
     /// holds still (no focus moves), and a Select, Back or Down pressed
@@ -332,89 +308,32 @@ final class ModeSwap: ObservableObject {
     }
     enum HeldPress { case play, back, down }
     var heldPress: HeldPress?
-    /// The window Details was opened through — Back closes it again.
-    var openedThrough: WindowOpen?
 
-    /// Going: quick, getting out of the way at once (not an ease-in — that
-    /// crept, then shot away at the very end).
+    /// The old swap's going half — only its timing is still used, for the
+    /// fades below.
     static let outDuration: Double = 0.16
-    static let out: Animation = .timingCurve(0.3, 0, 0.2, 1, duration: outDuration)
-    /// Coming: the page scroll's fast-then-slow (`detailPageScroll`) — most
-    /// of the way at once, then a long gentle settle.
-    static let `in`: Animation = .timingCurve(0.15, 0.85, 0.25, 1, duration: 0.45)
-    /// The screens change this far into the going half — the curve has
-    /// done its moving by then, and the arriving half starts sooner.
     static let handoverDelay: Double = outDuration * 0.75
     /// Fades run on their own, linear — so the movement stays visible.
     static let fadeOut: Animation = .linear(duration: handoverDelay)
     static let fadeIn: Animation = .linear(duration: 0.18)
     /// How far the parts travel as they go / come.
     static let lift: CGFloat = 20
-    /// Home's bottom cues (the "▾" hint, the dots) move down and fade —
-    /// the mirror of the top bar. Short: they meet the arriving hint
-    /// (coming down from `lift` above) around the same spot.
-    static let bottomTravel: CGFloat = 40
     /// Depth: Details is a step "into" the title — its backdrop leans in
-    /// (scales up) and darkens a step on arrival, and back out on the way
-    /// home. Billboard (lightest) → overview → Episodes (darkest).
+    /// (scales up). Billboard (lightest) → overview → Episodes (darkest).
     static let depthScale: CGFloat = 1.06
-    /// Billboard → Details: the picture's step closer — slower and calmer
-    /// than the rest of the swap, so it reads as a move INTO the title.
-    static let stepIn: Animation = .timingCurve(0.2, 0.7, 0.2, 1, duration: 0.8)
-    static let stepOutDuration: Double = 0.3
-    static let stepOut: Animation = .easeInOut(duration: stepOutDuration)
-    /// The swap's moves are over by then: the page may load and re-render.
+    /// The page may load and re-render after this.
     static let swapSettle: Double = 0.8
 
-    /// BILLBOARD ⇄ DETAILS, ONE TIMELINE: on the press, everything moves
-    /// together with this one curve and duration — the picture steps closer
-    /// (Core Animation, `StagePictureView`), the top bar lifts away, the hint
-    /// crossfades, the dots fade. Details takes over once that's done
-    /// (built while nothing moves), and only its buttons come in after.
+    /// The top bar's away/back move (trailers, the sidebar).
     static let swapDuration: Double = 0.5
     static let swapControlPoints = (CGPoint(x: 0.35, y: 0), CGPoint(x: 0.15, y: 1))
     static var swap: Animation {
         .timingCurve(swapControlPoints.0.x, swapControlPoints.0.y,
                      swapControlPoints.1.x, swapControlPoints.1.y, duration: swapDuration)
     }
-    /// Details takes over this far into the swap (its tail is too small to
-    /// see, and the page's build spike lands where nothing visibly moves).
-    static let swapHandover: Double = swapDuration * 0.9
-    /// Details' buttons, after: a quick rise.
-    static let buttonsIn: Animation = .timingCurve(0.2, 0.7, 0.2, 1, duration: 0.35)
-    static let buttonsOut: Animation = .easeIn(duration: 0.14)
-    static let depthDim: Double = 0.25
-    /// The depth is ONE motion with the rest of the swap: it starts on the
-    /// press and ends as the arriving parts land. It runs ACROSS the
-    /// handover, as a 0…1 progress: the leaving screen takes it this far
-    /// (linear, over `handoverDelay`), the arriving one on from there (the
-    /// `in` curve, with its buttons / hint). Back mirrors it.
-    static let depthHandover: CGFloat = 0.35
-    static let depthLeaving: Animation = .linear(duration: handoverDelay)
-
-    /// Box → Details: the box's artwork grows from its spot to the full
-    /// screen (becoming Details' backdrop) while the rest of Home fades —
-    /// the one extra move on top of the billboard swap. The page scroll's
-    /// fast-then-slow; the screens change once it has grown.
-    static let boxGrowDuration: Double = 0.4
-    /// The scrim runs across the handover too: the growing box takes it
-    /// most of the way — on the grow's own fast-then-slow, so it darkens
-    /// most while it moves most — and Details finishes the small rest with
-    /// its parts. (Linear read as "subtle, then dark all at once", with
-    /// Details' fast start doing half of it.)
-    static let boxScrimHandover: Double = 0.75
-    /// …and the depth likewise: on the box path the grow is the main
-    /// motion, so it takes the depth most of the way (the billboard's 35%
-    /// left most of the darkening for after the switch — back-heavy).
-    static let boxDepthHandover: CGFloat = 0.8
-    /// The rest of Home fades out quickly as the box starts to grow (the
-    /// bright rows below lingered around the growing, darkening box).
-    static let boxHomeFade: Animation = .easeOut(duration: 0.15)
-    static let boxGrow: Animation = .timingCurve(0.15, 0.85, 0.25, 1, duration: boxGrowDuration)
 
     /// The backdrop at a depth progress `p` (0 = the billboard, 1 = Details).
     static func depthScale(_ p: CGFloat) -> CGFloat { 1 + (depthScale - 1) * p }
-    static func depthDim(_ p: CGFloat) -> Double { depthDim * Double(p) }
     /// The top bar moves up (and fades) this far.
     static let chromeTravel: CGFloat = 80
 }
@@ -560,15 +479,3 @@ struct TitleBadge: View {
     }
 }
 
-/// A card as the start of the zoom into Details (`TitleMorphOverlay`): where
-/// it is on screen and how it looks.
-struct TitleMorphSource {
-    /// The card: the window starts here.
-    var frame: CGRect
-    /// The card as it looks (it zooms with Details; its text fades first).
-    var picture: UIImage?
-    /// Where the card draws the title's BACKDROP (aspect-filled), on screen —
-    /// Details' picture starts exactly there, so nothing changes in it. nil:
-    /// the card shows other art (a poster), which dissolves softly instead.
-    var backdrop: CGRect? = nil
-}

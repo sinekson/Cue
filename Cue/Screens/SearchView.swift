@@ -205,7 +205,7 @@ struct SearchView: View {
             .map(Self.withArt))
         if !rows.isEmpty {
             FixedFocusRows(rows: rows, featuredRowID: "", continueRowID: "", active: active,
-                           billboardStepIn: false, progress: [:],
+                           progress: [:],
                            // Movies and Series: posters at a glance, Home's
                            // destination rows (Saved for Later's look).
                            destinationRowIDs: [Self.moviesRowID, Self.seriesRowID],
@@ -222,7 +222,7 @@ struct SearchView: View {
                            startsOverOnChange: true,
                            onSelect: select, onSelectFeatured: select,
                            onResume: { _ in },
-                           onOpenWindow: openThroughWindow,
+                           onOpenDetails: openDetails,
                            titleMenu: { item, _ in TitleMenu.shared.entries(for: item) }) { _, _ in }
                 .frame(width: 1920, height: area)
                 // Nothing slides over the keyboard.
@@ -270,11 +270,11 @@ struct SearchView: View {
         .focusSection()
     }
 
-    /// A result's Select: Details opens through a window from its card (see
-    /// `DetailWindow`), and the query joins the recent ones.
-    private func openThroughWindow(_ item: MetaItem, source: TitleMorphSource) {
+    /// A result's Select: into Details (`DetailTransition`), and the query
+    /// joins the recent ones.
+    private func openDetails(_ item: MetaItem) {
         remember()
-        DetailWindow.open(item, from: source, settings: mdblist.settings, push: onOpenInPlace)
+        DetailTransition.shared.open(item) { onOpenInPlace(item) }
     }
 
     /// The query joins the recent ones.

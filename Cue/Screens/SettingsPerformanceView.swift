@@ -313,6 +313,57 @@ struct RenderLabSettings: View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
             SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
                 PerfToggleRow(
+                    icon: "gauge.with.dots.needle.67percent",
+                    title: "Launch: show numbers",
+                    subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
+                    isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
+                )
+                CueDropdown(
+                    title: "Billboard change",
+                    subtitle: "Left / Right on the billboard: text and picture drift together — or depth + cascade: the text further, the picture less, the text's parts one after another (logo, chips, facts, tagline) — or a real scroll: the whole page slides out as the next slides in.",
+                    icon: "square.stack.3d.forward.dottedline",
+                    selection: probe.flags.billboardChange,
+                    options: [("drift", "Drift"), ("depthCascade", "Depth + cascade"), ("scroll", "Scroll")]
+                        .map { CueDropdownOption($0.0, $0.1) }
+                ) { raw in
+                    probe.flags.billboardChange = raw
+                }
+                PerfToggleRow(
+                    icon: "plus.magnifyingglass",
+                    title: "Billboard: slow zoom",
+                    subtitle: "Each billboard picture zooms in very slowly (to 104 %) while it shows — it never looks frozen.",
+                    isOn: Binding(get: { probe.flags.billboardSlowZoom }, set: { probe.flags.billboardSlowZoom = $0 })
+                )
+                CueDropdown(
+                    title: "Billboard scrim",
+                    subtitle: "What darkens the billboard's artwork behind the text: the whole left and bottom, or only around the text — in black or in the title's own colour.",
+                    icon: "text.below.photo",
+                    selection: probe.flags.billboardScrim,
+                    options: FixedFocusBillboardScrim.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
+                ) { raw in
+                    probe.flags.billboardScrim = raw
+                }
+                CueDropdown(
+                    title: "Billboard chips",
+                    subtitle: "Billboard and Details: the status badge and ratings right under the logo, or last, under the tagline.",
+                    icon: "rectangle.stack",
+                    selection: probe.flags.billboardChips,
+                    options: [("first", "Under the logo"), ("last", "Under the tagline")]
+                        .map { CueDropdownOption($0.0, $0.1) }
+                ) { raw in
+                    probe.flags.billboardChips = raw
+                }
+                CueDropdown(
+                    title: "Details: blurred picture, brightness cap",
+                    subtitle: "Below the billboard: the blurred picture no brighter than this — its bright parts pulled down softly, dark parts untouched, so text reads on any picture (it replaces the picture dim below while on). Applies to the next title.",
+                    icon: "sun.max.trianglebadge.exclamationmark",
+                    selection: String(probe.flags.detailsBlurCap),
+                    options: [(0.0, "Off"), (0.55, "55 %"), (0.45, "45 %"), (0.35, "35 %"), (0.25, "25 %")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.detailsBlurCap = v }
+                }
+                PerfToggleRow(
                     icon: "paintpalette",
                     title: "Poster rims",
                     subtitle: "Each poster gets a subtle rim in its own colour (pre-rendered; switch tabs to refresh).",
@@ -353,7 +404,7 @@ struct RenderLabSettings: View {
                     subtitle: "Title colour: how long you rest on a title before the background changes.",
                     icon: "timer",
                     selection: String(probe.flags.tintDelay),
-                    options: [0.08, 0.12, 0.18, 0.25].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                    options: [0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.18, 0.25].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
                 ) { raw in
                     if let v = Double(raw) { probe.flags.tintDelay = v }
                 }
@@ -362,9 +413,48 @@ struct RenderLabSettings: View {
                     subtitle: "Title colour: how long the change of colour takes.",
                     icon: "circle.lefthalf.filled",
                     selection: String(probe.flags.tintFade),
-                    options: [0.2, 0.25, 0.3, 0.4, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                    options: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
                 ) { raw in
                     if let v = Double(raw) { probe.flags.tintFade = v }
+                }
+                PerfToggleRow(
+                    icon: "arrow.left.and.right.circle",
+                    title: "Tint: move with focus",
+                    subtitle: "The background's colours change on the same press as the focus, on the same curve and in the same time (Motion: Left / Right), the next cards' colours ready beforehand. Off: after the tint delay, over the tint fade.",
+                    isOn: Binding(get: { probe.flags.tintFollowsFocus }, set: { probe.flags.tintFollowsFocus = $0 })
+                )
+                PerfToggleRow(
+                    icon: "hare",
+                    title: "Tint: calm while scrolling fast",
+                    subtitle: "With move with focus: presses in quick succession are a burst — the colours change only now and then, over a calm blend, skipping the cards you pass; on landing, the focus spring again.",
+                    isOn: Binding(get: { probe.flags.tintBurstCalm }, set: { probe.flags.tintBurstCalm = $0 })
+                )
+                CueDropdown(
+                    title: "Tint burst: press gap",
+                    subtitle: "Presses closer together than this count as fast scrolling.",
+                    icon: "timer",
+                    selection: String(probe.flags.tintBurstGap),
+                    options: [0.2, 0.25, 0.3, 0.4, 0.5].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintBurstGap = v }
+                }
+                CueDropdown(
+                    title: "Tint burst: change every",
+                    subtitle: "While scrolling fast: at most one colour change this often.",
+                    icon: "metronome",
+                    selection: String(probe.flags.tintBurstEvery),
+                    options: [0.2, 0.3, 0.4, 0.6, 0.8].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintBurstEvery = v }
+                }
+                CueDropdown(
+                    title: "Tint burst: blend",
+                    subtitle: "While scrolling fast: how long each colour change blends (ease-in-out).",
+                    icon: "wave.3.right",
+                    selection: String(probe.flags.tintBurstBlend),
+                    options: [0.3, 0.4, 0.5, 0.7, 1.0].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.tintBurstBlend = v }
                 }
                 CueDropdown(
                     title: "Tint strength",
@@ -384,6 +474,42 @@ struct RenderLabSettings: View {
                 ) { raw in
                     probe.flags.tintMode = raw
                 }
+                CueDropdown(
+                    title: "Colour layout: grid",
+                    subtitle: "Picture's colour layout: how many parts of the picture give their own colour — more: closer to the picture.",
+                    icon: "square.grid.3x3",
+                    selection: probe.flags.layoutGrid,
+                    options: [("2x2", "2 × 2"), ("3x3", "3 × 3"), ("4x3", "4 × 3"), ("5x3", "5 × 3")]
+                        .map { CueDropdownOption($0.0, $0.1) }
+                ) { raw in
+                    probe.flags.layoutGrid = raw
+                }
+                CueDropdown(
+                    title: "Colour layout: saturation",
+                    subtitle: "Picture's colour layout: how full the colours are.",
+                    icon: "drop",
+                    selection: String(probe.flags.layoutSaturation),
+                    options: [(1.0, "× 1.0"), (1.1, "× 1.1"), (1.25, "× 1.25"), (1.4, "× 1.4")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.layoutSaturation = v }
+                }
+                CueDropdown(
+                    title: "Colour layout: light and dark",
+                    subtitle: "Picture's colour layout: how much of the picture's own light and dark parts is kept. Off: every part equally bright.",
+                    icon: "circle.righthalf.filled",
+                    selection: String(probe.flags.layoutLightness),
+                    options: [(0.0, "Off"), (0.25, "25 %"), (0.5, "50 %"), (0.75, "75 %")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.layoutLightness = v }
+                }
+                PerfToggleRow(
+                    icon: "circle.lefthalf.filled",
+                    title: "Tint: always two colours",
+                    subtitle: "Two colours: always a second one — another colour of the picture, else the neighbouring one, else one made from the main colour. Off: only when the picture clearly has a second colour.",
+                    isOn: Binding(get: { probe.flags.tintAlwaysTwo }, set: { probe.flags.tintAlwaysTwo = $0 })
+                )
                 CueDropdown(
                     title: "Tint brightness",
                     subtitle: "Title colour: how bright the colour is before it is laid over the dark base.",
@@ -498,21 +624,38 @@ struct RenderLabSettings: View {
                     if let v = Double(raw) { probe.flags.homeLeftFade = v }
                 }
                 CueDropdown(
+                    title: "Details: buttons focus speed",
+                    subtitle: "How fast Play and the round buttons light up and grow when focused (spring, no bounce).",
+                    icon: "hand.tap",
+                    selection: String(probe.flags.buttonFocusTime),
+                    options: [(0.08, "0.08 s"), (0.1, "0.10 s"), (0.12, "0.12 s"), (0.15, "0.15 s"),
+                              (0.2, "0.20 s"), (0.0, "As Motion: Focus")]
+                        .map { CueDropdownOption(String($0.0), $0.1) }
+                ) { raw in
+                    if let v = Double(raw) { probe.flags.buttonFocusTime = v }
+                }
+                PerfToggleRow(
+                    icon: "circle.dashed",
+                    title: "Details: vignette below",
+                    subtitle: "Below the billboard: the rows' vignette (corners and edges a little darker) over the blurred picture.",
+                    isOn: Binding(get: { probe.flags.detailsVignetteBelow }, set: { probe.flags.detailsVignetteBelow = $0 })
+                )
+                CueDropdown(
                     title: "Details: picture blur below",
                     subtitle: "How much the picture blurs on Episodes and More — and Home's \"Artwork, blurred\" background (a still, made once).",
                     icon: "drop.halffull",
                     selection: String(probe.flags.detailsPictureBlur),
-                    options: [(0.0, "Off"), (6.0, "Light"), (12.0, "Medium"), (20.0, "Strong"), (32.0, "Very strong")]
+                    options: [(0.0, "Off"), (6.0, "Light"), (9.0, "Light–medium"), (12.0, "Medium"), (20.0, "Strong"), (32.0, "Very strong")]
                         .map { CueDropdownOption(String($0.0), $0.1) }
                 ) { raw in
                     if let v = Double(raw) { probe.flags.detailsPictureBlur = v }
                 }
                 CueDropdown(
                     title: "Focus outline",
-                    subtitle: "The focused box's outline: the top bar's light (brightest top and bottom), or plain white.",
+                    subtitle: "Every focused card's outline, fixed box and moving focus alike.",
                     icon: "square.dashed",
-                    selection: probe.flags.focusOutline,
-                    options: [CueDropdownOption("light", "Top bar's light"), CueDropdownOption("white", "White")]
+                    selection: probe.flags.focusOutline == "strong" ? "strong" : "soft",
+                    options: [CueDropdownOption("strong", "4 pt, 85 %"), CueDropdownOption("soft", "3 pt, 75 %")]
                 ) { raw in
                     probe.flags.focusOutline = raw
                 }
@@ -541,6 +684,12 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.detailsOnRows }, set: { probe.flags.detailsOnRows = $0 })
                 )
                 PerfToggleRow(
+                    icon: "rectangle.stack",
+                    title: "Home: billboard like Details",
+                    subtitle: "Down from the billboard as on Details: one shorter move, the dots end beside the first row's name, the picture stays, blurs and gives way to the colours. Off: the picture scrolls away whole.",
+                    isOn: Binding(get: { probe.flags.homeBillboardRigid }, set: { probe.flags.homeBillboardRigid = $0 })
+                )
+                PerfToggleRow(
                     icon: "text.justify",
                     title: "Summary: justified",
                     subtitle: "Billboard and Details: the summary's lines filled to the full width (word gaps stretched, long words hyphenated). Off: ragged right.",
@@ -555,15 +704,6 @@ struct RenderLabSettings: View {
                         .map { CueDropdownOption(String($0.0), $0.1) }
                 ) { raw in
                     if let v = Double(raw) { probe.flags.billboardBottomFade = v }
-                }
-                CueDropdown(
-                    title: "Billboard scrim",
-                    subtitle: "What darkens the billboard's artwork behind the text: the whole left and bottom, or only around the text — in black or in the title's own colour.",
-                    icon: "text.below.photo",
-                    selection: probe.flags.billboardScrim,
-                    options: FixedFocusBillboardScrim.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.billboardScrim = raw
                 }
                 CueDropdown(
                     title: "Previous poster",

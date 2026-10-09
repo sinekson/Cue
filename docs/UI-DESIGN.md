@@ -232,6 +232,85 @@ curves or timings, the tokens win.
   it, not scaled with the focused name); shown only while the row has
   focus. Tried: under the captions (far from the name, crowded the next
   row's peek); beside the name on its line (busy next to the ‹ ›).
+- **Vertical curve: SYSTEM SPRING** (decided 2026-10-06, the default;
+  Render Lab → vertical curve): UIKit's duration + bounce 0 spring
+  (`UIView.animate(springDuration:bounce:)`; SwiftUI `.spring(duration:
+  bounce: 0)`) — reacts at once, lands smoothly, and a press during a move
+  carries its speed on. Ease-in-out (slow start, read as lag on a TV) and
+  a fast-then-long-settle cubic (0.2/0.8/0.2/1) were compared on the TV.
+  Measured on the sim, share of Details' 797 pt scroll done at
+  0.1 / 0.2 / 0.3 / 0.45 s: ease-in-out 3/17/44/85 %, settle 38/80/93/99 %,
+  system spring 13/50/77/94 %. Home and Details share it; Details'
+  backdrop blur / dim follows it too; the next row's name lift and size
+  follow the row's spring, sampled (`springProgress`). Left/Right keep
+  their own curve (ease-in-out).
+- **Less white, lighter billboard — TRYING** (2026-10-06, Render Lab):
+  Billboard scrim + "Bottom-left corner (soft)" and "Bottom only (soft)"
+  (faint, only where the text is; the billboard text gets a soft shadow
+  with them — `FixedFocusBillboardText.faintShade`); Text levels (row
+  names 90 %, facts / secondary lines 55 % — `FixedFocusText`); Focus
+  outline + "Soft, 3 pt 70 %" and "Faint, 2 pt 50 %" (`FixedFocusRing`).
+  Per-picture boost of the shade (2026-10-07, `StageArt.boost`): the
+  corner / bottom / black + title colour scrims scale 0.7–1.5× with the
+  luminance of the picture's left 45 % (`SpotlightTint.textGround`); the
+  corner's centre moved up to 82 % so it covers the kicker too. Details'
+  own `BillboardShade()` is not boosted yet.
+- **Black, smooth — TRYING** (2026-10-07, Render Lab → Billboard scrim,
+  first option): the stage scrim's bands (left, bottom, top — darkening BY
+  BAND: around the text alone looked patchy), each one smooth curve
+  (`BillboardShade.smoothStops`, monotone cubic, 48 stops, level ends).
+  Edges a little lighter (left 70 % for 80, bottom 72 for 85, top 45 for
+  50), darker towards the info block (~50 % at the column's right edge for
+  ~25); corner ~92 % for ~97. No per-picture boost, no text shadow. Tried
+  and dropped the same day: a soft area fitted around the text plus a
+  highlight cap baked into the picture (patchy, and the cap greyed pale
+  skies).
+- **Details = Home's billboard** (decided 2026-10-07): the same text block
+  (no summary — the tagline line; no reason line; the buttons below the
+  chips), the same rest spot for the first row's name ("Season 1" exactly
+  where "Continue Watching" is), the same scroll distances (the text and
+  buttons go up with the billboard). The picture STAYS behind the rows,
+  blurred and dimmed (tried: Home's way — the picture going up, the rows on
+  the title's colour layout; the blur looked better on Details).
+- **Top peek = bottom gap** (2026-10-06, `aboveVisible`): the row above
+  ends as far above the focused row's name as the next row's name is
+  below the box's info (62 pt) — its cards show to y 120 (was the top
+  bar's centre line, 70), on every row and the billboard (its travel and
+  dots follow). A collection is placed by its panel's BORDERS: the top
+  border the peek gap below the peek above, and the next row's name the
+  same gap below the bottom border (that row rises — `shortBy`).
+- **Left/Right during an opening: first land, then step** (decided
+  2026-10-06): a Left/Right while Up/Down into a fixed-box row is still
+  moving is HELD — the card beside never takes focus mid-move (it grew in
+  both ways while moving, forever on repeated presses). The opening is
+  hurried to its end (0.12 s from where it is, `hurryOpening`: every
+  running animation in the rows replaced by a short one from what's on
+  screen to its end — re-animating to the same target didn't retarget the
+  spring, and the step waited ~0.45 s for it; the opening's own
+  completion is then ignored, `hurriedMoves`), the box
+  takes the row (`handOverToBox`), then the held presses run as normal
+  steps, one after another (`pendingSteps`, `runPendingStep`). A press is
+  counted once, when its move fails (`observeHeldSteps` — tvOS asks
+  `shouldUpdateFocus` several times per press); the step goes through the
+  controller's preferred focus (a request straight to a card in a strip
+  is ignored). Tried: the cells carrying the step during the opening.
+- **Home billboard ⇄ rows — TRYING** (2026-10-06, Render Lab → Home:
+  billboard like Details, on by default): one move on one spring, but
+  each part its own distance (as the Apple TV app does): the billboard
+  (picture, text, dots) goes up until its HARD edge is at the top bar's
+  middle (`rigidBillboardTravel` = 1080 − `aboveVisible` — the usual peek of
+  the row above); the first row comes from just below the
+  screen's edge (`rigidRest`: only the sliver tvOS needs on screen, so
+  the edge is where cards appear — no line on the picture) ≈ 834 pt;
+  "Continue Watching ⌄" from its billboard spot (`rigidNameY` =
+  `nextNameY`) ≈ 796 pt — its gap to the cards closes. The dots sit lower
+  on the billboard (centred 35 pt from the edge) so they end in the peek.
+  The picture is the controller's own layer (`pinnedBillboardPicture` +
+  travel: it moves, no blur), under the billboard text (hosted by the
+  rows, `billboardOverlayBelowRows`), under the rows. Tried: the picture
+  staying, blurring and fading to the colours, with the row at the dots'
+  line (cards appeared at a line 40 pt above the edge, on the picture).
+  Off: the old whole-screen scroll.
 - **Season control** (Details, decided 2026-10-05; tabs and the white pill
   were tried and dropped): the episode row's OWN NAME, in the engine
   (`titleControlRowIDs`) — ‹ in the margin, › after the name, faint; no
@@ -285,11 +364,28 @@ curves or timings, the tokens win.
   episode's title (prominent), then the synopsis (2 lines) — no meta line:
   the runtime is in the card, past air dates are dropped, and no rating
   (it hints at the "big" episodes). No number/title or corner badges on the cards.
-- **Billboard dots**: one per title, each at a fixed spot; the current
-  one is large and white, and changing title it shrinks back as the next
-  grows, in place — the new one swells with a little overshoot,
-  arrives stretched the way you paged and springs round. Bottom right, on the "▾" hint's line — the
-  navigation cues together (hint: Down, dots: Left/Right).
+- **Billboard position** (2026-10-08): round 12 pt dots in a small glass
+  capsule (the top bar's glass, 16 pt around them), the current one a
+  36 pt pill — filling from its left end while the billboard pages by
+  itself (the iOS page control's timer look). Behind you 62 %, ahead 30 %.
+  Changing title the old pill shrinks back as the new one widens, in place,
+  on the billboard's Left/Right curve and time. Bottom right, on the "▾"
+  hint's line (kept there: the calm corner, off the picture's subject, and
+  the rows' peek is built around it). (Tried: segments in the glass capsule
+  — pills in a pill; segments alone; circles in the map's levels; a
+  page-control pill; 14 pt dots with a gliding 20 pt marker.)
+- **Billboard pages by itself** (2026-10-08, Settings → Appearance →
+  Billboard, on by default): resting on the billboard, the next title after
+  5 s (`BillboardAutoPage`) — the current pill fills from its left end
+  over that time (linear: a clock). It STOPS at the last title (no wrap;
+  the last pill stays solid) and is DONE for that visit — reached by itself
+  or by pressing, going back Left doesn't start it again; opening Home
+  again, the app coming back or new billboard titles do. Presses don't
+  wrap either: the end nudges, as every row's.
+  Any press, and every arrival back on the billboard, starts it over; off
+  the billboard (rows, top bar, Details, a hold menu, the app in the
+  background) it waits — it never takes focus from elsewhere. It pages
+  through the rows engine as a press would (`FixedFocusRowsCommand.select`).
 - **Meta line** (one builder, `TitleBlock.metaSegments`): Type • ONE genre
   (skip "Animation"/"Anime" if another exists) • Years ("2021–Present") •
   runtime (movies) / Seasons, or Episodes for a single season • ★ rating

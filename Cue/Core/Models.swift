@@ -636,10 +636,27 @@ enum ReleaseDateParser {
     }()
     /// Full ISO 8601 (with or without fractional seconds), else bare date.
     static func parse(_ released: String) -> Date? {
-        if let d = isoFractional.date(from: released) { return d }
-        if let d = iso.date(from: released) { return d }
+        if let d = isoFull(released) { return d }
         return ymdGMT.date(from: String(released.prefix(10)))
     }
+
+    /// Full ISO 8601 only (with or without fractional seconds) — each string
+    /// parsed ONCE, then remembered: ISO parsing is slow (ICU), and the
+    /// episode list's dates were parsed again on every redraw (the Details
+    /// buttons' Play target walked every episode on every focus move).
+    static func isoFull(_ released: String) -> Date? {
+        isoLock.lock()
+        if let hit = isoCache[released] { isoLock.unlock(); return hit }
+        isoLock.unlock()
+        let date = isoFractional.date(from: released) ?? iso.date(from: released)
+        isoLock.lock()
+        if isoCache.count > 20_000 { isoCache.removeAll() }
+        isoCache[released] = .some(date)
+        isoLock.unlock()
+        return date
+    }
+    private static let isoLock = NSLock()
+    nonisolated(unsafe) private static var isoCache: [String: Date?] = [:]
 }
 
 struct MetaVideo: Codable, Identifiable, Hashable {
@@ -704,8 +721,7 @@ struct MetaVideo: Codable, Identifiable, Hashable {
 
     var hasAired: Bool {
         guard let released else { return true }
-        if let date = ReleaseDateParser.isoFractional.date(from: released) { return date <= Date() }
-        if let date = ReleaseDateParser.iso.date(from: released) { return date <= Date() }
+        if let date = ReleaseDateParser.isoFull(released) { return date <= Date() }
         return true
     }
 
@@ -734,8 +750,7 @@ struct MetaVideo: Codable, Identifiable, Hashable {
     /// Air date formatted for display ("Jun 25, 2021"), or nil if unknown.
     var airedText: String? {
         guard let released, !released.isEmpty else { return nil }
-        var date = ReleaseDateParser.isoFractional.date(from: released)
-        if date == nil { date = ReleaseDateParser.iso.date(from: released) }
+        var date = ReleaseDateParser.isoFull(released)
         if date == nil {
             // Bare "yyyy-MM-dd" — local zone, so the shown day matches what
             // the addon wrote.

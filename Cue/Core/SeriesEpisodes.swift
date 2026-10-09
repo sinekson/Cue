@@ -15,10 +15,15 @@ enum SeriesEpisodes {
     /// a series from a catalog-only add-on can come back from the first with
     /// a name and NO episodes. Capped at four — a dozen meta add-ons shouldn't
     /// mean a dozen serial round trips on a title none of them can serve.
-    static func fullMeta(for item: MetaItem, addonManager: AddonManager) async -> MetaItem {
+    /// `revalidateAfter`: what's on disk is still returned at once, but
+    /// older than this it's asked again in the background (Details of an
+    /// airing show — `StremioAPI.meta`).
+    static func fullMeta(for item: MetaItem, addonManager: AddonManager,
+                         revalidateAfter: TimeInterval? = nil) async -> MetaItem {
         var best: MetaItem?
         for addon in addonManager.metaAddons(for: item.type, id: item.id).prefix(4) {
-            guard let full = try? await StremioAPI.meta(addon: addon, type: item.type, id: item.id)
+            guard let full = try? await StremioAPI.meta(addon: addon, type: item.type, id: item.id,
+                                                        revalidateAfter: revalidateAfter)
             else { continue }
             if best == nil { best = full }
             // A movie has nothing more to find; a series is only done when it

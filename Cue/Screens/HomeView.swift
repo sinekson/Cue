@@ -860,6 +860,10 @@ struct HomeView: View {
         }
         .onAppear {
             isVisible = true
+            // The background queue (TitlePreloader): Home's stores.
+            TitlePreloader.shared.context = .init(
+                addonManager: addonManager, mdb: mdblist.settings, tmdb: tmdbSettings.settings,
+                progress: progressStore, watched: watched)
         }
         .onDisappear {
             isVisible = false
@@ -1438,8 +1442,21 @@ struct HomeUIKitView: View {
     @State private var tintDeep: Color?
     /// The "Artwork, blurred" background: the focused title's backdrop.
     @State private var picture: FixedFocusPicture?
+    /// When the focus last moved and the colours last began to change
+    /// (Render Lab → Tint: calm while scrolling fast).
+    @State private var tintPace = TintPace()
     /// Focus is on the billboard: which of its titles (nil: in the rows).
     @State private var billboard: FixedFocusBillboardPosition?
+    /// The billboard paging by itself: the next title, as a press would.
+    @State private var billboardCommand: FixedFocusRowsCommand?
+    @AppStorage(BillboardAutoPage.key) private var autoPage = true
+    /// Arrivals on the billboard (each starts the paging clock over).
+    @State private var autoPageVisit = 0
+    /// The last title has been reached on this visit to Home: paging by
+    /// itself is done (going back Left doesn't start it again). Reset when
+    /// Home is opened again, the app comes back, or the titles change.
+    @State private var autoPageDone = false
+    @Environment(\.scenePhase) private var homeScenePhase
     /// How far below the billboard focus is (1: the first row below, whose
     /// strip of the billboard stays at the top).
     @State private var depth = 0
@@ -1453,9 +1470,10 @@ struct HomeUIKitView: View {
     @State private var tintScroll = false
     /// Details (opened from the billboard) is taking / has taken over: the
     /// billboard's own cues (hint, dots) are out.
-    @State private var swappedToDetail = false
+    /// Details is up over Home (the billboard doesn't page behind it).
+    @ObservedObject private var detailsOpen = DetailsOpen.shared
     /// …and its picture has stepped closer (see `StagePictureView`).
-    @State private var billboardStepIn = false
+    @EnvironmentObject private var theme: ThemeManager
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
@@ -1463,6 +1481,8 @@ struct HomeUIKitView: View {
 
     /// The way the billboard was paged (+1 right, −1 left).
     @State private var billboardDirection: CGFloat = 1
+    /// The billboard's titles' taglines (TMDB), as they come.
+    @State var billboardTaglines: [String: String] = [:]
     /// The dots' last state (so they fade out unchanged).
     @State private var lastBillboard: FixedFocusBillboardPosition?
 
@@ -1473,12 +1493,12 @@ struct HomeUIKitView: View {
     }
 
     /// A choice in Continue Watching's hold menu.
-    private func act(_ action: ContinueMenuAction, on entry: WatchProgress, source: TitleMorphSource?) {
+    private func act(_ action: ContinueMenuAction, on entry: WatchProgress) {
         switch action {
         case .details:
             let title = ContinueActions.title(entry)
-            if let push = onSelectFeatured, let source {
-                DetailWindow.open(title, from: source, settings: mdblist.settings, push: push)
+            if let push = onSelectFeatured {
+                DetailTransition.shared.open(title) { push(title) }
             } else {
                 onSelect(title)
             }
@@ -1500,7 +1520,7 @@ struct HomeUIKitView: View {
                 ATVBackground()
             }
             FixedFocusRows(rows: rows, featuredRowID: featuredRowID, continueRowID: continueRowID,
-                           active: active, billboardStepIn: billboardStepIn,
+                           active: active,
                            progress: progress,
                            panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
                            destinationRowIDs: Set(rows.map(\.id).filter {
@@ -1513,22 +1533,43 @@ struct HomeUIKitView: View {
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,
-                           // A title's card: Details through a window from it.
-                           onOpenWindow: onSelectFeatured.map { push in
-                               { [mdblist] item, source in
-                                   DetailWindow.open(item, from: source, settings: mdblist.settings, push: push)
-                               }
+                           // A title's card: into Details (`DetailTransition`).
+                           onOpenDetails: onSelectFeatured.map { push in
+                               { item in DetailTransition.shared.open(item) { push(item) } }
                            },
-                           onContinueMenu: { act($0, on: $1, source: $2) },
+                           onContinueMenu: { act($0, on: $1) },
                            titleMenu: { item, rowID in
                                TitleMenu.shared.entries(for: item,
                                                         in: rowID == HomeView.libraryRowID ? .library : .standard)
                            },
                            onDepth: { depth = $0 },
-                           onFocusArt: { focusedArt = $0 }) { item, position in
+                           onFocusArt: { focusedArt = $0 },
+                           // The billboard paging by itself (Settings →
+                           // Appearance → Billboard pages by itself).
+                           command: billboardCommand,
+                           // Render Lab → Home: billboard like Details.
+                           // The first row waits just below the screen's edge
+                           // (the sliver tvOS needs), its name on the billboard;
+                           // the billboard goes up until its hard edge is at the
+                           // top bar's middle — the usual peek, the dots in it.
+                           rigidRest: rigidBillboard ? Self.rigidRowRest : nil,
+                           rigidNameY: rigidBillboard ? FixedFocusRowsLayout.nextNameY : nil,
+                           billboardOverlay: rigidBillboard ? billboardOverlay : nil,
+                           billboardText: textOnOwnHost ? billboardTextOverlay : nil,
+                           billboardTextKey: billboardItem?.id,
+                           billboardOverlayBelowRows: true,
+                           // The picture under the text: the controller's own,
+                           // moved with the billboard's distance.
+                           pinnedBillboardPicture: rigidBillboard,
+                           rigidBillboardTravel: rigidBillboard ? Self.rigidBillboardTravel : nil) { item, position in
                 // Between the billboard and the rows: the colours shift
                 // gradually THROUGH the scroll (see `tintKey`'s task).
                 if (position == nil) != (billboard == nil) { tintScroll = true }
+                // Every arrival on the billboard (back from the top bar, on
+                // the same title too) starts its paging clock over.
+                if position != nil { autoPageVisit &+= 1 }
+                // At the last title: done for this visit (see `autoPageDone`).
+                if let position, position.index == position.count - 1 { autoPageDone = true }
                 focused = item
                 if let position {
                     // Left/Right on the billboard: its content DRIFTS the way
@@ -1541,7 +1582,10 @@ struct HomeUIKitView: View {
                     // most), so it drifts in with the text instead of
                     // appearing in place a beat later.
                     Task { @MainActor in
-                        if let logo = item.logo {
+                        // (Scroll: no wait — the text goes with its picture,
+                        // which starts at once; the neighbours' logos are
+                        // decoded ahead.)
+                        if let logo = item.logo, probe.flags.billboardChange != "scroll" {
                             await withTaskGroup(of: Void.self) { group in
                                 group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
                                 group.addTask { try? await Task.sleep(for: .milliseconds(250)) }
@@ -1549,7 +1593,7 @@ struct HomeUIKitView: View {
                                 group.cancelAll()
                             }
                         }
-                        withAnimation(.easeInOut(duration: Motion.durations.move)) { billboardItem = item }
+                        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)) { billboardItem = item }
                         warmNeighbourLogos(around: position.index)
                     }
                 }
@@ -1574,8 +1618,37 @@ struct HomeUIKitView: View {
             // scroll. Otherwise after a brief rest, with the usual fade.
             let scrolling = tintScroll
             tintScroll = false
-            let fade = scrolling ? FixedFocusMotion.billboardScroll : probe.flags.tintFade
-            if !scrolling { try? await Task.sleep(for: .seconds(probe.flags.tintDelay)) }
+            // Render Lab → Tint: move with focus — no rest, the focus move's
+            // curve and time.
+            var follows = probe.flags.tintFollowsFocus && !scrolling
+            var fade = scrolling ? FixedFocusMotion.billboardScroll
+                : follows ? Motion.durations.move : probe.flags.tintFade
+            if !scrolling && !follows { try? await Task.sleep(for: .seconds(probe.flags.tintDelay)) }
+            // FAST SCROLLING (Render Lab → Tint: calm while scrolling fast):
+            // a press soon after the last is part of a burst. Then the colours
+            // change at most every `tintBurstEvery` (the cards in between are
+            // skipped — a new press cancels this wait), over a calm blend; once
+            // no press has come for a moment, it has landed: the spring again.
+            if follows, probe.flags.tintBurstCalm {
+                let flags = probe.flags
+                let now = Date()
+                let gap = now.timeIntervalSince(tintPace.lastPress)
+                tintPace.lastPress = now
+                if gap < flags.tintBurstGap {
+                    let quiet = 0.15
+                    let due = min(tintPace.lastChange.addingTimeInterval(flags.tintBurstEvery),
+                                  now.addingTimeInterval(quiet))
+                    let wait = due.timeIntervalSinceNow
+                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                    guard !Task.isCancelled else { return }
+                    let landed = Date().timeIntervalSince(now) >= quiet - 0.01
+                    if !landed {
+                        follows = false
+                        fade = flags.tintBurstBlend
+                    }
+                }
+            }
+            let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
             if style == .blurredArtwork {
                 // The title's backdrop, blurred (a still, made once — the
                 // Detail page's Episodes background), crossfading.
@@ -1587,14 +1660,26 @@ struct HomeUIKitView: View {
                 }
                 return
             }
-            guard !Task.isCancelled,
-                  let colors = await FixedFocusTint.colors(for: url, flags: probe.flags),
-                  !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: fade)) {
+            // Picture's colour layout: the background is the picture's own
+            // colours where they sit (`FixedFocusTint.layout`) — made while
+            // the colours are found, not after.
+            let flags = probe.flags
+            let wantsLayout = FixedFocusTint.Mode(rawValue: flags.tintMode) == .layout
+            async let layoutImage = wantsLayout ? FixedFocusTint.layout(for: url, flags: flags) : nil
+            async let found = FixedFocusTint.colors(for: url, flags: flags)
+            let (layout, colorsFound) = await (layoutImage, found)
+            guard !Task.isCancelled, let colors = colorsFound else { return }
+            tintPace.lastChange = Date()
+            withAnimation(animation) {
                 tint = colors.first
                 tintSecond = colors.second
                 tintGlow = colors.glow
                 tintDeep = colors.deep
+            }
+            if let layout {
+                // Crossfaded by its own view (`LayoutPictureView`), from what
+                // is on screen at that moment.
+                picture = FixedFocusPicture(key: item.id, image: layout, fade: fade, follows: follows)
             }
         }
     }
@@ -1640,12 +1725,61 @@ struct HomeUIKitView: View {
 /// → Background, Tint …) over a near-black base, the subtle vignette and
 /// the grain.
 /// A blurred backdrop shown as a background (see `BlurredBackdrop`).
+/// The tint's pace (a reference: changing it redraws nothing).
+final class TintPace {
+    var lastPress = Date.distantPast
+    var lastChange = Date.distantPast
+}
+
 struct FixedFocusPicture: Equatable {
     let key: String
     let image: UIImage
+    /// Colour layout: how it crossfades in (`LayoutPictureView`).
+    var fade: Double = 0
+    var follows = false
+}
+
+/// The colour layout, crossfading in UIKit: a Core Animation fade always
+/// starts from what is ON SCREEN, so a press mid-fade carries on from there
+/// (no jump, no dip to the dark base).
+struct LayoutPictureView: UIViewRepresentable {
+    let picture: FixedFocusPicture
+
+    final class Coordinator { var key: String? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleToFill
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        guard context.coordinator.key != picture.key else { return }
+        let first = context.coordinator.key == nil
+        context.coordinator.key = picture.key
+        if !first, picture.fade > 0 {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = picture.fade
+            fade.timingFunction = picture.follows ? FixedFocusTint.focusTiming
+                : CAMediaTimingFunction(name: .easeInEaseOut)
+            view.layer.add(fade, forKey: "layout")
+        }
+        view.image = picture.image
+    }
 }
 
 struct TitleTintBackground: View {
+    /// The rows' vignette: corners and edges a little darker (also over
+    /// Details' blurred picture — Render Lab → Details: vignette below).
+    static var vignette: some View {
+        EllipticalGradient(stops: [.init(color: .clear, location: 0.55),
+                                   .init(color: .black.opacity(0.18), location: 0.8),
+                                   .init(color: .black.opacity(0.45), location: 1)],
+                           center: .center, startRadiusFraction: 0, endRadiusFraction: 0.72)
+    }
+
     @ObservedObject private var probe = RenderProbe.shared
     let tint: Color?
     var second: Color? = nil
@@ -1665,6 +1799,11 @@ struct TitleTintBackground: View {
                     RadialGradient(colors: [palette.glow.opacity(0.55), palette.glow.opacity(0.22), .clear],
                                    center: UnitPoint(x: 0.62, y: 0.45), startRadius: 0, endRadius: 1900)
                 }
+            } else if FixedFocusTint.Mode(rawValue: probe.flags.tintMode) == .layout, let picture {
+                // The picture's colour layout, at the tint's strength.
+                LayoutPictureView(picture: picture)
+                    .frame(width: 1920, height: 1080)
+                    .opacity(probe.flags.tintStrength)
             } else if let tint {
                 // The title's colour, evenly over the whole surface.
                 Rectangle().fill(tint.opacity(probe.flags.tintStrength))
@@ -1690,7 +1829,7 @@ struct TitleTintBackground: View {
                         .transition(.opacity)
                     // As on the Detail page's Episodes (Render Lab → Picture
                     // dim).
-                    Color.black.opacity(probe.flags.detailsPictureDim)
+                    Color.black.opacity(probe.flags.detailsBlurCap > 0 ? 0 : probe.flags.detailsPictureDim)
                 }
             }
             // The billboard's left fade, lighter (Render Lab → Left fade:
@@ -1700,12 +1839,7 @@ struct TitleTintBackground: View {
                     .opacity(probe.flags.homeLeftFade)
             }
             // Corners and edges a little darker (Render Lab → Vignette).
-            if probe.flags.vignette {
-                EllipticalGradient(stops: [.init(color: .clear, location: 0.55),
-                                           .init(color: .black.opacity(0.18), location: 0.8),
-                                           .init(color: .black.opacity(0.45), location: 1)],
-                                   center: .center, startRadiusFraction: 0, endRadiusFraction: 0.72)
-            }
+            if probe.flags.vignette { Self.vignette }
             // Fine static grain (Render Lab → Grain): texture, and it hides
             // the bands a smooth colour blend shows on TVs.
             if probe.flags.grain > 0 {
@@ -1723,9 +1857,11 @@ struct TitleTintBackground: View {
 @MainActor
 enum FixedFocusTint {
     enum Mode: String, CaseIterable {
-        case average, dominant, twoColors
+        case average, dominant, twoColors, areaAccent, layout
         var displayName: String {
             switch self {
+            case .layout: return "Picture's colour layout"
+            case .areaAccent: return "Area + vivid accent"
             case .average: return "Average"
             case .dominant: return "Dominant colour"
             case .twoColors: return "Two colours"
@@ -1743,12 +1879,131 @@ enum FixedFocusTint {
             return (shown(hue: h, saturation: s, flags: flags), nil, glow(hue: h, saturation: s),
                     deep(hue: h, saturation: s))
         }
-        guard let palette = await SpotlightTint.palette(for: url), let first = palette.first else { return nil }
-        let second = mode == .twoColors && palette.count > 1 ? palette[1] : nil
+        let found = mode == .areaAccent || mode == .layout
+            ? await SpotlightTint.areaPalette(for: url)
+            : await SpotlightTint.palette(for: url)
+        guard let palette = found, let first = palette.first else { return nil }
+        let second = mode != .dominant && palette.count > 1 ? palette[1] : nil
         return (shown(hue: first.hue, saturation: first.saturation, flags: flags),
                 second.map { shown(hue: $0.hue, saturation: $0.saturation, flags: flags) },
                 glow(hue: first.hue, saturation: first.saturation),
                 deep(hue: first.hue, saturation: first.saturation))
+    }
+
+    /// "Tint: move with focus": the focus move's own curve and time (Motion
+    /// → Left / Right) — SwiftUI's spring is UIKit's system spring.
+    @MainActor static var focusAnimation: Animation {
+        let duration = Motion.durations.move
+        switch FixedFocusMotion.curve {
+        case .systemSpring, .spring: return .spring(duration: duration, bounce: 0)
+        case .easeOut: return .easeOut(duration: duration)
+        case .easeInOut: return .easeInOut(duration: duration)
+        }
+    }
+
+    /// The same for the colour layout's Core Animation fade (a fade takes a
+    /// curve, not a spring: the no-bounce spring's shape, fast then a long
+    /// settle).
+    @MainActor static var focusTiming: CAMediaTimingFunction {
+        switch FixedFocusMotion.curve {
+        case .systemSpring, .spring: return CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
+        case .easeOut: return CAMediaTimingFunction(name: .easeOut)
+        case .easeInOut: return CAMediaTimingFunction(name: .easeInEaseOut)
+        }
+    }
+
+    /// "Tint: move with focus": the colours (and layout) of the cards you
+    /// may go to next, found beforehand — on the press there is nothing left
+    /// to work out. (Both are cached per picture.)
+    @MainActor static func prepare(_ urls: [String]) {
+        let flags = RenderProbe.shared.flags
+        guard flags.tintFollowsFocus, !urls.isEmpty else { return }
+        let layout = Mode(rawValue: flags.tintMode) == .layout
+        Task { @MainActor in
+            for url in urls {
+                _ = await colors(for: url, flags: flags)
+                if layout { _ = await self.layout(for: url, flags: flags) }
+            }
+        }
+    }
+
+    @MainActor private static var layouts: [String: UIImage] = [:]
+
+    /// "Picture's colour layout": the backdrop as a 3 × 3 grid of its own
+    /// colours — each the average of its part of the picture (sky on top,
+    /// the ground below, …) — every one at the tint's brightness and a
+    /// little fuller (a calm, even, dark ground: no bright patches), blended
+    /// smoothly across the screen. Made once per picture, a small still
+    /// (it is all soft), stretched.
+    @MainActor
+    static func layout(for url: String, flags: RenderProbe.Flags) async -> UIImage? {
+        let key = "\(url)|\(flags.tintBrightness)|\(flags.tintWarmBoost)|\(flags.layoutGrid)"
+            + "|\(flags.layoutSaturation)|\(flags.layoutLightness)"
+        if let hit = layouts[key] { return hit }
+        // Render Lab → Colour layout: grid ("4x3": four across, three down).
+        let size = flags.layoutGrid.split(separator: "x").compactMap { Int($0) }
+        let columns = size.count == 2 ? max(size[0], 2) : 3, rows = size.count == 2 ? max(size[1], 2) : 3
+        guard let cells = await SpotlightTint.grid(for: url, columns: columns, rows: rows) else { return nil }
+        // Light and dark (Render Lab → Colour layout: light and dark): each
+        // cell's brightness against the picture's average, kept by this
+        // share around the tint's brightness (0: all equally bright).
+        func value(_ rgb: (Double, Double, Double)) -> Double { max(rgb.0, rgb.1, rgb.2) }
+        let all = cells.flatMap { $0 }
+        let mean = max(all.map(value).reduce(0, +) / Double(all.count), 0.05)
+        // Saturation (Render Lab → Colour layout: saturation), its ceiling
+        // rising with it.
+        let ceiling = min(0.9, Double(Spotlight.tintMaxSaturation + 0.05) * flags.layoutSaturation / 1.1)
+        // Each cell as the background shows a colour (`shown`).
+        let shownCells: [[(Double, Double, Double)]] = cells.map { row in
+            row.map { rgb in
+                var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+                UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
+                let saturation = min(Double(s * Spotlight.tintSaturationBoost) * flags.layoutSaturation, ceiling)
+                let lift = min(max(1 + flags.layoutLightness * (value(rgb) - mean) / mean, 0.5), 1.6)
+                let ui = UIColor(shown(hue: h, saturation: CGFloat(saturation), flags: flags,
+                                       brightness: min(flags.tintBrightness * lift, 0.9)))
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+                ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+                return (Double(r), Double(g), Double(b))
+            }
+        }
+        let image = await Task.detached(priority: .userInitiated) { meshImage(shownCells) }.value
+        if layouts.count > 60 { layouts.removeAll() }
+        layouts[key] = image
+        return image
+    }
+
+    /// The grid blended smoothly: each cell's colour at its centre, eased
+    /// (smoothstep) between neighbours, flat beyond the outer centres.
+    nonisolated private static func meshImage(_ cells: [[(Double, Double, Double)]]) -> UIImage {
+        // Small: it is all soft gradients (stretched with smoothing).
+        let w = 192, h = 108
+        let rows = cells.count, columns = cells[0].count
+        var pixels = [UInt8](repeating: 255, count: w * h * 4)
+        func ease(_ t: Double) -> Double { t * t * (3 - 2 * t) }
+        for y in 0..<h {
+            let gy = min(max((Double(y) + 0.5) / Double(h) * Double(rows) - 0.5, 0), Double(rows - 1))
+            let y0 = min(Int(gy), rows - 2 < 0 ? 0 : rows - 2), ty = ease(gy - Double(y0))
+            for x in 0..<w {
+                let gx = min(max((Double(x) + 0.5) / Double(w) * Double(columns) - 0.5, 0), Double(columns - 1))
+                let x0 = min(Int(gx), columns - 2 < 0 ? 0 : columns - 2), tx = ease(gx - Double(x0))
+                let c00 = cells[y0][x0], c01 = cells[y0][x0 + 1], c10 = cells[y0 + 1][x0], c11 = cells[y0 + 1][x0 + 1]
+                func mix(_ a: Double, _ b: Double, _ c: Double, _ d: Double) -> UInt8 {
+                    let top = a + (b - a) * tx, bottom = c + (d - c) * tx
+                    return UInt8(min(max((top + (bottom - top) * ty) * 255, 0), 255).rounded())
+                }
+                let i = (y * w + x) * 4
+                pixels[i] = mix(c00.0, c01.0, c10.0, c11.0)
+                pixels[i + 1] = mix(c00.1, c01.1, c10.1, c11.1)
+                pixels[i + 2] = mix(c00.2, c01.2, c10.2, c11.2)
+            }
+        }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                         space: CGColorSpaceCreateDeviceRGB(),
+                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        return UIImage(cgImage: cg)
     }
 
     /// The billboard's scrim: the title's main colour, nearly black — it
@@ -1765,8 +2020,9 @@ enum FixedFocusTint {
     /// The colour as the background shows it: at the set brightness — warm
     /// hues (orange to yellow) brighter and fuller, since a DARK yellow or
     /// orange reads as brown.
-    private static func shown(hue: CGFloat, saturation: CGFloat, flags: RenderProbe.Flags) -> Color {
-        var brightness = flags.tintBrightness
+    private static func shown(hue: CGFloat, saturation: CGFloat, flags: RenderProbe.Flags,
+                              brightness base: Double? = nil) -> Color {
+        var brightness = base ?? flags.tintBrightness
         var saturation = Double(saturation)
         if flags.tintWarmBoost, saturation > 0.1 {
             // Strongest at yellow-orange (~50°), none beyond red and lime.
@@ -1849,9 +2105,88 @@ struct FixedFocusBillboardText: View {
     var reason: BillboardReason? = nil
     /// The ratings row (its room is kept either way).
     let ratings: AnyView?
+    /// HOME'S BILLBOARD: no summary and no name line (the logo is the
+    /// name) — the tagline instead, the logo lower by the room freed; the
+    /// facts and chips where they always are. (Details keeps the summary.)
+    var compact = false
+    var tagline: String? = nil
+    /// Render Lab → Billboard change → Depth + cascade: each part changes
+    /// on its own, one after another (nil: the block changes as one — the
+    /// caller's transition).
+    var cascade: BillboardCascade? = nil
+    /// The logo to show instead of the item's (Details: the one Home
+    /// showed — the record's is often another image).
+    var logo: String? = nil
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     static let logoToSummary: CGFloat = 20
+    /// The status badge, then the ratings (outlined boxes: `chipsGap` of
+    /// extra room next to text).
+    private var chips: some View {
+        HStack(spacing: 10) {
+            ForEach([FixedFocusShowInfo.status(item)].compactMap { $0 }, id: \.self) {
+                TitleBadge(text: $0)
+            }
+            ratings
+        }
+        .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
+    }
+
+    /// Render Lab → Billboard chips: right under the logo (else last).
+    private var chipsFirst: Bool { probe.flags.billboardChips != "last" }
+
+    /// The logo's room (the reason above it).
+    private var logoRoom: some View {
+        Group {
+            if let logo = logo ?? item.logo {
+                // A logo that can't be loaded falls back to the name.
+                RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading,
+                            maxDimension: TitleBlock.logoWidth, showsPlaceholder: false,
+                            fallback: AnyView(nameText))
+                    .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
+                    .frame(width: TitleBlock.logoWidth)
+            } else {
+                nameText
+            }
+        }
+        // (Compact: the logo centred in its room — the room is centred
+        // on the screen.)
+        .frame(height: TitleBlock.logoHeight, alignment: .bottomLeading)
+        // Above the logo's room, at the same spot for every title.
+        .overlay(alignment: .topLeading) {
+            if let reason {
+                BillboardReasonLabel(reason: reason)
+                    .frame(height: 30, alignment: .leading)
+                    // Where it is on screen (the way into Details lifts it
+                    // out of Home's picture as a cut-out) — inside the offset,
+                    // so with it.
+                    .background(GeometryReader { geo in
+                        Color.clear
+                            .onAppear { BillboardReasonFrame.rects[item.id] = geo.frame(in: .global) }
+                            .onChange(of: geo.frame(in: .global)) { _, rect in BillboardReasonFrame.rects[item.id] = rect }
+                    })
+                    .offset(y: -Self.reasonRise)
+            }
+        }
+    }
+
+    /// A part of the block, changing on its own when cascading: the old and
+    /// the new copy overlap in its own slot (a ZStack: the column never
+    /// grows), the `step`-th part a little after the one before.
+    @ViewBuilder
+    private func staged<V: View>(_ part: V, _ step: Int) -> some View {
+        if let cascade {
+            ZStack(alignment: .topLeading) {
+                part.id(cascade.key).transition(cascade.transition(step))
+            }
+        } else {
+            part
+        }
+    }
+
+    /// Extra room above the chips (and the tagline after them): a plain
+    /// line step left ~6 pt between the facts and the chips' boxes.
+    static let chipsGap: CGFloat = 9
     /// The reason sits this far above the logo's room.
     static let reasonRise: CGFloat = 40
     /// How many rating sources show (the first ones, in Settings' order).
@@ -1917,64 +2252,157 @@ struct FixedFocusBillboardText: View {
         }
     }
 
+    /// Compact: the room the summary and the name line took, less the
+    /// tagline's line — the logo moves down by it.
+    /// Compact: the block's BOTTOM (the chips) stands here — it grows up
+    /// with what it has, as the Apple TV app's text sits on its buttons.
+    /// (Where the chips end on Details: room for the buttons right below.)
+    static var compactBottom: CGFloat { buttonsY - 44 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Group {
-                if let logo = item.logo {
-                    // A logo that can't be loaded falls back to the name.
-                    RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading,
-                                maxDimension: TitleBlock.logoWidth, showsPlaceholder: false,
-                                fallback: AnyView(nameText))
-                        .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
-                        .frame(width: TitleBlock.logoWidth)
-                } else {
-                    nameText
-                }
-            }
-            .frame(height: TitleBlock.logoHeight, alignment: .bottomLeading)
-            // Above the logo's room, at the same spot for every title.
-            .overlay(alignment: .topLeading) {
-                if let reason {
-                    BillboardReasonLabel(reason: reason)
-                        .frame(height: 30, alignment: .leading)
-                        .offset(y: -Self.reasonRise)
-                }
-            }
+            staged(logoRoom, 0)
 
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear.frame(height: Self.logoToSummary)
 
-                summary
+                if !compact {
+                    summary
 
-                // As under the fixed box: the name, then the facts.
-                Text(item.name)
-                    .font(.system(size: FixedFocusMetrics.textSize, weight: .regular))
-                    .foregroundStyle(Color.white)
-                    .lineLimit(1)
-                    .frame(height: 30, alignment: .leading)
-                    .padding(.top, FixedFocusMetrics.infoGap)
-                // (Without the rating: the chips below carry it.)
-                Text(FixedFocusShowInfo.factsLine(item, info: info))
-                    .font(.system(size: FixedFocusMetrics.textSize, weight: .regular))
-                    .foregroundStyle(Color.white.opacity(0.62))
-                    .lineLimit(1)
-                    .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
-                    .padding(.top, FixedFocusMetrics.factsOffset - 30)
-
-                // A third line in the same rhythm (its centre one line step
-                // below the facts'): the status badge, then the ratings.
-                HStack(spacing: 10) {
-                    ForEach([FixedFocusShowInfo.status(item)].compactMap { $0 }, id: \.self) {
-                        TitleBadge(text: $0)
-                    }
-                    ratings
+                    // As under the fixed box: the name, then the facts.
+                    Text(item.name)
+                        .font(.system(size: FixedFocusMetrics.textSize, weight: .regular))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(1)
+                        .frame(height: 30, alignment: .leading)
+                        .padding(.top, FixedFocusMetrics.infoGap)
                 }
-                .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
-                .padding(.top, FixedFocusMetrics.factsOffset - 30)
+                // Render Lab → Billboard chips: the status badge and ratings
+                // right under the logo, or last (under the tagline).
+                if compact, chipsFirst { staged(chips, 1) }
+                // THE FACTS — what it is: the relevant line, so the bright one.
+                // (Without the rating: the chips carry it.)
+                staged(Text(FixedFocusShowInfo.factsLine(item, info: info))
+                    .font(.system(size: FixedFocusMetrics.textSize, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .lineLimit(1)
+                    .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading),
+                       compact && chipsFirst ? 2 : 1)
+                    .padding(.top, compact && !chipsFirst ? 0 : compact ? FixedFocusMetrics.factsOffset - 30 + Self.chipsGap
+                             : FixedFocusMetrics.factsOffset - 30)
+                if compact {
+                    // The tagline — the mood, quiet and italic; no tagline:
+                    // the name (ALWAYS a line here: every title's block has
+                    // the same height, nothing moves).
+                    staged(Text(tagline ?? item.name)
+                        .font(.system(size: FixedFocusMetrics.textSize, weight: .regular).italic())
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.tagline))
+                        .lineLimit(1)
+                        .frame(height: 30, alignment: .leading), chipsFirst ? 3 : 2)
+                        .padding(.top, FixedFocusMetrics.factsOffset - 30)
+                    if !chipsFirst { staged(chips, 3).padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap) }
+                } else {
+                    chips.padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap)
+                }
             }
             .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
         }
         .frame(width: Self.width, alignment: .leading)
+        // Faint shades (Render Lab → Billboard scrim): a soft shadow under
+        // all the text, so it reads over bright patches of the picture.
+        .shadow(color: .black.opacity(Self.faintShade ? 0.55 : 0), radius: 14, y: 2)
+    }
+
+    /// The billboard's shade is a faint one (corner / bottom).
+    @MainActor static var faintShade: Bool {
+        let style = FixedFocusBillboardScrim(rawValue: RenderProbe.shared.flags.billboardScrim)
+        return style == .corner || style == .bottom || style == .blackTint
+    }
+}
+
+/// Render Lab → Billboard change → Scroll: the billboard's text as PAGES —
+/// on a new title the new page is put `distance` the way you paged and both
+/// slide over together (the old one out), on the Left/Right curve over
+/// `duration`: the picture's own scroll, so the text rides on it. Started
+/// from inside its own host (a change animated from outside — the page's
+/// `withAnimation`, a transition — doesn't move in the rows' host).
+struct BillboardScrollPager<Page: View>: View {
+    let item: MetaItem
+    let direction: CGFloat
+    let distance: CGFloat
+    let duration: Double
+    @ViewBuilder let page: (MetaItem) -> Page
+
+    /// A page: while it MOVES, its text as it was when the scroll began (a
+    /// part arriving mid-scroll — the tagline, a rating — was put at its
+    /// resting place instead of on the moving page: a ghost); once it has
+    /// landed, live again.
+    private struct Shown: Identifiable {
+        let id = UUID()
+        let item: MetaItem
+        var x: CGFloat
+        var frozen: AnyView?
+    }
+    @State private var shown: [Shown] = []
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(shown) { entry in
+                Group {
+                    if let frozen = entry.frozen { frozen } else { page(entry.item) }
+                }
+                .offset(x: entry.x)
+            }
+        }
+        .onAppear { if shown.isEmpty { shown = [Shown(item: item, x: 0)] } }
+        .onChange(of: item.id) { _, _ in
+            let step = distance * direction
+            var still = Transaction()
+            still.disablesAnimations = true
+            withTransaction(still) {
+                // Every page as it is now, for the move.
+                for k in shown.indices where shown[k].frozen == nil {
+                    shown[k].frozen = AnyView(page(shown[k].item))
+                }
+                shown.append(Shown(item: item, x: step, frozen: AnyView(page(item))))
+            }
+            DispatchQueue.main.async {
+                withAnimation(FixedFocusMotion.horizontalAnimation(duration: duration)) {
+                    for k in shown.indices { shown[k].x -= step }
+                }
+                // Landed: the pages gone off screen dropped, the one in
+                // view live again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.15) {
+                    guard let last = shown.last, abs(last.x) < 1 else { return }
+                    withTransaction(still) {
+                        shown.removeAll { $0.id != last.id && abs($0.x) >= distance - 1 }
+                        if let k = shown.firstIndex(where: { $0.id == last.id }) { shown[k].frozen = nil }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Render Lab → Billboard change → Depth + cascade: the parts of the
+/// billboard's text change one after another (logo, then chips, facts,
+/// tagline — `stagger` apart), each drifting `shift` the way you paged — more
+/// than the picture does (depth: the text near, the picture far).
+struct BillboardCascade {
+    let key: String
+    let direction: CGFloat
+    static let shift: CGFloat = 44
+    static let stagger: Double = 0.035
+
+    @MainActor
+    func transition(_ step: Int) -> AnyTransition {
+        let move = FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)
+        let dx = Self.shift * direction
+        return .asymmetric(
+            insertion: AnyTransition.offset(x: dx).combined(with: .opacity)
+                .animation(move.delay(Double(step) * Self.stagger)),
+            removal: AnyTransition.offset(x: -dx).combined(with: .opacity)
+                .animation(move.delay(Double(step) * Self.stagger * 0.6)))
     }
 }
 
@@ -2031,13 +2459,14 @@ private struct BillboardReasonLabel: View {
                         .frame(minWidth: 30)
                         .frame(height: 30)
                         .padding(.horizontal, 2)
-                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white))
-                    caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white))
+                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.white.opacity(FixedFocusText.primary)))
+                    caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white.opacity(FixedFocusText.primary)))
                 }
             } else {
-                caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white.opacity(0.7))
+                caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                      + Text(reason.detail.map { (separator + $0).uppercased() } ?? "")
-                        .foregroundStyle(Color.white))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary)))
             }
         }
         .lineLimit(1)
@@ -2058,17 +2487,26 @@ private struct BillboardReasonLabel: View {
 
 /// Render Lab → Billboard scrim.
 enum FixedFocusBillboardScrim: String, CaseIterable {
-    case leftFade, black, tinted, column, columnTinted
+    case sun, twoFades, smooth, leftFade, black, tinted, column, columnTinted, corner, bottom, blackTint
 
-    var tinted: Bool { self == .tinted || self == .columnTinted }
+    var tinted: Bool { self == .tinted || self == .columnTinted || self == .blackTint }
+    /// The faint scrims: their strength follows the picture's brightness
+    /// where the text sits (`StageArt.boost`).
+    var adaptive: Bool { self == .corner || self == .bottom || self == .blackTint }
     var column: Bool { self == .column || self == .columnTinted }
     var displayName: String {
         switch self {
-        case .leftFade: return "Left fade (smooth, strong)"
+        case .sun: return "Sun (light from the top right)"
+        case .twoFades: return "Two fades (left + bottom)"
+        case .smooth: return "Black, smooth"
+        case .leftFade: return "Left fade (soft, flat dim)"
         case .black: return "Black (as before)"
         case .tinted: return "Title colour"
         case .column: return "Text column only, black"
         case .columnTinted: return "Text column only, title colour"
+        case .corner: return "Bottom-left corner (soft)"
+        case .bottom: return "Bottom only (soft)"
+        case .blackTint: return "Black + title colour, with text shadow"
         }
     }
 }
@@ -2181,6 +2619,9 @@ struct BillboardShade: View {
     @ObservedObject private var probe = RenderProbe.shared
     /// The title's colour, very dark (the tinted scrims; nil: black).
     var tint: Color? = nil
+    /// How strong the black + title colour scrim is (1: as designed; more on
+    /// a bright picture, less on a dark one — `StageArt.boost`).
+    var boost: Double = 1
 
     var body: some View {
         ZStack {
@@ -2221,11 +2662,54 @@ struct BillboardShade: View {
         let s = StageScrimStyle.self
         if probe.flags.noScrim {
             EmptyView()
+        } else if style == .sun {
+            // SUN: light from the top right corner, darker with distance
+            // from it (`sunImage`).
+            Image(uiImage: Self.sunImage).resizable()
+                .allowsHitTesting(false)
+        } else if style == .twoFades {
+            // TWO FADES: left and bottom, stacked (`twoFadesImage`).
+            Image(uiImage: Self.twoFadesImage).resizable()
+                .allowsHitTesting(false)
+        } else if style == .smooth {
+            // BLACK, SMOOTH: the stage scrim's bands (left, bottom, top),
+            // each one smooth curve (`smoothLeftStops`…).
+            ZStack {
+                LinearGradient(stops: Self.smoothLeftStops, startPoint: .leading, endPoint: .trailing)
+                LinearGradient(stops: Self.smoothBottomStops, startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: Self.smoothTopStops, startPoint: .top, endPoint: .bottom)
+            }
+            .allowsHitTesting(false)
+        } else if style == .corner || style == .bottom {
+            // FAINT, where the text is: the rest of the picture stays clear
+            // (the text's own soft shadow carries it over bright patches).
+            ZStack {
+                if style == .corner {
+                    // Bottom left: under the text column and the hint.
+                    EllipticalGradient(stops: [.init(color: .black.opacity(min(0.72 * boost, 0.95)), location: 0),
+                                               .init(color: .black.opacity(min(0.55 * boost, 0.9)), location: 0.3),
+                                               .init(color: .black.opacity(min(0.25 * boost, 0.6)), location: 0.6),
+                                               .init(color: .black.opacity(0), location: 1)],
+                                       center: UnitPoint(x: 0.05, y: 0.82),
+                                       startRadiusFraction: 0, endRadiusFraction: 0.75)
+                } else {
+                    LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.3),
+                                           .init(color: .black.opacity(min(0.35 * boost, 0.9)), location: 0.6),
+                                           .init(color: .black.opacity(min(0.75 * boost, 0.95)), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                // A little at the top for the navigation.
+                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
+                                       .init(color: .clear, location: s.topReach)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .allowsHitTesting(false)
         } else if style == .leftFade {
             // The left fade (the hint at the bottom left sits on it too; no
-            // bottom fade), and a little at the top for the navigation.
+            // bottom fade) over a flat dim (`softLeftStops`), and a little at
+            // the top for the navigation.
             ZStack {
-                leftFade
+                LinearGradient(stops: Self.softLeftStops, startPoint: .leading, endPoint: .trailing)
                 LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
                                        .init(color: .clear, location: s.topReach)],
                                startPoint: .top, endPoint: .bottom)
@@ -2247,6 +2731,32 @@ struct BillboardShade: View {
                 LinearGradient(stops: [.init(color: color.opacity(0), location: 0.84),
                                        .init(color: color.opacity(0.55), location: 1)],
                                startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
+                                       .init(color: .clear, location: s.topReach)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .allowsHitTesting(false)
+        } else if style == .blackTint {
+            // BLACK + TITLE COLOUR: the stage scrim's shape, part black (the
+            // depth) and part the title's colour (keeps the picture's mood) —
+            // a touch lighter than either alone; the text's soft shadow
+            // (`faintShade`) makes up for it.
+            ZStack {
+                ForEach(0..<2, id: \.self) { layer in
+                    let c = layer == 0 ? Color.black : color
+                    let k = (layer == 0 ? 0.55 : 0.5) * boost
+                    ZStack {
+                        LinearGradient(stops: [.init(color: c.opacity(s.left * k), location: 0),
+                                               .init(color: c.opacity(s.left * k * 0.8), location: s.leftReach * 0.3),
+                                               .init(color: c.opacity(s.left * k * 0.45), location: s.leftReach * 0.6),
+                                               .init(color: c.opacity(0), location: s.leftReach)],
+                                       startPoint: .leading, endPoint: .trailing)
+                        LinearGradient(stops: [.init(color: c.opacity(0), location: s.bottomStart),
+                                               .init(color: c.opacity(s.bottom * k * 0.45), location: (s.bottomStart + 1) / 2),
+                                               .init(color: c.opacity(s.bottom * k), location: 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                    }
+                }
                 LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
                                        .init(color: .clear, location: s.topReach)],
                                startPoint: .top, endPoint: .bottom)
@@ -2294,12 +2804,68 @@ struct BillboardShade: View {
             (columnEnd + (end - columnEnd) * 0.5, 0.33),
             (end, 0),
         ]
-        // Monotone cubic interpolation (Fritsch–Carlson): smooth through
-        // every point, never overshooting; level at the end (a soft landing).
+        return smoothStops(points, levelStart: false)
+    }()
+
+    /// "Left fade" (Render Lab → Billboard scrim): lighter than the rows'
+    /// `billboardLeftStops` (85 % at the edge for 97, ~50 % at the column's
+    /// right edge for 75) and one even ease — level at the edge, steepest
+    /// just past the column, landing softly on a flat 15 % dim that holds
+    /// across the rest of the picture.
+    static let softLeftStops = smoothStops([
+        (0, 0.95),                                      // the screen's edge
+        (0.2, 0.88),                                    // the column's middle
+        (0.4, 0.65),                                    // its right edge
+        (0.58, 0.4),
+        (0.78, 0.15),                                   // the flat dim, from here on
+    ])
+
+    /// "Black, smooth" (Render Lab → Billboard scrim): the stage scrim's
+    /// three bands, each ONE smooth curve. A little lighter than the stage
+    /// scrim at the screen's edges (left 70 % for 80, bottom 72 for 85),
+    /// darker over the info block (at the column's right edge ~50 % for
+    /// ~25) — and the bottom-left corner ~92 % for ~97.
+    static let smoothLeftStops = smoothStops([
+        (0, 0.7),                                       // the screen's edge
+        (0.2, 0.66),                                    // the column's middle
+        (0.36, 0.52),
+        (0.48, 0.28),                                   // past the column
+        (0.64, 0),
+    ])
+    static let smoothBottomStops = smoothStops([
+        (0.4, 0),
+        (0.6, 0.25),
+        (0.75, 0.47),                                   // the info block's foot
+        (0.9, 0.62),
+        (1, 0.72),                                      // the screen's edge
+    ])
+    static let smoothTopStops = smoothStops([
+        (0, 0.45),
+        (0.1, 0.2),
+        (0.24, 0),
+    ])
+
+    /// Black stops along one smooth curve through `points` (share of the
+    /// gradient, darkness) — monotone cubic interpolation (Fritsch–Carlson):
+    /// smooth through every point, never overshooting; level at the ends
+    /// (a soft landing; `levelStart` false: the first slope as it comes).
+    static func smoothStops(_ points: [(x: Double, y: Double)], levelStart: Bool = true) -> [Gradient.Stop] {
+        let darkness = smoothCurve(points, levelStart: levelStart)
+        let start = points[0].x, end = points[points.count - 1].x
+        let steps = 48
+        return (0...steps).map { i in
+            let x = start + (end - start) * Double(i) / Double(steps)
+            return .init(color: .black.opacity(darkness(x)), location: x)
+        }
+    }
+
+    /// The curve itself: darkness at any share (0 before the first point's
+    /// value… held flat outside the points).
+    static func smoothCurve(_ points: [(x: Double, y: Double)], levelStart: Bool = true) -> (Double) -> Double {
         let n = points.count
         let slopes = (0..<n - 1).map { (points[$0 + 1].y - points[$0].y) / (points[$0 + 1].x - points[$0].x) }
         var tangents = (0..<n).map { i -> Double in
-            if i == 0 { return slopes[0] }
+            if i == 0 { return levelStart ? 0 : slopes[0] }
             if i == n - 1 { return 0 }
             return slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2
         }
@@ -2312,18 +2878,100 @@ struct BillboardShade: View {
                 tangents[i + 1] = scale * b * slopes[i]
             }
         }
-        func darkness(_ x: Double) -> Double {
+        let tangentsFixed = tangents
+        return { x in
+            if x <= points[0].x { return points[0].y }
+            if x >= points[n - 1].x { return points[n - 1].y }
             let i = min((0..<n - 1).last { points[$0].x <= x } ?? 0, n - 2)
             let width = points[i + 1].x - points[i].x, t = (x - points[i].x) / width
             let t2 = t * t, t3 = t2 * t
-            return (2 * t3 - 3 * t2 + 1) * points[i].y + (t3 - 2 * t2 + t) * width * tangents[i]
-                + (-2 * t3 + 3 * t2) * points[i + 1].y + (t3 - t2) * width * tangents[i + 1]
+            let y = (2 * t3 - 3 * t2 + 1) * points[i].y + (t3 - 2 * t2 + t) * width * tangentsFixed[i]
+                + (-2 * t3 + 3 * t2) * points[i + 1].y + (t3 - t2) * width * tangentsFixed[i + 1]
+            return min(max(y, 0), 1)
         }
-        let steps = 48
-        return (0...steps).map { i in
-            let x = end * Double(i) / Double(steps)
-            return .init(color: .black.opacity(min(max(darkness(x), 0), 1)), location: x)
+    }
+
+    /// "Two fades" (Render Lab → Billboard scrim): the left and the bottom
+    /// curve below, stacked — the darkening comes out of the bottom-left
+    /// corner. (Tried: the darker of the two at every point.)
+    /// No top band, no vignette. Made once (half size, stretched: all soft).
+    static let twoFadesLeft: [(x: Double, y: Double)] = [
+        (0, 0.8),                                      // the screen's edge
+        (0.05, 0.75),
+        (0.1, 0.70),
+        (0.2, 0.66),                                    // the column's middle
+        (0.36, 0.52),
+        (0.48, 0.28),                                   // past the column
+        (0.64, 0),
+    ]
+    static let twoFadesBottom: [(x: Double, y: Double)] = [
+        (0.4, 0),
+        (0.6, 0.25),
+        (0.75, 0.47),                                   // the info block's foot
+        (0.9, 0.65),
+        (0.95, 0.74),
+        (1, 0.8),                                      // the screen's edge
+    ]
+    /// "Sun" (Render Lab → Billboard scrim): a light at the top right
+    /// corner — the further from it, the darker (one smooth curve). The
+    /// distance in the screen's own proportions (0…1 each way), so the
+    /// edge of the light runs from the top, left of the middle, round to
+    /// the bottom right: the text, the hint and the bottom-left corner in
+    /// the dark, the picture's right half in the light. (share of the
+    /// distance to the far corner, √2 → 1; darkness)
+    static let sunCurve: [(x: Double, y: Double)] = [
+        (0.42, 0.2),                                    // the light: a flat 20 %
+        (0.53, 0.37),                                   // its edge: an even rise,
+        (0.64, 0.58),                                   // steepest here,
+        (0.76, 0.76),                                   // easing off
+        (0.88, 0.87),
+        (1, 0.95),                                      // the bottom-left corner
+    ]
+    static let sunImage: UIImage = {
+        let w = 960, h = 540
+        let curve = smoothCurve(sunCurve)
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                let dx = 1 - (Double(x) + 0.5) / Double(w), dy = (Double(y) + 0.5) / Double(h)
+                let r = (dx * dx + dy * dy).squareRoot() / 2.0.squareRoot()
+                pixels[(y * w + x) * 4 + 3] = UInt8((curve(r) * 255).rounded())
+            }
         }
+        return blackImage(pixels, width: w, height: h)
+    }()
+
+    /// A black shade from its alpha bytes (RGBA, premultiplied).
+    static func blackImage(_ pixels: [UInt8], width w: Int, height h: Int) -> UIImage {
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                         space: CGColorSpaceCreateDeviceRGB(),
+                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        return UIImage(cgImage: cg)
+    }
+
+    static let twoFadesImage: UIImage = {
+        let w = 960, h = 540
+        let left = smoothCurve(twoFadesLeft, levelStart: false)
+        let bottom = smoothCurve(twoFadesBottom)
+        let across = (0..<w).map { left((Double($0) + 0.5) / Double(w)) }
+        let down = (0..<h).map { bottom((Double($0) + 0.5) / Double(h)) }
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                // Black, premultiplied: only the alpha. STACKED (one over
+                // the other): the darkening comes out of the corner.
+                let dark = 1 - (1 - across[x]) * (1 - down[y])
+                pixels[(y * w + x) * 4 + 3] = UInt8((dark * 255).rounded())
+            }
+        }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                         space: CGColorSpaceCreateDeviceRGB(),
+                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        return UIImage(cgImage: cg)
     }()
 
     /// How much black a WHITE picture needs over it for white text of
@@ -2348,6 +2996,28 @@ struct BillboardShade: View {
     }
 }
 
+/// Text levels: a hierarchy, mostly off-white.
+enum FixedFocusText {
+    /// THE BRIGHTEST any text gets: nothing in the UI is pure white (the
+    /// logo, a picture, aside). The focused title, row names, the tagline.
+    static let primary: CGFloat = 0.85
+    static let heading: CGFloat = primary
+    /// Facts and other secondary lines.
+    static let secondary: CGFloat = 0.55
+    /// The billboard's tagline: quieter than the facts.
+    static let tagline: CGFloat = 0.58
+}
+
+/// The focus outline (Render Lab → Focus outline).
+@MainActor
+enum FixedFocusRing {
+    /// "strong" 4 pt 85 %, or "soft" 3 pt 75 % (the default — any older
+    /// stored value means it too).
+    static var strong: Bool { RenderProbe.shared.flags.focusOutline == "strong" }
+    static var width: CGFloat { strong ? 4 : 3 }
+    static var color: UIColor { UIColor.white.withAlphaComponent(strong ? 0.85 : 0.75) }
+}
+
 /// Where focus is on the billboard: title `index` of `count`.
 struct FixedFocusBillboardPosition: Equatable {
     let index: Int
@@ -2360,74 +3030,61 @@ extension HomeUIKitView {
         billboard != nil ? 0 : FixedFocusRowsLayout.billboardScroll(depth: max(depth, 1))
     }
 
+    /// The billboard moves as Details' (Render Lab → Home: billboard like
+    /// Details): its text and dots hosted by the rows, in the rows' move;
+    /// the rest at the first row's name spot — the dots end on its line.
+    var rigidBillboard: Bool { probe.flags.homeBillboardRigid }
+
+    /// The billboard is paging by itself right now: the setting on, focus
+    /// on it (not Details, a menu, or the app in the background).
+    var autoPageRunning: Bool {
+        guard let billboard, !autoPageDone else { return false }
+        // It stops at the last title (no wrap back to the first).
+        return autoPage && billboard.index < billboard.count - 1
+            && homeScenePhase == .active && active && detailsOpen.depth == 0
+    }
+    static var rigidRowRest: CGFloat {
+        1080 - FixedFocusRowsLayout.restingCardsOnScreen - FixedFocusMetrics.titleHeight
+    }
+    static var rigidBillboardTravel: CGFloat { 1080 - FixedFocusMetrics.aboveVisible }
+    /// The dots' centre on the billboard: in the middle of its peek once
+    /// it's up.
+    static var rigidDotsMid: CGFloat { 1080 - FixedFocusMetrics.aboveVisible / 2 }
+
+    /// The billboard's text and dots for the rows to host — their own
+    /// animations (a change made in a `withAnimation` here doesn't carry
+    /// into the rows' host).
+    var billboardOverlay: AnyView {
+        AnyView(billboardContent
+            // (Scroll: the picture's time — they cross the screen together.)
+            .animation(FixedFocusMotion.horizontalAnimation(
+                           duration: probe.flags.billboardChange == "scroll"
+                               ? StagePictureView.scrollTime : Motion.durations.move),
+                       value: billboardItem?.id)
+            .environmentObject(mdblist))
+    }
+
     /// THE BILLBOARD (the Featured row in focus): the title's backdrop edge
     /// to edge under the shared scrim, the Detail page's title block in its
     /// place, and one dot per title. Left/Right crossfades in place; on Down
     /// it lifts away and the rows take the screen. (Focus itself is on the
     /// Featured row's invisible cells — see `FixedFocusRowsController`.)
     var billboardLayer: some View {
-        ZStack(alignment: .topLeading) {
-            if let item = billboardItem {
-                // (The reason — Details has none — goes with the swap.)
-                FixedFocusBillboardText(item: item, info: billboardInfo[item.id],
-                                        reason: swappedToDetail ? nil : billboardReasons[item.id],
-                                        ratings: billboardRatingsRow(item))
-                    // Lined up with the rows: the fixed box's text column, at
-                    // Details' spot (the swap leaves it where it is).
-                    .padding(.top, FixedFocusBillboardText.topY)
-                    .padding(.leading, FixedFocusMetrics.titleInset)
-                    .id(item.id)
-                    .transition(billboardDrift)
-                    // The ratings (cached by the service), as on Details.
-                    .task(id: item.id) {
-                        if billboardInfo[item.id] == nil, let info = await FixedFocusShowInfo.load(item) {
-                            billboardInfo[item.id] = info
-                        }
-                    }
-                    .task(id: item.id) {
-                        guard billboardRatings[item.id] == nil,
-                              let ratings = await MDBListService.ratings(for: item, settings: mdblist.settings)
-                        else { return }
-                        billboardRatings[item.id] = ratings
-                    }
-            }
-            // Details' buttons, already here as the swap plays — the SAME
-            // buttons (`DetailActionButton`) at the same spot, not focusable:
-            // they rise in with the zoom, and Details takes over with its own
-            // exactly there.
-            if let item = billboardItem {
-                swapButtons(item)
-                    .padding(.top, FixedFocusBillboardText.buttonsY)
-                    .padding(.leading, FixedFocusMetrics.titleInset)
-                    .opacity(swappedToDetail ? 1 : 0)
-            }
-            // Details' own hint, already here as the swap plays: Details
-            // takes over showing exactly this. (Details on rows has none: its
-            // first row's name comes in itself once its content is in.)
-            if let item = billboardItem, !RenderProbe.shared.flags.detailsOnRows {
-                SectionHint.place(SectionHint(title: item.isSeries ? "Episodes" : "More"))
-                    .frame(width: 1920)
-                    .offset(y: TitleBlock.hintY(screenHeight: 1080))
-                    .opacity(swappedToDetail ? 1 : 0)
-            }
-            // The position, bottom right (Left/Right): it stays in the strip
-            // with the text.
-            if let shown = billboard ?? lastBillboard {
-                BillboardDots(count: shown.count, current: shown.index, focused: true)
-                    .frame(height: SectionHint.size * 1.3)
-                    .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .trailing)
-                    .offset(x: Spotlight.screenInset, y: TitleBlock.hintY(screenHeight: 1080))
-                    .opacity(swappedToDetail ? 0 : 1)
+        Group {
+            if rigidBillboard {
+                // (Drawn by the rows — see `billboardOverlay`; only its
+                // upkeep stays here.)
+                Color.clear.frame(width: 0, height: 0)
+            } else {
+                billboardContent
+                    // Scrolling away with the picture and the rows: the
+                    // picture's own offset at every depth, on the rows' curve
+                    // and time — no fade.
+                    .offset(y: -billboardScrolled)
+                    .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll),
+                               value: billboardScrolled)
             }
         }
-        // (Top-left: without the picture the layer is only as large as its
-        // text — centred, it all moved down.)
-        .frame(width: 1920, height: 1080, alignment: .topLeading)
-        // Scrolling away with the picture and the rows: the picture's own
-        // offset at every depth, on the rows' curve and time — no fade.
-        .offset(y: -billboardScrolled)
-        .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll),
-                   value: billboardScrolled)
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .onChange(of: billboard) { _, now in
@@ -2436,61 +3093,108 @@ extension HomeUIKitView {
         // A page opened with focus still in the top bar (Movies / Series on
         // their first visit): the billboard is what's there, so show it all —
         // its text, hint and dots — not just its picture.
-        .onAppear { primeBillboard() }
+        .onAppear { primeBillboard(); autoPageDone = false }
+        .onChange(of: homeScenePhase) { _, phase in if phase == .active { autoPageDone = false } }
+        // THE BILLBOARD PAGING BY ITSELF: resting on it, the next title
+        // after `BillboardAutoPage.interval` (the current segment fills over
+        // it). Any press — a new title — starts it over; off the billboard,
+        // in Details or a menu, it waits.
+        .task(id: "\(billboard?.index ?? -1)|\(autoPageRunning)|\(autoPageVisit)") {
+            guard autoPageRunning, let position = billboard, position.count > 1 else { return }
+            try? await Task.sleep(for: .seconds(BillboardAutoPage.interval))
+            guard !Task.isCancelled, autoPageRunning, billboard == position else { return }
+            billboardCommand = FixedFocusRowsCommand(
+                action: .select(rowID: featuredRowID, index: position.index + 1))
+        }
         .onChange(of: rows.first(where: { $0.id == featuredRowID })?.items.map(\.id)) { _, _ in
+            autoPageDone = false
             primeBillboard()
             refreshBillboardItem()
         }
-        // Back from Details (opened on the billboard): Home's half returns.
-        // Back from Details (opened on the billboard): Home is back exactly
-        // as Details left it, and plays the swap the other way — together.
-        .onReceive(ModeSwap.shared.$homeChromeOut) { out in
-            if !out, swappedToDetail {
-                billboardStepIn = false
-                withAnimation(ModeSwap.swap) { swappedToDetail = false }
+    }
+
+    /// The billboard's text, Details' buttons and hint for the swap, and
+    /// the dots, laid out on the screen.
+    var billboardContent: some View {
+        ZStack(alignment: .topLeading) {
+            if let item = billboardItem {
+                Group {
+                    if textOnOwnHost {
+                        // (On its own host — `billboardTextOverlay` — moved
+                        // with the picture; here only kept for its loading.)
+                        billboardText(item).opacity(0)
+                    } else if probe.flags.billboardChange == "scroll" {
+                        // SCROLL: the text on its page — the old one goes out
+                        // and the new one comes in with the picture, its whole
+                        // distance and time (`BillboardScrollPager`).
+                        BillboardScrollPager(item: item, direction: billboardDirection,
+                                             distance: StagePictureView.pictureSize.width
+                                                 + 2 * StagePictureView.drift + StagePictureView.scrollGap,
+                                             duration: StagePictureView.scrollTime) { page in
+                            billboardText(page)
+                        }
+                    } else {
+                        billboardText(item)
+                            // (Cascading: its parts change on their own — the
+                            // block stays.)
+                            .id(cascades ? "billboard-text" : item.id)
+                            .transition(billboardDrift)
+                    }
+                }
+                    // The ratings (cached by the service), as on Details.
+                    .task(id: item.id) {
+                        if billboardInfo[item.id] == nil, let info = await FixedFocusShowInfo.load(item) {
+                            billboardInfo[item.id] = info
+                        }
+                    }
+                    .task(id: item.id) {
+                        guard billboardTaglines[item.id] == nil,
+                              let tagline = await TMDBService.facts(for: item)?.tagline else { return }
+                        billboardTaglines[item.id] = tagline
+                    }
+                    .task(id: item.id) {
+                        guard billboardRatings[item.id] == nil,
+                              let ratings = await MDBListService.ratings(for: item, settings: mdblist.settings)
+                        else { return }
+                        billboardRatings[item.id] = ratings
+                    }
+            }
+            // The position, bottom right (Left/Right): it stays in the strip
+            // with the text.
+            if let shown = billboard ?? lastBillboard {
+                BillboardDots(count: shown.count, current: shown.index, focused: true,
+                              timer: autoPageRunning ? BillboardAutoPage.interval : nil,
+                              cycle: autoPageVisit)
+                    .frame(height: SectionHint.size * 1.3)
+                    .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .trailing)
+                    .offset(x: Spotlight.screenInset,
+                            y: rigidBillboard ? Self.rigidDotsMid - SectionHint.size * 1.3 / 2
+                                : TitleBlock.hintY(screenHeight: 1080))
             }
         }
+        // (Top-left: without the picture the layer is only as large as its
+        // text — centred, it all moved down.)
+        .frame(width: 1920, height: 1080, alignment: .topLeading)
     }
 
-    /// Select on the billboard: Details is laid out exactly like it, so it
-    /// takes over IN PLACE, with no slide — see below.
-    /// Back runs it the other way (see the `homeChromeOut` receiver).
+    /// Select on the billboard: into Details (through black).
     func openBillboardTitle(_ item: MetaItem) {
         guard let onSelectFeatured else { onSelect(item); return }
-        guard !swappedToDetail else { return }
-        // ONE TIMELINE, from the press: the picture steps closer (UIKit),
-        // the top bar lifts, the hint crossfades to Details' and the dots
-        // fade — all on `ModeSwap.swap`. Details takes over at the end,
-        // looking exactly like this; only its buttons come in after.
-        ModeSwap.shared.chromeHeld = true
-        ModeSwap.shared.handingOver = true
-        billboardStepIn = true
-        withAnimation(ModeSwap.swap) {
-            swappedToDetail = true
-            ModeSwap.shared.homeChromeOut = true
-        }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(ModeSwap.swapHandover))
-            // What the billboard shows, so Details starts identical.
-            ModeSwap.shared.billboardItemID = item.id
-            ModeSwap.shared.arrivedFromBox = false
-            ModeSwap.shared.billboardRatings = billboardRatings[item.id]
-            ModeSwap.shared.billboardFacts = nil
-            ModeSwap.shared.billboardSeriesSize = nil
-            ModeSwap.shared.billboardTint = (tint, tintSecond)
-            // Play's label: where Continue Watching has the show, else the
-            // first episode — Details confirms it once its list is in.
-            ModeSwap.shared.billboardPlayTitle =
-                item.isSeries ? Self.playTitle(item, progress: progress[item.id]) : nil
-            onSelectFeatured(item)
-            ModeSwap.shared.handingOver = false
-        }
-    }
-
-    /// Details' button row as it will look (see `DetailView.actionRow`).
-    private func swapButtons(_ item: MetaItem) -> some View {
-        DetailSwapButtons(playTitle: Self.playTitle(item, progress: progress[item.id]),
-                          saved: library.contains(item))
+        // In place (`DetailTransition.openInPlace`): the billboard's text
+        // stays (a live copy, without the reason line) while what only Home
+        // has goes and the picture zooms in; then the buttons and its rows'
+        // name come.
+        // (Without the reason line: it goes with the top bar and the dots, a
+        // cut-out of Home's screen — `BillboardReasonFrame`.)
+        let copy = FixedFocusBillboardText(item: item, info: billboardInfo[item.id], reason: nil,
+                                           ratings: billboardRatingsRow(item), compact: true,
+                                           tagline: billboardTaglines[item.id])
+            .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
+            .padding(.leading, FixedFocusMetrics.titleInset)
+            .frame(width: 1920, height: 1080, alignment: .topLeading)
+            .environmentObject(theme)
+            .environmentObject(mdblist)
+        DetailTransition.shared.openInPlace(item, text: AnyView(copy)) { onSelectFeatured(item) }
     }
 
     /// Play's label as Details will first show it: where Continue Watching
@@ -2510,7 +3214,7 @@ extension HomeUIKitView {
         guard item.id != billboardItem?.id else { return }
         billboard = FixedFocusBillboardPosition(index: index, count: row.items.count)
         focused = item
-        withAnimation(.easeInOut(duration: Motion.durations.move)) { billboardItem = item }
+        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)) { billboardItem = item }
     }
 
     /// The logos either side of the billboard's title, decoded ahead so the
@@ -2541,7 +3245,48 @@ extension HomeUIKitView {
     /// Home's box drift, for the billboard: the new title comes in shifted a
     /// little the way you went and fades in; the old one fades out shifting
     /// on (a plain crossfade with Render Lab → Box change: drift off).
+    /// Billboard change → Scroll on the rigid billboard: the text on its
+    /// own host, moved by the rows with the picture.
+    var textOnOwnHost: Bool { rigidBillboard && probe.flags.billboardChange == "scroll" }
+
+    /// The billboard's text alone, for its own host (Scroll).
+    var billboardTextOverlay: AnyView {
+        AnyView(ZStack(alignment: .topLeading) {
+            if let item = billboardItem { billboardText(item) }
+        }
+        .frame(width: 1920, height: 1080, alignment: .topLeading)
+        .environmentObject(mdblist))
+    }
+
+    /// The billboard's text for a title, at its place (standing on its
+    /// bottom line — it grows up — the buttons below it).
+    /// (The reason — Details has none — goes with the swap; the rest stays
+    /// exactly: Details' text is the billboard's.)
+    private func billboardText(_ item: MetaItem) -> some View {
+        FixedFocusBillboardText(item: item, info: billboardInfo[item.id],
+                                reason: billboardReasons[item.id],
+                                ratings: billboardRatingsRow(item),
+                                compact: true,
+                                tagline: billboardTaglines[item.id],
+                                cascade: cascades
+                                    ? BillboardCascade(key: item.id, direction: billboardDirection) : nil)
+            .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
+            .padding(.leading, FixedFocusMetrics.titleInset)
+    }
+
+    /// Render Lab → Billboard change: "depthCascade".
+    var cascades: Bool { probe.flags.billboardChange == "depthCascade" }
+
     var billboardDrift: AnyTransition {
+        // Render Lab → Billboard change → Scroll: the text goes with its
+        // page — the picture's distance and time, no fade.
+        if probe.flags.billboardChange == "scroll" {
+            let dx = (StagePictureView.pictureSize.width + 2 * StagePictureView.drift
+                      + StagePictureView.scrollGap) * billboardDirection
+            // (On the overlay's own animation — `billboardOverlay`: one set
+            // here doesn't reach the rows' host.)
+            return AnyTransition.asymmetric(insertion: .offset(x: dx), removal: .offset(x: -dx))
+        }
         guard probe.flags.boxDrift else { return .opacity }
         let shift = Self.billboardDriftShift * billboardDirection
         return .asymmetric(insertion: .offset(x: shift).combined(with: .opacity),
@@ -2580,7 +3325,9 @@ enum FixedFocusCardEdge: String, CaseIterable {
 
     /// The focus outline in the top bar's light (Render Lab → Focus outline)
     /// — off: a plain white line.
-    @MainActor static var focusLight: Bool { RenderProbe.shared.flags.focusOutline == "light" }
+    /// (The top bar's light is no focus style any more: every focused card
+    /// uses the same plain line — `FixedFocusRing`.)
+    @MainActor static var focusLight: Bool { false }
     @MainActor static var focusImage: UIImage { art.focus }
 
     /// The edge over the card (nil: none).
@@ -2729,7 +3476,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     let featuredRowID: String
     let continueRowID: String
     let active: Bool
-    let billboardStepIn: Bool
     let progress: [String: WatchProgress]
     /// Rows of landscape cards besides Continue Watching (Search's).
     var landscapeRowIDs: Set<String> = []
@@ -2759,11 +3505,11 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     let onResume: (WatchProgress) -> Void
     /// Select on a title's card (not the billboard, not Continue Watching,
     /// not a folder): the title and the card as the morph's start — Details
-    /// opens by morphing out of it (`DetailWindow`). nil: `onSelect`.
-    var onOpenWindow: ((MetaItem, TitleMorphSource) -> Void)? = nil
+    /// opens through `DetailTransition`. nil: `onSelect`.
+    var onOpenDetails: ((MetaItem) -> Void)? = nil
     /// A choice in a Continue Watching card's hold menu (the system context
     /// menu): the row and the card as a zoom's start. nil: no menu.
-    var onContinueMenu: ((ContinueMenuAction, WatchProgress, TitleMorphSource?) -> Void)? = nil
+    var onContinueMenu: ((ContinueMenuAction, WatchProgress) -> Void)? = nil
     /// Select held on a title's card (not a billboard, not a folder): its
     /// menu's items (`TitleMenu`), given the title and its row's id. nil: no menu.
     var titleMenu: ((MetaItem, String) -> [MenuEntry])? = nil
@@ -2821,6 +3567,22 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// Its height from the top of the screen: no more than its content needs
     /// — over the rows it hides them from focus (tvOS skips what's covered).
     var billboardOverlayHeight: CGFloat = 1080
+    /// Billboard change → Scroll: the billboard's TEXT on its own host, and
+    /// which title it shows — it scrolls with the picture, in one animation
+    /// (`FixedFocusRowsController.scrollBillboard`).
+    var billboardText: AnyView? = nil
+    var billboardTextKey: String? = nil
+    /// The overlay UNDER the rows (Home: the billboard's focus is its own
+    /// hidden cards — anything over them hides them from focus).
+    var billboardOverlayBelowRows = false
+    /// RIGID billboard (Home): its picture doesn't scroll with the rows — it
+    /// stays, blurs and darkens on the way down, then gives way to the
+    /// background's colours (`StagePictureView.blursBelow`).
+    var pinnedBillboardPicture = false
+    /// How far the billboard itself (picture, text) goes up for the first
+    /// row, if not the rows' distance (Home: until its edge is at the top
+    /// bar's middle — the rows' usual peek above).
+    var rigidBillboardTravel: CGFloat? = nil
     let onFocusItem: (MetaItem, FixedFocusBillboardPosition?) -> Void
 
     func makeUIViewController(context: Context) -> FixedFocusRowsController {
@@ -2837,7 +3599,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.onSelect = onSelect
         controller.onSelectFeatured = onSelectFeatured
         controller.onResume = onResume
-        controller.onOpenWindow = onOpenWindow
+        controller.onOpenDetails = onOpenDetails
         controller.onContinueMenu = onContinueMenu
         controller.titleMenu = titleMenu
         // SwiftUI inside the cells (the banner's chips) gets the app's stores.
@@ -2875,7 +3637,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.ringOnlyWithFocus = ringOnlyWithFocus
         controller.startsOverOnChange = startsOverOnChange
         controller.featuredRowID = featuredRowID
-        controller.setBillboardStepIn(billboardStepIn)
         // Hidden while another tab is in front: not in the focus engine's
         // way (a transparent SwiftUI layer alone doesn't guarantee that).
         if controller.isViewLoaded { controller.view.isHidden = !active }
@@ -2883,7 +3644,11 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.update(rows)
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
+        controller.billboardOverlayBelowRows = billboardOverlayBelowRows
+        controller.rigidBillboardTravel = rigidBillboardTravel
+        controller.pinnedBillboardPicture = pinnedBillboardPicture
         controller.setBillboardOverlay(billboardOverlay)
+        controller.setBillboardText(billboardText, key: billboardTextKey)
     }
 }
 
@@ -2914,10 +3679,15 @@ enum FixedFocusMetrics {
     /// edge (a little under half); the row above shows what's left of it.
     /// Rows further up / down than the neighbours: a whole row apart.
     static var rowPitch: CGFloat { titleHeight + height + 70 }
-    /// The row above: its cards' lower part shows at the top, ending
-    /// exactly at the top bar's centre line (the same for every kind of row).
-    static var aboveVisible: CGFloat {
-        GlassSidebar.topBarTop + (GlassPill.itemHeight + 2 * GlassPill.inset) / 2
+    /// The row above: its cards' lower part shows at the top, ending as far
+    /// above the focused row's name as the next row's name is below the
+    /// box's info (the same gap above and below; the same for every kind of
+    /// row, the billboard too).
+    static var aboveVisible: CGFloat { rowTop - peekGap }
+    /// Between the focused row and the peeks: the next row's name this far
+    /// below the box's info — and the same above.
+    static var peekGap: CGFloat {
+        1080 - belowVisible - titleHeight - (boxFrame.maxY + infoGap + infoHeight)
     }
     /// The row below: this much of its posters shows at the bottom (as on
     /// the original Home — a little under half).
@@ -3245,6 +4015,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        if let cell = pendingFocusCell {
+            pendingFocusCell = nil
+            return [cell]
+        }
         // On the billboard, its focus is the overlay's (Details' Play).
         if pendingFocusRow == nil, billboardFocusOutside, let overlayHost { return [overlayHost] }
         if let index = pendingFocusRow {
@@ -3264,6 +4038,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         layout.rowTop = { [weak self] in (self?.rowTop ?? FixedFocusMetrics.rowTop) + (self?.rowDrop ?? 0) }
         layout.rowDrop = { [weak self] in self?.rowDrop ?? 0 }
         layout.rigidRest = { [weak self] in self?.rigidRest }
+        layout.billboardUp = { [weak self] in self?.rigidBillboardTravel == nil ? nil : self?.billboardUp(depth: $0) }
         layout.cardHeight = { [weak self] in self?.cardHeight($0) ?? FixedFocusMetrics.height }
         layout.titleExtra = { [weak self] in self?.titleExtra($0) ?? 0 }
         layout.peeks = { [weak self] in
@@ -3278,9 +4053,20 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             self?.isPanel($0) == true ? FixedFocusMetrics.panelReach : (0, 0)
         }
         layout.shortBy = { [weak self] in
+            guard let self else { return 0 }
+            // A collection: its panel is its edge — the next row's name the
+            // peek gap below its bottom border, as the top border is below
+            // the peek above.
+            if self.isPanel($0) {
+                let reach = FixedFocusMetrics.panelReach
+                let bottom = self.rowTop + reach.above + FixedFocusMetrics.titleHeight
+                    + self.cardHeight($0) + reach.below
+                let usual = 1080 - self.belowVisible - FixedFocusMetrics.titleHeight
+                return max(0, usual - (bottom + FixedFocusMetrics.peekGap))
+            }
             // Continue Watching's smaller cards: the row under it comes up
             // by as much (the gap between them stays).
-            guard self?.isContinue($0) == true else { return 0 }
+            guard self.isContinue($0) else { return 0 }
             return FixedFocusMetrics.height - FixedFocusMetrics.continueHeight
         }
         layout.featuredRow = { [weak self] in
@@ -3305,6 +4091,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         root.addSubview(box)
         // Along the bottom edge, below the billboard's (invisible) cells.
         root.addLayoutGuide(belowGuide)
+        observeHeldSteps()
         NSLayoutConstraint.activate([
             belowGuide.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             belowGuide.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -3321,6 +4108,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // stay inside the list's visible area, so UIKit keeps their cells
         // and they SLIDE — outside it, it drops them and fades them in place.
         outer.frame = view.bounds.insetBy(dx: 0, dy: -FixedFocusRowsLayout.overscan)
+        if let stage = pinnedStage {
+            stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
+            stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
+        }
         layoutOverlay()
         place(box, boxFrame)
         if !boxPressed, !boxHeld {
@@ -3409,6 +4200,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let featured = isFeatured(rowIndex)
         onFocusArt(item.background ?? item.poster)
         onFocusItem(item, featured ? FixedFocusBillboardPosition(index: cell.itemIndex, count: row.items.count) : nil)
+        TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: cell.itemIndex)
+        // The next cards' colours, ready before you get there.
+        FixedFocusTint.prepare([cell.itemIndex + 1, cell.itemIndex - 1, cell.itemIndex + 2]
+            .filter { row.items.indices.contains($0) }
+            .compactMap { row.items[$0].background ?? row.items[$0].poster })
         onDepth(depth(of: rowIndex))
         // Back on the SAME card from outside the rows (a menu closing, down
         // from the top bar, back from a page): nothing moved — no move to
@@ -3419,6 +4215,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         let rowChanged = rowIndex != focusedRow || !hasFocus
+        // An opening into a fixed-box row: Left/Right waits for it to land.
+        if rowChanged, !featured, !isDestination(rowIndex) { openingRow = rowIndex }
         let continueRow = isLandscape(rowIndex)
         let entry = isContinue(rowIndex) ? progress[item.id] : nil
         // Up/Down is the "opening": the box steps aside, the new row's title
@@ -3434,7 +4232,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // look (still the focused row here) — the box can step aside
             // without anything changing — and then shrinks, animated.
             oldRowCell?.contentHidden = false
-            // Commit that look NOW: the animation below continues from what's
+            // Commit that look NOW: the, animation below continues from what's
             // on screen (beginFromCurrentState), and without this it started
             // from the plain poster — the old box was instantly small.
             CATransaction.flush()
@@ -3481,15 +4279,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             box.alpha = 0
             rowCell.contentHidden = false
         } else if box.alpha < 1 {
-            // Left/Right while an opening is still running: the box takes
-            // over (instead of the new cell growing in visibly) — a quick
-            // fade over the moving cell, then the cell steps back.
-            box.show(item, progress: entry, animated: false)
-            UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState]) {
-                self.box.alpha = 1
-            } completion: { _ in
-                if self.box.alpha == 1 { rowCell.contentHidden = true }
-            }
+            // Left/Right while an opening is still running: the CELLS carry
+            // it — the old one shrinks, the next grows, in this step's move,
+            // riding the row's rise. (The box taking over at once sat in its
+            // final place, full grown, while the row still rose under it: the
+            // card seemed to grow at once and slide in diagonally.) The box
+            // takes over once every move has settled (see `handOverToBox`).
+            rowCell.contentHidden = false
         } else {
             // The box stays; its content drifts (sideways on Left/Right, up
             // or down on Up/Down) while the row(s) move underneath.
@@ -3534,21 +4330,131 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                         self.outer.layoutIfNeeded()
                     }
                 }
-                guard rowChanged, !featured, self.box.alpha < 1, self.focusedRow == rowIndex,
-                      let current = self.selected[row.id], row.items.indices.contains(current) else { return }
-                // Hand over to the box: identical look, same place — no jump.
-                // (The title focused NOW — a Left/Right may have followed.)
-                let now = row.items[current]
-                self.box.show(now, progress: self.isContinue(rowIndex) ? self.progress[now.id] : nil,
-                              animated: false)
-                self.box.alpha = 1
-                rowCell.contentHidden = true
+                if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
+                self.movesInFlight -= 1
+                if !rowChanged, self.movesInFlight == 0 { self.runPendingStep() }
+                guard !featured, self.focusedRow == rowIndex else { return }
+                self.handOverToBox(rowCell, row: row, rowIndex: rowIndex)
             }
+            self.movesInFlight += 1
             if billboardScroll { self.liftNextTitle(down: !featured) }
         }
         move()
         hasFocus = true
         loadShowInfo(for: item, in: row, at: cell.itemIndex)
+    }
+
+    /// Moves (Up/Down, Left/Right) still running in the rows.
+    private var movesInFlight = 0
+    /// A fixed-box row opening (Up/Down into it), until the box has it.
+    private var openingRow: Int?
+    /// Left/Right presses held during an opening (+ right, − left).
+    private var pendingSteps = 0
+    private var hurried = false
+    /// The opening's rest in this much time, from where it is now.
+    static let hurryDuration: Double = 0.10
+
+    /// A held press (its move failed: `shouldUpdateFocus` said no) counts
+    /// once — as a step to run after the opening.
+    private var heldStepToken: NSObjectProtocol?
+    private func observeHeldSteps() {
+        guard heldStepToken == nil else { return }
+        heldStepToken = NotificationCenter.default.addObserver(
+            forName: UIFocusSystem.movementDidFailNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
+            else { return }
+            MainActor.assumeIsolated {
+                guard let self, let opening = self.openingRow,
+                      let from = ctx.previouslyFocusedItem as? FixedFocusPosterCell,
+                      from.rowCell?.rowIndex == opening, from.isDescendant(of: self.outer) else { return }
+                if ctx.focusHeading.contains(.left) { self.pendingSteps -= 1 }
+                if ctx.focusHeading.contains(.right) { self.pendingSteps += 1 }
+                self.hurryOpening(opening)
+            }
+        }
+    }
+
+    /// Finish the running opening quickly, from where it is (once per
+    /// opening): every animation running in the rows is replaced by a short
+    /// one from what's on screen to its end (re-animating to the same target
+    /// doesn't retarget a spring), and the opening counts as done at once.
+    private func hurryOpening(_ rowIndex: Int) {
+        guard !hurried, openingRow == rowIndex,
+              let rowCell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
+        else { return }
+        hurried = true
+        let duration = Self.hurryDuration
+        let ease = CAMediaTimingFunction(name: .easeOut)
+        func hurry(_ layer: CALayer) {
+            if let keys = layer.animationKeys(), !keys.isEmpty, let shown = layer.presentation() {
+                let now: [(String, Any?)] = [
+                    ("position", NSValue(cgPoint: shown.position)),
+                    ("bounds", NSValue(cgRect: shown.bounds)),
+                    ("transform", NSValue(caTransform3D: shown.transform)),
+                    ("opacity", shown.opacity),
+                ]
+                layer.removeAllAnimations()
+                for (key, from) in now {
+                    let to = layer.value(forKeyPath: key)
+                    guard let from, let to, !(from as AnyObject).isEqual(to) else { continue }
+                    let move = CABasicAnimation(keyPath: key)
+                    move.fromValue = from
+                    move.toValue = to
+                    move.duration = duration
+                    move.timingFunction = ease
+                    layer.add(move, forKey: "hurry.\(key)")
+                }
+            }
+            layer.sublayers?.forEach(hurry)
+        }
+        // The opening's own completion is void now (`hurriedMoves`) — set
+        // first: removing its animations calls it.
+        hurriedMoves = movesInFlight
+        movesInFlight = 0
+        hurry(view.layer)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            guard self.focusedRow == rowIndex, self.openingRow == rowIndex else { return }
+            self.handOverToBox(rowCell, row: self.rows[rowIndex], rowIndex: rowIndex)
+        }
+    }
+    /// Completions of moves cut short by a hurry, still to come (ignored).
+    private var hurriedMoves = 0
+
+    /// One held Left/Right, as a normal step (the box has the row now).
+    private func runPendingStep() {
+        guard openingRow == nil, movesInFlight == 0, pendingSteps != 0,
+              rows.indices.contains(focusedRow),
+              let rowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
+        else { return }
+        let step = pendingSteps > 0 ? 1 : -1
+        pendingSteps -= step
+        let target = (selected[rows[focusedRow].id] ?? 0) + step
+        guard rows[focusedRow].items.indices.contains(target), let cell = rowCell.posterCell(at: target),
+              let system = UIFocusSystem.focusSystem(for: view) else { pendingSteps = 0; return }
+        // (Through this controller's preferred focus: a request straight to
+        // a card in a strip is ignored.)
+        pendingFocusCell = cell
+        system.requestFocusUpdate(to: self)
+        system.updateFocusIfNeeded()
+    }
+    private var pendingFocusCell: UIView?
+
+    /// After an opening, once NOTHING moves any more (a Left/Right during it
+    /// keeps the cells carrying it): the box takes over — identical look,
+    /// same place, no jump — on the title focused now.
+    private func handOverToBox(_ rowCell: FixedFocusRowCell, row: HomeRow, rowIndex: Int) {
+        guard movesInFlight == 0 else { return }
+        if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
+            let now = row.items[current]
+            box.show(now, progress: isContinue(rowIndex) ? progress[now.id] : nil, animated: false)
+            box.alpha = 1
+            rowCell.contentHidden = true
+        }
+        openingRow = nil
+        hurried = false
+        // Held presses: now, one step at a time.
+        DispatchQueue.main.async { self.runPendingStep() }
     }
 
     /// Focus in a destination row: the system scrolls it and lifts the card;
@@ -3564,6 +4470,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let card = destinationCard(rowIndex)
         onFocusArt(card.width > card.height ? item.background ?? item.poster : item.poster ?? item.background)
         onFocusItem(item, nil)
+        TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
+        FixedFocusTint.prepare([index + 1, index - 1, index + 2]
+            .filter { row.items.indices.contains($0) }
+            .compactMap { card.width > card.height ? row.items[$0].background ?? row.items[$0].poster
+                : row.items[$0].poster ?? row.items[$0].background })
         onDepth(depth(of: rowIndex))
         rowCell.tintPanel(item, animated: true)
         selected[row.id] = index
@@ -3617,21 +4528,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     var onSelectFeatured: (MetaItem) -> Void = { _ in }
 
-    /// The billboard's picture steps closer / back (the Details swap).
-    func setBillboardStepIn(_ on: Bool) {
-        guard isViewLoaded, let featured = rows.firstIndex(where: { $0.id == featuredRowID }),
-              let cell = outer.cellForItem(at: IndexPath(item: featured, section: 0)) as? FixedFocusRowCell
-        else { return }
-        cell.setStageStepIn(on)
-        if stepIn != on {
-            // The next row's name on the billboard steps aside meanwhile.
-            stepIn = on
-            UIView.animate(withDuration: Motion.durations.fade) { self.applyDimming() }
-        }
-    }
-
-    var onOpenWindow: ((MetaItem, TitleMorphSource) -> Void)?
-    var onContinueMenu: ((ContinueMenuAction, WatchProgress, TitleMorphSource?) -> Void)?
+    var onOpenDetails: ((MetaItem) -> Void)?
+    var onContinueMenu: ((ContinueMenuAction, WatchProgress) -> Void)?
     var titleMenu: ((MetaItem, String) -> [MenuEntry])?
 
     override func viewDidAppear(_ animated: Bool) {
@@ -3646,12 +4544,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if isContinue(rowIndex) {
             guard let onContinueMenu, let entry = progress[item.id] else { return nil }
             return (entry.name, ContinueMenuAction.allCases.map { action in
-                MenuEntry(title: action.title, icon: action.icon, destructive: action == .remove) { [weak self] in
-                    // The card shows the episode's still, not the show's
-                    // backdrop: the zoom dissolves it (`backdrop` nil).
-                    var source = self?.box.alpha == 1 ? self?.box.morphSource() : nil
-                    source?.backdrop = nil
-                    onContinueMenu(action, entry, source)
+                MenuEntry(title: action.title, icon: action.icon, destructive: action == .remove) {
+                    onContinueMenu(action, entry)
                 }
             })
         }
@@ -3711,16 +4605,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// Gives SwiftUI hosted in a cell the app's stores.
     var environment: (AnyView) -> AnyView = { $0 }
 
-    /// The focused card of a row as the morph's start: the fixed box
-    /// (catalog rows) or the destination row's card.
-    private func morphSource(_ rowIndex: Int) -> TitleMorphSource? {
-        if isDestination(rowIndex) {
-            let rowCell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
-            return (rowCell?.posterCell(at: selected[rows[rowIndex].id] ?? 0) as? TitleMorphing)?.morphSource()
-        }
-        return box.alpha == 1 ? box.morphSource() : nil
-    }
-
     /// Where a row's first card sits on the screen (window points) while the
     /// row is at the spot.
     func restingCardOrigin(_ rowIndex: Int) -> CGPoint? {
@@ -3776,6 +4660,63 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// The billboard's overlay (see `FixedFocusRows.billboardOverlay`).
     private var overlayHost: UIHostingController<AnyView>?
     var billboardOverlayHeight: CGFloat = 1080
+    var billboardOverlayBelowRows = false
+    var rigidBillboardTravel: CGFloat?
+
+    /// How far the billboard is up with focus `depth` rows below it.
+    func billboardUp(depth: Int) -> CGFloat {
+        guard depth > 0 else { return 0 }
+        if let travel = rigidBillboardTravel { return travel + CGFloat(depth - 1) * FixedFocusMetrics.rowPitch }
+        return rigidRest.map {
+            FixedFocusRowsLayout.billboardScroll(depth: depth, rigidRest: $0, rowTop: rowTop + rowDrop)
+        } ?? FixedFocusRowsLayout.billboardScroll(depth: depth)
+    }
+
+    var pinnedBillboardPicture = false {
+        didSet {
+            guard pinnedBillboardPicture != oldValue else { return }
+            if pinnedBillboardPicture { loadViewIfNeeded(); makePinnedStage() } else {
+                pinnedStage?.removeFromSuperview()
+                pinnedStage = nil
+            }
+            if isViewLoaded { outer.reloadData() }
+        }
+    }
+    /// The pinned billboard picture (see `FixedFocusRows.pinnedBillboardPicture`).
+    private(set) var pinnedStage: StagePictureView?
+
+    private func makePinnedStage() {
+        guard pinnedStage == nil else { return }
+        let stage = StagePictureView()
+        stage.blursBelow = rigidBillboardTravel == nil
+        view.insertSubview(stage, at: 0)
+        stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
+        stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
+        pinnedStage = stage
+    }
+
+    /// The pinned picture at a depth: blurred and darker below the
+    /// billboard (in the move's animation), and — once the rows are up — out,
+    /// to the background's colours; back at once on the way up.
+    private func applyPinnedStage(depth: Int) {
+        guard let stage = pinnedStage else { return }
+        // Home: the picture travels the billboard's own distance (its hard
+        // edge ends at the top bar's middle) — under the text, which is
+        // under the rows.
+        if rigidBillboardTravel != nil {
+            stage.transform = CGAffineTransform(translationX: 0, y: -billboardUp(depth: depth))
+            return
+        }
+        stage.setBelow(depth > 0)
+        let alpha: CGFloat = depth > 0 ? 0 : 1
+        guard stage.alpha != alpha else { return }
+        let move = FixedFocusMotion.billboardScroll
+        UIView.animate(withDuration: depth > 0 ? move * 0.8 : move * 0.4,
+                       delay: depth > 0 ? move * 0.3 : 0,
+                       options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]) {
+            stage.alpha = alpha
+        }
+    }
 
     func setBillboardOverlay(_ content: AnyView?) {
         guard content != nil || overlayHost != nil else { return }
@@ -3790,16 +4731,24 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         if let overlayHost {
-            overlayHost.rootView = content
+            overlayHost.rootView = environment(content)
             return
         }
-        let host = UIHostingController(rootView: content)
+        let host = UIHostingController(rootView: environment(content))
         host.view.backgroundColor = .clear
         // (Its own safe area off: it's laid out in screen points, as the rows.)
         host.safeAreaRegions = []
+        // Details' info block: hidden until it rises in (`DetailTransition`).
+        DetailTransition.shared.textHostCreated(host.view)
         addChild(host)
-        // Over the rows (their names on the billboard stay under the text).
-        view.addSubview(host.view)
+        // Over the rows (their names on the billboard stay under the text) —
+        // or under them (see `billboardOverlayBelowRows`).
+        if billboardOverlayBelowRows {
+            view.insertSubview(host.view, belowSubview: outer)
+            host.view.isUserInteractionEnabled = false
+        } else {
+            view.addSubview(host.view)
+        }
         host.didMove(toParent: self)
         overlayHost = host
         layoutOverlay()
@@ -3809,22 +4758,137 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// From the top of the screen, its height; moved by a transform (see
     /// `applyOverlayPosition`).
     private func layoutOverlay() {
-        guard let host = overlayHost else { return }
         let height = min(billboardOverlayHeight, view.bounds.height)
-        host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
-        host.view.center = CGPoint(x: view.bounds.midX, y: height / 2)
+        for host in [overlayHost, textHost].compactMap({ $0 }) {
+            host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
+            host.view.center = CGPoint(x: view.bounds.midX, y: height / 2)
+        }
+    }
+
+    // MARK: Billboard change → Scroll (the text with the picture)
+
+    /// The billboard's text on its own host (Scroll): moved by UIKit like
+    /// the rows — sideways with its picture, up with the billboard.
+    private var textHost: UIHostingController<AnyView>?
+    private var textKey: String?
+    /// A scroll waiting for its text (the page's state reaches it a frame or
+    /// two after the press): the picture's moves, ready.
+    private var pendingScroll: (distance: CGFloat, moves: () -> Void, done: () -> Void)?
+    private var pendingScrollToken = 0
+    /// A scroll is under way: the text's updates (a rating, the tagline
+    /// arriving) wait for it to land — re-laid out mid-move, the block
+    /// jumped (it stands on its bottom line).
+    private var scrolling = 0
+    private var heldText: AnyView?
+
+    func setBillboardText(_ content: AnyView?, key: String?) {
+        guard let content else {
+            textHost?.willMove(toParent: nil)
+            textHost?.view.removeFromSuperview()
+            textHost?.removeFromParent()
+            textHost = nil
+            textKey = nil
+            return
+        }
+        loadViewIfNeeded()
+        guard let host = textHost else {
+            let host = UIHostingController(rootView: environment(content))
+            host.view.backgroundColor = .clear
+            host.safeAreaRegions = []
+            host.view.isUserInteractionEnabled = false
+            addChild(host)
+            // Under the overlay (its dots and hint), over the rows' names as
+            // the overlay is.
+            if let overlay = overlayHost?.view { view.insertSubview(host.view, belowSubview: overlay) }
+            else { view.insertSubview(host.view, belowSubview: outer) }
+            host.didMove(toParent: self)
+            textHost = host
+            textKey = key
+            layoutOverlay()
+            UIView.performWithoutAnimation { applyOverlayPosition() }
+            return
+        }
+        // A new title with its picture waiting: the old text as a still
+        // (taken before it's replaced), then both scroll together.
+        if key != textKey, pendingScroll != nil {
+            // (A held update was the old title's: gone with it.)
+            heldText = nil
+            let old = host.view.snapshotView(afterScreenUpdates: false)
+            host.rootView = environment(content)
+            textKey = key
+            runScroll(oldText: old)
+            return
+        }
+        if scrolling > 0, key == textKey { heldText = content; return }
+        heldText = nil
+        host.rootView = environment(content)
+        textKey = key
+    }
+
+    /// Billboard change → Scroll: the picture's page and the text's move as
+    /// ONE (the vertical scroll's way): the next picture is put a page over,
+    /// and once the new text is in its host — or after a moment at most —
+    /// both run in the same animation.
+    func scrollBillboard(_ url: String?, direction: CGFloat) -> Bool {
+        guard textHost != nil, let stage = pinnedStage,
+              let prepared = stage.prepareScroll(url, direction: direction) else { return false }
+        if pendingScroll != nil { runScroll(oldText: nil) }
+        pendingScroll = prepared
+        pendingScrollToken &+= 1
+        let token = pendingScrollToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.pendingScrollToken == token, self.pendingScroll != nil else { return }
+            self.runScroll(oldText: nil)
+        }
+        return true
+    }
+
+    private func runScroll(oldText: UIView?) {
+        guard let scroll = pendingScroll, let host = textHost else { return }
+        pendingScroll = nil
+        let dx = scroll.distance
+        // (The new text laid out now: it moves in with its page.)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        let vertical = host.view.transform.ty
+        if let oldText {
+            oldText.frame = host.view.frame
+            oldText.isUserInteractionEnabled = false
+            view.insertSubview(oldText, aboveSubview: host.view)
+        }
+        UIView.performWithoutAnimation {
+            host.view.transform = CGAffineTransform(translationX: dx, y: vertical)
+        }
+        scrolling += 1
+        // EXACTLY the vertical scroll's motion: its curve (Motion: Up / Down)
+        // and the billboard's scroll time.
+        FixedFocusMotion.run(vertical: true, duration: FixedFocusMotion.billboardScroll, damping: 1) {
+            scroll.moves()
+            host.view.transform = CGAffineTransform(translationX: 0, y: vertical)
+            oldText?.transform = CGAffineTransform(translationX: -dx, y: 0)
+        } completion: { _ in
+            scroll.done()
+            oldText?.removeFromSuperview()
+            self.scrolling -= 1
+            // Landed: what arrived meanwhile.
+            if self.scrolling == 0, let held = self.heldText {
+                self.heldText = nil
+                self.textHost?.rootView = self.environment(held)
+            }
+        }
     }
 
     /// The overlay where the billboard is: scrolled up with it, and above
     /// the rows dimmed like the row above. Inside a move: on its animation.
     private func applyOverlayPosition() {
-        guard let host = overlayHost, let featured = featuredIndex else { return }
+        guard let featured = featuredIndex else { return }
         let depth = max(focusedRow - featured, 0)
-        let scroll = rigidRest.map {
-            FixedFocusRowsLayout.billboardScroll(depth: depth, rigidRest: $0, rowTop: rowTop + rowDrop)
-        } ?? FixedFocusRowsLayout.billboardScroll(depth: depth)
-        host.view.transform = CGAffineTransform(translationX: 0, y: -scroll)
-        host.view.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
+        applyPinnedStage(depth: depth)
+        let scroll = billboardUp(depth: depth)
+        for host in [overlayHost, textHost].compactMap({ $0 }) {
+            host.view.transform = CGAffineTransform(translationX: 0, y: -scroll)
+            host.view.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
+        }
     }
 
     /// The row under a rigid billboard whose name has come in.
@@ -3894,6 +4958,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         case .focusBillboard:
             guard let featured = featuredIndex else { return }
             requestFocus(row: featured)
+        case let .select(rowID, index):
+            guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }),
+                  rows[rowIndex].items.indices.contains(index), focusedRow == rowIndex,
+                  let focused = UIFocusSystem.focusSystem(for: view)?.focusedItem as? UIView,
+                  focused.isDescendant(of: outer), !HoldMenu.shared.isOpen else { return }
+            selected[rowID] = index
+            let cell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
+            if cell?.isDestination == true { cell?.aim(index) } else { cell?.jump(to: index) }
+            DispatchQueue.main.async { self.requestFocus(row: rowIndex) }
 
 
         }
@@ -3962,6 +5035,18 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             DispatchQueue.main.async { self.onUpExit(id) }
             return false
         }
+        // LEFT/RIGHT DURING AN OPENING: held — first land, then step. The
+        // opening is hurried to its end (`hurryOpening`); the press runs as
+        // a normal step after it (`runPendingStep`). The card beside never
+        // takes focus mid-move (it grew in both ways while still moving).
+        if let opening = openingRow, previousInside,
+           context.focusHeading.contains(.left) || context.focusHeading.contains(.right),
+           let from = context.previouslyFocusedView as? FixedFocusPosterCell, from.rowCell?.rowIndex == opening {
+            // (Counted once per press, when the move fails — see
+            // `observeHeldSteps`: tvOS asks this several times per press.)
+            DispatchQueue.main.async { self.hurryOpening(opening) }
+            return false
+        }
         // Into a moving-focus row from outside: its CURRENT card, not the
         // one nearest by position (it may be aimed — Details' episodes).
         if !previousInside, !ModeSwap.shared.handingOver,
@@ -3984,9 +5069,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             ModeSwap.shared.heldPress = .play
             return
         }
-        if !isFeatured(rowIndex), !isContinue(rowIndex), item.type != "collection",
-           let onOpenWindow, let source = morphSource(rowIndex) {
-            onOpenWindow(item, source)
+        if !isFeatured(rowIndex), !isContinue(rowIndex), item.type != "collection", let onOpenDetails {
+            onOpenDetails(item)
         } else if isFeatured(rowIndex) {
             onSelectFeatured(item)
         } else if isContinue(rowIndex), let entry = progress[item.id] {
@@ -4051,7 +5135,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if rows.indices.contains(rowIndex), hiddenTitleRowIDs.contains(rows[rowIndex].id) { return 0 }
         guard isFeatured(focusedRow) else { return 1 }
         // (Rigid: the row's own brightness dims it.)
-        if isNext(rowIndex) { return stepIn ? 0 : rigidRest != nil ? 1 : FixedFocusMetrics.dimmedAlpha }
+        if isNext(rowIndex) { return rigidRest != nil ? 1 : FixedFocusMetrics.dimmedAlpha }
         return belowAway ? 1 : 0
     }
 
@@ -4064,7 +5148,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// The chevron after the next row's name, on the billboard only.
     private func showsNextHint(_ rowIndex: Int) -> Bool {
-        rigidRest == nil && isFeatured(focusedRow) && isNext(rowIndex) && !stepIn
+        rigidRest == nil && isFeatured(focusedRow) && isNext(rowIndex)
     }
 
     private func titleLift(_ rowIndex: Int) -> CGFloat {
@@ -4106,6 +5190,26 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let timing = rowMove?.timingFunction ?? CAMediaTimingFunction(name: .easeInEaseOut)
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
+        // A spring (Render Lab's spring curves) has no timing curve to share:
+        // the lift and size follow the row's own spring, sampled.
+        if let spring = rowMove as? CASpringAnimation {
+            let progress = Self.springProgress(spring)
+            let fromScale = down ? Self.nextNameScale : 1, toScale = down ? 1 : Self.nextNameScale
+            let lift: (CGFloat) -> CGFloat
+            if RenderProbe.shared.flags.nextNameSamePace {
+                lift = down ? { (start - spot) * (1 - $0) } : { (end - spot) * $0 }
+            } else if down {
+                let join = min(max((spot - start) / distance, 0), 1)
+                lift = { p in p >= join || join == 0 ? 0 : (start - spot) * (1 - p / join) }
+            } else {
+                let hold = min(max((spot - start) / distance, 0), 1)
+                lift = { p in p <= hold ? 0 : (end - spot) * (p - hold) / max(1 - hold, 0.0001) }
+            }
+            cell.moveTitleSampled(lift: progress.map(lift),
+                                  scale: progress.map { fromScale + (toScale - fromScale) * $0 },
+                                  duration: progress.duration)
+            return
+        }
         // Its size: to full on the way down to the rows, back on the way up.
         cell.moveTitleScale(from: down ? Self.nextNameScale : 1, to: down ? 1 : Self.nextNameScale,
                             timing: timing, duration: duration)
@@ -4126,6 +5230,28 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let hold = min(max((spot - start) / distance, 0), 1)
             cell.moveTitleLift([0, 0, end - spot], at: [0, hold, 1], timing: timing, duration: duration)
         }
+    }
+
+    /// A spring's progress (0…1, overshoot included) at even steps across
+    /// its settling time — as Core Animation runs it (mass, stiffness,
+    /// damping, from rest).
+    private static func springProgress(_ spring: CASpringAnimation, steps: Int = 90)
+        -> (values: [CGFloat], duration: Double, map: ((CGFloat) -> CGFloat) -> [CGFloat]) {
+        let duration = spring.settlingDuration
+        let m = Double(spring.mass), k = Double(spring.stiffness), c = Double(spring.damping)
+        var x = 0.0, v = Double(spring.initialVelocity)
+        let substeps = 8, dt = duration / Double(steps * substeps)
+        var values: [CGFloat] = [0]
+        for _ in 0..<steps {
+            for _ in 0..<substeps {
+                // Toward 1: semi-implicit Euler.
+                v += (-k * (x - 1) - c * v) / m * dt
+                x += v * dt
+            }
+            values.append(CGFloat(x))
+        }
+        values[values.count - 1] = 1
+        return (values, duration, { f in values.map(f) })
     }
 
     /// Scrolling to or from the rows (see `FixedFocusRowsLayout.belowAway`).
@@ -4168,7 +5294,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return [rowCell.posterCell(at: selected[rows[row].id] ?? 0) ?? rowCell]
     }
 
-    private var stepIn = false
 }
 
 /// Which of a row-name control's arrows show (see `FixedFocusRows.titleArrows`).
@@ -4210,6 +5335,11 @@ struct FixedFocusRowsCommand: Equatable {
         case focusRow(rowID: String)
         /// Back to the billboard (Details: on to its buttons).
         case focusBillboard
+        /// The row's card `index` takes focus — as a press there would, the
+        /// row first aimed at it (the billboard paging by itself, wrapping
+        /// from the last title to the first). Only while focus is in that
+        /// row: never pulled from elsewhere.
+        case select(rowID: String, index: Int)
 
     }
     let action: Action
@@ -4313,9 +5443,9 @@ final class FixedFocusBoxView: UIView {
             super.init(frame: frame)
             addSubview(chips)
             name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            name.textColor = .white
+            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
             facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            facts.textColor = UIColor.white.withAlphaComponent(0.62)
+            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
             addSubview(name)
             addSubview(facts)
         }
@@ -4373,7 +5503,6 @@ final class FixedFocusBoxView: UIView {
         clip.backgroundColor = UIColor(white: 0.12, alpha: 1)
         addSubview(clip)
         clip.addSubview(page)
-        _ = windowWatch
         infoHost.isUserInteractionEnabled = false
         addSubview(infoHost)
         infoHost.addSubview(infoPage)
@@ -4396,31 +5525,15 @@ final class FixedFocusBoxView: UIView {
     var ringHidden = false {
         didSet { if ringHidden != oldValue { applyOutlineStyle() } }
     }
-    /// While Details' window opens or closes over the box, its outline steps
-    /// aside: the window draws one, attached to itself.
-    private lazy var windowWatch: AnyCancellable = ModeSwap.shared.$windowOpen.sink { [weak self] window in
-        self?.windowOver = window != nil
-    }
-    private var windowOver = false {
-        didSet {
-            guard windowOver != oldValue else { return }
-            applyOutlineStyle()
-        }
-    }
-
-    /// The box, on screen and as it looks — the zoom's start.
-    func morphSource() -> TitleMorphSource {
-        TitleMorphSource(frame: clip.onScreen, picture: clip.picture(), backdrop: page.backdrop.onScreen)
-    }
-
     private func applyOutlineStyle() {
         let colored = RenderProbe.shared.flags.boxRimColored
         // The focus outline: the top bar's light, clearer (Render Lab →
         // Focus outline), or a plain white line.
         let lit = !colored && FixedFocusCardEdge.focusLight
-        let hidden = ringHidden || windowOver
+        let hidden = ringHidden
         focusRing.image = lit && !hidden ? FixedFocusCardEdge.focusImage : nil
-        layer.borderWidth = colored || lit || hidden ? 0 : 4
+        layer.borderWidth = colored || lit || hidden ? 0 : FixedFocusRing.width
+        layer.borderColor = FixedFocusRing.color.cgColor
         rim.isHidden = !colored || hidden
         let style = FixedFocusRim.style
         FixedFocusRim.apply(style, to: rim.layer)
@@ -4805,6 +5918,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         title.layer.add(grow, forKey: "scale")
     }
 
+    /// The lift and the size along sampled values (even steps, in order) —
+    /// a spring's (see the controller's `springProgress`); ends at the last.
+    func moveTitleSampled(lift: [CGFloat], scale: [CGFloat], duration: Double) {
+        UIView.performWithoutAnimation {
+            titleLift = lift.last ?? 0
+            titleScale = scale.last ?? 1
+        }
+        let times = lift.indices.map { NSNumber(value: Double($0) / Double(max(lift.count - 1, 1))) }
+        let move = CAKeyframeAnimation(keyPath: "transform.translation.y")
+        move.values = lift.map { NSNumber(value: Double(-$0)) }
+        move.keyTimes = times
+        move.calculationMode = .linear
+        move.duration = duration
+        titleHolder.layer.add(move, forKey: "lift")
+        let grow = CAKeyframeAnimation(keyPath: "transform.scale")
+        grow.values = scale.map { NSNumber(value: Double($0)) }
+        grow.keyTimes = times
+        grow.calculationMode = .linear
+        grow.duration = duration
+        title.layer.add(grow, forKey: "scale")
+    }
+
     /// The lift along `values` at `keyTimes`, on a move's curve and time;
     /// ends at the last value.
     func moveTitleLift(_ values: [CGFloat], at keyTimes: [CGFloat], timing: CAMediaTimingFunction,
@@ -4840,7 +5975,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         clipsToBounds = false
         contentView.clipsToBounds = false
         title.font = Self.titleFont
-        title.textColor = .white
+        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.heading)
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
@@ -4871,6 +6006,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // (Last: once the strip has its size.)
+        defer { applyPendingAim() }
         // (Bounds and centre: the name may be lifted — a transform.)
         // (Wide: as a control, Up from any card finds it.)
         titleHolder.bounds = CGRect(x: 0, y: 0, width: 1700, height: FixedFocusMetrics.titleLine)
@@ -4922,11 +6059,29 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         panel.tint(for: item.background ?? item.poster, animated: animated)
     }
 
-    func setStageStepIn(_ on: Bool) { stage?.setStepIn(on) }
 
 
     func showStage(_ item: MetaItem, direction: CGFloat, animated: Bool) {
+        // Full screen: TMDB's ORIGINAL file, whatever size the pick came
+        // with (a saved pick or cached catalog may still carry a smaller
+        // rendition — soft on a 4K TV).
+        placeStage(TMDBService.originalSize(item.background) ?? item.poster,
+                   direction: direction, animated: animated)
+    }
+
+    private func placeStage(_ url: String?, direction: CGFloat, animated: Bool) {
         guard isFeatured, controller?.hidesBillboardPicture != true else { return }
+        // Pinned: the controller's, not part of this row.
+        if let pinned = controller?.pinnedStage {
+            stage?.removeFromSuperview()
+            stage = nil
+            // Billboard change → Scroll: picture and text as one (the
+            // controller runs both).
+            if animated, RenderProbe.shared.flags.billboardChange == "scroll",
+               controller?.scrollBillboard(url, direction: direction) == true { return }
+            pinned.show(url, direction: direction, animated: animated)
+            return
+        }
         if stage == nil {
             let view = StagePictureView()
             contentView.insertSubview(view, at: 0)
@@ -4934,7 +6089,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             setNeedsLayout()
             layoutIfNeeded()
         }
-        stage?.show(item.background ?? item.poster, direction: direction, animated: animated)
+        stage?.show(url, direction: direction, animated: animated)
     }
 
     /// The catalog (and its titles and art) this cell last showed.
@@ -5006,10 +6161,16 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             windowStart = 0
             destinationStrip?.reloadData()
             destinationStrip?.contentOffset = .zero
-            // (Aimed before its cell was made: there at once.)
+            // (Aimed before its cell was made: there at once — and again once
+            // the strip has its size: a page built in one go (Details with
+            // its data) made this cell before layout, the offset set then
+            // was lost, and the row sat at its first card while the engine
+            // took it to be at the aimed one — Down then found nothing.)
             if selectedIndex > 0 {
                 destinationStrip?.layoutIfNeeded()
                 aim(selectedIndex, animated: false)
+                pendingAim = selectedIndex
+                setNeedsLayout()
             }
             return
         }
@@ -5203,9 +6364,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     /// The first card a destination row shows in full.
     private var windowStart = 0
+    /// An aim made before the strip had its size (see `configure`).
+    private var pendingAim: Int?
+
+    private func applyPendingAim() {
+        guard let index = pendingAim, let cv = destinationStrip, cv.bounds.width > 0 else { return }
+        pendingAim = nil
+        guard index == selectedIndex else { return }
+        cv.layoutIfNeeded()
+        aim(index, animated: false)
+    }
 
     /// Shows `index` first in view (aimed from outside — see
     /// `FixedFocusRowsCommand.aim`); a long way: a quick fade across.
+    /// A fixed-focus row (the billboard's) straight at `index` — its card
+    /// there, for focus to land on (the billboard paging by itself, the
+    /// last title to the first). Destination rows: `aim`.
+    func jump(to index: Int) {
+        guard !isDestination, let row, row.items.indices.contains(index) else { return }
+        strip.contentOffset = CGPoint(x: offset(for: index), y: 0)
+        strip.layoutIfNeeded()
+    }
+
     func aim(_ index: Int, animated: Bool = true) {
         guard isDestination, let cv = destinationStrip, let controller, let row,
               row.items.indices.contains(index) else { return }
@@ -5253,13 +6433,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 }
 
-/// A card that can describe itself as the start of the morph into Details
-/// (`TitleMorphSource`).
-@MainActor
-protocol TitleMorphing: UIView {
-    func morphSource() -> TitleMorphSource
-}
-
 extension UIView {
     /// This view on screen (window points, its transform included).
     @MainActor
@@ -5277,40 +6450,873 @@ extension UIView {
 
 
 
-/// Opening Details from a card: the card morphs into Details — its window
-/// opening to the whole screen, its parts interpolating into Details'
-/// (`TitleMorphOverlay`) — the same motion, curve and end for every way in;
-/// Details takes over in place as it ends. Back plays it backwards into the
-/// card (see `CueApp`).
+/// THE way into Details, from everywhere (billboard, cards, Search, folders,
+/// More Like This). Nothing shown before it's final; every move is Core
+/// Animation (played by the render server — the main thread can't make it
+/// jump), and nothing heavy runs while something moves. STRICT PHASES:
+/// A. Move 1 — the page dims; Details' picture comes forward over it: in at
+///    Home's framing, zooming once into Details' as it fades in. Starts
+///    once the picture is decoded (usually at the press).
+/// B. Still — everything else is loaded (`DetailPreparer`), Details is pushed
+///    and built under the still picture, until the main thread has been
+///    quiet for a few frames.
+/// C. Move 2 — the picture hands over to Details (its rows' name) and the
+///    info block fades in, in place. Focus is on Play from its first frame.
+/// Back: the mirror. Every phase's main-thread hitches go to the LAN log
+/// ("details") — `FrameWatch`.
 @MainActor
-enum DetailWindow {
-    static func open(_ item: MetaItem, from source: TitleMorphSource,
-                     settings: MDBListSettings, push: @escaping (MetaItem) -> Void) {
-        guard ModeSwap.shared.windowOpen == nil else { return }
-        let window = ModeSwap.WindowOpen(item: item, source: source)
-        ModeSwap.shared.windowOpen = window
+final class DetailTransition {
+    static let shared = DetailTransition()
+
+    // The look — tune here (the real durations; no multiplier).
+    /// A: the page going (it only dims — scaled too, it fought the
+    /// picture's zoom: in, out, in).
+    static let pageDim: CGFloat = 0.85
+    static let pageTime: Double = 0.3
+    /// A: the picture, from exactly Home's framing (the billboard's — Details
+    /// frames it `ModeSwap.depthScale` larger) zooming ONCE into Details'.
+    static let pictureDelay: Double = 0.05
+    static let pictureFade: Double = 0.38
+    static let pictureSettle: Double = 0.55
+    /// Fade: the zoomed backdrop alone this long before the info block
+    /// comes in. (Tried: the info block landing WITH the zoom's end, and
+    /// 0.1 s before it — not it; a 0.25 s pause — too slow.)
+    static let picturePause: Double = 0.0
+    /// …the info block starting at this much of the zoom's time (its tail
+    /// barely moves; 1: at its very end).
+    static let revealAt: Double = 0.85
+    /// The picture's zoom: the original curve — quick off the mark, a long
+    /// settle — a little slower (0.7 s; was 0.5, then 0.6). (Tried: linear —
+    /// too abrupt; gentle starts (0.45, 0, 0.15, 1), (0.3, 0.25, 0.15, 1);
+    /// ease in-out (0.35, 0, 0.25, 1).)
+    static let zoomInCurve = CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.2, 1)
+    /// B: quiet frames before C (and at most this long).
+    static let quietFrames = 2
+    static let quietLimit: Double = 1.0
+    /// C: the hand-over and the rise.
+    static let reveal: Double = 0.28
+
+    static let textTime: Double = 0.28
+    /// Back.
+    /// Back (the simple exit): Details fades and steps back to this size.
+    static let exitTime: Double = 0.25
+    static let exitScale: CGFloat = 0.98
+    /// Back to the billboard in place (the way in backwards — `closeInPlace`).
+    /// (Tried 2026-10-09: the simple exit there too — it looked bad.)
+    static let inPlaceBack = true
+    /// Back to the billboard (in place): the buttons go, then the zoom out.
+    static let backWindows: Double = 0.1
+    static let backZoom: Double = 0.35
+    static let ringAfter: Double = 1.5
+    static let giveUp: Double = 8
+
+    static let settleCurve = CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.2, 1)
+    static let inOut = CAMediaTimingFunction(name: .easeInEaseOut)
+    static let out = CAMediaTimingFunction(name: .easeOut)
+
+    private var busy = false
+    private var appeared: String?
+    /// The picture each opened page shows (Back brings it over it again).
+    private var pictures: [String: String] = [:]
+    /// Details' info block (its host view in the rows engine): hidden from
+    /// its first frame while `hidesNextText`, then risen in.
+    var hidesNextText = false
+    private(set) weak var textView: UIView?
+    private var textViews: [String: UIView] = [:]
+    private let overlay = DetailTransitionOverlay()
+
+    /// The rows engine made a billboard text host.
+    func textHostCreated(_ view: UIView) {
+        guard hidesNextText else { return }
+        hidesNextText = false
+        view.alpha = 0
+        textView = view
+    }
+
+    func pageAppeared(_ id: String) { appeared = id }
+
+    /// Where an opening started (Back returns there): the picture at
+    /// Home's framing.
+    struct Opening {
+        var picture: CGRect
+    }
+    private var openings: [String: Opening] = [:]
+
+    static var screen: CGRect { CGRect(origin: .zero, size: StagePictureView.pictureSize) }
+    /// Details' picture on screen: a little wider than it (the drift),
+    /// stepped closer (`ModeSwap.depthScale`).
+    static func detailsPicture(scale: CGFloat? = nil) -> CGRect {
+        let scale = scale ?? ModeSwap.depthScale(1)
+        let size = CGSize(width: (1920 + 2 * StagePictureView.drift) * scale, height: 1080 * scale)
+        return CGRect(x: 960 - size.width / 2, y: 540 - size.height / 2, width: size.width, height: size.height)
+    }
+
+    /// The opening's start: Home's framing of the picture (the billboard's,
+    /// as large as it is at the press).
+    private static func opening(startScale: CGFloat) -> Opening {
+        Opening(picture: detailsPicture(scale: startScale))
+    }
+
+    func open(_ item: MetaItem, fromBillboard: Bool = false, push: @escaping () -> Void) {
+        guard !busy, let window = Self.window else { return }
+        // From the billboard: its picture, as large as it is right now.
+        let opening = Self.opening(startScale: fromBillboard ? StagePictureView.shownScale : 1)
+        busy = true
         ModeSwap.shared.handingOver = true
+        DetailOpenProbe.pressed()
+        DetailPreparer.shared.start(item)
+        // The screen as it is, in the overlay: what dims and what the picture
+        // comes over — so Details can be pushed and BUILT under it at once,
+        // during move 1 (the moves are the render server's; the main thread
+        // building doesn't touch them).
+        overlay.install(in: window, page: window.snapshotView(afterScreenUpdates: false))
+        let watch = FrameWatch()
+        let k = Self.length
         Task { @MainActor in
-            // Its ratings (cached), so Details starts with them.
-            async let ratings = MDBListService.ratings(for: item, settings: settings)
-            try? await Task.sleep(for: .seconds(ModeSwap.swapHandover))
-            // Details starts exactly as the window ended — its title block,
-            // buttons and hint already in (as from Home's billboard).
+            let start = CACurrentMediaTime()
+            let ring = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.ringAfter * Self.length))
+                if !Task.isCancelled { self.overlay.ring(true) }
+            }
+            // A. Move 1: the page dims at once; the picture as soon as it's
+            // decoded. (Not awaited: Details is built meanwhile.)
+            watch.begin("move 1")
+            var moves: [Task<Void, Never>] = []
+            moves.append(Task { await Self.run {
+                Self.animate(self.overlay.dim, "opacity", from: 0, to: Self.pageDim, Self.pageTime * k, Self.inOut)
+            } })
+            let url = await DetailPreparer.shared.picture(for: item, within: Self.giveUp)
+            let image = url.flatMap(Self.decoded)
+            let wait = Self.pictureDelay * k - (CACurrentMediaTime() - start)
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            var zoomEnd: CFTimeInterval?
+            if let url, let image {
+                pictures[item.id] = url
+                openings[item.id] = opening
+                overlay.picture.image = image
+                // The billboard's own shade for it (Details uses the same).
+                overlay.place(opening, shade: DetailPreparer.shared.peek(item.id)?.shade
+                              ?? StageArt.knownShade(for: url))
+                zoomEnd = CACurrentMediaTime() + Self.pictureSettle * k
+                moves.append(Task {
+                    await Self.run {
+                        Self.animate(self.overlay.pictureFrame.layer, "opacity", from: 0, to: 1, Self.pictureFade * k, Self.out)
+                        self.overlay.open(from: opening, Self.pictureSettle * k, Self.zoomInCurve)
+                    }
+                })
+            }
+            // A frame for the moves to be handed over before the main thread
+            // gets busy (Details is built during them).
+            try? await Task.sleep(for: .milliseconds(20))
+            // Under it: the rest of the data, then Details, pushed and built.
+            await DetailPreparer.shared.ready(item, within: Self.giveUp)
             ModeSwap.shared.billboardItemID = item.id
-            ModeSwap.shared.arrivedFromBox = false
-            ModeSwap.shared.billboardRatings = await ratings
+            ModeSwap.shared.billboardRatings = nil
             ModeSwap.shared.billboardFacts = nil
             ModeSwap.shared.billboardSeriesSize = nil
             ModeSwap.shared.billboardTint = (nil, nil)
-            ModeSwap.shared.billboardPlayTitle = HomeUIKitView.playTitle(item, progress: nil)
-            ModeSwap.shared.openedThrough = window
-            push(item)
+            ModeSwap.shared.billboardPlayTitle = nil
+            appeared = nil
+            hidesNextText = true
+            DetailOpenProbe.note("push")
+            DetailsOpen.shared.depth += 1
+            push()
             ModeSwap.shared.handingOver = false
-            // Details is up (looking as the window ended): the window goes.
-            try? await Task.sleep(for: .milliseconds(150))
-            if ModeSwap.shared.windowOpen?.id == window.id { ModeSwap.shared.windowOpen = nil }
+            let built = CACurrentMediaTime()
+            while appeared != item.id, CACurrentMediaTime() - built < 1 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            let drawnAt = CACurrentMediaTime()
+            // The rest once the picture looks landed — `revealAt` of its zoom
+            // (its last bit hardly moves and runs out under the fade) — and
+            // Details is ready.
+            if let zoomEnd {
+                await moves.first?.value
+                let at = zoomEnd - Self.pictureSettle * k * (1 - Self.revealAt) - CACurrentMediaTime()
+                if at > 0 { try? await Task.sleep(for: .seconds(at)) }
+                if Self.picturePause > 0 { try? await Task.sleep(for: .seconds(Self.picturePause * k)) }
+            } else {
+                for move in moves { await move.value }
+            }
+            // B. Only if Details was drawn just now: its first frames.
+            watch.begin("still")
+            if CACurrentMediaTime() - drawnAt < 0.15 {
+                await watch.quiet(frames: Self.quietFrames, within: Self.quietLimit)
+            }
+            hidesNextText = false
+            ring.cancel()
+            overlay.ring(false)
+            if let text = textView { textViews[item.id] = text }
+            let covered = image != nil
+            // The page (the snapshot) gone under the picture.
+            if covered {
+                Self.set(overlay.dim, "opacity", 0)
+                overlay.dropPage()
+            }
+            // (Dev: `-detailsHold` keeps the cover up a while — to compare it
+            // with Details on screenshots.)
+            if ProcessInfo.processInfo.arguments.contains("-detailsHold") {
+                try? await Task.sleep(for: .seconds(3))
+            }
+            // C. Hand-over and rise.
+            watch.begin("move 2")
+            DetailOpenProbe.note("reveal")
+            let text = textView
+            Self.refocus()
+            await Self.run {
+                if !covered {
+                    Self.animate(self.overlay.dim, "opacity", from: Self.pageDim, to: 0, Self.reveal * k, Self.inOut)
+                    self.overlay.fadePage(Self.reveal * k)
+                }
+                Self.animate(self.overlay.pictureFrame.layer, "opacity", from: covered ? 1 : 0, to: 0, Self.reveal * k, Self.inOut)
+                // The info block: a plain fade, in place.
+                if let text {
+                    text.alpha = 1
+                    Self.animate(text.layer, "opacity", from: 0, to: 1, Self.textTime * k, Self.inOut)
+                }
+            }
+            watch.end()
+            overlay.remove()
+            busy = false
         }
     }
+
+    /// Details' shade (`BillboardShade`, as the Render Lab has it), drawn
+    /// once into a picture — the same view, so it matches whatever the
+    /// settings. Made again when they change.
+    static var shadeImage: UIImage? {
+        let flags = RenderProbe.shared.flags
+        let key = "\(flags.billboardScrim)|\(flags.billboardVignette)|\(flags.noScrim)"
+        if let cached = shadeCache, cached.key == key { return cached.image }
+        let renderer = ImageRenderer(content: BillboardShade()
+            .frame(width: screen.width, height: screen.height))
+        renderer.scale = 1
+        let image = renderer.uiImage
+        shadeCache = image.map { (key, $0) }
+        return image
+    }
+    private static var shadeCache: (key: String, image: UIImage)?
+
+    /// 1 — or 4 with the dev slow motion.
+    static var length: Double { slowMotion ? 4 : 1 }
+    /// Dev: `-transitionSlowMo` — every move 4× longer (to watch / screenshot).
+    static let slowMotion = ProcessInfo.processInfo.arguments.contains("-transitionSlowMo")
+
+    /// FROM THE BILLBOARD, in place — the fade's two moves, using what's
+    /// already there:
+    /// 1. The cover (the billboard's own picture, its framing, its shade —
+    ///    identical) fades in over Home with a live copy of the billboard's
+    ///    text above it (without the reason line): only what Home alone has
+    ///    goes (the reason line, its rows' name, the dots, the top bar).
+    ///    Then the zoom, as from anywhere; the text stays still.
+    /// 2. At `revealAt` of the zoom: the overlay hands over to Details —
+    ///    the same picture and text; the buttons and its rows' name come.
+    /// Details is built under it from the press. Back: as from anywhere.
+    func openInPlace(_ item: MetaItem, text: AnyView, push: @escaping () -> Void) {
+        guard !busy, let window = Self.window else { return }
+        let url = DetailPreparer.homePicture(item)
+        // (The billboard's picture not decoded — never, really: the fade.)
+        guard let url, let image = Self.decoded(url) else {
+            open(item, fromBillboard: true, push: push)
+            return
+        }
+        busy = true
+        ModeSwap.shared.handingOver = true
+        DetailOpenProbe.pressed()
+        DetailPreparer.shared.start(item)
+        // Details starts with the billboard's own shade (as the cover).
+        DetailPreparer.shared.peek(item.id)?.shade = StageArt.knownShade(for: url)
+        let k = Self.length
+        let opening = Self.opening(startScale: StagePictureView.shownScale)
+        overlay.install(in: window, page: window.snapshotView(afterScreenUpdates: false))
+        let host = UIHostingController(rootView: text)
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        host.view.frame = Self.screen
+        overlay.showText(host.view)
+        let watch = FrameWatch()
+        Task { @MainActor in
+            watch.begin("move 1")
+            let ring = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.ringAfter * k))
+                if !Task.isCancelled { self.overlay.ring(true) }
+            }
+            pictures[item.id] = url
+            openings[item.id] = opening
+            inPlace[item.id] = (text, url, opening)
+            overlay.picture.image = image
+            overlay.place(opening, shade: StageArt.knownShade(for: url))
+            // AT ONCE (from a card the screen reacts at the press too): the
+            // copy laid out now, then the picture and the copy — both
+            // identical to Home — appear in ONE step, nothing changing; Home
+            // stays only where it alone has things (the top bar; the bottom
+            // band: dots, its rows' name), and those fade — zooming WITH the
+            // picture (they hold Home's picture: zooming apart they'd show it
+            // twice), so the zoom starts right away too. No text is ever
+            // drawn twice, nothing crossfades under it.
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            overlay.pictureFrame.layer.opacity = 1
+            host.view.layer.opacity = 1
+            overlay.liftPage(showing: Self.homeOnlyBands(reason: BillboardReasonFrame.rects[item.id]))
+            CATransaction.commit()
+            let zoomEnd = CACurrentMediaTime() + Self.pictureSettle * k
+            let move = Task {
+                await Self.run {
+                    self.overlay.fadePage(Self.inPlaceFade * k)
+                    self.overlay.zoomPage(by: Self.detailsPicture().width / opening.picture.width,
+                                          Self.pictureSettle * k, Self.zoomInCurve)
+                    self.overlay.open(from: opening, Self.pictureSettle * k, Self.zoomInCurve)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+            // Under it: the data, then Details, pushed and built.
+            await DetailPreparer.shared.ready(item, within: Self.giveUp)
+            ModeSwap.shared.billboardItemID = item.id
+            ModeSwap.shared.billboardRatings = nil
+            ModeSwap.shared.billboardFacts = nil
+            ModeSwap.shared.billboardSeriesSize = nil
+            ModeSwap.shared.billboardTint = (nil, nil)
+            ModeSwap.shared.billboardPlayTitle = nil
+            appeared = nil
+            hidesNextText = true
+            detailsAtTop = true
+            DetailOpenProbe.note("push")
+            DetailsOpen.shared.depth += 1
+            push()
+            ModeSwap.shared.handingOver = false
+            let built = CACurrentMediaTime()
+            while appeared != item.id, CACurrentMediaTime() - built < 1 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            // (Details' own text is shown: the hand-over reveals it as it is.)
+            hidesNextText = false
+            textView?.alpha = 1
+            if let text = textView { textViews[item.id] = text }
+            let drawnAt = CACurrentMediaTime()
+            await move.value
+            // (Its full end: the cover's picture must be Details' exactly.)
+            let at = zoomEnd - CACurrentMediaTime()
+            if at > 0 { try? await Task.sleep(for: .seconds(at)) }
+            watch.begin("still")
+            if CACurrentMediaTime() - drawnAt < 0.15 {
+                await watch.quiet(frames: Self.quietFrames, within: Self.quietLimit)
+            }
+            ring.cancel()
+            overlay.ring(false)
+            overlay.dropPage()
+            // 2. The hand-over: picture and text the same — the buttons and
+            // its rows' name come in.
+            watch.begin("move 2")
+            DetailOpenProbe.note("reveal")
+            Self.refocus()
+            // The cover opens only where something new comes — the buttons,
+            // its rows' name; everywhere else it and the copy stay, whole
+            // (Details' own text never shows under the copy: no text drawn
+            // twice, nothing dimming). Then both go in one frame: under them
+            // is the same page.
+            await Self.run { self.overlay.openWindows(Self.inPlaceWindows, Self.reveal * k) }
+            watch.end()
+            host.view.removeFromSuperview()
+            overlay.remove()
+            busy = false
+        }
+    }
+    /// From the billboard, the hand-over: where Details has what Home
+    /// hadn't — its buttons, its rows' name.
+    static var inPlaceWindows: [CGRect] {
+        let buttons = CGRect(x: FixedFocusMetrics.titleInset - 30, y: FixedFocusBillboardText.buttonsY - 30,
+                             width: 900, height: TitleBlock.buttonHeight + 60)
+        return [buttons, homeOnlyBands()[1]]
+    }
+    /// Pages opened in place: Back plays it the other way (the billboard's
+    /// text copy, the picture's two framings).
+    private var inPlace: [String: (text: AnyView, url: String, opening: Opening)] = [:]
+    /// Details is at its top (the billboard part), not down in its rows.
+    var detailsAtTop = true
+
+    /// From the billboard: Home's own parts fading (before the zoom).
+    static let inPlaceFade: Double = 0.15
+    /// Where Home alone has things over the billboard: the top bar, the
+    /// bottom band (its rows' name, the dots) — clear of the text block.
+    static func homeOnlyBands(reason: CGRect? = nil) -> [CGRect] {
+        let bottom = max(FixedFocusBillboardText.compactBottom + 10, FixedFocusRowsLayout.nextNameY - 24)
+        // (The reason line: just its own line — clear of the logo below.)
+        let line = reason.map { $0.insetBy(dx: -6, dy: -2) }
+        return [CGRect(x: 0, y: 0, width: 1920, height: 130),
+                CGRect(x: 0, y: bottom, width: 1920, height: 1080 - bottom)] + (line.map { [$0] } ?? [])
+    }
+
+    /// BACK TO THE BILLBOARD, the way in played backwards: Details' picture
+    /// and a copy of its text (both identical) over it in one step, nothing
+    /// changing; the buttons and its rows' name go (the cover closing over
+    /// them); the picture zooms out to the billboard's framing while Home's
+    /// own parts come back with it (the top bar, the reason line, the dots,
+    /// its rows' name — cut-outs of Home's screen, zooming along); then the
+    /// overlay goes, Home's billboard under it the same. The text stays.
+    private func closeInPlace(_ itemID: String, way: (text: AnyView, url: String, opening: Opening),
+                              image: UIImage, window: UIWindow, pop: @escaping () -> Void) {
+        busy = true
+        let k = Self.length
+        let watch = FrameWatch()
+        watch.begin("back 1")
+        // Details as it is: seen only where its buttons and rows' name are.
+        let details = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
+        overlay.install(in: window, page: details)
+        overlay.picture.image = image
+        overlay.shade.image = StageArt.knownShade(for: way.url) ?? Self.shadeImage
+        overlay.placeOpen()
+        let host = UIHostingController(rootView: way.text)
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        host.view.frame = Self.screen
+        overlay.showText(host.view)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlay.pictureFrame.layer.opacity = 1
+        host.view.layer.opacity = 1
+        overlay.openWindowsNow(Self.inPlaceWindows)
+        CATransaction.commit()
+        // Home back under it at once (alive: it only needs to draw).
+        inPlace[itemID] = nil
+        textViews[itemID] = nil
+        pop()
+        DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
+        Task { @MainActor in
+            // 1. The buttons and its rows' name go.
+            await Self.run { self.overlay.closeWindows(Self.backWindows * k) }
+            overlay.dropPage()
+            // Home drawn: its own parts (top bar, reason line, dots, rows'
+            // name) as cut-outs, at the picture's zoomed framing.
+            watch.begin("back still")
+            await watch.quiet(frames: Self.quietFrames, within: Self.quietLimit)
+            let home = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
+            let scale = Self.detailsPicture().width / way.opening.picture.width
+            if let home {
+                overlay.install(in: window, page: home)
+                overlay.liftPage(showing: Self.homeOnlyBands(reason: BillboardReasonFrame.rects[itemID]))
+                Self.set(home.layer, "opacity", 0)
+                Self.set(home.layer, "transform.scale", scale)
+            }
+            // 2. The zoom out; Home's parts come back as it lands.
+            watch.begin("back 2")
+            let settle = Self.backZoom * k
+            await Self.run {
+                self.overlay.close(to: way.opening, settle, Self.zoomInCurve)
+                if let home {
+                    Self.animate(home.layer, "transform.scale", from: scale, to: 1, settle, Self.zoomInCurve)
+                    Self.animate(home.layer, "opacity", from: 0, to: 1, Self.backWindows * k, Self.inOut,
+                                 delay: max(0, settle - Self.backWindows * k))
+                }
+            }
+            watch.end()
+            host.view.removeFromSuperview()
+            overlay.remove()
+            busy = false
+        }
+    }
+
+    /// Back from Details: the info block drops away, the picture is over it
+    /// again, the page goes; the page below comes back to its size.
+    func close(itemID: String?, pop: @escaping () -> Void) {
+        guard !busy, let window = Self.window else { pop(); return }
+        // (In place only from Details' top — scrolled down, the page isn't
+        // the billboard's look: the simple exit, as from anywhere.)
+        if Self.inPlaceBack, let itemID, let way = inPlace[itemID], detailsAtTop,
+           let image = Self.decoded(way.url) {
+            closeInPlace(itemID, way: way, image: image, window: window, pop: pop)
+            return
+        }
+        // THE SIMPLE EXIT (from anywhere else): Details steps back — it
+        // fades and shrinks a touch — and the page below is simply there
+        // (Back is about leaving: quick, no picture brought forward).
+        busy = true
+        let k = Self.length
+        let watch = FrameWatch()
+        watch.begin("back")
+        let shot = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
+        overlay.install(in: window, page: shot)
+        if let itemID {
+            textViews[itemID] = nil
+            pictures[itemID] = nil
+            openings[itemID] = nil
+            inPlace[itemID] = nil
+        }
+        pop()
+        DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
+        Task { @MainActor in
+            if let shot {
+                await Self.run {
+                    // (A frame for the page below to be drawn.)
+                    Self.animate(shot.layer, "opacity", from: 1, to: 0, Self.exitTime * k, Self.inOut, delay: 1.0 / 30)
+                    Self.animate(shot.layer, "transform.scale", from: 1, to: Self.exitScale, Self.exitTime * k,
+                                 Self.inOut, delay: 1.0 / 30)
+                }
+            }
+            watch.end()
+            overlay.remove()
+            busy = false
+        }
+    }
+
+    // MARK: Core Animation
+
+    /// The animations added in `body`, until Core Animation says they're
+    /// ALL done (a fixed wait cut them short when they began late).
+    /// …or until their longest one has ended by the clock, whichever comes
+    /// first (a late report never holds the next phase back).
+    private static func run(_ body: () -> Void) async {
+        collecting = 0
+        var resumed = false
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            func finish() {
+                guard !resumed else { return }
+                resumed = true
+                done.resume()
+            }
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { MainActor.assumeIsolated { finish() } }
+            body()
+            CATransaction.commit()
+            // To the render server NOW: otherwise only when the main thread
+            // next returns to its run loop — after building Details, the
+            // moves began ~0.25 s late.
+            CATransaction.flush()
+            let longest = collecting ?? 0
+            collecting = nil
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(longest + 1.0 / 60))
+                finish()
+            }
+        }
+    }
+    /// The longest animation added inside a `run` so far.
+    private static var collecting: Double?
+    private static func note(_ duration: Double) {
+        if let longest = collecting { collecting = max(longest, duration) }
+    }
+
+    /// From → to, the model value set to the end (it stays there).
+    static func animate(_ layer: CALayer, _ path: String, from: CGFloat, to: CGFloat,
+                        _ duration: Double, _ curve: CAMediaTimingFunction, delay: Double = 0) {
+        let animation = CABasicAnimation(keyPath: path)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = duration
+        animation.timingFunction = curve
+        if delay > 0 {
+            animation.beginTime = CACurrentMediaTime() + delay
+            animation.fillMode = .backwards
+        }
+        note(duration + delay)
+        set(layer, path, to)
+        layer.add(animation, forKey: path)
+    }
+
+    /// A layer from one frame (in its superlayer) to another: its size and
+    /// place (Core Animation scales a picture's contents with it).
+    static func move(_ layer: CALayer, from: CGRect, to: CGRect, _ duration: Double, _ curve: CAMediaTimingFunction) {
+        let bounds = CABasicAnimation(keyPath: "bounds")
+        bounds.fromValue = CGRect(origin: .zero, size: from.size)
+        bounds.toValue = CGRect(origin: .zero, size: to.size)
+        let position = CABasicAnimation(keyPath: "position")
+        position.fromValue = CGPoint(x: from.midX, y: from.midY)
+        position.toValue = CGPoint(x: to.midX, y: to.midY)
+        for animation in [bounds, position] {
+            animation.duration = duration
+            animation.timingFunction = curve
+        }
+        note(duration)
+        place(layer, to)
+        layer.add(bounds, forKey: "bounds")
+        layer.add(position, forKey: "position")
+    }
+
+    static func place(_ layer: CALayer, _ frame: CGRect) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.bounds = CGRect(origin: .zero, size: frame.size)
+        layer.position = CGPoint(x: frame.midX, y: frame.midY)
+        CATransaction.commit()
+    }
+
+    static func set(_ layer: CALayer, _ path: String, _ value: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: path)
+        layer.setValue(value, forKeyPath: path)
+        CATransaction.commit()
+    }
+
+    private static var window: UIWindow? {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+    }
+
+    /// The picture as Details decodes it (same size: same memory entry).
+    private static func decoded(_ url: String) -> UIImage? {
+        ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: StagePictureView.pictureSize.width,
+                                                           maxPixels: nil))
+    }
+
+    /// Focus onto the page that's now up.
+    private static func refocus() {
+        window?.rootViewController?.setNeedsFocusUpdate()
+        window?.rootViewController?.updateFocusIfNeeded()
+    }
+}
+
+typealias DetailTransitionOpening = DetailTransition.Opening
+
+/// Over everything (on the window, above the app): the page's dimming,
+/// Details' picture exactly where Details draws it (without its shade), a
+/// ring for a long wait.
+@MainActor
+final class DetailTransitionOverlay {
+    let root = UIView()
+    let dim = CALayer()
+    /// The screen, clipped: the cover picture's frame — it fades.
+    let pictureFrame = UIView()
+    let picture = UIImageView()
+    /// Details' shade over the picture (the cover is Details without its
+    /// text — the reveal only adds things).
+    let shade = UIImageView()
+    private let spinner = UIActivityIndicatorView(style: .large)
+
+    init() {
+        root.isUserInteractionEnabled = false
+        root.frame = DetailTransition.screen
+        dim.backgroundColor = UIColor.black.cgColor
+        dim.frame = root.bounds
+        dim.opacity = 0
+        root.layer.addSublayer(dim)
+        pictureFrame.frame = root.bounds
+        pictureFrame.clipsToBounds = true
+        pictureFrame.backgroundColor = .black
+        pictureFrame.layer.opacity = 0
+        picture.contentMode = .scaleAspectFill
+        picture.clipsToBounds = true
+        pictureFrame.addSubview(picture)
+        shade.contentMode = .scaleToFill
+        shade.frame = root.bounds
+        pictureFrame.addSubview(shade)
+        placeOpen()
+        root.addSubview(pictureFrame)
+        spinner.color = .white
+        spinner.center = CGPoint(x: 960, y: 540)
+        spinner.hidesWhenStopped = true
+        root.addSubview(spinner)
+    }
+
+    /// The screen as it was at the press (dimmed; Details is built under it).
+    private var page: UIView?
+
+    func install(in window: UIWindow, page snapshot: UIView? = nil) {
+        if root.superview !== window { window.addSubview(root) }
+        window.bringSubviewToFront(root)
+        if let snapshot {
+            page?.removeFromSuperview()
+            snapshot.frame = root.bounds
+            snapshot.isUserInteractionEnabled = false
+            root.insertSubview(snapshot, at: 0)
+            page = snapshot
+        }
+    }
+
+    func dropPage() {
+        page?.layer.mask = nil
+        page?.removeFromSuperview()
+        page = nil
+    }
+
+    /// Without a picture: the page fades into Details.
+    func fadePage(_ duration: Double) {
+        guard let page else { return }
+        DetailTransition.animate(page.layer, "opacity", from: 1, to: 0, duration, DetailTransition.inOut)
+    }
+
+    func ring(_ on: Bool) { on ? spinner.startAnimating() : spinner.stopAnimating() }
+
+    /// The billboard text's copy, over the picture (hidden: drawn first).
+    func showText(_ view: UIView) {
+        view.isUserInteractionEnabled = false
+        view.layer.opacity = 0
+        root.insertSubview(view, aboveSubview: pictureFrame)
+    }
+
+    /// The page (lifted) zooming with the picture, about the screen's centre.
+    func zoomPage(by scale: CGFloat, _ duration: Double, _ curve: CAMediaTimingFunction) {
+        guard let page else { return }
+        DetailTransition.animate(page.layer, "transform.scale", from: 1, to: scale, duration, curve)
+    }
+
+    /// The cover open in `rects` already (Back: Details' buttons showing).
+    func openWindowsNow(_ rects: [CGRect]) {
+        openWindows(rects, 0)
+    }
+
+    /// …closing them again (Back: the buttons go).
+    func closeWindows(_ duration: Double) {
+        guard let mask = pictureFrame.layer.mask else { return }
+        for case let window? in (mask.sublayers ?? []).dropFirst().map({ $0 as CALayer? }) {
+            DetailTransition.animate(window, "opacity", from: 0, to: 1, duration, DetailTransition.inOut)
+        }
+    }
+
+    /// The cover opening in `rects` (softly), Details showing there.
+    func openWindows(_ rects: [CGRect], _ duration: Double) {
+        let mask = CALayer()
+        mask.frame = pictureFrame.bounds
+        let rest = CAShapeLayer()
+        let path = CGMutablePath()
+        path.addRect(pictureFrame.bounds)
+        for rect in rects { path.addRect(rect) }
+        rest.path = path
+        rest.fillRule = .evenOdd
+        rest.fillColor = UIColor.black.cgColor
+        mask.addSublayer(rest)
+        for rect in rects {
+            let window = CALayer()
+            window.frame = rect
+            window.backgroundColor = UIColor.black.cgColor
+            mask.addSublayer(window)
+            if duration > 0 {
+                DetailTransition.animate(window, "opacity", from: 1, to: 0, duration, DetailTransition.inOut)
+            } else {
+                DetailTransition.set(window, "opacity", 0)
+            }
+        }
+        pictureFrame.layer.mask = mask
+    }
+
+    /// The page (Home as it was) above the picture, but only in `rects`.
+    func liftPage(showing rects: [CGRect]) {
+        guard let page else { return }
+        let mask = CAShapeLayer()
+        let path = CGMutablePath()
+        for rect in rects { path.addRect(rect) }
+        mask.path = path
+        page.layer.mask = mask
+        root.insertSubview(page, aboveSubview: pictureFrame)
+    }
+
+    /// The picture at the opening's start, Home's framing (no animation).
+    func place(_ opening: DetailTransitionOpening, shade image: UIImage?) {
+        shade.image = image ?? DetailTransition.shadeImage
+        DetailTransition.place(picture.layer, opening.picture)
+    }
+
+    /// The picture at Details' framing (no animation).
+    func placeOpen() {
+        DetailTransition.place(picture.layer, DetailTransition.detailsPicture())
+    }
+
+    /// The zoom in: Home's framing → Details'.
+    func open(from opening: DetailTransitionOpening, _ duration: Double, _ curve: CAMediaTimingFunction) {
+        DetailTransition.move(picture.layer, from: opening.picture, to: DetailTransition.detailsPicture(), duration, curve)
+    }
+
+    /// Back: Details' framing → Home's.
+    func close(to opening: DetailTransitionOpening, _ duration: Double, _ curve: CAMediaTimingFunction) {
+        DetailTransition.move(picture.layer, from: DetailTransition.detailsPicture(), to: opening.picture, duration, curve)
+    }
+
+    func remove() {
+        dropPage()
+        root.removeFromSuperview()
+        dim.removeAllAnimations()
+        dim.opacity = 0
+        for layer in [pictureFrame.layer, picture.layer] { layer.removeAllAnimations() }
+        pictureFrame.layer.mask = nil
+        pictureFrame.layer.opacity = 0
+        placeOpen()
+        picture.image = nil
+        spinner.stopAnimating()
+    }
+}
+
+/// Main-thread hitches per phase of a transition (LAN log, "details"): a
+/// display link counts frames that came later than one refresh. The moves
+/// themselves are Core Animation — this shows what the main thread did
+/// meanwhile (and B waits on it: `quiet`).
+@MainActor
+final class FrameWatch {
+    private var link: CADisplayLink?
+    private var phase: String?
+    private var phaseStart: CFTimeInterval = 0
+    private var last: CFTimeInterval = 0
+    private var frames = 0, late = 0
+    private var worst: CFTimeInterval = 0
+    private var quietRun = 0
+    private final class Target: NSObject {
+        weak var watch: FrameWatch?
+        @objc func tick(_ link: CADisplayLink) { MainActor.assumeIsolated { watch?.tick(link) } }
+    }
+    private let target = Target()
+
+    init() {
+        target.watch = self
+        let link = CADisplayLink(target: target, selector: #selector(Target.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    fileprivate func tick(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let refresh = max(link.duration, 1.0 / 120)
+        if last > 0 {
+            let gap = now - last
+            frames += 1
+            if gap > refresh * 1.5 { late += 1; quietRun = 0 } else { quietRun += 1 }
+            worst = max(worst, gap)
+        }
+        last = now
+    }
+
+    func begin(_ name: String) {
+        report()
+        phase = name
+        phaseStart = CACurrentMediaTime()
+        frames = 0; late = 0; worst = 0
+    }
+
+    /// Until `frames` frames in a row came on time (or `within` passed).
+    func quiet(frames count: Int, within: Double) async {
+        quietRun = 0
+        let deadline = CACurrentMediaTime() + within
+        while quietRun < count, CACurrentMediaTime() < deadline {
+            try? await Task.sleep(for: .milliseconds(8))
+        }
+    }
+
+    func end() {
+        report()
+        link?.invalidate()
+        link = nil
+    }
+
+    private func report() {
+        guard let phase else { return }
+        PlayerProbe.event("details", String(format: "frames %@: %.0f ms · %d frames · %d late · worst %.0f ms",
+                                            phase, (CACurrentMediaTime() - phaseStart) * 1000, frames, late, worst * 1000))
+    }
+}
+
+/// Where each billboard title's reason line is on screen (Home's own).
+@MainActor
+enum BillboardReasonFrame {
+    static var rects: [String: CGRect] = [:]
+}
+
+/// How many Details pages are up (opened through `DetailTransition`). Its
+/// own object: it changes only at a push / pop, not with the animation.
+@MainActor
+final class DetailsOpen: ObservableObject {
+    static let shared = DetailsOpen()
+    @Published var depth = 0
 }
 
 /// A card in a destination row, as the controller sees it: its row and
@@ -5367,10 +7373,10 @@ protocol FixedFocusDestinationItem: UIView {
 
 /// A banner row's card — Search's Top Result — drawn as a small billboard:
 /// the backdrop filling it, the billboard's left fade, and over it the
-/// billboard's text in the billboard's order — the logo (or the name), the
-/// summary, the name line, the facts and the chips — at its sizes, only the
-/// logo and the summary shorter. Focused: Cue's outline and a shadow.
-final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationItem, TitleMorphing {
+/// billboard's text as Home's billboard has it — the logo (or the name), the
+/// chips, the facts and the tagline — at its sizes, only the logo shorter.
+/// Focused: Cue's outline and a shadow.
+final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationItem {
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private let card = UIView()
@@ -5379,26 +7385,24 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     private let logo = LeftAlignedImageView()
     /// The title in big type, where there's no logo.
     private let name = UILabel()
-    /// The name line under the summary (as on the billboard).
-    private let nameLine = UILabel()
     private let facts = UILabel()
+    /// The tagline (TMDB) — no tagline: the name, so the block keeps its
+    /// height.
+    private let tagline = UILabel()
     /// The chips line (status, the first three ratings) — the billboard's
     /// own SwiftUI chips, hosted.
     private let chips = UIHostingController(rootView: AnyView(EmptyView()))
-    private let summary = UILabel()
+    /// Loads the facts' season count and the tagline for the shown title.
+    private var extras: Task<Void, Never>?
     private let outline = UIView()
     private let shadow = UIImageView()
     private var item: MetaItem?
     private var focusedNow = false
-    /// While the window opens or closes over it, the banner's own outline
-    /// and shadow step aside: the window draws them, attached to itself.
-    private var windowWatch: AnyCancellable?
 
     /// The text column: from the card's left, this wide.
     private static let textInset: CGFloat = 56
     private static let textWidth: CGFloat = 760
     private static let logoHeight: CGFloat = 96
-    private static let summaryLines = 2
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -5420,24 +7424,23 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         fade.locations = [0, 0.3, 0.5, 0.75]
         card.layer.addSublayer(fade)
         name.font = .systemFont(ofSize: 52, weight: .bold)
-        name.textColor = .white
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         name.numberOfLines = 2
-        nameLine.font = .systemFont(ofSize: FixedFocusMetrics.textSize)
-        nameLine.textColor = .white
-        facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize)
-        facts.textColor = UIColor.white.withAlphaComponent(0.62)
-        summary.numberOfLines = Self.summaryLines
+        // As on the billboard: the facts bright, the tagline quiet and italic.
+        facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .medium)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        tagline.font = UIFont(descriptor: UIFont.systemFont(ofSize: FixedFocusMetrics.textSize)
+            .fontDescriptor.withSymbolicTraits(.traitItalic) ?? UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).fontDescriptor,
+                              size: FixedFocusMetrics.textSize)
+        tagline.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tagline)
         chips.view.backgroundColor = .clear
         chips.safeAreaRegions = []
-        for view: UIView in [logo, name, summary, nameLine, facts, chips.view] { card.addSubview(view) }
-        windowWatch = ModeSwap.shared.$windowOpen.sink { [weak self] window in
-            self?.windowOver = window != nil
-        }
+        for view: UIView in [logo, name, chips.view, facts, tagline] { card.addSubview(view) }
         // A logo arriving replaces the name: the column is laid out again.
         logo.imageView.onImage = { [weak self] in self?.setNeedsLayout() }
         outline.isUserInteractionEnabled = false
-        outline.layer.borderColor = UIColor.white.cgColor
-        outline.layer.borderWidth = 4
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
+        outline.layer.borderWidth = FixedFocusRing.width
         outline.layer.cornerRadius = Spotlight.cornerRadius
         outline.layer.cornerCurve = .continuous
         outline.alpha = 0
@@ -5455,19 +7458,23 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
             logo.image = nil
             FixedFocusImages.load(item.logo, into: logo.imageView, maxDimension: 600)
         }
+        let changed = self.item?.id != item.id
         self.item = item
         name.text = item.name
-        nameLine.text = item.name
-        facts.text = FixedFocusShowInfo.factsLine(item)
         chips.rootView = rowCell.hosted(TitleChipsLine(item: item))
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = FixedFocusBillboardText.summaryLineSpacing
-        style.lineBreakMode = .byTruncatingTail
-        summary.attributedText = NSAttributedString(string: item.description ?? "", attributes: [
-            .font: UIFont.systemFont(ofSize: FixedFocusBillboardText.summarySize),
-            .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusBillboardText.summaryOpacity),
-            .paragraphStyle: style,
-        ])
+        if changed {
+            facts.text = FixedFocusShowInfo.factsLine(item)
+            tagline.text = TMDBService.knownFacts(for: item)?.tagline ?? item.name
+            extras?.cancel()
+            extras = Task { @MainActor [weak self] in
+                async let info = FixedFocusShowInfo.load(item)
+                async let facts = TMDBService.facts(for: item)
+                let (size, titleFacts) = await (info, facts)
+                guard let self, !Task.isCancelled, self.item?.id == item.id else { return }
+                self.facts.text = FixedFocusShowInfo.factsLine(item, info: size)
+                if let line = titleFacts?.tagline { self.tagline.text = line }
+            }
+        }
         applyFocus(isFocused)
         setNeedsLayout()
     }
@@ -5484,8 +7491,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         shadow.center = CGPoint(x: bounds.midX, y: bounds.midY)
         // A WINDOW onto the full-screen picture: the backdrop at the size and
         // place Details (and Home's billboard) give it, seen through the
-        // card — so opening the window (`TitleMorphOverlay`) shows more of
-        // the very same picture.
+        // card — the very same picture.
         let origin = rowCell?.restingCardOrigin() ?? .zero
         let drift = StagePictureView.drift
         backdrop.frame = CGRect(x: -drift - origin.x, y: -origin.y,
@@ -5493,29 +7499,27 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
                                 height: StagePictureView.pictureSize.height)
         fade.frame = card.bounds
         // The text column, centred on the card's height, in the billboard's
-        // order and rhythm: the logo (or the name), the summary, then the
-        // name line, the facts and the chips one line step apart.
+        // order and rhythm: the logo (or the name), the chips, the facts,
+        // the tagline.
         let x = Self.textInset, width = Self.textWidth
         let hasLogo = logo.image != nil
         name.isHidden = hasLogo
         logo.isHidden = !hasLogo
         let titleHeight = hasLogo ? Self.logoHeight
             : name.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let summaryHeight = summary.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let step = FixedFocusMetrics.factsOffset          // one line step
-        let lines = FixedFocusMetrics.infoGap + 3 * step  // name, facts, chips
-        let total = titleHeight + FixedFocusBillboardText.logoToSummary + summaryHeight + lines
+        let line = FixedFocusMetrics.factsHeight
+        let gap = FixedFocusMetrics.factsOffset - 30   // the billboard's line step
+        let chipsGap = gap + FixedFocusBillboardText.chipsGap
+        let total = titleHeight + FixedFocusBillboardText.logoToSummary + line + chipsGap + line + gap + 30
         var y = max(24, (bounds.height - total) / 2)
         logo.frame = CGRect(x: x, y: y, width: width * 0.7, height: Self.logoHeight)
         name.frame = CGRect(x: x, y: y, width: width, height: titleHeight)
         y += titleHeight + FixedFocusBillboardText.logoToSummary
-        summary.frame = CGRect(x: x, y: y, width: width, height: summaryHeight)
-        y += summaryHeight + FixedFocusMetrics.infoGap
-        nameLine.frame = CGRect(x: x, y: y, width: width, height: 30)
-        y += step
-        facts.frame = CGRect(x: x, y: y, width: width, height: FixedFocusMetrics.factsHeight)
-        y += step
-        chips.view.frame = CGRect(x: x, y: y, width: width, height: FixedFocusMetrics.factsHeight)
+        chips.view.frame = CGRect(x: x, y: y, width: width, height: line)
+        y += line + chipsGap
+        facts.frame = CGRect(x: x, y: y, width: width, height: line)
+        y += line + gap
+        tagline.frame = CGRect(x: x, y: y, width: width, height: 30)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -5528,18 +7532,8 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     /// (No lift: the window stays exactly where the picture is.)
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
-        let shown = focused && !windowOver
-        outline.alpha = shown ? 1 : 0
-        shadow.alpha = shown ? 1 : 0
-    }
-
-    private var windowOver = false {
-        didSet { if windowOver != oldValue { applyFocus(focusedNow) } }
-    }
-
-    /// The banner, on screen and as it looks — the zoom's start.
-    func morphSource() -> TitleMorphSource {
-        TitleMorphSource(frame: card.onScreen, picture: card.picture(), backdrop: backdrop.onScreen)
+        outline.alpha = focused ? 1 : 0
+        shadow.alpha = focused ? 1 : 0
     }
 }
 
@@ -5592,192 +7586,6 @@ enum ContinueMenuAction: CaseIterable {
     }
 }
 
-/// Details' button row as it will look (see `DetailView.actionRow`), not
-/// focusable — shown while a swap brings Details in, so Details takes over
-/// with its own exactly there.
-struct DetailSwapButtons: View {
-    let playTitle: String
-    let saved: Bool
-
-    var body: some View {
-        HStack(spacing: CueSpacing.md) {
-            // Lit already: focus lands on Play as Details takes over.
-            DetailActionButton(icon: "play.fill", title: playTitle, isPrimary: true, lit: true, action: {})
-            HStack(spacing: CueSpacing.md) {
-                DetailActionButton(icon: saved ? "checkmark" : "plus",
-                                   title: saved ? "In Library" : "Add to Library",
-                                   isPrimary: false, lit: false, action: {})
-                DetailActionButton(icon: "play.rectangle.fill", title: "Watch Trailer",
-                                   isPrimary: false, lit: false, action: {})
-            }
-        }
-        .padding(.top, CueSpacing.xs)
-        .frame(height: TitleBlock.buttonHeight)
-        .focusable(false)
-        .allowsHitTesting(false)
-    }
-}
-
-/// A card opening into Details as ONE ZOOM: Details' first frame starts
-/// shrunk into the card (filling it) and grows to the whole screen; the card
-/// grows with it as if on the same surface; the card's rounded rect is the
-/// window it's all seen through, growing to the screen, its outline and
-/// shadow on it. Nothing moves on its own. The change-over is kept out of
-/// sight:
-/// - the PICTURE starts exactly as the card draws its backdrop (`backdrop`)
-///   and grows into Details' — the same image, so nothing changes in it; a
-///   poster (other art) dissolves softly, through a slight blur, instead;
-/// - the TEXT never overlaps: the card's goes in the first third, Details'
-///   (title block, buttons, hint, with its shade) comes in from half-way.
-/// Ends exactly as Details looks (as from Home's billboard), which takes
-/// over. Closing runs it backwards.
-struct TitleMorphOverlay: View {
-    @EnvironmentObject private var library: LibraryStore
-    @ObservedObject private var probe = RenderProbe.shared
-    let open: ModeSwap.WindowOpen
-    /// Full screen (else the card).
-    @State private var opened: Bool
-    /// The card's own look is gone.
-    @State private var cardGone: Bool
-    /// Details' text (and its shade) is in.
-    @State private var textIn: Bool
-
-    init(open: ModeSwap.WindowOpen) {
-        self.open = open
-        _opened = State(initialValue: open.closing)
-        _cardGone = State(initialValue: open.closing)
-        _textIn = State(initialValue: open.closing)
-    }
-
-    private var item: MetaItem { open.item }
-    private var card: CGRect { open.source.frame }
-    private static var screen: CGSize { StagePictureView.pictureSize }
-
-    /// The zoom's start: the page shrunk to FILL the card, centred on it.
-    private var startScale: CGFloat {
-        max(card.width / Self.screen.width, card.height / Self.screen.height)
-    }
-    private var startOrigin: CGPoint {
-        CGPoint(x: card.midX - Self.screen.width * startScale / 2,
-                y: card.midY - Self.screen.height * startScale / 2)
-    }
-
-    var body: some View {
-        let screen = Self.screen
-        let window = opened ? CGRect(origin: .zero, size: screen) : card
-        let corner = opened ? 0 : Spotlight.cornerRadius
-        // The card, on the same surface: where the zoom takes it.
-        let cardEnd = CGRect(x: (card.minX - startOrigin.x) / startScale,
-                             y: (card.minY - startOrigin.y) / startScale,
-                             width: card.width / startScale, height: card.height / startScale)
-        ZStack(alignment: .topLeading) {
-            Image(uiImage: FixedFocusCardEdge.shadowImage)
-                .resizable()
-                .place(window.insetBy(dx: -FixedFocusCardEdge.shadowPad, dy: -FixedFocusCardEdge.shadowPad))
-                .opacity(opened ? 0 : 1)
-            ZStack(alignment: .topLeading) {
-                pictureLayer
-                if let picture = open.source.picture {
-                    Image(uiImage: picture)
-                        .resizable()
-                        .place(opened ? cardEnd : card)
-                        // Other art dissolves softly (the backdrop is the
-                        // same picture underneath: only the text goes).
-                        .blur(radius: open.source.backdrop == nil && cardGone ? 14 : 0)
-                        .opacity(cardGone ? 0 : 1)
-                }
-                textLayer
-                    .scaleEffect(opened ? 1 : startScale, anchor: .topLeading)
-                    .offset(x: opened ? 0 : startOrigin.x, y: opened ? 0 : startOrigin.y)
-                    .opacity(textIn ? 1 : 0)
-            }
-            .frame(width: screen.width, height: screen.height, alignment: .topLeading)
-            .mask(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: corner, style: .continuous).place(window)
-            }
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white, lineWidth: 4)
-                .place(window)
-                .opacity(opened ? 0 : 1)
-        }
-        .frame(width: screen.width, height: screen.height, alignment: .topLeading)
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .onAppear(perform: run)
-    }
-
-    /// Details' picture, where it is at full screen (a little wider than the
-    /// screen, stepped closer).
-    private static var picture: CGRect {
-        let drift = StagePictureView.drift
-        let base = CGRect(x: -drift, y: 0, width: screen.width + 2 * drift, height: screen.height)
-        let scale = ModeSwap.depthScale(1)
-        return base.insetBy(dx: -base.width * (scale - 1) / 2, dy: -base.height * (scale - 1) / 2)
-    }
-
-    /// Details' picture: from exactly where the card draws the backdrop (or,
-    /// for other art, from its place in the shrunk page) to its own.
-    private var pictureLayer: some View {
-        let screen = Self.screen
-        let full = Self.picture
-        let shrunk = CGRect(x: startOrigin.x + full.minX * startScale, y: startOrigin.y + full.minY * startScale,
-                            width: full.width * startScale, height: full.height * startScale)
-        return ZStack(alignment: .topLeading) {
-            ATVBackground()
-            RemoteImage(url: item.background ?? item.poster, maxDimension: StagePictureView.pictureSize.width)
-                .place(opened ? full : (open.source.backdrop ?? shrunk))
-            // Details' shade comes in with its text.
-            BillboardShade()
-                .frame(width: screen.width, height: screen.height)
-                .opacity(textIn ? 1 : 0)
-        }
-        .frame(width: screen.width, height: screen.height, alignment: .topLeading)
-        .clipped()
-        // Faded out at the bottom, as Details' picture is.
-        .mask {
-            let fade = probe.flags.billboardBottomFade
-            LinearGradient(stops: [.init(color: .black, location: 0),
-                                   .init(color: .black, location: max(screen.height - fade, 0) / screen.height),
-                                   .init(color: .black.opacity(fade > 0 ? 0 : 1), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
-        }
-    }
-
-    /// Details' text, full screen: the title block, buttons and hint.
-    private var textLayer: some View {
-        let screen = Self.screen
-        return ZStack(alignment: .topLeading) {
-            FixedFocusBillboardText(item: item, info: FixedFocusShowInfo.known(item), reason: nil,
-                                    ratings: AnyView(TitleChipsLine(item: item, includesStatus: false)))
-                .padding(.top, FixedFocusBillboardText.topY)
-                .padding(.leading, FixedFocusMetrics.titleInset)
-            DetailSwapButtons(playTitle: HomeUIKitView.playTitle(item, progress: nil),
-                              saved: library.contains(item))
-                .padding(.top, FixedFocusBillboardText.buttonsY)
-                .padding(.leading, FixedFocusMetrics.titleInset)
-            SectionHint.place(SectionHint(title: item.isSeries ? "Episodes" : "More"))
-                .frame(width: screen.width)
-                .offset(y: TitleBlock.hintY(screenHeight: screen.height))
-        }
-        .frame(width: screen.width, height: screen.height, alignment: .topLeading)
-    }
-
-    /// One motion (Billboard ⇄ Details' curve, `ModeSwap.swap`); the card's
-    /// look goes in its first third, Details' text comes in its second half
-    /// — never both at once (closing: the other way round).
-    private func run() {
-        let d = ModeSwap.swapDuration
-        withAnimation(ModeSwap.swap) { opened = !open.closing }
-        if open.closing {
-            withAnimation(.easeOut(duration: d / 2)) { textIn = false }
-            withAnimation(.easeIn(duration: d / 3).delay(d * 2 / 3)) { cardGone = false }
-        } else {
-            withAnimation(.easeOut(duration: d / 3)) { cardGone = true }
-            withAnimation(.easeIn(duration: d / 2).delay(d / 2)) { textIn = true }
-        }
-    }
-}
-
 private extension View {
     /// Into a rect of the screen (top-left origin).
     func place(_ rect: CGRect, alignment: Alignment = .center) -> some View {
@@ -5826,7 +7634,7 @@ final class LeftAlignedImageView: UIView {
 /// A destination row's card: its picture with Cue's focus outline (or
 /// tvOS's lift — `FixedFocusMetrics.destinationSystemLift`); under it the
 /// name and a second line (when it was saved, how many catalogs).
-final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinationItem, TitleMorphing {
+final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinationItem {
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private let picture = UIImageView()
@@ -5835,6 +7643,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let edge = UIImageView()
     private let outline = UIView()
     private let outlineLight = UIImageView()
+    /// The lift's scale the outline is sized to (see `setFocused`).
+    private var outlineScale: CGFloat = 1
     private let shadow = UIImageView()
     private let name = UILabel()
     private let detail = UILabel()
@@ -5850,12 +7660,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let stateShade = CAGradientLayer()
     /// The captions' gap below the card (larger while it's grown).
     private var captionGap: NSLayoutConstraint!
-    /// While a window opens or closes over it, its outline and shadow step
-    /// aside: the window draws them, attached to itself.
-    private var windowWatch: AnyCancellable?
-    private var windowOver = false {
-        didSet { if windowOver != oldValue { applyFocus(isFocused) } }
-    }
     private var cardHeight: CGFloat = 0
     private var shown: String?
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
@@ -5897,15 +7701,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         name.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
         name.lineBreakMode = .byTruncatingTail
         detail.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        detail.textColor = UIColor.white.withAlphaComponent(0.62)
+        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         for label in [name, detail] {
             label.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(label)
         }
         // Below the picture's FOCUSED frame: a lift pushes them down.
-        windowWatch = ModeSwap.shared.$windowOpen.sink { [weak self] window in
-            self?.windowOver = window != nil
-        }
         captionGap = name.topAnchor.constraint(equalTo: picture.focusedFrameGuide.bottomAnchor,
                                                constant: FixedFocusMetrics.infoGap)
         NSLayoutConstraint.activate([
@@ -5931,6 +7732,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             view.bounds = CGRect(origin: .zero, size: card.size)
             view.center = CGPoint(x: card.midX, y: card.midY)
         }
+        outline.bounds = CGRect(origin: .zero, size: CGSize(width: card.width * outlineScale,
+                                                            height: card.height * outlineScale))
         shadow.bounds = CGRect(origin: .zero, size: card.insetBy(dx: -FixedFocusCardEdge.shadowPad,
                                                                     dy: -FixedFocusCardEdge.shadowPad).size)
         shadow.center = CGPoint(x: card.midX, y: card.midY)
@@ -5943,7 +7746,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         stateShade.frame = picture.bounds
         CATransaction.commit()
         let lit = FixedFocusCardEdge.focusLight
-        outline.layer.borderWidth = lit ? 0 : 4
+        outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
         outlineLight.image = lit ? FixedFocusCardEdge.focusImage : nil
         outlineLight.frame = outline.bounds
     }
@@ -5951,12 +7755,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     /// The card itself, without its caption (in the cell).
     var cardFrame: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: cardHeight) }
 
-    /// The card's picture, on screen and as it looks — the zoom's start.
-    func morphSource() -> TitleMorphSource {
-        // A landscape card shows the backdrop itself; a poster is other art.
-        TitleMorphSource(frame: picture.onScreen, picture: picture.picture(),
-                         backdrop: picture.bounds.width > picture.bounds.height ? picture.onScreen : nil)
-    }
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
                    progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil) {
@@ -6044,7 +7842,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
-        name.textColor = UIColor.white.withAlphaComponent(focused ? 1 : 0.8)
+        name.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : 0.7)
         guard !Self.lift else { return }
         // Grown, outlined, a shadow under it — the captions step down with it.
         // (Render Lab → Moving focus: lift; off: only outlined, as the box.)
@@ -6056,10 +7854,14 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             : 1
         let grown = CGAffineTransform(scaleX: scale, y: scale)
         picture.transform = grown
-        outline.transform = grown
+        // The outline SIZED with the card, not scaled: its line stays the
+        // fixed box's width (scaled, it grew thicker with the lift).
+        outlineScale = scale
+        outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: cardHeight * scale))
+        outline.layer.cornerRadius = Spotlight.cornerRadius * scale
         shadow.transform = grown
-        outline.alpha = focused && !windowOver ? 1 : 0
-        shadow.alpha = focused && grows && RenderProbe.shared.flags.movingFocusShadow && !windowOver ? 1 : 0
+        outline.alpha = focused ? 1 : 0
+        shadow.alpha = focused && grows && RenderProbe.shared.flags.movingFocusShadow ? 1 : 0
         // The caption keeps its distance to the card at its FOCUSED size:
         // pressing or holding (brief, the card's own feedback) doesn't move it.
         let focusedScale = focused && grows ? 1 + lift : 1
@@ -6150,8 +7952,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outlineRim.alpha = 0
         addSubview(outlineRim)
         outline.isUserInteractionEnabled = false
-        outline.layer.borderColor = UIColor.white.cgColor
-        outline.layer.borderWidth = 4
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
+        outline.layer.borderWidth = FixedFocusRing.width
         // (The top bar's light — as on the box: see `FixedFocusCardEdge`.)
         outline.addSubview(outlineLight)
         outline.layer.cornerRadius = Spotlight.cornerRadius
@@ -6159,9 +7961,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outline.alpha = 0
         addSubview(outline)
         name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        name.textColor = .white
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        facts.textColor = UIColor.white.withAlphaComponent(0.62)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         info.addSubview(name)
         info.addSubview(facts)
         info.addSubview(chips)
@@ -6184,7 +7986,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outline.frame = bounds
         let style = FixedFocusCardEdge.current
         let lit = FixedFocusCardEdge.focusLight
-        outline.layer.borderWidth = lit ? 0 : 4
+        outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
         outlineLight.image = lit ? FixedFocusCardEdge.focusImage : nil
         outlineLight.frame = outline.bounds
         edge.image = style.edgeImage
@@ -6502,6 +8305,8 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     var rowDrop: () -> CGFloat = { 0 }
     /// See `FixedFocusRows.rigidRest`.
     var rigidRest: () -> CGFloat? = { nil }
+    /// The billboard's own distance up at a depth, if it has one.
+    var billboardUp: (Int) -> CGFloat? = { _ in nil }
     /// A row's cards' height (one size, but for a side-info row).
     var cardHeight: (Int) -> CGFloat = { _ in FixedFocusMetrics.height }
     /// A row's cards this much lower under its name (a line under it).
@@ -6634,7 +8439,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
                 // above does).
                 // (From the usual spot, not the dropped one: the picture's
                 // frame is laid out from it.)
-                y = focusY - rowDrop() - (rigidRest().map {
+                y = focusY - rowDrop() - (billboardUp(f - featured) ?? rigidRest().map {
                     Self.billboardScroll(depth: f - featured, rigidRest: $0, rowTop: focusY)
                 } ?? Self.billboardScroll(depth: f - featured))
             } else {
@@ -6817,7 +8622,7 @@ final class FixedFocusProgressView: UIView {
         super.init(frame: frame)
         for label in [episode, remaining] {
             label.font = .systemFont(ofSize: Spotlight.continueStateSize, weight: .semibold)
-            label.textColor = .white
+            label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
             label.layer.shadowColor = UIColor.black.cgColor
             label.layer.shadowOpacity = 0.6
             label.layer.shadowRadius = 6
@@ -6881,18 +8686,20 @@ final class FixedFocusProgressView: UIView {
 @MainActor
 enum FixedFocusMotion {
     enum Curve: String, CaseIterable {
-        case spring, easeOut, easeInOut
+        case spring, easeOut, easeInOut, systemSpring
         var displayName: String {
             switch self {
             case .spring: return "Spring (no bounce)"
             case .easeOut: return "Ease-out"
             case .easeInOut: return "Ease-in-out"
+            case .systemSpring: return "System spring"
             }
         }
     }
 
+
     static var curve: Curve { Curve(rawValue: RenderProbe.shared.flags.horizontalCurve) ?? .easeInOut }
-    static var verticalCurve: Curve { Curve(rawValue: RenderProbe.shared.flags.verticalCurve) ?? .easeInOut }
+    static var verticalCurve: Curve { Curve(rawValue: RenderProbe.shared.flags.verticalCurve) ?? .systemSpring }
 
     /// A focus movement on its curve (Left/Right or Up/Down, each chosen in
     /// Render Lab). Ease-in-out gives the movement weight: it has to get
@@ -6903,6 +8710,16 @@ enum FixedFocusMotion {
         let chosen = vertical ? verticalCurve : curve
         // Always UIView.animate: collection views only animate their cells'
         // size changes inside it (under a property animator they jumped).
+        switch chosen {
+        case .systemSpring:
+            // UIKit's own spring (duration + bounce 0): a new press during
+            // the move carries its speed on instead of starting from rest.
+            UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction],
+                           animations: animations, completion: completion)
+            return
+        default: break
+        }
         if chosen == .spring {
             UIView.animate(withDuration: duration, delay: 0,
                            usingSpringWithDamping: vertical ? damping : 1, initialSpringVelocity: 0,
@@ -6936,6 +8753,19 @@ enum FixedFocusMotion {
         case .easeOut: return .easeOut(duration: duration)
         case .spring:
             return .spring(duration: duration, bounce: 1 - Motion.durations.verticalDamping)
+        case .systemSpring:
+            return .spring(duration: duration, bounce: 0)
+        }
+    }
+
+    /// `run(vertical: false, …)`'s move for SwiftUI views moving with it
+    /// (the billboard's text drifting with its picture): the same curve.
+    static func horizontalAnimation(duration: Double) -> Animation {
+        switch curve {
+        case .easeInOut: return .easeInOut(duration: duration)
+        case .easeOut: return .easeOut(duration: duration)
+        case .spring: return .spring(duration: duration, bounce: 0)
+        case .systemSpring: return .spring(duration: duration, bounce: 0)
         }
     }
 

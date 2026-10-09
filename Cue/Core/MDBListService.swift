@@ -305,6 +305,9 @@ enum MDBListService {
     /// mid-day, and every request counts against a daily limit.
     private static let disk = DiskCache<MDBListRatings>(name: "mdblist-ratings-v2")
     private static let ttl: TimeInterval = 24 * 60 * 60
+    /// Kept this long (stale-while-revalidate, docs/LOADING-PLAN.md §2): past
+    /// `ttl` they're still shown at once and asked again in the background.
+    private static let keep: TimeInterval = 14 * 24 * 60 * 60
     private static let cacheLimit = 512
 
     private static func cacheKey(_ imdbID: String, _ mediaType: String) -> String { "\(mediaType):\(imdbID)" }
@@ -331,16 +334,43 @@ enum MDBListService {
     }
 
     /// Cached ratings: `.some(nil)` = known to have none; nil = not cached.
+    /// `stale`: older than a day (still shown — ask again in the background).
     private static func cached(_ key: String) async -> MDBListRatings?? {
+        await cachedWithAge(key)?.ratings
+    }
+
+    private static func cachedWithAge(_ key: String) async -> (ratings: MDBListRatings?, stale: Bool)? {
         if let hit = cachedEntry(key), hit.expiresAt > Date() {
-            return .some(hit.ratings.isEmpty ? nil : hit.ratings)
+            return (hit.ratings.isEmpty ? nil : hit.ratings, false)
         }
-        if let stored = await disk.value(for: key, ttl: ttl) {
-            storeEntry(CacheEntry(ratings: stored, expiresAt: Date().addingTimeInterval(ttl)), for: key)
-            return .some(stored.isEmpty ? nil : stored)
+        if let (stored, age) = await disk.entry(for: key, keep: keep) {
+            let stale = age > ttl
+            storeEntry(CacheEntry(ratings: stored,
+                                  expiresAt: Date().addingTimeInterval(stale ? 0 : ttl - age)), for: key)
+            return (stored.isEmpty ? nil : stored, stale)
         }
         return nil
     }
+
+    /// Asked again, quietly (a stale entry was just shown) — once per title
+    /// per session.
+    private static func refreshInBackground(imdbID: String, type: String, key: String,
+                                            settings: MDBListSettings) {
+        let first = cacheLock.withLock { refreshing.insert(key).inserted }
+        guard first else { return }
+        Task.detached(priority: .utility) {
+            guard await mayAsk(settings),
+                  let url = url("/imdb/\(mediaType(type))/\(imdbID)", apiKey: settings.apiKey),
+                  let (data, response) = try? await session.data(from: url),
+                  let http = response as? HTTPURLResponse else { return }
+            MDBListUsage.note(http)
+            if http.statusCode == 429 { markLimited(http) }
+            guard (200..<300).contains(http.statusCode) else { return }
+            let ratings = (try? JSONDecoder().decode(Media.self, from: data))?.ratings ?? MDBListRatings()
+            await store(ratings, for: key)
+        }
+    }
+    nonisolated(unsafe) private static var refreshing = Set<String>()
 
     /// No requests: no key, limited, or Render Lab → MDBList off.
     private static func mayAsk(_ settings: MDBListSettings) async -> Bool {
@@ -386,7 +416,10 @@ enum MDBListService {
         guard settings.isConfigured, imdbID.hasPrefix("tt") else { return nil }
         let mediaType = mediaType(type)
         let key = cacheKey(imdbID, mediaType)
-        if let known = await cached(key) { return known }
+        if let known = await cachedWithAge(key) {
+            if known.stale { refreshInBackground(imdbID: imdbID, type: type, key: key, settings: settings) }
+            return known.ratings
+        }
         guard await mayAsk(settings),
               let url = url("/imdb/\(mediaType)/\(imdbID)", apiKey: settings.apiKey),
               let (data, response) = try? await session.data(from: url),
@@ -408,7 +441,9 @@ enum MDBListService {
         var wanted: [String: [String]] = [:]
         for meta in metas where meta.id.hasPrefix("tt") {
             let mediaType = mediaType(meta.type)
-            guard await cached(cacheKey(meta.id, mediaType)) == nil,
+            // (Missing — or stale: refreshed in the same batch.)
+            let known = await cachedWithAge(cacheKey(meta.id, mediaType))
+            guard known == nil || known?.stale == true,
                   wanted[mediaType]?.contains(meta.id) != true else { continue }
             wanted[mediaType, default: []].append(meta.id)
         }

@@ -149,8 +149,13 @@ struct WatchProgress: Codable, Identifiable, Hashable {
 @MainActor
 final class ProgressStore: ObservableObject {
     @Published private(set) var items: [String: WatchProgress] = [:] {
-        didSet { continueWatchingMemo.removeAll(keepingCapacity: true) }
+        didSet {
+            continueWatchingMemo.removeAll(keepingCapacity: true)
+            revision &+= 1
+        }
     }
+    /// Bumped on every `items` change: a cheap key for memos built from it.
+    private(set) var revision = 0
 
     /// Memoized `continueWatching(sortMode:)` results, cleared on any items
     /// change. The derivation builds a per-show dictionary and sorts, and

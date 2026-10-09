@@ -106,10 +106,10 @@ struct FolderView: View {
         }
     }
 
-    /// Titles open Details by zooming out of their poster.
-    private var openWindow: ((MetaItem, TitleMorphSource) -> Void)? {
+    /// Titles open Details through `DetailTransition`.
+    private var openDetails: ((MetaItem) -> Void)? {
         onOpenInPlace.map { push in
-            { [mdblist] item, source in DetailWindow.open(item, from: source, settings: mdblist.settings, push: push) }
+            { item in DetailTransition.shared.open(item) { push(item) } }
         }
     }
 
@@ -129,7 +129,7 @@ struct FolderView: View {
                                                   subtitles: Self.years($0.items))
                                 },
                                 cap: part == nil ? Self.partCap : nil,
-                                onSelect: onSelect, onOpenWindow: openWindow, onSeeAll: onSeeAll)
+                                onSelect: onSelect, onOpenDetails: openDetails, onSeeAll: onSeeAll)
             .ignoresSafeArea()
     }
 
@@ -165,7 +165,7 @@ struct FolderView: View {
             FolderPosterGrid(header: nil,
                              sections: [FolderSection(id: current ?? "", title: nil, items: items,
                                                       subtitles: Self.years(items))],
-                             cap: nil, onSelect: onSelect, onOpenWindow: openWindow, onSeeAll: { _ in })
+                             cap: nil, onSelect: onSelect, onOpenDetails: openDetails, onSeeAll: { _ in })
                 .id(current)
                 .ignoresSafeArea(edges: [.horizontal, .bottom])
         }
@@ -273,14 +273,14 @@ private struct FolderPosterGrid: UIViewControllerRepresentable {
     /// Titles a part shows at most (the last place then "See All"); nil: all.
     let cap: Int?
     let onSelect: (MetaItem) -> Void
-    let onOpenWindow: ((MetaItem, TitleMorphSource) -> Void)?
+    let onOpenDetails: ((MetaItem) -> Void)?
     let onSeeAll: (String) -> Void
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
     func updateUIViewController(_ controller: FolderGridController, context: Context) {
         controller.onSelect = onSelect
-        controller.onOpenWindow = onOpenWindow
+        controller.onOpenDetails = onOpenDetails
         controller.onSeeAll = onSeeAll
         controller.show(header: header.map { AnyView($0) }, sections: sections, cap: cap)
     }
@@ -289,7 +289,7 @@ private struct FolderPosterGrid: UIViewControllerRepresentable {
 final class FolderGridController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,
                                   UICollectionViewDelegateFlowLayout, HoldMenuProviding {
     var onSelect: (MetaItem) -> Void = { _ in }
-    var onOpenWindow: ((MetaItem, TitleMorphSource) -> Void)?
+    var onOpenDetails: ((MetaItem) -> Void)?
     var onSeeAll: (String) -> Void = { _ in }
 
     private var header: AnyView?
@@ -438,8 +438,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         guard let part = part(indexPath.section) else { return }
         if isSeeAll(indexPath) { onSeeAll(part.id); return }
         let item = part.items[indexPath.item]
-        if let onOpenWindow, let cell = collectionView.cellForItem(at: indexPath) as? FixedFocusDestinationCell {
-            onOpenWindow(item, cell.morphSource())
+        if let onOpenDetails {
+            onOpenDetails(item)
         } else {
             onSelect(item)
         }

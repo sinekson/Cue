@@ -412,6 +412,28 @@ final class ImageCache: @unchecked Sendable {
         return true
     }
 
+    /// Downloaded into the DISK cache only, not decoded (the background
+    /// queue further from focus). True when it's on disk.
+    @discardableResult
+    func fetchToDisk(_ value: String) async -> Bool {
+        let fileURL = fileURL(for: value)
+        if fm.fileExists(atPath: fileURL.path) { return true }
+        guard let url = URL(string: value), let data = try? await download(url) else { return false }
+        ioQueue.async { self.writeCacheFile(data, to: fileURL) }
+        return true
+    }
+
+    /// As `preload`, from MEMORY or DISK only — never the network (the
+    /// launch: nothing waits for it; what isn't on disk loads as usual).
+    /// True when it's now decoded in memory.
+    @discardableResult
+    func preloadFromDisk(_ value: String, maxDimension: CGFloat? = nil) async -> Bool {
+        let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: nil)
+        if image(for: key) != nil { return true }
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        return await diskImage(for: value, budget: budget, memoryKey: key) != nil
+    }
+
     // MARK: Pre-blurred renditions (hero "progressive blur")
 
     /// Shared CIContext for the pre-blur path. Creating one per blur would
@@ -1260,7 +1282,8 @@ enum AppGlass {
     /// Glass that is an item itself (the billboard's dots): light enough to
     /// read on any picture, clearly below the focus highlight.
     static let idleTint = Color.white.opacity(0.4)
-    static let text = Color.white
+    /// (85 %: nothing in the UI is pure white — `FixedFocusText.primary`.)
+    static let text = Color.white.opacity(0.85)
     static let textMuted = Color.white.opacity(0.62)
     static let textOnFocus = Color.black.opacity(0.85)
     /// THE glass: every Liquid Glass surface in the app is this one —

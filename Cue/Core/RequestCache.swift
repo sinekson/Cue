@@ -92,6 +92,30 @@ actor DiskCache<Value: Codable & Sendable> {
         return entry.value
     }
 
+    /// The value for `key` and its AGE, kept up to `keep` (stale-while-
+    /// revalidate: the caller decides what's fresh). Older: deleted, nil.
+    func entry(for key: String, keep: TimeInterval) -> (value: Value, age: TimeInterval)? {
+        let entry: Entry?
+        if let hit = memory[key] {
+            entry = hit
+        } else if let data = try? Data(contentsOf: fileURL(key)),
+                  let decoded = try? JSONDecoder().decode(Entry.self, from: data) {
+            memory[key] = decoded
+            capMemory()
+            entry = decoded
+        } else {
+            entry = nil
+        }
+        guard let entry else { return nil }
+        let age = Date().timeIntervalSince(entry.time)
+        guard age < keep else {
+            memory.removeValue(forKey: key)
+            try? FileManager.default.removeItem(at: fileURL(key))
+            return nil
+        }
+        return (entry.value, age)
+    }
+
     func store(_ value: Value, for key: String) {
         let entry = Entry(value: value, time: Date())
         memory[key] = entry
@@ -117,6 +141,73 @@ actor DiskCache<Value: Codable & Sendable> {
         let hashed = SHA256.hash(data: Data(key.utf8))
             .map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent(hashed).appendingPathExtension("json")
+    }
+}
+
+/// RAW RESPONSES ON DISK, with their age (docs/LOADING-PLAN.md §2): the
+/// bodies as they came (no re-encoding — a TMDB details body is ~44 KB), one
+/// file each, the file's date as the time it was fetched. Reads hand back the
+/// data AND its age: the caller decides what's fresh and what's only "still
+/// usable while it refreshes" (stale-while-revalidate). Kept up to `keep`;
+/// older files are deleted when met.
+actor RawCache {
+    static let tmdb = RawCache(name: "tmdb-raw")
+
+    private let directory: URL
+    private var memory: [String: (data: Data, time: Date)] = [:]
+    private let memoryLimit = PerformanceProfile.isLowPower ? 24 : 96
+
+    init(name: String) {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        directory = base.appendingPathComponent("CueCache/\(name)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    /// The body for `key` and how old it is — nil if missing or older than
+    /// `keep`.
+    func read(_ key: String, keep: TimeInterval) -> (data: Data, age: TimeInterval)? {
+        let url = fileURL(key)
+        let entry: (data: Data, time: Date)
+        if let hit = memory[key] {
+            entry = hit
+        } else if let data = try? Data(contentsOf: url),
+                  let time = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date {
+            entry = (data, time)
+            remember(key, entry)
+        } else {
+            return nil
+        }
+        let age = Date().timeIntervalSince(entry.time)
+        guard age < keep else {
+            memory.removeValue(forKey: key)
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return (entry.data, age)
+    }
+
+    func write(_ key: String, _ data: Data) {
+        remember(key, (data, Date()))
+        let url = fileURL(key)
+        if (try? data.write(to: url, options: .atomic)) == nil {
+            // (The folder removed under us — "Clear cache", tvOS reclaiming
+            // Caches/: recreate once.)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func remember(_ key: String, _ entry: (data: Data, time: Date)) {
+        memory[key] = entry
+        guard memory.count > memoryLimit else { return }
+        for (old, _) in memory.sorted(by: { $0.value.time < $1.value.time }).prefix(memory.count - memoryLimit / 2) {
+            memory.removeValue(forKey: old)
+        }
+    }
+
+    private func fileURL(_ key: String) -> URL {
+        let hashed = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(hashed)
     }
 }
 

@@ -40,13 +40,20 @@ final class FocusBridge<Value: Hashable> {
 struct FocusBridgeHost<Value: Hashable, Content: View>: View {
     let bridge: FocusBridge<Value>
     let defaultValue: Value
+    /// Every focus change, as it happens (the page's reactions — called
+    /// from HERE: the page can't watch the bridge, and a page-wide redraw
+    /// per press is what made the buttons feel slow).
+    var onChange: (Value?, Value?) -> Void = { _, _ in }
     @ViewBuilder let content: (FocusState<Value?>.Binding) -> Content
     @FocusState private var focus: Value?
 
     var body: some View {
         content($focus)
             .defaultFocus($focus, defaultValue)
-            .onChange(of: focus) { _, new in if bridge.current != new { bridge.current = new } }
+            .onChange(of: focus) { old, new in
+                if bridge.current != new { bridge.current = new }
+                onChange(old, new)
+            }
             .onChange(of: bridge.requested?.id) { _, _ in focus = bridge.requested?.value }
     }
 }
@@ -73,8 +80,14 @@ final class DetailViewModel: ObservableObject {
             episodeCache.removeAll()
             allEpisodesCache = nil
             airCache.removeAll()
+            metaRevision &+= 1
         }
     }
+    /// Bumped when `meta` / `episodeExtras` change: the episode row's memo key.
+    private(set) var metaRevision = 0
+    private(set) var extrasRevision = 0
+    /// The episode row as the page last built it (`DetailView.rowData`).
+    var rowMemo: DetailRowData?
 
     /// An episode's air date as the episode row shows it — worked out ONCE
     /// per episode: parsing and formatting dates for every episode on every
@@ -145,12 +158,95 @@ final class DetailViewModel: ObservableObject {
     @Published var releaseDate: String?
     @Published var contentRating: String?
     /// Per-season episode extras (rating / air date), keyed season → episode.
-    @Published var episodeExtras: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
+    @Published var episodeExtras: [Int: [Int: TMDBService.EpisodeExtra]] = [:] {
+        didSet { extrasRevision &+= 1 }
+    }
     @Published var episodeCasts: [String: [TMDBService.CastMember]] = [:]
     private var loadingEpisodeCast = Set<String>()
 
     init(item: MetaItem) {
         meta = item
+    }
+
+    /// The picture Home showed for this title (the card's / the billboard's)
+    /// — Details keeps it; the meta add-on's record often has another.
+    var shownPicture: String?
+    /// …and its logo (the add-on's record often has another one too).
+    var shownLogo: String?
+    /// The page's picture: Home's, else the record's.
+    var backdropURL: String? { shownPicture ?? meta.background ?? meta.poster }
+
+    /// Prepared since the press (`DetailPreparer`): the page is BUILT with
+    /// it — what's here doesn't land later as a row of updates.
+    private var metaIsFull = false
+    private var detailApplied = false
+    func seed(_ prepared: DetailPreparer.Prepared) {
+        let tmdb = prepared.tmdb
+        useEpisodeExtras = tmdb.useEpisodes
+        shownPicture = prepared.picture
+        shownLogo = prepared.logo
+        if let full = prepared.meta {
+            meta = full
+            metaIsFull = true
+            selectedSeason = meta.regularSeasons.first ?? meta.seasons.first
+            isLoading = false
+        }
+        if !prepared.extras.isEmpty { episodeExtras = prepared.extras }
+        if mdbRatings == nil, let ratings = prepared.ratings { mdbRatings = ratings }
+        if let detail = prepared.detail {
+            applyNow(detail: detail, tmdb: tmdb)
+            if let parts = prepared.collectionParts { collectionParts = parts }
+            detailApplied = true
+        }
+    }
+
+    /// The add-on to ask again (a background refresh found a change —
+    /// `StremioAPI.metaRefreshed`): set by `load`.
+    private weak var addonManager: AddonManager?
+    private var refreshObserver: NSObjectProtocol?
+
+    /// A background refresh of this title's episode list brought something
+    /// new (a just-listed episode): the list again — from disk now — in ONE
+    /// change.
+    private func watchForRefresh() {
+        guard refreshObserver == nil else { return }
+        refreshObserver = NotificationCenter.default.addObserver(
+            forName: StremioAPI.metaRefreshed, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let id = note.object as? String, id == self.meta.id,
+                      let addonManager = self.addonManager else { return }
+                Task { @MainActor in
+                    let full = await SeriesEpisodes.fullMeta(for: self.meta, addonManager: addonManager)
+                    if MetaFreshness.changed(self.meta, full) { self.meta = full }
+                }
+            }
+        }
+    }
+
+    deinit {
+        if let refreshObserver { NotificationCenter.default.removeObserver(refreshObserver) }
+    }
+
+    /// Several seasons' extras at once (in parallel), published in ONE
+    /// change — one season at a time, each re-rendered the whole page.
+    func loadSeasons(_ seasons: [Int]) async {
+        guard useEpisodeExtras, meta.isSeries else { return }
+        let wanted = seasons.filter { episodeExtras[$0] == nil }
+        guard !wanted.isEmpty else { return }
+        let id = meta.id, type = meta.type
+        let found = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
+            for season in wanted {
+                group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season)) }
+            }
+            var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
+            for await (season, extras) in group where !extras.isEmpty { all[season] = extras }
+            return all
+        }
+        guard !found.isEmpty, !Task.isCancelled else { return }
+        var merged = episodeExtras
+        merged.merge(found) { old, _ in old }
+        episodeExtras = merged
     }
 
     /// The `.task` that calls this re-runs on every return from Sources or
@@ -218,13 +314,20 @@ final class DetailViewModel: ObservableObject {
             ? Task { [canonical] in await TMDBService.detail(imdbID: canonical.id, type: canonical.type) }
             : nil
 
-        // The one episode list (the add-on's, else TMDB's).
-        let full = await SeriesEpisodes.fullMeta(for: canonical, addonManager: addonManager)
+        // The one episode list (the add-on's, else TMDB's) — from disk when
+        // it's there; an airing show's asked again in the background if
+        // older than half an hour (a new episode then comes in one change —
+        // `watchForRefresh`).
+        self.addonManager = addonManager
+        watchForRefresh()
+        let full = await SeriesEpisodes.fullMeta(for: canonical, addonManager: addonManager,
+                                                 revalidateAfter: canonical.isSeries ? 30 * 60 : nil)
         // Opened through the swap: the page stays as it is until it's over.
         if let wait = settleUntil?.timeIntervalSinceNow, wait > 0 {
             try? await Task.sleep(for: .seconds(wait))
         }
-        meta = full
+        // (Seeded with it already: only a real change — a new episode.)
+        if !metaIsFull || MetaFreshness.changed(meta, full) { meta = full }
         let ratingsTask = Task { await loadMDBRatings(settings: mdbSettings) }
         if selectedSeason == nil {
             selectedSeason = meta.regularSeasons.first ?? meta.seasons.first
@@ -237,7 +340,7 @@ final class DetailViewModel: ObservableObject {
         // (e.g. AIOMetadata) was already the slow part of this load, and
         // chaining three more independent network calls after it responded
         // just made "episodes" wait even longer for no reason.
-        isLoading = false
+        if isLoading { isLoading = false }
 
         // Unwinding on cancellation: the garnish tasks below were already
         // launched — kill them rather than let three network round trips run
@@ -256,11 +359,18 @@ final class DetailViewModel: ObservableObject {
         // publish is main-actor via the view model.
         Task { [weak self] in
             guard let self else { return }
-            await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
+            // (Seeded: the page has it — the request refreshed the cache.)
+            if !self.detailApplied {
+                await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
+            } else if let collection = self.collection, self.collectionParts.isEmpty, tmdb.useCollections {
+                let parts = await TMDBService.collectionItems(id: collection.id)
+                    .filter { $0.id != self.meta.id }.deduplicatedByID()
+                if !parts.isEmpty { self.collectionParts = parts }
+            }
             // A failed load never replaces ratings handed over from the
             // billboard (the row would shrink to the fallback and back).
             let ratings = await ratingsTask.value
-            if ratings != nil || self.mdbRatings == nil { self.mdbRatings = ratings }
+            if (ratings != nil || self.mdbRatings == nil), ratings != self.mdbRatings { self.mdbRatings = ratings }
         }
     }
 
@@ -280,6 +390,17 @@ final class DetailViewModel: ObservableObject {
             return
         }
         enrichmentPending = false
+        applyNow(detail: detail, tmdb: tmdb)
+        if tmdb.useCollections, let collection {
+            collectionParts = await TMDBService.collectionItems(id: collection.id)
+                .filter { $0.id != meta.id }
+                .deduplicatedByID()
+        }
+    }
+
+    /// The TMDB details' sections, at once (the collection's titles are a
+    /// request of their own).
+    private func applyNow(detail: TMDBService.Detail, tmdb: TMDBSettings) {
         // Granular TMDB toggles gate which enriched sections appear.
         if tmdb.useCredits {
             cast = detail.cast
@@ -301,14 +422,7 @@ final class DetailViewModel: ObservableObject {
         if tmdb.useProductions { companies = detail.companies }
         if tmdb.useDetails { about = detail.about }
         if tmdb.useTrailers { trailers = detail.trailers }
-        if tmdb.useCollections {
-            collection = detail.collection
-            if let collection {
-                collectionParts = await TMDBService.collectionItems(id: collection.id)
-                    .filter { $0.id != meta.id }
-                    .deduplicatedByID()
-            }
-        }
+        if tmdb.useCollections { collection = detail.collection }
     }
 
     /// Fetch MDBList source ratings, resolving a tmdb id to imdb first if needed.
@@ -372,6 +486,9 @@ struct DetailView: View {
     @State private var activeTrailer: TMDBService.Trailer?
     /// The series' size and status, once loaded (see `FixedFocusShowInfo`).
     @State private var showInfo: TMDBService.ShowSize?
+    /// The billboard's one line under the logo (TMDB's tagline; the name
+    /// until it's known) — as on Home's billboard.
+    @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
         case play, library, trailer
@@ -402,7 +519,7 @@ struct DetailView: View {
     /// (From the billboard: Play lit from the first frame — the swap brought
     /// it in lit; focus lands on it a moment later without a visible change.)
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
-        ModeSwap.shared.billboardItemID != nil && !ModeSwap.shared.arrivedFromBox ? .play : nil
+        ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
     /// The episode that currently holds focus, reported by `EpisodeCell`'s
     /// `onFocus` callback. Drives the "focused episode stays in the first
@@ -423,13 +540,15 @@ struct DetailView: View {
     }
     /// The picture blurred, for Episodes / More (nil: none / not yet).
     @State private var blurredBackdrop: UIImage?
+    /// The billboard's shade for this picture — exactly the one Home's
+    /// billboard uses (`StageArt.shade(for:)`).
+    @State private var pictureShade: UIImage?
     /// Opened from Home's billboard: this page plays its half of the swap
     /// in, and Back plays it out and returns (see `ModeSwap`).
     @State private var fromBillboard: Bool
+    /// Built with its data (`DetailPreparer`): nothing to hold back.
+    @State private var prepared: Bool
     private let onReturnToBillboard: (() -> Void)?
-    /// Opened from a catalog box: the title block fades in with the buttons
-    /// (the box had none), and out with them on Back.
-    @State private var fromBox: Bool
     /// From a box: the scrim arrives half-way (the growing box took it that
     /// far) and finishes with the page's parts; Back takes it half-way back.
     @State private var scrim: Double
@@ -437,12 +556,8 @@ struct DetailView: View {
     /// State, not a plain property: SwiftUI re-creates this view while the
     /// page is up, and only the FIRST creation still sees the handoff.
     @State private var billboardSeriesSize: String?
-    /// The backdrop's depth, 0…1 (see `ModeSwap.depthHandover`): from the
-    /// billboard it arrives part-way (Home began it) and finishes with the
-    /// buttons; leaving, it goes part-way back and Home finishes it.
+    /// The backdrop's depth, 0…1 (1 = a step into the title).
     @State private var depth: CGFloat
-    /// This page's own parts (buttons, the hint) are in.
-    @State private var swappedIn: Bool
     /// Play's label as the billboard knew it (see `ModeSwap`).
     @State private var handedPlayTitle: String? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardPlayTitle : nil
@@ -548,7 +663,16 @@ struct DetailView: View {
     ) {
         let fromBillboard = MainActor.assumeIsolated { ModeSwap.shared.billboardItemID == item.id }
         let model = DetailViewModel(item: item)
-        if fromBillboard {
+        // Got ready under the curtain (`DetailTransition`): built with it.
+        let prepared = MainActor.assumeIsolated { DetailPreparer.shared.take(item.id) }
+        if let prepared {
+            MainActor.assumeIsolated { model.seed(prepared) }
+            _showInfo = State(initialValue: prepared.showInfo)
+            _billboardTagline = State(initialValue: prepared.tagline)
+            _pictureShade = State(initialValue: prepared.shade)
+        }
+        _prepared = State(initialValue: prepared != nil)
+        if fromBillboard, prepared == nil {
             // Start with exactly what the billboard showed — nothing in the
             // title block may change as the page takes over.
             MainActor.assumeIsolated {
@@ -558,15 +682,10 @@ struct DetailView: View {
         }
         _viewModel = StateObject(wrappedValue: model)
         _fromBillboard = State(initialValue: fromBillboard)
-        let fromBox = fromBillboard && MainActor.assumeIsolated { ModeSwap.shared.arrivedFromBox }
-        _fromBox = State(initialValue: fromBox)
-        _scrim = State(initialValue: fromBox ? ModeSwap.boxScrimHandover : 1)
-        _depth = State(initialValue: fromBox ? ModeSwap.boxDepthHandover : 1)
+        _scrim = State(initialValue: 1)
+        _depth = State(initialValue: 1)
         _billboardSeriesSize = State(initialValue: fromBillboard
             ? MainActor.assumeIsolated { ModeSwap.shared.billboardSeriesSize } : nil)
-        // (From the billboard its buttons are already in: Home brought them
-        // in with the swap. Only from a box they still come in here.)
-        _swappedIn = State(initialValue: !fromBillboard || !fromBox)
 
         self.onReturnToBillboard = onReturnToBillboard
         self.onSelectItem = onSelectItem
@@ -575,6 +694,7 @@ struct DetailView: View {
     }
 
     var body: some View {
+        let _ = DetailOpenProbe.note("body")
         ZStack {
             ATVBackground()
             if RenderProbe.shared.flags.detailsOnRows {
@@ -835,7 +955,7 @@ struct DetailView: View {
             // mid-animation dropped frames.
             // (Fetching starts at once; the page only changes once it's over.)
             await viewModel.load(addonManager: addonManager, mdbSettings: mdblist.settings, tmdb: tmdbSettings.settings,
-                                 settleUntil: fromBillboard
+                                 settleUntil: fromBillboard && !prepared
                                     ? Date().addingTimeInterval(ModeSwap.swapSettle + 0.15) : nil)
         }
         // Auto-play the trailer in the backdrop after the configured idle
@@ -845,20 +965,13 @@ struct DetailView: View {
             await startBackdropTrailerIfEnabled()
         }
         .onDisappear { teardownBackdropTrailer() }
+        .onReceive(viewModel.objectWillChange) { DetailOpenProbe.note("change") }
         .onAppear {
+            DetailOpenProbe.note("appear")
+            DetailTransition.shared.pageAppeared(viewModel.meta.id)
             guard fromBillboard else { return }
             // Consumed: a title opened from here again is a normal push.
             ModeSwap.shared.billboardItemID = nil
-            ModeSwap.shared.arrivedFromBox = false
-            // Home has played the whole swap (the picture closer, the bar
-            // away, the hint changed, the buttons in) and this page took
-            // over looking exactly like that.
-            if fromBox {
-                withAnimation(ModeSwap.buttonsIn) {
-                    swappedIn = true
-                    scrim = 1
-                }
-            }
             // A press made while Home handed over: it's this page's.
             if let held = ModeSwap.shared.heldPress {
                 ModeSwap.shared.heldPress = nil
@@ -914,7 +1027,7 @@ struct DetailView: View {
             ZStack(alignment: .top) {
                 TitleTintBackground(tint: tint, second: tintSecond)
                     .task(id: viewModel.meta.id) {
-                        guard let url = viewModel.meta.background ?? viewModel.meta.poster,
+                        guard let url = viewModel.backdropURL,
                               let colors = await FixedFocusTint.colors(for: url, flags: RenderProbe.shared.flags)
                         else { return }
                         tint = colors.first
@@ -929,7 +1042,7 @@ struct DetailView: View {
                 // Details: picture dim below), so the cards on the right —
                 // outside the left fade — sit on calm ground.
                 Color.black
-                    .opacity(page == .overview ? 0 : RenderProbe.shared.flags.detailsPictureDim)
+                    .opacity(page == .overview || RenderProbe.shared.flags.detailsBlurCap > 0 ? 0 : RenderProbe.shared.flags.detailsPictureDim)
                     .animation(detailPageScroll, value: page == .overview)
                     .allowsHitTesting(false)
             }
@@ -944,7 +1057,7 @@ struct DetailView: View {
     /// own bottom, mirrored, blurred and faded into the colours (it seems to
     /// melt as it scrolls up), or a plain edge with a soft shadow.
     private func stagePicture(size: CGSize) -> some View {
-        let url = viewModel.meta.background ?? viewModel.meta.poster
+        let url = viewModel.backdropURL
         let drift = StagePictureView.drift
         return ZStack {
             // Decorative backdrop — kept out of hit testing so it cannot
@@ -957,8 +1070,7 @@ struct DetailView: View {
                 .allowsHitTesting(false)
                 .frame(width: size.width + 2 * drift, height: size.height)
                 .frame(width: size.width, height: size.height)
-                // Opened from the billboard: the picture steps a little closer
-                // — the sign a page has opened (`ModeSwap.stepIn`).
+                // The picture a step closer than Home's.
                 .scaleEffect(ModeSwap.depthScale(depth))
             // MOUNTED ALWAYS, revealed by opacity — never inserted into
             // the tree while the page is on screen. Inserting a
@@ -1297,7 +1409,7 @@ struct DetailView: View {
             rowsBackdrop
             let seasonIDs: Set<String> = [Self.episodesRowID]
             FixedFocusRows(rows: detailRows, featuredRowID: Self.billboardRowID, continueRowID: "",
-                           active: true, billboardStepIn: false, progress: [:],
+                           active: true, progress: [:],
                            // Episodes: landscape tiles (the collections' size —
                            // about 3½ in view), moving focus.
                            landscapeRowIDs: seasonIDs,
@@ -1310,7 +1422,7 @@ struct DetailView: View {
                                    ? (rowEpisodes.firstIndex { $0.id == item.id }.flatMap { episodeMenu($0)?.entries } ?? [])
                                    : TitleMenu.shared.entries(for: item)
                            },
-                           onDepth: { rowsDepth.depth = $0 },
+                           onDepth: { rowsDepth.depth = $0; DetailTransition.shared.detailsAtTop = $0 == 0 },
                            externalBillboard: true,
                            cardStates: episodeCardStates,
                            onSelectInRow: { item, rowID in
@@ -1319,8 +1431,12 @@ struct DetailView: View {
                                return true
                            },
                            command: rowCommand,
-                           rigidRest: Self.rowsRestY,
-                           rigidNameY: Self.rowsNameY,
+                           // EXACTLY Home's billboard: the first row waiting
+                           // just below the screen, its name at Home's spot,
+                           // the billboard going up until its bottom is the
+                           // peek.
+                           rigidRest: HomeUIKitView.rigidRowRest,
+                           rigidNameY: FixedFocusRowsLayout.nextNameY,
                            hidesBillboardPicture: true,
                            // The row's name is the season control: Up from the
                            // episodes, Left / Right step the seasons.
@@ -1334,7 +1450,8 @@ struct DetailView: View {
                            // The billboard's text and buttons: the engine's,
                            // moved with the rows in the same animation.
                            billboardOverlay: rowsBillboardOverlay,
-                           billboardOverlayHeight: Self.overlayHeight) { item, position in
+                           billboardOverlayHeight: Self.overlayHeight,
+                           rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel) { item, position in
                 // Up into the billboard lands on its invisible card: on to
                 // Play (the billboard's focus is its buttons).
                 if position != nil { DispatchQueue.main.async { actionFocus = .play } }
@@ -1342,9 +1459,12 @@ struct DetailView: View {
                 if item.type == "episode" { focusedRowEpisode = item.id }
             }
             .ignoresSafeArea()
-            .task(id: viewModel.meta.id) {
-                // Every season's stills, lengths, air dates.
-                for season in viewModel.meta.seasons { await viewModel.loadSeason(season) }
+            // (Again once the episode list is in: opened from a card, the page
+            // starts with the card's data — no seasons yet.)
+            .task(id: "\(viewModel.meta.id)|\(viewModel.meta.seasons.count)") {
+                // Every season's stills, lengths, air dates: the one shown
+                // first (with the core load), the rest together in ONE change.
+                await viewModel.loadSeasons(viewModel.meta.seasons)
             }
             // The row waits on the episode Play shows: Down lands there.
             .onChange(of: aimKey, initial: true) { _, _ in
@@ -1363,32 +1483,18 @@ struct DetailView: View {
     /// The episode row's name (the season control) has focus.
     @State private var seasonNameFocused = false
 
-    /// Under the billboard the first row waits as far down as the scroll
-    /// that leaves only the buttons on screen above it (the screen's edge
-    /// halfway between the badges and them — `buttonsTopGap`) brings it to
-    /// Home's spot. Its cards' top bit is then on the screen, cut off by a
-    /// line there (`concealTravel`); one plain scroll brings it up. Only its
-    /// NAME shows on the billboard — Home's next-row look, smaller, ⌄ after
-    /// it, dimmed — lifted above its cards to `rowsNameY`; the lift shrinks
-    /// to nothing on the way, so name and cards meet.
-    private static var rowsRestY: CGFloat {
-        FixedFocusMetrics.rowTop + FixedFocusBillboardText.buttonsY - buttonsTopGap
-    }
-    /// The badges end ~29 pt above the buttons: the edge halfway.
-    private static let buttonsTopGap: CGFloat = 15
-    private static let rowsNameY: CGFloat = 1080 - 60 - FixedFocusMetrics.titleHeight
-
-
     /// THE PICTURE stays: sharp under the overview (the billboard's shade
     /// on it); below it, its blurred copy fades in over it and it steps
     /// back (Render Lab → Details: picture blur / dim below), the shade
-    /// lighter — the rows sit on calm ground of the same picture.
+    /// lighter — the rows sit on calm ground of the same picture. (Tried
+    /// 2026-10-07: Home's way — the picture going up, the rows on the
+    /// title's colour layout; the blur looked better here.)
     private var rowsBackdrop: some View {
         RowsDepthReader(model: rowsDepth) { depth in rowsBackdrop(below: depth > 0) }
     }
 
     private func rowsBackdrop(below: Bool) -> some View {
-        let url = viewModel.meta.background ?? viewModel.meta.poster
+        let url = viewModel.backdropURL
         let drift = StagePictureView.drift
         let flags = RenderProbe.shared.flags
         return ZStack {
@@ -1417,10 +1523,26 @@ struct DetailView: View {
             .scaleEffect(ModeSwap.depthScale(depth))
             .frame(width: 1920, height: 1080)
             .clipped()
-            Color.black.opacity(below ? flags.detailsPictureDim : 0)
-            // The billboard's shade (from a box: finishing its handover).
-            BillboardShade()
-                .opacity(below ? flags.episodesLeftFade : scrim)
+            Color.black.opacity(below && flags.detailsBlurCap == 0 ? flags.detailsPictureDim : 0)
+            // The billboard's shade, exactly Home's (in the title's colour,
+            // as strong as its text area needs — `StageArt.shade(for:)`).
+            Group {
+                if let pictureShade {
+                    Image(uiImage: pictureShade).resizable()
+                } else {
+                    BillboardShade()
+                }
+            }
+            .frame(width: 1920, height: 1080)
+            .opacity(below ? flags.episodesLeftFade : scrim)
+            .task(id: url) {
+                if let made = await StageArt.shade(for: url) { pictureShade = made }
+            }
+            // Below: the rows' vignette over the blur (Render Lab → Details:
+            // vignette below).
+            if flags.detailsVignetteBelow {
+                TitleTintBackground.vignette.opacity(below ? 1 : 0)
+            }
         }
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the
@@ -1428,7 +1550,8 @@ struct DetailView: View {
         .task(id: "\(url ?? "")|\(flags.detailsPictureBlur)") {
             blurredBackdrop = await BlurredBackdrop.image(for: url, strength: flags.detailsPictureBlur)
         }
-        .animation(detailPageScroll, value: below)
+        // On the rows' own curve and time (Render Lab → vertical curve).
+        .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll), value: below)
         .allowsHitTesting(false)
         .ignoresSafeArea()
     }
@@ -1464,20 +1587,16 @@ struct DetailView: View {
     private static let episodesRowID = seasonRowPrefix + "all"
 
     /// The episodes row: every season in the pill's order (Specials last).
-    private var rowItemsInOrder: [EpisodeRowItem] {
-        let order = Dictionary(rowSeasons.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
-        return episodeRowItems.enumerated().sorted {
-            (order[$0.element.season] ?? .max, $0.offset) < (order[$1.element.season] ?? .max, $1.offset)
-        }.map(\.element)
-    }
+    private var rowItemsInOrder: [EpisodeRowItem] { rowData.ordered }
 
     /// The season the row is in: its focused episode's, else the aimed one's.
     private var rowSeason: Int? {
-        let items = rowItemsInOrder
+        let data = rowData
         let id = focusedRowEpisode ?? aimedRowEpisode
         // (Not yet aimed: Play's season — the row opens there; "Season 1"
         // first would flash.)
-        return items.first { $0.id == id }?.season ?? seriesPlayTarget?.season ?? rowSeasons.first
+        return id.flatMap { data.orderedIndex[$0] }.map { data.ordered[$0].season }
+            ?? data.playTarget?.season ?? data.seasons.first
     }
 
     /// Before the episode list is in (held until the swap from Home has
@@ -1495,7 +1614,7 @@ struct DetailView: View {
     private var aimKey: String { "\(rowItemsInOrder.count)-\(seriesPlayTarget?.id ?? "")" }
 
     private func aimRow(at episodeID: String) {
-        guard let index = rowItemsInOrder.firstIndex(where: { $0.id == episodeID }) else { return }
+        guard let index = rowData.orderedIndex[episodeID] else { return }
         aimedRowEpisode = episodeID
         rowCommand = FixedFocusRowsCommand(action: .aim(rowID: Self.episodesRowID, index: index))
     }
@@ -1507,14 +1626,13 @@ struct DetailView: View {
     }
 
     /// The seasons, then Specials.
-    private var rowSeasons: [Int] {
-        viewModel.meta.seasons.sorted { ($0 == 0 ? Int.max : $0) < ($1 == 0 ? Int.max : $1) }
-    }
+    private var rowSeasons: [Int] { rowData.seasons }
 
     /// The map's episode: the one in focus, else where the season starts.
     private var rowProgressEpisode: MetaVideo? {
         let id = focusedRowEpisode ?? aimedRowEpisode
-        return rowEpisodes.first { $0.id == id } ?? rowEpisodes.first { $0.season == rowSeason }
+        let episodes = rowEpisodes, season = rowSeason
+        return episodes.first { $0.id == id } ?? episodes.first { $0.season == season }
     }
 
     /// More than one season: the row's name is the season control.
@@ -1547,10 +1665,15 @@ struct DetailView: View {
     /// the engine moves (and dims) them with the rows.
     private var rowsBillboardText: some View {
         ZStack(alignment: .topLeading) {
-            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges)
+            // Home's billboard text exactly (no summary: the tagline), on
+            // its bottom line, the buttons below.
+            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
+                                    compact: true, tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline,
+                                    logo: viewModel.shownLogo)
                 .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
+                .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
+                .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
                 .padding(.leading, FixedFocusMetrics.titleInset)
-                .padding(.top, FixedFocusBillboardText.topY)
             headerExtras
                 .frame(height: TitleBlock.buttonHeight)
                 .padding(.top, FixedFocusBillboardText.buttonsY)
@@ -1564,15 +1687,14 @@ struct DetailView: View {
         var rows = [HomeRow(id: Self.billboardRowID, title: "", items: [viewModel.meta])]
         if viewModel.meta.isSeries {
             // ONE row: every episode (the season pill above it jumps).
-            let episodes = rowItemsInOrder
-            if episodes.isEmpty {
+            let data = rowData
+            if data.ordered.isEmpty {
                 // Its name at once; its cards when the list is in.
                 rows.append(HomeRow(id: Self.episodesRowID, title: provisionalSeasonTitle, items: []))
             } else {
                 rows.append(HomeRow(
                     id: Self.episodesRowID, title: rowSeason.map(seasonName) ?? "Episodes",
-                    items: episodes.map { MetaItem(id: $0.id, type: "episode", name: $0.title, background: $0.image) },
-                    subtitles: Dictionary(episodes.map { ($0.id, $0.facts) }, uniquingKeysWith: { a, _ in a })))
+                    items: data.rowItems, subtitles: data.subtitles))
             }
         }
         if !viewModel.moreLikeThis.isEmpty {
@@ -1585,12 +1707,7 @@ struct DetailView: View {
     }
 
     /// Each episode's state line on its card (Continue Watching's).
-    private var episodeCardStates: [String: FixedFocusCardState] {
-        Dictionary(episodeRowItems.map { item in
-            (item.id, FixedFocusCardState(label: item.state.label, fraction: item.state.progress,
-                                          right: item.state.remaining.map { "\($0) left" } ?? item.state.status))
-        }, uniquingKeysWith: { a, _ in a })
-    }
+    private var episodeCardStates: [String: FixedFocusCardState] { rowData.cardStates }
 
     private func overviewPage(size: CGSize) -> some View {
         let height = size.height
@@ -1599,19 +1716,18 @@ struct DetailView: View {
         return ZStack(alignment: .topLeading) {
             // THE BILLBOARD'S TEXT, exactly (same view, same place): logo,
             // summary, name, facts, the status badge and ratings chips.
-            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges)
+            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
+                                    compact: true, tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline)
                 // The season count and the status chip (AIRING / RETURNING /
                 // ENDED), as on Home — re-drawn once they're known.
                 .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
+                .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
                 // Steps aside while a trailer has the screen.
                 .opacity(trailerMode ? 0 : 1)
                 .animation(TrailerMode.fade, value: trailerMode)
-                // From a box: fades in with the buttons (it wasn't there).
-                .opacity(fromBox && !swappedIn ? 0 : 1)
+                .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
                 .padding(.leading, FixedFocusMetrics.titleInset)
-                .padding(.top, FixedFocusBillboardText.topY)
             headerExtras
-                // Each button grows out of a dot (`DotGrow`, per button).
                 .frame(height: TitleBlock.buttonHeight)
                 .padding(.top, FixedFocusBillboardText.buttonsY)
         }
@@ -1619,11 +1735,7 @@ struct DetailView: View {
         .overlay(alignment: .topLeading) {
             hint(viewModel.meta.isSeries ? "Episodes" : morePageTitle,
                  up: false, on: .overview, y: TitleBlock.hintY(screenHeight: height),
-                 // Comes down into place from a little above (Home's went
-                 // down off the screen) — see `ModeSwap`.
-                 // (From the billboard it's there from the start: Home
-                 // already crossfaded to it.)
-                 swapOut: fromBox && !swappedIn)
+                 swapOut: false)
         }
     }
 
@@ -1726,7 +1838,8 @@ struct DetailView: View {
     private var headerExtras: some View {
         // The row with its own focus state (see `actionFocus`); Play is the
         // default.
-        FocusBridgeHost(bridge: actionBridge, defaultValue: .play) { focus in actionRow(focus) }
+        FocusBridgeHost(bridge: actionBridge, defaultValue: .play,
+                        onChange: { old, new in actionFocusChanged(from: old, to: new) }) { focus in actionRow(focus) }
             // (The text's left edge — the billboard's column.)
             .padding(.leading, FixedFocusMetrics.titleInset)
             // Down before the episodes are in: held, not lost.
@@ -1758,15 +1871,7 @@ struct DetailView: View {
             actionFocus = .play
             return
         }
-        guard swappedIn else { return }
-        // Home — left exactly as this page looks, buttons included — is back
-        // at once and plays the swap the other way, all together.
-        guard fromBox else { onReturnToBillboard?(); return }
-        withAnimation(ModeSwap.buttonsOut) { swappedIn = false }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.14))
-            onReturnToBillboard?()
-        }
+        onReturnToBillboard?()
     }
 
     /// The title block's ratings row (nil = none).
@@ -1802,7 +1907,6 @@ struct DetailView: View {
                     }
                 )
                 .focused(focus, equals: .play)
-                .modifier(DotGrow(shown: swappedIn, index: 0))
                 // Trailer mode: Up (nothing above) brings the page back.
                 .onMoveCommand { direction in
                     if direction == .up, trailerMode { revealTrailerPage() }
@@ -1823,7 +1927,6 @@ struct DetailView: View {
                         action: { library.toggle(viewModel.meta) }
                     )
                     .focused(focus, equals: .library)
-                    .modifier(DotGrow(shown: swappedIn, index: 1))
                     // Always there (the row never changes shape): without a
                     // trailer it says so.
                     DetailActionButton(
@@ -1835,23 +1938,12 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .trailer)
-                    .modifier(DotGrow(shown: swappedIn, index: 2))
                 }
                 // Trailer mode: only Play stays (press it to play).
                 .opacity(trailerMode ? 0 : 1)
                 .animation(TrailerMode.fade, value: trailerMode)
                 .focusSection()
                 Spacer(minLength: 0)
-            }
-            .animation(DetailActionButton.open, value: litAction)
-            .onChange(of: actionFocus) { _, new in
-                guard let new else { litAction = nil; return }
-                Task { @MainActor in
-                    try? await Task.sleep(for: DetailActionButton.paintDelay)
-                    guard actionFocus == new else { return }
-                    pillAction = new
-                    litAction = new
-                }
             }
             .padding(.top, CueSpacing.xs)
             // Full-width focus section: the buttons stay left-aligned, but the
@@ -1871,41 +1963,45 @@ struct DetailView: View {
             // which re-rendered the row and flipped the circles to focusable
             // mid-move, so the focus engine invalidated and bounced focus back
             // up to the synopsis. Never gate focusability on focus state.
-            // The enter-lands-on-Play redirect: focus arriving on any control
-            // while the row previously held NOTHING gets moved to Play. Moves
-            // WITHIN the row (old != nil) are left alone.
-            .onChange(of: actionFocus) { old, new in
-                interactionCount += 1
-                if new != nil { page = .overview }
-                // Deferred one turn: arming flips the teaser from unfocusable
-                // to focusable, and doing that INSIDE the focus change that
-                // put Play in focus is the "focusable set depends on focus"
-                // trap this row's own comment bans — the engine can invalidate
-                // the in-flight move and bounce it.
-                if new == .play, !teaserArmed {
-                    Task { @MainActor in teaserArmed = true }
-                }
-                // Only a USER move re-arms full-screen. Leaving full-screen
-                // restores focus to Play programmatically; treating that as
-                // interaction cleared the cooldown, so the page went back to
-                // full-screen two seconds later and swallowed every other
-                // press — the details page felt dead.
-                if Date().timeIntervalSince(fullscreenExitedAt) > 1.0 {
-                    fullscreenCooldown = false
-                }
-                if old == nil, let new, new != .play {
-                    // DEFERRED, not immediate: setting @FocusState while the
-                    // engine's own move is still in flight made it revert —
-                    // Down from the synopsis went circle -> Play -> back to the
-                    // synopsis, so the press appeared to do nothing at all.
-                    // The icon it lands on never PAINTS in the meantime; see
-                    // CircleIconLabel.
-                    Task { @MainActor in
-                        guard actionFocus != nil, actionFocus != .play else { return }
-                        actionFocus = .play
-                    }
-                }
+    }
+
+    /// The button row's focus moved (from `FocusBridgeHost`, as it happens).
+    /// Only what changes is set: a page-wide redraw per press is what made
+    /// Left / Right feel slow.
+    /// - The enter-lands-on-Play redirect: focus arriving on any control
+    ///   while the row previously held NOTHING gets moved to Play. Moves
+    ///   WITHIN the row (old != nil) are left alone.
+    private func actionFocusChanged(from old: ActionControl?, to new: ActionControl?) {
+        // (The full-screen trailer's rest timer: only matters with focus OFF
+        // the row — restart it on leaving, not on every move in it.)
+        if new == nil { interactionCount += 1 }
+        if new != nil, page != .overview { page = .overview }
+        // Deferred one turn: arming flips the teaser from unfocusable
+        // to focusable, and doing that INSIDE the focus change that
+        // put Play in focus is the "focusable set depends on focus"
+        // trap this row's own comment bans — the engine can invalidate
+        // the in-flight move and bounce it.
+        if new == .play, !teaserArmed {
+            Task { @MainActor in teaserArmed = true }
+        }
+        // Only a USER move re-arms full-screen. Leaving full-screen
+        // restores focus to Play programmatically; treating that as
+        // interaction cleared the cooldown, so the page went back to
+        // full-screen two seconds later and swallowed every other
+        // press — the details page felt dead.
+        if fullscreenCooldown, Date().timeIntervalSince(fullscreenExitedAt) > 1.0 {
+            fullscreenCooldown = false
+        }
+        if old == nil, let new, new != .play {
+            // DEFERRED, not immediate: setting @FocusState while the
+            // engine's own move is still in flight made it revert —
+            // Down from the synopsis went circle -> Play -> back to the
+            // synopsis, so the press appeared to do nothing at all.
+            Task { @MainActor in
+                guard actionFocus != nil, actionFocus != .play else { return }
+                actionFocus = .play
             }
+        }
     }
 
     private var playButtonTitle: String {
@@ -1924,10 +2020,7 @@ struct DetailView: View {
 
     /// For a series, the episode the Play button should start: an in-progress
     /// episode, else the next-up episode, else the very first — like the APK.
-    private var seriesPlayTarget: MetaVideo? {
-        SeriesEpisodes.playTarget(viewModel.meta.id, in: viewModel.allEpisodesInPlayOrder,
-                                  progress: progressStore, watched: watched)
-    }
+    private var seriesPlayTarget: MetaVideo? { rowData.playTarget }
 
     /// The Play button's label on a show: just the episode ("S1:E1") — the
     /// ▶ says play; resume or not, it continues where you are.
@@ -1947,10 +2040,39 @@ struct DetailView: View {
     /// What the row shows: the specials, then every regular episode in play
     /// order — ONE row, a season seam between each (Left from S1:E1 crosses
     /// into the specials).
-    private var rowEpisodes: [MetaVideo] {
+    private var rowEpisodes: [MetaVideo] { rowData.episodes }
+
+    /// The episode row, built ONCE until the episode list, the season extras,
+    /// progress or watched change. (Built per use, per body pass — and per
+    /// episode in one lookup — One Piece's 1,100 episodes froze the page for
+    /// seconds, and every focus move in the row rebuilt it.)
+    private var rowData: DetailRowData {
+        let key = DetailRowData.Key(meta: viewModel.metaRevision, extras: viewModel.extrasRevision,
+                                    progress: progressStore.revision, watched: watched.revision)
+        if let memo = viewModel.rowMemo, memo.key == key { return memo }
         let regular = viewModel.allEpisodesInPlayOrder
         let specials = regular.contains { $0.season == 0 } ? [] : viewModel.episodes(season: 0)
-        return specials + regular
+        let episodes = specials + regular
+        let items = buildEpisodeRowItems(episodes)
+        let seasons = viewModel.meta.seasons.sorted { ($0 == 0 ? Int.max : $0) < ($1 == 0 ? Int.max : $1) }
+        let order = Dictionary(seasons.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let ordered = items.enumerated().sorted {
+            (order[$0.element.season] ?? .max, $0.offset) < (order[$1.element.season] ?? .max, $1.offset)
+        }.map(\.element)
+        let data = DetailRowData(
+            key: key, episodes: episodes, items: items, ordered: ordered,
+            orderedIndex: Dictionary(ordered.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a }),
+            seasons: seasons,
+            playTarget: SeriesEpisodes.playTarget(viewModel.meta.id, in: regular,
+                                                  progress: progressStore, watched: watched),
+            cardStates: Dictionary(items.map { item in
+                (item.id, FixedFocusCardState(label: item.state.label, fraction: item.state.progress,
+                                              right: item.state.remaining.map { "\($0) left" } ?? item.state.status))
+            }, uniquingKeysWith: { a, _ in a }),
+            rowItems: ordered.map { MetaItem(id: $0.id, type: "episode", name: $0.title, background: $0.image) },
+            subtitles: Dictionary(ordered.map { ($0.id, $0.facts) }, uniquingKeysWith: { a, _ in a }))
+        viewModel.rowMemo = data
+        return data
     }
 
     private var currentIndex: Int {
@@ -2027,14 +2149,16 @@ struct DetailView: View {
     private var hasSeasonSelector: Bool { viewModel.meta.seasons.count > 1 }
 
     /// The row's episodes as it draws them.
-    private var episodeRowItems: [EpisodeRowItem] {
-        rowEpisodes.map { episode in
+    private var episodeRowItems: [EpisodeRowItem] { rowData.items }
+
+    private func buildEpisodeRowItems(_ episodes: [MetaVideo]) -> [EpisodeRowItem] {
+        episodes.map { episode in
             let season = episode.season ?? 0
             let extra = episode.episode.flatMap { viewModel.episodeExtras[season]?[$0] }
             // TMDB's still in full resolution first: the add-on's thumbnail is
             // often small, and these cards are big.
             let image = TMDBService.originalSize(extra?.still) ?? episode.thumbnail
-                ?? viewModel.meta.background ?? viewModel.meta.poster
+                ?? viewModel.backdropURL
             let progress = progressStore.progress(for: episode.id)
             let fraction = progress?.fraction ?? 0
             let done = isWatched(episode, season: season)
@@ -2676,27 +2800,6 @@ private struct CompanyPlate: View {
     }
 }
 
-/// A Detail button's arrival from the billboard: it appears as a small dot
-/// and swells into its shape with a liquid spring (a little overshoot),
-/// left to right; leaving, it shrinks back into a dot and goes. Plain
-/// buttons only — glass flickers under a changing opacity.
-/// The billboard → Details swap: a button fades in where it is, one after
-/// the other (`index`) — no movement (it used to rise, and before that grow
-/// out of a dot).
-struct DotGrow: ViewModifier {
-    let shown: Bool
-    var index = 0
-
-    static let stagger: Double = 0.04
-
-    func body(content: Content) -> some View {
-        // In place: the buttons fade in where they are (no rise).
-        content
-            .opacity(shown ? 1 : 0)
-            .animation(shown ? ModeSwap.buttonsIn.delay(Double(index) * Self.stagger) : ModeSwap.buttonsOut,
-                       value: shown)
-    }
-}
 
 /// A Detail button. The primary one (Play / Resume) always shows its icon
 /// and title; the others are circles with an icon — and, focused, a small
@@ -2718,6 +2821,21 @@ struct DetailActionButton: View {
 
     /// Its hold menu open (Play).
     @State private var held = false
+    /// Lit by ITS OWN focus (a press redraws this button alone — the page's
+    /// `lit` reached it late: through the page's redraw, and across the rows'
+    /// SwiftUI host). `lit` only until focus first comes or goes (the swap's
+    /// Play, lit from the first frame).
+    @State private var focusLit = false
+    @State private var focusKnown = false
+    private var shownLit: Bool { focusKnown ? focusLit : lit }
+
+    /// Its focus came or went: lit / unlit AT ONCE — the old button and the
+    /// new one change together, on one curve (`open`). (A 50 ms wait before
+    /// lighting left a moment with nothing lit: it read as lag.)
+    private func focusChanged(_ focused: Bool) {
+        focusKnown = true
+        focusLit = focused
+    }
 
     static let paintDelay = Duration.milliseconds(50)
     /// The top bar's look at Apple's button size: the app's glass at rest,
@@ -2727,8 +2845,12 @@ struct DetailActionButton: View {
     static let height: CGFloat = 64
     static let textPadding: CGFloat = 25
     static let iconBox: CGFloat = 30
-    /// Lighting up / the caption coming in.
-    static let open: Animation = .smooth(duration: 0.2)
+    /// Lighting up / the caption coming in / the scale: a no-bounce spring
+    /// (Render Lab → Details: buttons focus speed; 0: Motion: Focus).
+    @MainActor static var open: Animation {
+        let time = RenderProbe.shared.flags.buttonFocusTime
+        return time > 0 ? .spring(duration: time, bounce: 0) : Motion.focus
+    }
     /// The caption: small, under the circle.
     static let captionSize: CGFloat = 20
     static let captionGap: CGFloat = 12
@@ -2738,7 +2860,7 @@ struct DetailActionButton: View {
             HStack(spacing: 10) {
                 Group {
                     if busy {
-                        ProgressView().tint(lit ? .black : .white).scaleEffect(0.8)
+                        ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
                     } else {
                         Image(systemName: icon)
                             .font(.system(size: GlassPill.iconSize, weight: .semibold))
@@ -2754,17 +2876,17 @@ struct DetailActionButton: View {
             }
             .padding(.horizontal, isPrimary ? Self.textPadding : 0)
             .frame(width: isPrimary ? nil : Self.height, height: Self.height)
-            .foregroundStyle(lit ? FlatControl.contentOnFocus : FlatControl.content)
+            .foregroundStyle(shownLit ? FlatControl.contentOnFocus : FlatControl.content)
             // ONE glass layer that never changes; the focus highlight fades
-            // in over it. (Swapping glass views on every focus change, and
-            // animating their size and a large shadow, dropped frames.)
+            // in over it. (Tried: a flat look-alike, `FlatGlass` — no faster,
+            // and it didn't fit the top bar's style.)
             .background {
                 ZStack {
                     Color.clear.liquidGlass(in: Capsule())
-                    Capsule().fill(AppGlass.focusTint).opacity(lit ? 1 : 0)
+                    Capsule().fill(AppGlass.focusTint).opacity(shownLit ? 1 : 0)
                 }
             }
-            .animation(Self.open, value: lit)
+            .animation(Self.open, value: shownLit)
             // An icon button's name, under it while focused (outside its
             // frame: the row never moves for it).
             .overlay(alignment: .top) {
@@ -2774,17 +2896,37 @@ struct DetailActionButton: View {
                         .foregroundStyle(AppGlass.textMuted)
                         .lineLimit(1)
                         .fixedSize()
-                        .opacity(lit ? 1 : 0)
-                        .animation(Self.open, value: lit)
+                        .opacity(shownLit ? 1 : 0)
+                        .animation(Self.open, value: shownLit)
                         .offset(y: Self.height + Self.captionGap)
                 }
             }
         }
-        .buttonStyle(DetailPressStyle(lit: lit, held: held))
+        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, onFocus: focusChanged))
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
-        .holdMenu(focused: lit && onHold != nil, direct: true, onHeld: { held = $0 }) {
+        .holdMenu(focused: shownLit && onHold != nil, direct: true, onHeld: { held = $0 }) {
             onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
+        }
+    }
+}
+
+/// The top bar's glass, drawn flat (no blur — cheap to show, fade and
+/// scale): a dark translucent fill, a light rim along the top and a fainter
+/// one along the bottom, as light catches real glass.
+struct FlatGlass<S: InsettableShape>: View {
+    let shape: S
+    var body: some View {
+        ZStack {
+            shape.fill(Color.black.opacity(0.32))
+            shape.fill(Color.white.opacity(0.07))
+            shape.strokeBorder(
+                LinearGradient(stops: [.init(color: .white.opacity(0.32), location: 0),
+                                       .init(color: .white.opacity(0.06), location: 0.4),
+                                       .init(color: .white.opacity(0.04), location: 0.65),
+                                       .init(color: .white.opacity(0.16), location: 1)],
+                               startPoint: .top, endPoint: .bottom),
+                lineWidth: 1.5)
         }
     }
 }
@@ -2794,15 +2936,32 @@ struct DetailActionButton: View {
 private struct DetailPressStyle: ButtonStyle {
     let lit: Bool
     let held: Bool
+    /// The button's own focus, as it comes and goes.
+    var onFocus: (Bool) -> Void = { _ in }
     static let focusScale: CGFloat = 1.07
 
     func makeBody(configuration: Configuration) -> some View {
-        let base = lit ? Self.focusScale : 1
-        let scale = held ? base + FixedFocusMetrics.heldGrowth
-            : configuration.isPressed ? base - (1 - FixedFocusMetrics.pressScale) : base
-        return configuration.label
-            .scaleEffect(scale)
-            .animation(.easeOut(duration: configuration.isPressed ? 0.12 : 0.2), value: scale)
+        PressBody(configuration: configuration, lit: lit, held: held, onFocus: onFocus)
+    }
+
+    private struct PressBody: View {
+        @Environment(\.isFocused) private var isFocused
+        let configuration: Configuration
+        let lit: Bool
+        let held: Bool
+        let onFocus: (Bool) -> Void
+
+        var body: some View {
+            let base = lit ? DetailPressStyle.focusScale : 1
+            let scale = held ? base + FixedFocusMetrics.heldGrowth
+                : configuration.isPressed ? base - (1 - FixedFocusMetrics.pressScale) : base
+            return configuration.label
+                .scaleEffect(scale)
+                // Focus: with the highlight, on its curve; a press quicker.
+                .animation(configuration.isPressed ? .easeOut(duration: 0.12) : DetailActionButton.open,
+                           value: scale)
+                .onChange(of: isFocused) { _, now in onFocus(now) }
+        }
     }
 }
 
@@ -2977,3 +3136,234 @@ private struct DetailRowHeader: View {
 
 
 
+
+
+/// The episode row as `DetailView` built it, kept on its view model until
+/// one of the inputs in `key` changes.
+struct DetailRowData {
+    struct Key: Equatable {
+        var meta: Int, extras: Int, progress: Int, watched: Int
+    }
+    let key: Key
+    /// Specials first, then every regular episode in play order.
+    let episodes: [MetaVideo]
+    let items: [EpisodeRowItem]
+    /// The row's order: the seasons, Specials last.
+    let ordered: [EpisodeRowItem]
+    let orderedIndex: [String: Int]
+    let seasons: [Int]
+    let playTarget: MetaVideo?
+    let cardStates: [String: FixedFocusCardState]
+    let rowItems: [MetaItem]
+    let subtitles: [String: String]
+}
+
+
+/// What happens after a press opens Details (LAN log, "details"): each body
+/// pass and view-model change, in ms since the press — for the Home →
+/// Details transition work (docs/LOADING-PLAN.md §5).
+@MainActor
+enum DetailOpenProbe {
+    static var pressedAt: CFTimeInterval = 0
+    private static var counts: [String: Int] = [:]
+    static func pressed() {
+        pressedAt = CACurrentMediaTime()
+        counts = [:]
+        PlayerProbe.event("details", "press")
+    }
+    static func note(_ what: String) {
+        let ms = (CACurrentMediaTime() - pressedAt) * 1000
+        guard pressedAt > 0, ms < 4000 else { return }
+        counts[what, default: 0] += 1
+        PlayerProbe.event("details", String(format: "%@ #%d at %.0f ms", what, counts[what]!, ms))
+    }
+}
+
+
+/// From the press until Details is built (the swap's ~0.45 s): what the page
+/// needs, from memory / disk (the background queue put it there —
+/// `TitlePreloader`) — handed to the page as it's created, so it opens
+/// complete in ONE build. Whatever isn't ready by then loads as before.
+@MainActor
+final class DetailPreparer {
+    static let shared = DetailPreparer()
+
+    final class Prepared {
+        let id: String
+        let tmdb: TMDBSettings
+        var meta: MetaItem?
+        var extras: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
+        var ratings: MDBListRatings?
+        var detail: TMDBService.Detail?
+        var collectionParts: [MetaItem]?
+        /// The title block's season count / status chip and tagline (Details
+        /// loaded them after its first frame: they changed as it took over).
+        var showInfo: TMDBService.ShowSize?
+        var tagline: String?
+        var textReady = false
+        /// The first row's name under the billboard, as Details will show it
+        /// (a show: Play's season; a movie: More Like This / the collection).
+        var firstRowName: String?
+        var rowNameReady = false
+        /// Details, ratings, the collection: all asked.
+        var dataDone = false
+        /// The picture Details shows: Home's for it (TMDB's original file),
+        /// else — once it's in — the record's.
+        var picture: String?
+        /// Its shade — the billboard's own (`StageArt.shade(for:)`).
+        var shade: UIImage?
+        /// The logo Home showed (else the record's).
+        var logo: String?
+        init(id: String, tmdb: TMDBSettings) { self.id = id; self.tmdb = tmdb }
+    }
+
+    private var current: Prepared?
+    private var startedAt: CFTimeInterval = 0
+
+    func start(_ item: MetaItem) {
+        guard let context = TitlePreloader.shared.context, !item.id.hasPrefix("tmdb:") else { return }
+        let prepared = Prepared(id: item.id, tmdb: context.tmdb)
+        prepared.picture = Self.homePicture(item)
+        prepared.logo = item.logo
+        current = prepared
+        startedAt = CACurrentMediaTime()
+        let tmdb = context.tmdb
+        Task { @MainActor in
+            async let info = FixedFocusShowInfo.load(item)
+            async let facts = TMDBService.hasAPIKey ? TMDBService.facts(for: item) : nil
+            prepared.showInfo = await info
+            prepared.tagline = await facts?.tagline
+            prepared.textReady = true
+        }
+        Task { @MainActor in
+            async let ratings = MDBListService.ratings(for: item, settings: context.mdb)
+            async let detail: TMDBService.Detail? = TMDBService.hasAPIKey
+                ? TMDBService.detail(imdbID: item.id, type: item.type) : nil
+            let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: context.addonManager)
+            // (Before the record is marked ready: the window draws with them.)
+            prepared.ratings = await ratings
+            if meta.isSeries, tmdb.useEpisodes, TMDBService.hasAPIKey {
+                let id = meta.id, type = meta.type
+                prepared.extras = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
+                    for season in meta.seasons {
+                        group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season)) }
+                    }
+                    var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
+                    for await (season, extras) in group where !extras.isEmpty { all[season] = extras }
+                    return all
+                }
+            }
+            if meta.isSeries {
+                let order = SeriesEpisodes.inPlayOrder(meta)
+                let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress,
+                                                       watched: context.watched)
+                let seasons = meta.seasons.sorted { ($0 == 0 ? Int.max : $0) < ($1 == 0 ? Int.max : $1) }
+                prepared.firstRowName = (target?.season ?? seasons.first).map { $0 == 0 ? "Specials" : "Season \($0)" }
+                    ?? "Episodes"
+                prepared.rowNameReady = true
+            }
+            // (The episode list last of the three: the page takes meta and
+            // its extras together.)
+            if prepared.picture == nil { prepared.picture = meta.background ?? meta.poster }
+            if prepared.logo == nil { prepared.logo = meta.logo }
+            prepared.meta = meta
+            prepared.detail = await detail
+            if !meta.isSeries {
+                if tmdb.useMoreLikeThis, prepared.detail?.moreLikeThis.isEmpty == false {
+                    prepared.firstRowName = "More Like This"
+                } else if tmdb.useCollections, let collection = prepared.detail?.collection {
+                    prepared.firstRowName = collection.name
+                }
+                prepared.rowNameReady = true
+            }
+            if tmdb.useCollections, let collection = prepared.detail?.collection {
+                prepared.collectionParts = await TMDBService.collectionItems(id: collection.id)
+                    .filter { $0.id != meta.id }.deduplicatedByID()
+            }
+            prepared.dataDone = true
+            DetailOpenProbe.note(String(format: "prepared (%.0f ms after start)", (CACurrentMediaTime() - self.startedAt) * 1000))
+        }
+    }
+
+    /// Details' picture (its record's), once it's decoded at the size
+    /// Details draws it — nil if that took longer than `within`.
+    func picture(for item: MetaItem, within: Double) async -> String? {
+        guard let prepared = current, prepared.id == item.id else { return nil }
+        let deadline = CACurrentMediaTime() + within
+        while prepared.picture == nil, prepared.meta == nil, CACurrentMediaTime() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard let url = prepared.picture else { return nil }
+        // Its shade too (the colours are known for what Home showed).
+        if prepared.shade == nil { prepared.shade = await StageArt.shade(for: url) }
+        let decoded = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width) }
+            group.addTask {
+                let left = deadline - CACurrentMediaTime()
+                if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        DetailOpenProbe.note("picture \(decoded)")
+        return decoded ? url : nil
+    }
+
+    /// Everything Details shows on arrival is in — its data, the text, the
+    /// first row's name, the logo, picture, blurred picture and colours
+    /// decoded — or `within` seconds have passed. Details is only shown then
+    /// (`DetailTransition`): no placeholders, nothing arriving after.
+    func ready(_ item: MetaItem, within: Double) async {
+        guard let prepared = current, prepared.id == item.id else { return }
+        let deadline = CACurrentMediaTime() + within
+        func done() -> Bool {
+            prepared.meta != nil && prepared.textReady && prepared.rowNameReady && prepared.dataDone
+        }
+        while !done(), CACurrentMediaTime() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard let meta = prepared.meta else { return }
+        let logo = prepared.logo ?? meta.logo
+        let picture = prepared.picture
+        let flags = RenderProbe.shared.flags
+        await withTaskGroup(of: Void.self) { group in
+            if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) } }
+            if let picture {
+                group.addTask { await ImageCache.shared.preload(picture, maxDimension: StagePictureView.pictureSize.width) }
+                group.addTask { _ = await BlurredBackdrop.image(for: picture, strength: flags.detailsPictureBlur) }
+                group.addTask { _ = await FixedFocusTint.colors(for: picture, flags: flags) }
+            }
+            group.addTask {
+                let left = deadline - CACurrentMediaTime()
+                if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            }
+            // All the pictures, or the deadline: whichever first.
+            var pending = (logo != nil ? 1 : 0) + (picture != nil ? 3 : 0)
+            while pending > 0, await group.next() != nil {
+                pending -= 1
+                if CACurrentMediaTime() >= deadline { break }
+            }
+            group.cancelAll()
+        }
+        DetailOpenProbe.note("ready")
+    }
+
+    /// The picture Home shows for `item` (the billboard's and the cards'
+    /// backdrop: TMDB's original file).
+    static func homePicture(_ item: MetaItem) -> String? {
+        TMDBService.originalSize(item.background) ?? item.background
+    }
+
+    /// What's ready for `id`, left for Details (the window draws with it).
+    func peek(_ id: String) -> Prepared? { current?.id == id ? current : nil }
+
+    /// What's ready for `id` now (once).
+    func take(_ id: String) -> Prepared? {
+        guard let current, current.id == id else { return nil }
+        self.current = nil
+        DetailOpenProbe.note("take: meta \(current.meta != nil) · extras \(current.extras.count) · details \(current.detail != nil) · ratings \(current.ratings != nil) · id \(id) · meta id \(current.meta?.id ?? "-") · seasons \(current.meta?.seasons ?? []) · more \(current.detail?.moreLikeThis.prefix(2).map(\.name) ?? [])")
+        return current
+    }
+}

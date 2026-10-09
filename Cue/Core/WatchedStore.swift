@@ -22,7 +22,11 @@ struct WatchedItem: Codable, Identifiable, Hashable {
 
 @MainActor
 final class WatchedStore: ObservableObject {
-    @Published private(set) var items: [String: WatchedItem] = [:]
+    @Published private(set) var items: [String: WatchedItem] = [:] {
+        didSet { revision &+= 1 }
+    }
+    /// Bumped on every `items` change: a cheap key for memos built from it.
+    private(set) var revision = 0
 
     /// Fired after a local change so account sync can push. Suppressed while
     /// merging remote data.

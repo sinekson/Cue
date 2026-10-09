@@ -332,43 +332,86 @@ enum Spotlight {
 
 // MARK: - Billboard dots
 
-/// The billboard's position: one dot per title, and a highlight gliding to
-/// the current one — larger, bright white while the billboard has focus.
-/// Flat (it's in the page).
+/// The billboard's position: round dots in a small glass capsule (the top
+/// bar's glass), the CURRENT one a pill — which, while the billboard pages
+/// by itself (`BillboardAutoPage`), fills from its left end with the time
+/// left (the iOS page control's timer look). The dots behind you a little
+/// brighter than the ones ahead (the progress map's levels). Changing title
+/// the old pill shrinks back into a dot as the new one widens — in place,
+/// on the billboard's Left/Right curve and time. Flat inside, glass around.
+/// (Tried: segments in a glass capsule — pills in a pill; segments alone;
+/// circles in the map's levels; a page-control pill; 14 pt dots with a
+/// 20 pt marker gliding between them.)
 struct BillboardDots: View {
     let count: Int
     let current: Int
-    /// The billboard has focus: the highlight is bright white (else faint).
+    /// The billboard has focus: the current one at full strength.
     let focused: Bool
+    /// Paging by itself: the current pill FILLS over this many seconds — the
+    /// next title when it's full. Nil: solid.
+    var timer: Double? = nil
+    /// A new run of the clock on the same title (back on the billboard).
+    var cycle = 0
+    @State private var fill: CGFloat = 0
 
-    /// Centre to centre; a glass dot; the highlight on the current one.
-    static let pitch: CGFloat = 28
-    static let dot: CGFloat = 14
-    static let marker: CGFloat = 20
-
-    @Namespace private var highlight
+    static let dot: CGFloat = 12
+    static let pill: CGFloat = 36
+    static let gap: CGFloat = 12
+    /// Around the dots inside their glass capsule.
+    static let capsulePadding: CGFloat = 16
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: Self.gap) {
             ForEach(0..<max(count, 0), id: \.self) { k in
-                ZStack {
-                    // (The current one IS the highlight.)
-                    Circle().fill(AppGlass.idleTint)
-                        .frame(width: Self.dot, height: Self.dot)
-                        .opacity(k == current ? 0 : 1)
-                        .animation(GlassPill.glide, value: current)
-                    Color.clear
-                        .frame(width: Self.marker, height: Self.marker)
-                        .glassPillItem(k, in: highlight)
-                }
-                .frame(width: Self.pitch, height: Self.marker)
+                let on = k == current
+                Capsule()
+                    .fill(Color.white.opacity(on && timer != nil ? 0.3 : opacity(k)))
+                    .frame(width: on ? Self.pill : Self.dot, height: Self.dot)
+                    // Timed: the current pill fills from its left end.
+                    .overlay(alignment: .leading) {
+                        if on, timer != nil {
+                            Capsule().fill(Color.white)
+                                .frame(width: max(Self.pill * fill, Self.dot), height: Self.dot)
+                        }
+                    }
             }
         }
-        // (In the page: flat, not glass.)
-        .glassHighlight(on: current, in: highlight, focused: focused, glass: false)
+        .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move), value: current)
+        .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move), value: focused)
+        .padding(.horizontal, Self.capsulePadding)
+        .padding(.vertical, Self.capsulePadding * 0.75)
+        .background { Color.clear.liquidGlass(in: Capsule()) }
         .opacity(count > 1 ? 1 : 0)
         .allowsHitTesting(false)
+        .onAppear { restartFill() }
+        .onChange(of: current) { _, _ in restartFill() }
+        .onChange(of: timer) { _, _ in restartFill() }
+        .onChange(of: cycle) { _, _ in restartFill() }
     }
+
+    /// Behind 62 %, the current one white (fainter without focus), ahead 30 %.
+    private func opacity(_ k: Int) -> Double {
+        if k == current { return focused ? 1 : 0.62 }
+        return k < current ? 0.62 : 0.3
+    }
+
+    /// The fill from empty, then over `timer` — linear: it's a clock.
+    private func restartFill() {
+        var none = Transaction()
+        none.disablesAnimations = true
+        withTransaction(none) { fill = 0 }
+        guard let timer else { return }
+        DispatchQueue.main.async {
+            withAnimation(.linear(duration: timer)) { fill = 1 }
+        }
+    }
+}
+
+/// Settings → Appearance → "Billboard pages by itself": resting on the
+/// billboard, the next title every `interval` seconds.
+enum BillboardAutoPage {
+    static let key = "cue.home.billboardAutoPage"
+    static let interval: Double = 5
 }
 
 // MARK: - Place memory
@@ -461,6 +504,48 @@ enum SpotlightTint {
 }
 
 extension SpotlightTint {
+    @MainActor private static var grounds: [String: Double] = [:]
+
+    /// How bright the picture is where the billboard's text sits (the left
+    /// 45 %, from the top bar down): mean relative luminance, 0...1. The
+    /// shade's strength follows it (`StageArt.boost`): a bright picture gets
+    /// the darkening it needs, a dark one is left alone.
+    @MainActor
+    static func textGround(for url: String) async -> Double? {
+        if let cached = grounds[url] { return cached }
+        let value: Double? = await Task.detached(priority: .utility) {
+            guard let cg = await smallImage(url)?.cgImage else { return nil }
+            let width = 32, height = 18
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+                guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { return false }
+                ctx.interpolationQuality = .medium
+                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+                return true
+            }
+            guard drawn else { return nil }
+            func linear(_ v: UInt8) -> Double {
+                let c = Double(v) / 255
+                return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            var sum = 0.0, count = 0.0
+            for y in 3..<height {
+                for x in 0..<Int(Double(width) * 0.45) {
+                    let i = (y * width + x) * 4
+                    sum += 0.2126 * linear(pixels[i]) + 0.7152 * linear(pixels[i + 1]) + 0.0722 * linear(pixels[i + 2])
+                    count += 1
+                }
+            }
+            return count > 0 ? sum / count : nil
+        }.value
+        if let value { grounds[url] = value }
+        return value
+    }
+
     /// One of the artwork's main colours (hue and saturation only; whoever
     /// shows it picks the brightness).
     struct Swatch {
@@ -476,17 +561,19 @@ extension SpotlightTint {
     /// orange that is in neither).
     @MainActor
     static func palette(for url: String) async -> [Swatch]? {
-        if let cached = palettes[url] { return cached }
+        let always = RenderProbe.shared.flags.tintAlwaysTwo
+        let key = always ? url + "|two" : url
+        if let cached = palettes[key] { return cached }
         let found: [Swatch]? = await Task.detached(priority: .utility) {
             guard let image = await smallImage(url) else { return nil }
-            return swatches(from: image)
+            return swatches(from: image, alwaysTwo: always)
         }.value
         guard let found else { return nil }
-        palettes[url] = found
+        palettes[key] = found
         return found
     }
 
-    private static func swatches(from image: UIImage) -> [Swatch]? {
+    private static func swatches(from image: UIImage, alwaysTwo: Bool) -> [Swatch]? {
         guard let cg = image.cgImage else { return nil }
         let side = 24, groups = 12
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
@@ -526,15 +613,230 @@ extension SpotlightTint {
             return Swatch(hue: hue, saturation: min(s * Spotlight.tintSaturationBoost, Spotlight.tintMaxSaturation))
         }
         guard let first = weight.indices.max(by: { weight[$0] < weight[$1] }), weight[first] > 0 else {
-            // No colour at all (black-and-white artwork): neutral.
-            return [Swatch(hue: 0, saturation: 0)]
+            // No colour at all (black-and-white artwork): neutral (and a
+            // faint cool grey beside it).
+            return [Swatch(hue: 0, saturation: 0)] + (alwaysTwo ? [Swatch(hue: 0.6, saturation: 0.15)] : [])
         }
-        // A second colour only if it is a DIFFERENT one (not the neighbouring
-        // group) and carries real weight.
-        let second = weight.indices
-            .filter { min(abs($0 - first), groups - abs($0 - first)) >= 2 && weight[$0] >= weight[first] * 0.3 }
+        if !alwaysTwo {
+            // A second colour only if it is a DIFFERENT one (not the
+            // neighbouring group) and carries real weight.
+            let second = weight.indices
+                .filter { min(abs($0 - first), groups - abs($0 - first)) >= 2 && weight[$0] >= weight[first] * 0.3 }
+                .max(by: { weight[$0] < weight[$1] })
+            return [swatch(first)] + (second.map { [swatch($0)] } ?? [])
+        }
+        // ALWAYS a second colour (Render Lab → Tint: always two colours), the best there
+        // is: a DIFFERENT colour (two groups away or more) with some weight,
+        // else the neighbouring group's, else one made from the first — its
+        // hue turned 30° (towards the side with more weight), a little less
+        // full. A trace (under 5 % of the first) is noise, not a colour.
+        func distance(_ g: Int) -> Int { min(abs(g - first), groups - abs(g - first)) }
+        let floor = weight[first] * 0.05
+        let other = weight.indices
+            .filter { distance($0) >= 2 && weight[$0] >= floor }
             .max(by: { weight[$0] < weight[$1] })
-        return [swatch(first)] + (second.map { [swatch($0)] } ?? [])
+        let neighbour = weight.indices
+            .filter { distance($0) == 1 && weight[$0] >= floor }
+            .max(by: { weight[$0] < weight[$1] })
+        if let second = other ?? neighbour { return [swatch(first), swatch(second)] }
+        let main = swatch(first)
+        let left = weight[(first + groups - 1) % groups], right = weight[(first + 1) % groups]
+        let turn: CGFloat = right >= left ? 1.0 / 12 : -1.0 / 12
+        var hue = main.hue + turn
+        if hue < 0 { hue += 1 } else if hue >= 1 { hue -= 1 }
+        return [main, Swatch(hue: hue, saturation: main.saturation * 0.8)]
+    }
+}
+
+// MARK: - Colour grid
+
+extension SpotlightTint {
+    /// The picture's average colour in each cell of a grid (row 0 at the
+    /// top; sRGB 0…1) — "Picture's colour layout". Near-black pixels count
+    /// little, so a dark corner doesn't turn its cell grey-black.
+    @MainActor
+    static func grid(for url: String, columns: Int, rows: Int) async -> [[(Double, Double, Double)]]? {
+        await Task.detached(priority: .userInitiated) { () -> [[(Double, Double, Double)]]? in
+            guard let image = await smallImage(url), let cg = image.cgImage else { return nil }
+            let w = columns * 8, h = rows * 8
+            var pixels = [UInt8](repeating: 0, count: w * h * 4)
+            let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+                guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h,
+                                          bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { return false }
+                ctx.interpolationQuality = .medium
+                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+                return true
+            }
+            guard drawn else { return nil }
+            return (0..<rows).map { row in
+                (0..<columns).map { column in
+                    var r = 0.0, g = 0.0, b = 0.0, total = 0.0
+                    for y in row * 8..<(row + 1) * 8 {
+                        for x in column * 8..<(column + 1) * 8 {
+                            let i = (y * w + x) * 4
+                            let pr = Double(pixels[i]) / 255, pg = Double(pixels[i + 1]) / 255, pb = Double(pixels[i + 2]) / 255
+                            let weight = 0.15 + max(pr, pg, pb)
+                            r += pr * weight; g += pg * weight; b += pb * weight; total += weight
+                        }
+                    }
+                    return (r / total, g / total, b / total)
+                }
+            }
+        }.value
+    }
+}
+
+// MARK: - Area + vivid accent
+
+/// Render Lab → Tint colour → "Area + vivid accent": the picture's colours
+/// grouped by how they LOOK (OKLab, a perceptual colour space — a light sky
+/// blue and a deep navy are different groups, a muted brown and a bright
+/// orange too), not by hue alone.
+/// - The main colour: the group covering the most of the picture — area
+///   counts more than saturation, so earthy browns, olives and muted greens
+///   can win; the top quarter (often sky) counts half.
+/// - The second: the most VIVID group of a different hue (at least 40°
+///   away) — the accent (a logo, hair, a costume), even when small.
+extension SpotlightTint {
+    @MainActor private static var areaPalettes: [String: [Swatch]] = [:]
+
+    @MainActor
+    static func areaPalette(for url: String) async -> [Swatch]? {
+        let always = RenderProbe.shared.flags.tintAlwaysTwo
+        let key = always ? url + "|two" : url
+        if let cached = areaPalettes[key] { return cached }
+        let found: [Swatch]? = await Task.detached(priority: .utility) {
+            guard let image = await smallImage(url) else { return nil }
+            return areaSwatches(from: image, alwaysTwo: always)
+        }.value
+        guard let found else { return nil }
+        areaPalettes[key] = found
+        return found
+    }
+
+    private struct Lab { var l: Double, a: Double, b: Double
+        var chroma: Double { (a * a + b * b).squareRoot() }
+        var hue: Double { let h = atan2(b, a) / (2 * .pi); return h < 0 ? h + 1 : h }
+    }
+
+    private static func lab(r: Double, g: Double, b: Double) -> Lab {
+        func linear(_ v: Double) -> Double { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        let r = linear(r), g = linear(g), b = linear(b)
+        let l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        return Lab(l: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                   a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                   b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+    }
+
+    /// Back to a swatch (hue and saturation, as the background shows it).
+    private static func swatch(_ c: Lab) -> Swatch {
+        let l = pow(c.l + 0.3963377774 * c.a + 0.2158037573 * c.b, 3)
+        let m = pow(c.l - 0.1055613458 * c.a - 0.0638541728 * c.b, 3)
+        let s = pow(c.l - 0.0894841775 * c.a - 1.2914855480 * c.b, 3)
+        func encode(_ v: Double) -> CGFloat {
+            let v = min(max(v, 0), 1)
+            return CGFloat(v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1 / 2.4) - 0.055)
+        }
+        let r = encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)
+        let g = encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)
+        let b = encode(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+        var hue: CGFloat = 0, sat: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+        UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&hue, saturation: &sat, brightness: &v, alpha: &a)
+        return Swatch(hue: hue, saturation: min(sat * Spotlight.tintSaturationBoost, Spotlight.tintMaxSaturation))
+    }
+
+    private static func areaSwatches(from image: UIImage, alwaysTwo: Bool) -> [Swatch]? {
+        guard let cg = image.cgImage else { return nil }
+        let w = 32, h = 18
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h,
+                                      bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            ctx.interpolationQuality = .medium
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+
+        // The pixels with some colour (not near-black, not grey), each
+        // weighted by its place: the top quarter (row 0 is the TOP — the
+        // context draws flipped into memory) counts half.
+        var points: [(c: Lab, w: Double)] = []
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let c = lab(r: Double(pixels[i]) / 255, g: Double(pixels[i + 1]) / 255, b: Double(pixels[i + 2]) / 255)
+                guard c.l > 0.2, c.chroma > 0.025 else { continue }
+                let place = y < h / 4 ? 0.5 : 1.0
+                // Area first; colourfulness only a little (a muted brown
+                // ~0.8 of a vivid one).
+                let colour = min(1, 0.6 + c.chroma * 3)
+                points.append((c, place * colour))
+            }
+        }
+        guard points.count >= 4 else {
+            // No colour to speak of: neutral (and a faint cool grey).
+            return [Swatch(hue: 0, saturation: 0)] + (alwaysTwo ? [Swatch(hue: 0.6, saturation: 0.15)] : [])
+        }
+
+        // k-means in OKLab (lightness counted half: the background shows
+        // every colour at its own brightness anyway), six groups, seeded
+        // far apart.
+        func distance(_ p: Lab, _ q: Lab) -> Double {
+            let dl = (p.l - q.l) * 0.5, da = p.a - q.a, db = p.b - q.b
+            return dl * dl + da * da + db * db
+        }
+        let k = min(6, points.count)
+        var centres = [points.max { $0.w < $1.w }!.c]
+        while centres.count < k {
+            let next = points.max { a, b in
+                centres.map { distance(a.c, $0) }.min()! < centres.map { distance(b.c, $0) }.min()!
+            }!
+            centres.append(next.c)
+        }
+        var weights = [Double](repeating: 0, count: k)
+        for _ in 0..<10 {
+            var sums = [Lab](repeating: Lab(l: 0, a: 0, b: 0), count: k)
+            weights = [Double](repeating: 0, count: k)
+            for p in points {
+                let j = (0..<k).min { distance(p.c, centres[$0]) < distance(p.c, centres[$1]) }!
+                sums[j].l += p.c.l * p.w; sums[j].a += p.c.a * p.w; sums[j].b += p.c.b * p.w
+                weights[j] += p.w
+            }
+            for j in 0..<k where weights[j] > 0 {
+                centres[j] = Lab(l: sums[j].l / weights[j], a: sums[j].a / weights[j], b: sums[j].b / weights[j])
+            }
+        }
+        let total = weights.reduce(0, +)
+        let groups = (0..<k).filter { weights[$0] > 0 }
+        // The main colour: the biggest group.
+        guard let main = groups.max(by: { weights[$0] < weights[$1] }) else { return nil }
+        // The accent: the most vivid group of a different hue (40°+ away),
+        // at least 2 % of the picture — its vividness counted far more
+        // than its size.
+        func hueGap(_ x: Double, _ y: Double) -> Double { let d = abs(x - y); return min(d, 1 - d) }
+        let accent = groups
+            .filter { $0 != main && weights[$0] / total >= 0.02 && centres[$0].chroma >= 0.05
+                && hueGap(centres[$0].hue, centres[main].hue) >= 40.0 / 360 }
+            .max { a, b in
+                centres[a].chroma * (weights[a] / total).squareRoot()
+                    < centres[b].chroma * (weights[b] / total).squareRoot()
+            }
+        let first = swatch(centres[main])
+        if let accent { return [first, swatch(centres[accent])] }
+        guard alwaysTwo else { return [first] }
+        // None: one made from the main colour, its hue turned 30°.
+        var hue = first.hue + 1.0 / 12
+        if hue >= 1 { hue -= 1 }
+        return [first, Swatch(hue: hue, saturation: first.saturation * 0.8)]
     }
 }
 

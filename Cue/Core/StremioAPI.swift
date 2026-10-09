@@ -103,7 +103,12 @@ enum StremioAPI {
     /// paints instantly instead of waiting on the addon meta fetch. TTL kept
     /// modest so a currently-airing show still picks up new episodes soon.
     private static let metaDiskCache = DiskCache<MetaItem>(name: "meta")
-    private static let metaDiskTTL: TimeInterval = 30 * 60
+    /// Kept up to this (stale-while-revalidate — `MetaFreshness` decides
+    /// what's fresh: an airing show by its air dates).
+    private static let metaKeep: TimeInterval = 30 * 24 * 60 * 60
+    /// A title's meta refreshed in the background CHANGED (a new episode
+    /// listed): `object` is the title id. An open Details picks it up.
+    static let metaRefreshed = Notification.Name("cue.metaRefreshed")
 
     /// `ttl` = how long a cached body stays fresh (0 disables caching for this
     /// request — used for streams, whose links can be short-lived).
@@ -257,17 +262,43 @@ enum StremioAPI {
         return metas
     }
 
-    static func meta(addon: InstalledAddon, type: String, id: String) async throws -> MetaItem {
+    /// A title's full meta (its episode list) — from DISK whenever there is
+    /// one (docs/LOADING-PLAN.md §2): returned at once, and when it's past
+    /// what `MetaFreshness` calls fresh (or older than `revalidateAfter` —
+    /// Details of an airing show), asked again in the background; a change
+    /// is announced (`metaRefreshed`). Only a title never fetched waits.
+    static func meta(addon: InstalledAddon, type: String, id: String,
+                     revalidateAfter: TimeInterval? = nil) async throws -> MetaItem {
         // Via `resourceURL` so a configured addon's manifest query (its
         // token) rides along after `.json` instead of being dropped.
         let url = addon.resourceURL("/meta/\(encodePathComponent(type))/\(encodePathComponent(id)).json")
-        if let cached = await metaDiskCache.value(for: url, ttl: metaDiskTTL) {
+        if let (cached, age) = await metaDiskCache.entry(for: url, keep: metaKeep) {
+            let fresh = min(MetaFreshness.fresh(cached, age: age), revalidateAfter ?? .infinity)
+            if age > fresh {
+                Task.detached(priority: .utility) { await refreshMeta(url, id: id, old: cached) }
+            }
             return cached
         }
-        let response: MetaResponse = try await get(url, ttl: 600)
+        let response: MetaResponse = try await get(url)
         guard let meta = response.meta else { throw StremioAPIError.emptyBody }
         await metaDiskCache.store(meta, for: url)
         return meta
+    }
+
+    /// A title's meta read from DISK into memory (the launch: the titles you
+    /// may open first) — never the network. True if it was there.
+    @discardableResult
+    static func warmMeta(addon: InstalledAddon, type: String, id: String) async -> Bool {
+        let url = addon.resourceURL("/meta/\(encodePathComponent(type))/\(encodePathComponent(id)).json")
+        return await metaDiskCache.entry(for: url, keep: metaKeep) != nil
+    }
+
+    /// The background refresh: stored; a change announced on the main actor.
+    private static func refreshMeta(_ url: String, id: String, old: MetaItem) async {
+        guard let response: MetaResponse = try? await get(url), let meta = response.meta else { return }
+        await metaDiskCache.store(meta, for: url)
+        guard MetaFreshness.changed(old, meta) else { return }
+        await MainActor.run { NotificationCenter.default.post(name: metaRefreshed, object: id) }
     }
 
     static func streams(addon: InstalledAddon, type: String, id: String,
@@ -324,5 +355,41 @@ enum StremioAPI {
         // looked that way. A non-empty result is cached exactly as before.
         if subtitles.isEmpty { cache.remove(url) }
         return subtitles
+    }
+}
+
+
+/// WHEN A TITLE'S META IS FRESH (docs/LOADING-PLAN.md §2) — not a timer:
+/// - a series with an episode due after it was fetched: fresh until it's
+///   due (+1 h for the add-on to list it), at most 3 days — no requests
+///   between episodes;
+/// - an episode aired in the last day: 1 h (the add-on catching up);
+/// - airing without a known next date (an episode in the last two weeks):
+///   12 h;
+/// - otherwise (between seasons, ended): 2 days; a movie 7 days.
+enum MetaFreshness {
+    static func fresh(_ meta: MetaItem, age: TimeInterval) -> TimeInterval {
+        let hour: TimeInterval = 60 * 60, day = 24 * hour
+        guard meta.isSeries else { return 7 * day }
+        let now = Date()
+        let fetched = now.addingTimeInterval(-age)
+        let dates = (meta.videos ?? []).compactMap(\.airedDate)
+        if let latest = dates.filter({ $0 <= now }).max(), now.timeIntervalSince(latest) < day {
+            return hour
+        }
+        if let next = dates.filter({ $0 > fetched }).min() {
+            return min(next.timeIntervalSince(fetched) + hour, 3 * day)
+        }
+        if let latest = dates.filter({ $0 <= fetched }).max(), fetched.timeIntervalSince(latest) < 14 * day {
+            return 12 * hour
+        }
+        return 2 * day
+    }
+
+    /// The refresh brought something new: other episodes, or their dates.
+    static func changed(_ old: MetaItem, _ new: MetaItem) -> Bool {
+        let a = (old.videos ?? []).map { "\($0.id)|\($0.released ?? "")" }
+        let b = (new.videos ?? []).map { "\($0.id)|\($0.released ?? "")" }
+        return a != b
     }
 }

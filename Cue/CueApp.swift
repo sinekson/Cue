@@ -257,11 +257,23 @@ struct RootView: View {
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
 
+    @ObservedObject private var launch = LaunchPreloader.shared
+
     var body: some View {
         content
             // While the source picker (or a search) is up, nothing under it
-            // takes focus.
-            .disabled(sourcePicker.request != nil || launcher.search?.overlay == true)
+            // takes focus — nor under the launch screen.
+            .disabled(sourcePicker.request != nil || launcher.search?.overlay == true || launch.curtain)
+            // THE LAUNCH (docs/LOADING-PLAN.md §4): over everything on a cold
+            // start while the closest things get ready; Home is built under
+            // it.
+            .overlay { LaunchCurtain() }
+            .animation(.easeOut(duration: 0.35), value: launch.curtain)
+            .task { launch.run(home: homeViewModel, addonManager: addonManager) }
+            // The welcome screen or the profile gate up: they cover it — no
+            // curtain on top (the preload carries on behind).
+            .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
+            .onChange(of: showProfileGate) { _, on in if on { launch.skip() } }
             // Play from a card or an episode: finding its source, over the
             // app (Back cancels — see `PlayLauncher`).
             .overlay {
@@ -293,13 +305,6 @@ struct RootView: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: sourcePicker.request?.id)
-            // A card morphing into Details (and back), over everything (see
-            // `TitleMorphOverlay`).
-            .overlay {
-                if let window = modeSwap.windowOpen {
-                    TitleMorphOverlay(open: window).id(window.id)
-                }
-            }
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -779,7 +784,16 @@ struct RootView: View {
         // instead of a movie — the two branches of the action row are the
         // working/broken pair for the hold menu.
         if ProcessInfo.processInfo.arguments.contains("-detailDemo") {
-            let series = ProcessInfo.processInfo.arguments.contains("-detailSeries")
+            let args = ProcessInfo.processInfo.arguments
+            let series = args.contains("-detailSeries")
+            // `-detailID tt…`: that series instead (e.g. a long one to profile).
+            let picked = args.firstIndex(of: "-detailID").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+            if let picked {
+                return AnyView(ZStack {
+                    theme.palette.background.ignoresSafeArea()
+                    DetailView(item: MetaItem(id: picked, type: "series", name: picked))
+                })
+            }
             return AnyView(
                 ZStack {
                     theme.palette.background.ignoresSafeArea()
@@ -892,15 +906,14 @@ struct RootView: View {
     /// focus needs to settle — every Up in it is lost.
     private static let railSettle: Double = 0.25
 
-    /// The top bar is out for the billboard ⇄ Details swap — Home's tab only
+    /// The top bar is out for the billboard's trailer — Home's tab only
     /// (another tab's bar is never part of it).
     private var homeChromeOut: Bool {
-        (modeSwap.homeChromeOut || modeSwap.trailerChromeOut) && onHomeLikeTab
+        modeSwap.trailerChromeOut && onHomeLikeTab
     }
 
     private var showSidebar: Bool {
-        // (Billboard → Details: the bar stays for its lift-away.)
-        guard atTabRoot || (modeSwap.chromeHeld && onHomeLikeTab) else { return false }
+        guard atTabRoot else { return false }
         return !sidebarAutoHides || sidebarRevealed
     }
 
@@ -1180,16 +1193,6 @@ struct RootView: View {
                 .onChange(of: path.wrappedValue.count) { oldCount, newCount in
                     // Only a pop that lands ON the page matters here.
                     guard newCount < oldCount, newCount == 0 else { return }
-                    // Back from Details opened on the billboard: the page's
-                    // half of the swap, the other way in.
-                    if modeSwap.homeChromeOut {
-                        withAnimation(ModeSwap.swap) { modeSwap.homeChromeOut = false }
-                    }
-                    // (Held until the bar is back in place.)
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(ModeSwap.swapDuration))
-                        if !modeSwap.homeChromeOut { modeSwap.chromeHeld = false }
-                    }
                     lastHomePopAt = Date()
                     // Popping all the way back: keep the rail non-focusable
                     // for a beat so focus lands on a card instead of the rail
@@ -1367,7 +1370,7 @@ struct RootView: View {
             viewModel: homeViewModel,
             typeFilter: filter,
             active: active,
-            onSelect: { path.wrappedValue.append(Route.detail($0)) },
+            onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
             // From the billboard: no slide. It already looks like the Detail
             // page's top, so the page just takes over in place.
             onSelectFeatured: { item in
@@ -1391,11 +1394,21 @@ struct RootView: View {
         .probeScreen("Home")
     }
 
+    /// Into Details, from anywhere: through black (`DetailTransition`),
+    /// pushed under it without a slide.
+    private func openDetail(_ item: MetaItem, append: @escaping (Route) -> Void) {
+        DetailTransition.shared.open(item) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { append(Route.detail(item)) }
+        }
+    }
+
     private func searchRoot(active: Bool) -> some View {
         SearchView(
             viewModel: searchViewModel,
             active: active,
-            onSelect: { searchPath.append(Route.detail($0)) },
+            onSelect: { openDetail($0) { searchPath.append($0) } },
             onOpenInPlace: { item in
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
@@ -1407,7 +1420,7 @@ struct RootView: View {
 
     private var libraryRoot: some View {
         LibraryView(
-            onSelect: { libraryPath.append(Route.detail($0)) },
+            onSelect: { openDetail($0) { libraryPath.append($0) } },
             onBackAtRoot: { focusSidebar(2) }
         )
         .probeScreen("Library")
@@ -1427,7 +1440,7 @@ struct RootView: View {
     private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, part: String?,
                             path: Binding<NavigationPath>) -> some View {
         FolderView(collection: collection, folder: folder, part: part,
-                   onSelect: { path.wrappedValue.append(Route.detail($0)) },
+                   onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                    onOpenInPlace: { item in
                        var transaction = Transaction()
                        transaction.disablesAnimations = true
@@ -1442,46 +1455,36 @@ struct RootView: View {
         case .detail(let item):
             DetailView(
                     item: item,
-                    onSelectItem: { path.wrappedValue.append(Route.detail($0)) },
+                    onSelectItem: { openDetail($0) { path.wrappedValue.append($0) } },
                     onSelectPerson: { id, name in path.wrappedValue.append(Route.person(id: id, name: name)) },
                     onSelectCompany: { company in
                         path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
                                                                    network: company.isNetwork))
                     },
-                    // Back to the billboard: Details has played its half of
-                    // the swap; Home plays the rest — no system slide.
+                    // Back: `DetailTransition` (the billboard's way backwards,
+                    // else the simple exit) — no system slide.
                     onReturnToBillboard: {
-                        // Opened through a window (Search's Top Result): it
-                        // closes back into the banner as the page goes.
-                        if let window = ModeSwap.shared.openedThrough, window.item.id == item.id {
-                            ModeSwap.shared.openedThrough = nil
-                            var closing = ModeSwap.WindowOpen(item: window.item, source: window.source)
-                            closing.closing = true
-                            ModeSwap.shared.windowOpen = closing
-                            Task { @MainActor in
-                                try? await Task.sleep(for: .seconds(ModeSwap.swapDuration + 0.05))
-                                if ModeSwap.shared.windowOpen?.id == closing.id { ModeSwap.shared.windowOpen = nil }
+                        DetailTransition.shared.close(itemID: item.id) {
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
                             }
-                        }
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
                         }
                     }
             )
         case .collection(let collection):
-            CollectionView(collection: collection) { path.wrappedValue.append(Route.detail($0)) }
+            CollectionView(collection: collection) { openDetail($0) { path.wrappedValue.append($0) } }
         case .folder(let collection, let folder):
             folderView(collection, folder, part: nil, path: path)
         case .folderPart(let collection, let folder, let part):
             folderView(collection, folder, part: part, path: path)
         case .person(let id, let name):
-            CastDetailView(personID: id, personName: name) { path.wrappedValue.append(Route.detail($0)) }
+            CastDetailView(personID: id, personName: name) { openDetail($0) { path.wrappedValue.append($0) } }
         case .tmdbCompany(let id, let name, let network):
-            TMDBBrowseView(companyID: id, title: name, network: network) { path.wrappedValue.append(Route.detail($0)) }
+            TMDBBrowseView(companyID: id, title: name, network: network) { openDetail($0) { path.wrappedValue.append($0) } }
         case .catalogSeeAll(let addon, let catalog, let title):
-            CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { path.wrappedValue.append(Route.detail($0)) }
+            CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { openDetail($0) { path.wrappedValue.append($0) } }
         case .streams(let meta, let video):
             StreamsView(
                 meta: meta, video: video,
@@ -1817,3 +1820,430 @@ enum FocusTrace {
     }
 }
 // (end -focusLog tracer)
+
+
+// MARK: - Launch (docs/LOADING-PLAN.md §4)
+
+/// THE LAUNCH: on a cold start, while a small ring shows, the closest things
+/// get ready — Home's rows and billboard from disk, the billboard's pictures
+/// and colours decoded, the first row's posters, the one-time artwork — and
+/// Home is built under it. It ends when that's done (at least `minimum`
+/// shown), or at `cap` — never waiting on the network: what isn't on disk
+/// loads as usual afterwards. Every step reports a count and its time
+/// (Render Lab → Launch: show numbers).
+@MainActor
+final class LaunchPreloader: ObservableObject {
+    static let shared = LaunchPreloader()
+
+    @Published private(set) var curtain = true
+    @Published private(set) var progress: Double = 0
+    @Published private(set) var lines: [String] = []
+
+    static let minimum: Double = 0.6
+    static let cap: Double = 2.5
+
+    private var started = false
+    private var finished = false
+    private let launchedAt = CACurrentMediaTime()
+    private var elapsed: Double { CACurrentMediaTime() - launchedAt }
+
+    func run(home: HomeViewModel, addonManager: AddonManager) {
+        guard !started else { return }
+        started = true
+        Task { await steps(home: home, addonManager: addonManager) }
+        Task {
+            try? await Task.sleep(for: .seconds(Self.cap))
+            finish(note: "cap reached")
+        }
+    }
+
+    /// Covered by the welcome screen or the profile gate: no curtain.
+    func skip() { finish(note: "covered") }
+
+    private func finish(note: String) {
+        guard !finished else { return }
+        finished = true
+        line(String(format: "Total     %.2f s  (%@)", elapsed, note))
+        progress = 1
+        curtain = false
+        // Input back on: the focus engine doesn't pick a focus by itself —
+        // the first press only woke it. Asked to, once the page is enabled.
+        Task {
+            try? await Task.sleep(for: .milliseconds(50))
+            let window = UIApplication.shared.connectedScenes
+                .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+            window?.rootViewController?.setNeedsFocusUpdate()
+            window?.rootViewController?.updateFocusIfNeeded()
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(Self.numbersLinger))
+            numbersShown = false
+        }
+    }
+
+    private func line(_ text: String) {
+        lines.append(text)
+        PlayerProbe.event("launch", text)
+    }
+
+    /// The numbers stay this long after Home appears (to read them).
+    static let numbersLinger: Double = 6
+    @Published private(set) var numbersShown = true
+
+    private func steps(home: HomeViewModel, addonManager: AddonManager) async {
+        // ① From disk: Home's rows and billboard picks (Home reads its cache
+        // as it's built under the curtain) — and the titles to open first.
+        var t = CACurrentMediaTime()
+        while home.entries.isEmpty, elapsed < 1.0 { try? await Task.sleep(for: .milliseconds(25)) }
+        // The billboard's own picks (made once the catalogs are in): waited
+        // for — they replaced the rows' highlights a moment after Home
+        // appeared, a visible swap. At most until 2 s (room for the decodes
+        // before the cap).
+        let picksStarted = CACurrentMediaTime()
+        while home.billboardPicks.isEmpty, elapsed < 2.0 { try? await Task.sleep(for: .milliseconds(25)) }
+        let picksWait = (CACurrentMediaTime() - picksStarted) * 1000
+        // (Home's own: its first `BillboardPicks.count` — the model holds
+        // every tab's.)
+        let picks = home.billboard(type: nil).map(\.item)
+        let rows: [HomeRow] = home.entries.compactMap { if case .catalog(let row) = $0 { return row } else { return nil } }
+        var records = 0
+        let firstTitles = Array(picks.prefix(6)) + Array((rows.first?.items ?? []).prefix(6))
+        for item in firstTitles {
+            if let addon = addonManager.metaAddons(for: item.type, id: item.id).first,
+               await StremioAPI.warmMeta(addon: addon, type: item.type, id: item.id) { records += 1 }
+        }
+        line(String(format: "Disk      rows %d · picks %d%@ (waited %.0f ms) · records %d/%d · %.0f ms",
+                    rows.count, picks.count, home.billboardPicks.isEmpty ? " (highlights)" : "",
+                    picksWait, records, firstTitles.count, (CACurrentMediaTime() - t) * 1000))
+        progress = 0.15
+
+        // ③ One-time artwork (cheap; first so it's off the way), on the main
+        // actor — under the curtain.
+        t = CACurrentMediaTime()
+        _ = StageArt.shade
+        _ = FixedFocusBackdropArt.grain
+        _ = FixedFocusBackdropArt.shadow
+        _ = FixedFocusBackdropArt.glow
+        _ = FixedFocusCardEdge.shadowImage
+        _ = BillboardShade.sunImage
+        _ = DetailTransition.shadeImage
+        line(String(format: "Setup     artwork 7 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
+        progress = 0.25
+
+        // ② Decodes, from disk only, a few at a time: the billboard's first
+        // backdrops (the stage's own size), every logo, the first colours, the
+        // first row's posters (the cards' size).
+        t = CACurrentMediaTime()
+        var jobs: [(kind: String, run: () async -> Bool)] = []
+        for item in picks.prefix(3) {
+            if let url = TMDBService.originalSize(item.background) ?? item.poster {
+                jobs.append(("backdrop", { await ImageCache.shared.preloadFromDisk(url, maxDimension: StagePictureView.pictureSize.width) }))
+            }
+        }
+        for item in picks {
+            if let logo = item.logo {
+                jobs.append(("logo", { await ImageCache.shared.preloadFromDisk(logo, maxDimension: TitleBlock.logoWidth) }))
+            }
+        }
+        let flags = RenderProbe.shared.flags
+        for item in picks.prefix(3) {
+            if let url = item.background ?? item.poster {
+                jobs.append(("colours", {
+                    guard await ImageCache.shared.preloadFromDisk(url, maxDimension: 64) else { return false }
+                    _ = await FixedFocusTint.colors(for: url, flags: flags)
+                    if FixedFocusTint.Mode(rawValue: flags.tintMode) == .layout {
+                        _ = await FixedFocusTint.layout(for: url, flags: flags)
+                    }
+                    return true
+                }))
+            }
+        }
+        for item in (rows.first?.items ?? []).prefix(8) {
+            if let url = item.poster ?? item.background {
+                jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: FixedFocusMetrics.height) }))
+            }
+        }
+        var done: [String: (ok: Int, all: Int)] = [:]
+        let total = max(jobs.count, 1)
+        var finishedJobs = 0
+        // A few at a time (the decodes themselves are off the main actor).
+        var next = 0
+        await withTaskGroup(of: (String, Bool).self) { group in
+            func start() {
+                guard next < jobs.count else { return }
+                let job = jobs[next]
+                next += 1
+                group.addTask { (job.kind, await job.run()) }
+            }
+            for _ in 0..<3 { start() }
+            for await (kind, ok) in group {
+                var entry = done[kind] ?? (0, 0)
+                entry.all += 1
+                if ok { entry.ok += 1 }
+                done[kind] = entry
+                finishedJobs += 1
+                progress = 0.25 + 0.75 * Double(finishedJobs) / Double(total)
+                start()
+            }
+        }
+        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters")]
+            .compactMap { kind, label -> String? in
+                guard let entry = done[kind] else { return nil }
+                return "\(label) \(entry.ok)/\(entry.all)"
+            }.joined(separator: " · ")
+        line(String(format: "Decode    %@ · %.0f ms", summary, (CACurrentMediaTime() - t) * 1000))
+
+        // Shown at least `minimum` (no flash of a ring).
+        if elapsed < Self.minimum { try? await Task.sleep(for: .seconds(Self.minimum - elapsed)) }
+        finish(note: "ready")
+    }
+}
+
+/// The launch screen: a small ring, and — Render Lab → Launch: show numbers
+/// — what was loaded and how long it took.
+struct LaunchCurtain: View {
+    @ObservedObject private var launch = LaunchPreloader.shared
+    @ObservedObject private var probe = RenderProbe.shared
+
+    var body: some View {
+        ZStack {
+            if launch.curtain {
+                ZStack {
+                    Color.black
+                    ZStack {
+                        Circle().stroke(Color.white.opacity(0.15), lineWidth: 5)
+                        Circle().trim(from: 0, to: launch.progress)
+                            .stroke(Color.white.opacity(FixedFocusText.primary),
+                                    style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeOut(duration: 0.2), value: launch.progress)
+                    }
+                    .frame(width: 56, height: 56)
+                }
+                .transition(.opacity)
+            }
+            // The numbers: on the curtain, and a little after on Home (to read).
+            if probe.flags.launchNumbers, launch.numbersShown, !launch.lines.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(launch.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                    }
+                }
+                .font(.system(size: 20, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.75))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(.leading, 84)
+                .padding(.bottom, 130)
+                .transition(.opacity)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.3), value: launch.numbersShown)
+    }
+}
+
+/// Step ⑤/⑥ of the loading plan (docs/LOADING-PLAN.md): a background queue
+/// that gets what Details needs ready BEFORE the press — around focus first,
+/// then the rows top to bottom. Never in the way:
+/// - it waits until focus has stopped moving (`settle`) — nothing starts
+///   during a scroll or a swap;
+/// - 3 jobs at a time, each a few small requests or a decode off the main
+///   thread; nothing while the player is up;
+/// - a cap per launch (`cap` titles that needed the network);
+/// - decoded near focus only (the focused title and its neighbours); further
+///   out only to disk.
+/// Three depths per title, each done at most once per launch:
+/// - record: the episode list / meta, TMDB details, backdrop and logo to disk;
+/// - pictures: + the backdrop decoded at the stage's size, the logo, colours;
+/// - full (after a rest of `restTime` on it): + the season extras, the
+///   blurred backdrop, the first episode stills to disk.
+@MainActor
+final class TitlePreloader {
+    static let shared = TitlePreloader()
+
+    enum Depth: Int, Comparable {
+        case record, pictures, full
+        static func < (a: Depth, b: Depth) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    struct Context {
+        let addonManager: AddonManager
+        let mdb: MDBListSettings
+        let tmdb: TMDBSettings
+        var useEpisodeExtras: Bool { tmdb.useEpisodes }
+        let progress: ProgressStore
+        let watched: WatchedStore
+    }
+
+    /// Set by Home (its stores); nothing runs before.
+    var context: Context?
+
+    static let parallel = 3
+    /// Focus still for this long: the queue starts.
+    static let settle: Double = 0.35
+    /// Resting on a title this long: it's warmed fully.
+    static let restTime: Double = 0.5
+    /// Titles per launch that went to the network.
+    static let cap = PerformanceProfile.isLowPower ? 120 : 250
+    /// Rows top to bottom: this many titles of each.
+    static let perRow = 6
+
+    private var queue: [(item: MetaItem, depth: Depth)] = []
+    private var done: [String: Depth] = [:]
+    private var running = 0
+    private var settleTask: Task<Void, Never>?
+    private var restTask: Task<Void, Never>?
+    private var batchedRows = Set<String>()
+    private(set) var networkTitles = 0
+    private var stats = (jobs: 0, disk: 0, net: 0, ms: 0.0)
+
+    /// Focus moved to `index` in row `row` of `rows` (Home's rows engine).
+    func focused(rows: [HomeRow], row: Int, index: Int) {
+        guard context != nil, rows.indices.contains(row), rows[row].items.indices.contains(index) else { return }
+        settleTask?.cancel()
+        restTask?.cancel()
+        let item = rows[row].items[index]
+        settleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.settle))
+            guard !Task.isCancelled, let self else { return }
+            self.plan(rows: rows, row: row, index: index)
+        }
+        if Self.wanted(item) {
+            restTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.restTime))
+                guard !Task.isCancelled, let self else { return }
+                self.queue.insert((item, .full), at: 0)
+                self.pump()
+            }
+        }
+    }
+
+    /// Titles only (not episodes, folders, people).
+    private static func wanted(_ item: MetaItem) -> Bool { item.type == "movie" || item.type == "series" }
+
+    /// The order, from where focus is: the title and its neighbours (decoded),
+    /// a little further along the row and the next row (records), then the
+    /// rows top to bottom (records). Replaces what was waiting.
+    private func plan(rows: [HomeRow], row: Int, index: Int) {
+        var list: [(MetaItem, Depth)] = []
+        let items = rows[row].items
+        func add(_ r: Int, _ i: Int, _ depth: Depth) {
+            guard rows.indices.contains(r), rows[r].items.indices.contains(i) else { return }
+            list.append((rows[r].items[i], depth))
+        }
+        add(row, index, .pictures)
+        for offset in [1, -1] { add(row, index + offset, .pictures) }
+        for offset in [2, 3, -2, 4, -3] { add(row, index + offset, .record) }
+        for i in 0..<4 { add(row + 1, i, .record) }
+        for r in rows.indices where r != row {
+            for i in 0..<min(Self.perRow, rows[r].items.count) { add(r, i, .record) }
+        }
+        for i in items.indices.prefix(Self.perRow) { add(row, i, .record) }
+        queue = list.filter { item, depth in
+            Self.wanted(item) && done[item.id].map { $0 < depth } ?? true
+        }
+        batchRatings(rows)
+        pump()
+    }
+
+    /// The ratings of every title on the rows: one MDBList batch (200 a
+    /// request) per new set of rows.
+    private func batchRatings(_ rows: [HomeRow]) {
+        guard let context else { return }
+        let key = rows.map(\.id).joined(separator: ",")
+        guard batchedRows.insert(key).inserted else { return }
+        let items = rows.flatMap(\.items).filter(Self.wanted)
+        Task.detached(priority: .utility) { await MDBListService.prefetch(items, settings: context.mdb) }
+    }
+
+    private func pump() {
+        while running < Self.parallel, !queue.isEmpty {
+            guard PlayerViewModel.liveInstances == 0 else { queue.removeAll(); return }
+            let (item, depth) = queue.removeFirst()
+            if let had = done[item.id], had >= depth { continue }
+            let first = done[item.id] == nil
+            if first, networkTitles >= Self.cap, depth < .pictures { continue }
+            done[item.id] = depth
+            running += 1
+            Task { [weak self] in
+                let t = CACurrentMediaTime()
+                let net = await self?.warm(item, depth: depth, first: first) ?? false
+                guard let self else { return }
+                self.running -= 1
+                self.note(item, depth: depth, net: net, ms: (CACurrentMediaTime() - t) * 1000)
+                self.pump()
+            }
+        }
+    }
+
+    private func note(_ item: MetaItem, depth: Depth, net: Bool, ms: Double) {
+        stats.jobs += 1
+        if net { stats.net += 1; networkTitles += 1 } else { stats.disk += 1 }
+        stats.ms += ms
+        PlayerProbe.event("preload", String(format: "%@ %@ %.0f ms%@ · total %d (meta on disk %d, from network %d of %d)",
+                                            "\(depth)", item.name, ms, net ? " (meta from network)" : "",
+                                            stats.jobs, stats.disk, stats.net, Self.cap))
+    }
+
+    /// One title to `depth`. True when something came from the network.
+    private func warm(_ item: MetaItem, depth: Depth, first: Bool) async -> Bool {
+        guard let context else { return false }
+        var net = false
+        // The record (cheap when it's on disk: read, no request).
+        let onDisk: Bool
+        if let addon = context.addonManager.metaAddons(for: item.type, id: item.id).first {
+            onDisk = await StremioAPI.warmMeta(addon: addon, type: item.type, id: item.id)
+        } else { onDisk = false }
+        let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: context.addonManager)
+        if !onDisk { net = true }
+        if TMDBService.hasAPIKey, first {
+            _ = await TMDBService.detail(imdbID: meta.id, type: meta.type)
+        }
+        // The page's pictures: what Details shows (its meta's) and what the
+        // card had, if different.
+        let backdrops = Array(Set([meta.background ?? meta.poster, item.background ?? item.poster].compactMap { $0 }))
+        let logo = meta.logo ?? item.logo
+        if depth == .record {
+            for url in backdrops { _ = await ImageCache.shared.fetchToDisk(url) }
+            if let logo { _ = await ImageCache.shared.fetchToDisk(logo) }
+            return net
+        }
+        for url in backdrops {
+            await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+        }
+        if let logo { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
+        let flags = RenderProbe.shared.flags
+        if let url = backdrops.first { _ = await FixedFocusTint.colors(for: url, flags: flags) }
+        guard depth == .full else { return net }
+        _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster, strength: flags.detailsPictureBlur)
+        // A show: the season extras (Details asks for every season — the
+        // first 10 here) and the stills around Play's episode.
+        guard meta.isSeries else { return net }
+        if context.useEpisodeExtras, TMDBService.hasAPIKey {
+            let id = meta.id, type = meta.type
+            await withTaskGroup(of: Void.self) { group in
+                for season in meta.seasons.prefix(10) {
+                    group.addTask { _ = await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season) }
+                }
+            }
+        }
+        let order = SeriesEpisodes.inPlayOrder(meta)
+        if let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress, watched: context.watched),
+           let at = order.firstIndex(where: { $0.id == target.id }) {
+            let season = target.season ?? 0
+            let extras = context.useEpisodeExtras
+                ? await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season) : [:]
+            for episode in order[max(0, at - 1)..<min(order.count, at + 5)] {
+                let still = episode.episode.flatMap { extras[$0]?.still }
+                if let url = TMDBService.originalSize(still) ?? episode.thumbnail {
+                    _ = await ImageCache.shared.fetchToDisk(url)
+                }
+            }
+        }
+        return net
+    }
+}

@@ -337,6 +337,69 @@ enum TMDBService {
     }
 
     private static func fetch<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        try JSONDecoder().decode(T.self, from: try await fetchData(path, query: query))
+    }
+
+    // MARK: Stale-while-revalidate (docs/LOADING-PLAN.md §2)
+
+    /// A request answered from DISK when it can be: what's there is returned
+    /// at once — and, older than `fresh(value)`, fetched again in the
+    /// background for next time (the screen keeps what it has; TMDB data
+    /// changes slowly). Kept up to `keep`. One request per question: callers
+    /// asking at the same time share it.
+    private static func cachedGet<T: Decodable>(
+        _ path: String, query: [String: String] = [:],
+        fresh: @escaping (T) -> TimeInterval, keep: TimeInterval
+    ) async throws -> T {
+        let key = cacheKey(path, query)
+        if let (data, age) = await RawCache.tmdb.read(key, keep: keep),
+           let value = try? JSONDecoder().decode(T.self, from: data) {
+            if age > fresh(value) {
+                Task.detached(priority: .utility) { _ = try? await shared(key, path, query) }
+            }
+            return value
+        }
+        return try JSONDecoder().decode(T.self, from: try await shared(key, path, query))
+    }
+
+    /// The request behind a cache key — one at a time per key — written to
+    /// disk when it comes back.
+    private static func shared(_ key: String, _ path: String, _ query: [String: String]) async throws -> Data {
+        // (Looked up and started in one step: two callers never both start it.)
+        let task: Task<Data, Error> = inFlightLock.withLock {
+            if let running = inFlight[key] { return running }
+            let task = Task<Data, Error> {
+                defer { inFlightLock.withLock { inFlight[key] = nil } }
+                let done = AppProbe.begin("data", "tmdb " + path)
+                do {
+                    let data = try await fetchData(path, query: query)
+                    await RawCache.tmdb.write(key, data)
+                    done("ok")
+                    return data
+                } catch {
+                    done("FAILED")
+                    throw error
+                }
+            }
+            inFlight[key] = task
+            return task
+        }
+        return try await task.value
+    }
+    static let day: TimeInterval = 24 * 60 * 60
+    private static let inFlightLock = NSLock()
+    nonisolated(unsafe) private static var inFlight: [String: Task<Data, Error>] = [:]
+
+    /// The request as a key: path, the parameters in a FIXED order, the
+    /// language the request goes out in.
+    private static func cacheKey(_ path: String, _ query: [String: String]) -> String {
+        let lang = query["language"] ?? preferredLanguage
+        let items = query.filter { $0.key != "language" }.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        return "\(path)?\(items)#\(lang)"
+    }
+
+    private static func fetchData(_ path: String, query: [String: String] = [:]) async throws -> Data {
         // No key, no request. Every TMDB v3 endpoint needs one, and firing
         // them anyway would just spend the network on guaranteed 401s.
         let key = apiKey
@@ -355,7 +418,9 @@ enum TMDBService {
         if query["language"] == nil, preferredLanguage != "en" {
             items.append(URLQueryItem(name: "language", value: preferredLanguage))
         }
-        items += query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        // In a FIXED order: a Dictionary's changes per launch, which made the
+        // same request a different URL every time — the HTTP cache missed.
+        items += query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         comps.queryItems = items
         guard let url = comps.url else { throw TMDBError.badPath(path) }
         var request = URLRequest(url: url)
@@ -364,7 +429,7 @@ enum TMDBService {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw TMDBError.badResponse(http.statusCode)
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        return data
     }
 
     /// Check a key before saving it, so a typo says so on the spot instead of
@@ -485,7 +550,7 @@ enum TMDBService {
                 type: "series",
                 name: name,
                 poster: imageURL(show.poster_path, size: "w500") ?? imageURL(show.backdrop_path, size: "w780"),
-                background: imageURL(show.backdrop_path, size: "w1280"),
+                background: imageURL(show.backdrop_path, size: "original"),
                 logo: nil,
                 description: show.overview,
                 releaseInfo: show.first_air_date.map { String($0.prefix(4)) },
@@ -499,7 +564,7 @@ enum TMDBService {
                 type: "movie",
                 name: title,
                 poster: imageURL(movie.poster_path, size: "w500") ?? imageURL(movie.backdrop_path, size: "w780"),
-                background: imageURL(movie.backdrop_path, size: "w1280"),
+                background: imageURL(movie.backdrop_path, size: "original"),
                 logo: nil,
                 description: movie.overview,
                 releaseInfo: movie.release_date.map { String($0.prefix(4)) },
@@ -513,7 +578,7 @@ enum TMDBService {
                 type: "series",
                 name: name,
                 poster: imageURL(show.poster_path, size: "w500") ?? imageURL(show.backdrop_path, size: "w780"),
-                background: imageURL(show.backdrop_path, size: "w1280"),
+                background: imageURL(show.backdrop_path, size: "original"),
                 logo: nil,
                 description: show.overview,
                 releaseInfo: show.first_air_date.map { String($0.prefix(4)) },
@@ -793,7 +858,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: item.id, isMovie: isMovie, name: title,
                 poster: imageURL(item.poster_path, size: "w500") ?? imageURL(item.backdrop_path, size: "w780"),
-                background: imageURL(item.backdrop_path, size: "w1280"),
+                background: imageURL(item.backdrop_path, size: "original"),
                 description: item.overview,
                 releaseInfo: (item.release_date ?? item.first_air_date).map { String($0.prefix(4)) },
                 rating: item.vote_average
@@ -815,7 +880,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: part.id, isMovie: true, name: title,
                 poster: imageURL(part.poster_path, size: "w500") ?? imageURL(part.backdrop_path, size: "w780"),
-                background: imageURL(part.backdrop_path, size: "w1280"),
+                background: imageURL(part.backdrop_path, size: "original"),
                 description: part.overview,
                 releaseInfo: part.release_date.map { String($0.prefix(4)) },
                 rating: part.vote_average
@@ -943,7 +1008,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: r.id, isMovie: !useTV, name: title,
                 poster: imageURL(r.poster_path, size: "w500") ?? imageURL(r.backdrop_path, size: "w780"),
-                background: imageURL(r.backdrop_path, size: "w1280"),
+                background: imageURL(r.backdrop_path, size: "original"),
                 description: r.overview,
                 releaseInfo: (r.release_date ?? r.first_air_date).map { String($0.prefix(4)) },
                 rating: r.vote_average,
@@ -974,7 +1039,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: c.id, isMovie: !credIsTV, name: title,
                 poster: imageURL(c.poster_path, size: "w500") ?? imageURL(c.backdrop_path, size: "w780"),
-                background: imageURL(c.backdrop_path, size: "w1280"),
+                background: imageURL(c.backdrop_path, size: "original"),
                 description: c.overview,
                 releaseInfo: (c.release_date ?? c.first_air_date).map { String($0.prefix(4)) },
                 rating: c.vote_average
@@ -1080,6 +1145,8 @@ enum TMDBService {
         var runtimeMinutes: Int?
         var country: String?
         var language: String?
+        /// The one-line tagline ("Fear can hold you prisoner…"), if any.
+        var tagline: String?
 
         /// Series: "Creator: …" (TMDB's creators, else writers, else
         /// directors). Movies: "Director: …" (else "Writer: …"). Two names
@@ -1119,11 +1186,18 @@ enum TMDBService {
         factsCache[key] = facts
     }
 
+    /// The facts if already loaded (no wait) — e.g. the tagline for a view
+    /// drawn at once.
+    static func knownFacts(for meta: MetaItem) -> TitleFacts? {
+        cachedFacts("v2:\(meta.type):\(meta.id):\(preferredLanguage)")
+    }
+
     /// The title block's facts on their own — for Home's billboard, which
     /// has no Detail page load behind it. One light request per title
     /// (credits + certification only), remembered for the session.
     static func facts(for meta: MetaItem) async -> TitleFacts? {
-        let key = "\(meta.type):\(meta.id):\(preferredLanguage)"
+        // (v2: with the tagline — older stored facts lack it.)
+        let key = "v2:\(meta.type):\(meta.id):\(preferredLanguage)"
         if let hit = cachedFacts(key) { return hit }
         // On disk for a day: a relaunch doesn't ask again.
         if let stored = await factsDisk.value(for: key, ttl: 24 * 60 * 60) {
@@ -1151,6 +1225,7 @@ enum TMDBService {
             let original_language: String?
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
+            let tagline: String?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         guard let body: Response = try? await get(path, query: [
@@ -1167,6 +1242,8 @@ enum TMDBService {
         facts.runtimeMinutes = isMovie ? body.runtime : body.episode_run_time?.first
         facts.country = body.production_countries?.first?.name
         facts.language = body.original_language?.uppercased()
+        let tagline = body.tagline?.trimmingCharacters(in: .whitespacesAndNewlines)
+        facts.tagline = tagline?.isEmpty == false ? tagline : nil
         if isMovie {
             let countries = body.release_dates?.results ?? []
             let us = countries.first { $0.iso_3166_1 == "US" } ?? countries.first
@@ -1298,8 +1375,12 @@ enum TMDBService {
         let appended = isMovie
             ? "credits,recommendations,similar,videos,release_dates"
             : "credits,recommendations,similar,videos,content_ratings"
-        guard let body: DetailResponse = try? await get(
-            path, query: ["language": language, "append_to_response": appended]
+        // From disk when it can be (stale-while-revalidate): fresh 3 days,
+        // 7 for an ended show; kept 30 (docs/LOADING-PLAN.md §2).
+        guard let body: DetailResponse = try? await cachedGet(
+            path, query: ["language": language, "append_to_response": appended],
+            fresh: { ["Ended", "Canceled"].contains($0.status ?? "") ? 7 * day : 3 * day },
+            keep: 30 * day
         ) else { return nil }
 
         func movieCertification(_ dates: DetailResponse.ReleaseDates?) -> String? {
@@ -1402,7 +1483,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: r.id, isMovie: !itemIsTV, name: title,
                 poster: imageURL(r.poster_path, size: "w500") ?? imageURL(r.backdrop_path, size: "w780"),
-                background: imageURL(r.backdrop_path, size: "w1280"),
+                background: imageURL(r.backdrop_path, size: "original"),
                 description: r.overview,
                 releaseInfo: (r.release_date ?? r.first_air_date).map { String($0.prefix(4)) },
                 rating: r.vote_average
@@ -1510,7 +1591,19 @@ enum TMDBService {
             }
             let episodes: [Episode]?
         }
-        guard let body: SeasonResponse = try? await get("/tv/\(tmdbID)/season/\(season)") else {
+        // From disk when it can be: a season whose episodes all aired more
+        // than two weeks ago doesn't change (fresh 30 days); the current one
+        // 12 h. Kept 60 days.
+        guard let body: SeasonResponse = try? await cachedGet(
+            "/tv/\(tmdbID)/season/\(season)",
+            fresh: { body in
+                let cutoff = Date().addingTimeInterval(-14 * day)
+                let dates = (body.episodes ?? []).map { $0.air_date.flatMap(ReleaseDateParser.parse) }
+                let settled = !dates.isEmpty && dates.allSatisfy { ($0 ?? .distantFuture) < cutoff }
+                return settled ? 30 * day : 12 * 60 * 60
+            },
+            keep: 60 * day
+        ) else {
             return [:]   // transient failure — not cached, retried next time
         }
         var map: [Int: EpisodeExtra] = [:]
@@ -1768,7 +1861,7 @@ enum TMDBService {
             return TMDBRawItem(
                 tmdbID: r.id, isMovie: isMovie, name: title,
                 poster: imageURL(r.poster_path, size: "w500") ?? imageURL(r.backdrop_path, size: "w780"),
-                background: imageURL(r.backdrop_path, size: "w1280"),
+                background: imageURL(r.backdrop_path, size: "original"),
                 description: r.overview,
                 releaseInfo: (r.release_date ?? r.first_air_date).map { String($0.prefix(4)) },
                 rating: r.vote_average
@@ -1801,7 +1894,7 @@ enum TMDBService {
                 return TMDBRawItem(
                     tmdbID: c.id, isMovie: !isTV, name: title,
                     poster: imageURL(c.poster_path, size: "w500") ?? imageURL(c.backdrop_path, size: "w780"),
-                    background: imageURL(c.backdrop_path, size: "w1280"),
+                    background: imageURL(c.backdrop_path, size: "original"),
                     description: c.overview,
                     releaseInfo: (c.release_date ?? c.first_air_date).map { String($0.prefix(4)) },
                     rating: c.vote_average
@@ -1913,7 +2006,7 @@ extension TMDBService {
                 return TMDBRawItem(
                     tmdbID: result.id, isMovie: isMovie, name: name,
                     poster: imageURL(result.poster_path, size: "w500"),
-                    background: imageURL(result.backdrop_path, size: "w1280"),
+                    background: imageURL(result.backdrop_path, size: "original"),
                     description: result.overview,
                     releaseInfo: date.map { String($0.prefix(4)) },
                     rating: result.vote_average,
