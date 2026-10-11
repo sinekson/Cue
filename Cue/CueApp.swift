@@ -1994,13 +1994,12 @@ final class LaunchPreloader: ObservableObject {
                 jobs.append(("logo", { await ImageCache.shared.preloadFromDisk(logo, maxDimension: TitleBlock.logoWidth) }))
             }
         }
-        let flags = RenderProbe.shared.flags
         for item in picks.prefix(3) {
             if let url = item.background ?? item.poster {
                 jobs.append(("colours", {
                     guard await ImageCache.shared.preloadFromDisk(url, maxDimension: 64) else { return false }
-                    _ = await FixedFocusTint.colors(for: url, flags: flags)
-                    _ = await FixedFocusTint.layout(for: url, flags: flags)
+                    _ = await FixedFocusTint.colors(for: url)
+                    _ = await FixedFocusTint.layout(for: url)
                     return true
                 }))
             }
@@ -2264,7 +2263,7 @@ final class TitlePreloader {
         }
         if let logo { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
         let flags = RenderProbe.shared.flags
-        if let url = backdrops.first { _ = await FixedFocusTint.colors(for: url, flags: flags) }
+        if let url = backdrops.first { _ = await FixedFocusTint.colors(for: url) }
         guard depth == .full else { return net }
         _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster, strength: flags.detailsPictureBlur)
         // A show: the season extras (Details asks for every season — the

@@ -395,14 +395,6 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        var layoutSaturation: Double = 1.1
-        var layoutLightness: Double = 0
-        /// Two colours: always a second one (from the picture, else made
-        /// from the first — `SpotlightTint.swatches`); off: only when the
-        /// picture clearly has one.
-        var tintAlwaysTwo = true
-        var tintBrightness: Double = 0.45
-        var tintWarmBoost = true
         /// New Home, background: a soft shadow and a halo (the title's
         /// colour) behind the fixed box, darker corners, and fine grain
         /// (its opacity; 0: none).
@@ -490,11 +482,6 @@ final class RenderProbe: ObservableObject {
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
-            tintAlwaysTwo = (try? c.decode(Bool.self, forKey: .tintAlwaysTwo)) ?? d.tintAlwaysTwo
-            layoutSaturation = (try? c.decode(Double.self, forKey: .layoutSaturation)) ?? d.layoutSaturation
-            layoutLightness = (try? c.decode(Double.self, forKey: .layoutLightness)) ?? d.layoutLightness
-            tintBrightness = (try? c.decode(Double.self, forKey: .tintBrightness)) ?? d.tintBrightness
-            tintWarmBoost = (try? c.decode(Bool.self, forKey: .tintWarmBoost)) ?? d.tintWarmBoost
             boxShadow = (try? c.decode(Bool.self, forKey: .boxShadow)) ?? d.boxShadow
             boxGlow = (try? c.decode(Bool.self, forKey: .boxGlow)) ?? d.boxGlow
             vignette = (try? c.decode(Bool.self, forKey: .vignette)) ?? d.vignette

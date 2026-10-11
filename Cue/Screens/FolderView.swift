@@ -48,7 +48,7 @@ struct FolderView: View {
         .task(id: folder.tileCoverImageUrl) {
             // Home's own colour from a picture (its brightness), not brighter.
             guard let cover = folder.tileCoverImageUrl,
-                  let colors = await FixedFocusTint.colors(for: cover, flags: RenderProbe.shared.flags) else { return }
+                  let colors = await FixedFocusTint.colors(for: cover) else { return }
             tint = colors.first
         }
     }

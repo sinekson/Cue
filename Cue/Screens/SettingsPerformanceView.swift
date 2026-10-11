@@ -318,47 +318,6 @@ struct RenderLabSettings: View {
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                CueDropdown(
-                    title: "Colour layout: saturation",
-                    subtitle: "Picture's colour layout: how full the colours are.",
-                    icon: "drop",
-                    selection: String(probe.flags.layoutSaturation),
-                    options: [(1.0, "× 1.0"), (1.1, "× 1.1"), (1.25, "× 1.25"), (1.4, "× 1.4")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.layoutSaturation = v }
-                }
-                CueDropdown(
-                    title: "Colour layout: light and dark",
-                    subtitle: "Picture's colour layout: how much of the picture's own light and dark parts is kept. Off: every part equally bright.",
-                    icon: "circle.righthalf.filled",
-                    selection: String(probe.flags.layoutLightness),
-                    options: [(0.0, "Off"), (0.25, "25 %"), (0.5, "50 %"), (0.75, "75 %")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.layoutLightness = v }
-                }
-                PerfToggleRow(
-                    icon: "circle.lefthalf.filled",
-                    title: "Tint: always two colours",
-                    subtitle: "Two colours: always a second one — another colour of the picture, else the neighbouring one, else one made from the main colour. Off: only when the picture clearly has a second colour.",
-                    isOn: Binding(get: { probe.flags.tintAlwaysTwo }, set: { probe.flags.tintAlwaysTwo = $0 })
-                )
-                CueDropdown(
-                    title: "Tint brightness",
-                    subtitle: "Title colour: how bright the colour is before it is laid over the dark base.",
-                    icon: "sun.min",
-                    selection: String(probe.flags.tintBrightness),
-                    options: [0.45, 0.55, 0.65, 0.75, 0.85, 1.0].map { CueDropdownOption(String($0), "\(Int(($0 * 100).rounded())) %") }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintBrightness = v }
-                }
-                PerfToggleRow(
-                    icon: "flame",
-                    title: "Tint: brighter warm colours",
-                    subtitle: "Yellow and orange get extra brightness, so they read as gold instead of brown.",
-                    isOn: Binding(get: { probe.flags.tintWarmBoost }, set: { probe.flags.tintWarmBoost = $0 })
-                )
                 PerfToggleRow(
                     icon: "shadow",
                     title: "Box shadow",

@@ -1044,7 +1044,7 @@ struct DetailView: View {
                 TitleTintBackground(tint: tint, second: tintSecond)
                     .task(id: viewModel.meta.id) {
                         guard let url = viewModel.backdropURL,
-                              let colors = await FixedFocusTint.colors(for: url, flags: RenderProbe.shared.flags)
+                              let colors = await FixedFocusTint.colors(for: url)
                         else { return }
                         tint = colors.first
                         tintSecond = colors.second
@@ -1561,7 +1561,7 @@ struct DetailView: View {
         return ZStack {
             TitleTintBackground(tint: tint, second: tintSecond)
                 .task(id: viewModel.meta.id) {
-                    guard let url, let colors = await FixedFocusTint.colors(for: url, flags: flags)
+                    guard let url, let colors = await FixedFocusTint.colors(for: url)
                     else { return }
                     tint = colors.first
                     tintSecond = colors.second
@@ -3506,7 +3506,7 @@ final class DetailPreparer {
             if let picture {
                 group.addTask { await ImageCache.shared.preload(picture, maxDimension: StagePictureView.pictureSize.width) }
                 group.addTask { _ = await BlurredBackdrop.image(for: picture, strength: flags.detailsPictureBlur) }
-                group.addTask { _ = await FixedFocusTint.colors(for: picture, flags: flags) }
+                group.addTask { _ = await FixedFocusTint.colors(for: picture) }
             }
             group.addTask {
                 let left = deadline - CACurrentMediaTime()

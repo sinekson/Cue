@@ -568,15 +568,13 @@ extension SpotlightTint {
 
     @MainActor
     static func areaPalette(for url: String) async -> [Swatch]? {
-        let always = RenderProbe.shared.flags.tintAlwaysTwo
-        let key = always ? url + "|two" : url
-        if let cached = areaPalettes[key] { return cached }
+        if let cached = areaPalettes[url] { return cached }
         let found: [Swatch]? = await Task.detached(priority: .utility) {
             guard let image = await smallImage(url) else { return nil }
-            return areaSwatches(from: image, alwaysTwo: always)
+            return areaSwatches(from: image)
         }.value
         guard let found else { return nil }
-        areaPalettes[key] = found
+        areaPalettes[url] = found
         return found
     }
 
@@ -613,7 +611,7 @@ extension SpotlightTint {
         return Swatch(hue: hue, saturation: min(sat * Spotlight.tintSaturationBoost, Spotlight.tintMaxSaturation))
     }
 
-    private static func areaSwatches(from image: UIImage, alwaysTwo: Bool) -> [Swatch]? {
+    private static func areaSwatches(from image: UIImage) -> [Swatch]? {
         guard let cg = image.cgImage else { return nil }
         let w = 32, h = 18
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
@@ -646,8 +644,8 @@ extension SpotlightTint {
             }
         }
         guard points.count >= 4 else {
-            // No colour to speak of: neutral (and a faint cool grey).
-            return [Swatch(hue: 0, saturation: 0)] + (alwaysTwo ? [Swatch(hue: 0.6, saturation: 0.15)] : [])
+            // No colour to speak of: neutral.
+            return [Swatch(hue: 0, saturation: 0)]
         }
 
         // k-means in OKLab (lightness counted half: the background shows
@@ -695,11 +693,7 @@ extension SpotlightTint {
             }
         let first = swatch(centres[main])
         if let accent { return [first, swatch(centres[accent])] }
-        guard alwaysTwo else { return [first] }
-        // None: one made from the main colour, its hue turned 30°.
-        var hue = first.hue + 1.0 / 12
-        if hue >= 1 { hue -= 1 }
-        return [first, Swatch(hue: hue, saturation: first.saturation * 0.8)]
+        return [first]
     }
 }
 

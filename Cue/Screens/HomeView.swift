@@ -1619,7 +1619,6 @@ struct HomeUIKitView: View {
             // skipped — a new press cancels this wait), over a calm blend; once
             // no press has come for a moment, it has landed: the spring again.
             if follows {
-                let flags = probe.flags
                 let now = Date()
                 let gap = now.timeIntervalSince(tintPace.lastPress)
                 tintPace.lastPress = now
@@ -1641,9 +1640,8 @@ struct HomeUIKitView: View {
             // Picture's colour layout: the background is the picture's own
             // colours where they sit (`FixedFocusTint.layout`) — made while
             // the colours are found, not after.
-            let flags = probe.flags
-            async let layoutImage = FixedFocusTint.layout(for: url, flags: flags)
-            async let found = FixedFocusTint.colors(for: url, flags: flags)
+            async let layoutImage = FixedFocusTint.layout(for: url)
+            async let found = FixedFocusTint.colors(for: url)
             let (layout, colorsFound) = await (layoutImage, found)
             guard !Task.isCancelled, let colors = colorsFound else { return }
             tintPace.lastChange = Date()
@@ -1668,13 +1666,8 @@ struct HomeUIKitView: View {
     static let tintBurstEvery: Double = 0.3
     static let tintBurstBlend: Double = 0.5
 
-    /// What the tint follows: the focused title and the tint's own settings
-    /// (so a change in Render Lab shows on return).
-    private var tintKey: String {
-        let flags = probe.flags
-        return "\(focused?.id ?? "")|\(flags.tintWarmBoost)|\(flags.tintBrightness)"
-            + "|\(followsTitle)"
-    }
+    /// What the tint follows: the focused title.
+    private var tintKey: String { "\(focused?.id ?? "")|\(followsTitle)" }
 
     /// The background: the focused title's colour.
     @ViewBuilder
@@ -1818,12 +1811,12 @@ struct TitleTintBackground: View {
 /// layout, the title's colour).
 @MainActor
 enum FixedFocusTint {
-    static func colors(for url: String, flags: RenderProbe.Flags) async
+    static func colors(for url: String) async
         -> (first: Color, second: Color?, glow: Color, deep: Color)? {
         guard let palette = await SpotlightTint.areaPalette(for: url), let first = palette.first else { return nil }
         let second = palette.count > 1 ? palette[1] : nil
-        return (shown(hue: first.hue, saturation: first.saturation, flags: flags),
-                second.map { shown(hue: $0.hue, saturation: $0.saturation, flags: flags) },
+        return (shown(hue: first.hue, saturation: first.saturation),
+                second.map { shown(hue: $0.hue, saturation: $0.saturation) },
                 glow(hue: first.hue, saturation: first.saturation),
                 deep(hue: first.hue, saturation: first.saturation))
     }
@@ -1854,12 +1847,11 @@ enum FixedFocusTint {
     /// may go to next, found beforehand — on the press there is nothing left
     /// to work out. (Both are cached per picture.)
     @MainActor static func prepare(_ urls: [String]) {
-        let flags = RenderProbe.shared.flags
         guard !urls.isEmpty else { return }
         Task { @MainActor in
             for url in urls {
-                _ = await colors(for: url, flags: flags)
-                _ = await self.layout(for: url, flags: flags)
+                _ = await colors(for: url)
+                _ = await self.layout(for: url)
             }
         }
     }
@@ -1873,31 +1865,20 @@ enum FixedFocusTint {
     /// smoothly across the screen. Made once per picture, a small still
     /// (it is all soft), stretched.
     @MainActor
-    static func layout(for url: String, flags: RenderProbe.Flags) async -> UIImage? {
-        let key = "\(url)|\(flags.tintBrightness)|\(flags.tintWarmBoost)"
-            + "|\(flags.layoutSaturation)|\(flags.layoutLightness)"
-        if let hit = layouts[key] { return hit }
+    static func layout(for url: String) async -> UIImage? {
+        if let hit = layouts[url] { return hit }
         // Four across, three down.
         let columns = 4, rows = 3
         guard let cells = await SpotlightTint.grid(for: url, columns: columns, rows: rows) else { return nil }
-        // Light and dark (Render Lab → Colour layout: light and dark): each
-        // cell's brightness against the picture's average, kept by this
-        // share around the tint's brightness (0: all equally bright).
-        func value(_ rgb: (Double, Double, Double)) -> Double { max(rgb.0, rgb.1, rgb.2) }
-        let all = cells.flatMap { $0 }
-        let mean = max(all.map(value).reduce(0, +) / Double(all.count), 0.05)
-        // Saturation (Render Lab → Colour layout: saturation), its ceiling
-        // rising with it.
-        let ceiling = min(0.9, Double(Spotlight.tintMaxSaturation + 0.05) * flags.layoutSaturation / 1.1)
+        // Every cell equally bright (the tint's brightness), a little fuller.
+        let ceiling = min(0.9, Double(Spotlight.tintMaxSaturation + 0.05) / 1.1)
         // Each cell as the background shows a colour (`shown`).
         let shownCells: [[(Double, Double, Double)]] = cells.map { row in
             row.map { rgb in
                 var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
                 UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
-                let saturation = min(Double(s * Spotlight.tintSaturationBoost) * flags.layoutSaturation, ceiling)
-                let lift = min(max(1 + flags.layoutLightness * (value(rgb) - mean) / mean, 0.5), 1.6)
-                let ui = UIColor(shown(hue: h, saturation: CGFloat(saturation), flags: flags,
-                                       brightness: min(flags.tintBrightness * lift, 0.9)))
+                let saturation = min(Double(s * Spotlight.tintSaturationBoost), ceiling)
+                let ui = UIColor(shown(hue: h, saturation: CGFloat(saturation)))
                 var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
                 ui.getRed(&r, green: &g, blue: &b, alpha: &a)
                 return (Double(r), Double(g), Double(b))
@@ -1905,7 +1886,7 @@ enum FixedFocusTint {
         }
         let image = await Task.detached(priority: .userInitiated) { meshImage(shownCells) }.value
         if layouts.count > 60 { layouts.removeAll() }
-        layouts[key] = image
+        layouts[url] = image
         return image
     }
 
@@ -1953,20 +1934,12 @@ enum FixedFocusTint {
         Color(hue: Double(hue), saturation: Double(saturation), brightness: 0.95)
     }
 
-    /// The colour as the background shows it: at the set brightness — warm
-    /// hues (orange to yellow) brighter and fuller, since a DARK yellow or
-    /// orange reads as brown.
-    private static func shown(hue: CGFloat, saturation: CGFloat, flags: RenderProbe.Flags,
-                              brightness base: Double? = nil) -> Color {
-        var brightness = base ?? flags.tintBrightness
-        var saturation = Double(saturation)
-        if flags.tintWarmBoost, saturation > 0.1 {
-            // Strongest at yellow-orange (~50°), none beyond red and lime.
-            let warm = max(0, 1 - abs(Double(hue) - 0.14) / 0.1)
-            brightness = min(1, brightness + 0.3 * warm)
-            saturation = min(1, saturation + 0.2 * warm)
-        }
-        return Color(hue: Double(hue), saturation: saturation, brightness: brightness)
+    /// How bright the colour is before it is laid over the dark base.
+    static let brightness: Double = 0.45
+
+    /// The colour as the background shows it: at the tint's brightness.
+    private static func shown(hue: CGFloat, saturation: CGFloat) -> Color {
+        Color(hue: Double(hue), saturation: Double(saturation), brightness: brightness)
     }
 }
 
