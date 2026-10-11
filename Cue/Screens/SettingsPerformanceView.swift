@@ -319,52 +319,6 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
                 CueDropdown(
-                    title: "Tint burst: change every",
-                    subtitle: "While scrolling fast: at most one colour change this often.",
-                    icon: "metronome",
-                    selection: String(probe.flags.tintBurstEvery),
-                    options: [0.2, 0.3, 0.4, 0.6, 0.8].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintBurstEvery = v }
-                }
-                CueDropdown(
-                    title: "Tint burst: blend",
-                    subtitle: "While scrolling fast: how long each colour change blends (ease-in-out).",
-                    icon: "wave.3.right",
-                    selection: String(probe.flags.tintBurstBlend),
-                    options: [0.3, 0.4, 0.5, 0.7, 1.0].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintBurstBlend = v }
-                }
-                CueDropdown(
-                    title: "Tint strength",
-                    subtitle: "Title colour: how strongly the colour covers the background.",
-                    icon: "drop.fill",
-                    selection: String(probe.flags.tintStrength),
-                    options: [0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0].map { CueDropdownOption(String($0), "\(Int(($0 * 100).rounded())) %") }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintStrength = v }
-                }
-                CueDropdown(
-                    title: "Tint colour",
-                    subtitle: "Title colour: the artwork's average colour, its dominant colour, or its two strongest colours blended across the screen.",
-                    icon: "eyedropper",
-                    selection: probe.flags.tintMode,
-                    options: FixedFocusTint.Mode.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.tintMode = raw
-                }
-                CueDropdown(
-                    title: "Colour layout: grid",
-                    subtitle: "Picture's colour layout: how many parts of the picture give their own colour — more: closer to the picture.",
-                    icon: "square.grid.3x3",
-                    selection: probe.flags.layoutGrid,
-                    options: [("2x2", "2 × 2"), ("3x3", "3 × 3"), ("4x3", "4 × 3"), ("5x3", "5 × 3")]
-                        .map { CueDropdownOption($0.0, $0.1) }
-                ) { raw in
-                    probe.flags.layoutGrid = raw
-                }
-                CueDropdown(
                     title: "Colour layout: saturation",
                     subtitle: "Picture's colour layout: how full the colours are.",
                     icon: "drop",

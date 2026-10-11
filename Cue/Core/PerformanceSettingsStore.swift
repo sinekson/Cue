@@ -395,21 +395,8 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        /// Picture's colour layout: the grid ("3x3"), the saturation
-        /// multiplier, and how much of the picture's own light and dark is
-        /// kept (0: every cell equally bright).
-        var layoutGrid = "3x3"
         var layoutSaturation: Double = 1.1
         var layoutLightness: Double = 0
-        var tintBurstEvery: Double = 0.3
-        var tintBurstBlend: Double = 0.5
-        /// New Home, title colour: how strongly the colour covers the
-        /// background (its opacity).
-        var tintStrength: Double = 0.5
-        /// New Home, title colour: which colour(s) of the artwork
-        /// (`FixedFocusTint.Mode`), how bright, and whether warm hues get
-        /// extra brightness (dark yellow reads as brown).
-        var tintMode = "twoColors"
         /// Two colours: always a second one (from the picture, else made
         /// from the first — `SpotlightTint.swatches`); off: only when the
         /// picture clearly has one.
@@ -503,14 +490,9 @@ final class RenderProbe: ObservableObject {
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
-            tintStrength = (try? c.decode(Double.self, forKey: .tintStrength)) ?? d.tintStrength
-            tintMode = (try? c.decode(String.self, forKey: .tintMode)) ?? d.tintMode
             tintAlwaysTwo = (try? c.decode(Bool.self, forKey: .tintAlwaysTwo)) ?? d.tintAlwaysTwo
-            layoutGrid = (try? c.decode(String.self, forKey: .layoutGrid)) ?? d.layoutGrid
             layoutSaturation = (try? c.decode(Double.self, forKey: .layoutSaturation)) ?? d.layoutSaturation
             layoutLightness = (try? c.decode(Double.self, forKey: .layoutLightness)) ?? d.layoutLightness
-            tintBurstEvery = (try? c.decode(Double.self, forKey: .tintBurstEvery)) ?? d.tintBurstEvery
-            tintBurstBlend = (try? c.decode(Double.self, forKey: .tintBurstBlend)) ?? d.tintBurstBlend
             tintBrightness = (try? c.decode(Double.self, forKey: .tintBrightness)) ?? d.tintBrightness
             tintWarmBoost = (try? c.decode(Bool.self, forKey: .tintWarmBoost)) ?? d.tintWarmBoost
             boxShadow = (try? c.decode(Bool.self, forKey: .boxShadow)) ?? d.boxShadow
