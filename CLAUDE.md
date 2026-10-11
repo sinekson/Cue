@@ -44,8 +44,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Dev launch args: `-detailDemo -detailID tt…` (a show; add `-detailMovie`
   for a film — The Two Towers tt0167261 has a collection), `-detailDemoSeries [tt…]`
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
-  `-transitionSlowMo` (4×), `-detailsHold`, `-holdMenuDemo`, `-browseDemo`,
-  `-folderDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
+  `-transitionSlowMo` (4×), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
+  `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
 - Render Lab (Settings → Performance) holds experiment switches
   (`PerformanceSettingsStore` / `RenderProbe.shared.flags`). Remove options
   once a decision is made.
@@ -70,6 +70,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 - **Direction:** flat artwork, glass controls, one outline for focus. Calm,
   quick motion; a stable 60 fps beats fancy.
+- The top bar hides by moving out the top and shows by moving back in
+  (`GlassSidebar.hidden`, `Motion.move`) — everywhere; it is always in the
+  view tree, disabled while hidden.
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
   Everything in the page is flat (`FlatControl`). Exception: Details' buttons.
@@ -100,6 +103,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   watched" → trending) with a reason label above the logo. Compact text: logo,
   chips (status + 3 ratings), facts, tagline — no summary. Down scrolls one
   whole screen. Pages by itself every 5 s, stops at the last title.
+  Left/Right: the picture crossfades drifting 16 pt the way you went
+  (`StagePictureView.drift`); the text only crossfades, in place, as one
+  block (`BillboardCrossfade` — run from inside the rows' host, else it
+  only swapped; the text drifting looked restless). 0.35 s.
 - **Details** uses the billboard's text and shade. Four buttons: Play,
   Library, Trailer, Summary (`text.alignleft`). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
@@ -127,7 +134,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Home has the same as a trial, off by default: Render Lab → "Home: peek
   the first row" (its name stays above the darkened cards; the page dots
   sit on that name's line).
-  Tried and dropped: progress inside each season button; the map above
+  Also under trial (Render Lab, top: "Details: season progress on the
+  billboard", off): the full progress ("Season 2 • 3 of 13 watched", ticks
+  under it), centred, on the billboard at the peek's name line, riding up
+  with the episodes to above the season buttons
+  (`FixedFocusRows.rowTopAccessories`); the line between buttons and cards
+  goes. Tried and dropped there: Home's page-dots look (glass capsule, a
+  dot per episode).
+  Tried and dropped: the show's logo over the season buttons (Apple TV
+  app's way); progress inside each season button; the map above
   the buttons; the map under the episodes' captions.
 - **Details' collection** (films; TMDB's collection — not Cue's Collections):
   the first row below the billboard, above More Like This, named "More from
@@ -167,16 +182,48 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   tags: links, not the season buttons' capsules; TMDB genres → that genre's
   films or shows, `Route.genre`), later Tags (TMDB keywords, same look),
   Network & Studios (logos). Fixed height per title.
+- **Browse pages** (Details' genres, tags, studios, networks, cast — one view,
+  `TMDBBrowseView`): a kind label (GENRE / TAG / STUDIO / NETWORK / ACTOR…),
+  the name, one facts line; a person has a portrait and a 3-line bio, a
+  studio/network its logo on a light plate. Glass pills: Movies | Series
+  (only where both exist; a genre maps to the other side's id) and one
+  sort button (Popular / Top rated / Newest / A–Z; all but Popular also
+  filter: votes ≥ 200 / out, ≥ 10 / ≥ 50) — a sort icon before its label, at the
+  grid's right edge, apart from Movies | Series; TMDB's A–Z order kept whose list opens under it in
+  Cue's glass menu panel (`HoldMenu.openDropdown`), the current one checked.
+  Then the folder pages' grid itself (`FolderPosterGrid`, hosting Home's
+  `FixedFocusDestinationCell`; six across). The header and its controls
+  are one view in the grid's top inset and scroll with it (a header *cell*
+  is recycled once scrolled off, its controls with it). Its height is fixed
+  from the first frame (room for the controls kept). We choose where focus
+  scrolls (`scrollViewWillEndDragging`): first line or controls → the page
+  at its top, header whole; any other line only when it would come within
+  60 pt of the screen's edge, then just enough to show it. Six posters to a
+  line (Collections' grid: seven). A focus guide on the page (not in the
+  scroll view — there it was never found), on while the page is at its
+  top, takes Up from any column to the controls. Focus goes to the first title once the
+  titles arrive; more pages as focus nears the end. (Tried and dropped:
+  the header fixed above the grid — too much room lost; tvOS's own focus
+  scroll plus resetting the page on the first line — it jumped.)
 - **Details' More Like This**: fixed focus (Home's catalog style — the box
   tells the title). TMDB recommendations (else similar), 12 titles; titles
   not yet out or without any picture left out; watched films last.
 - **Into Details** (`DetailTransition`, Core Animation overlay):
   - Fade everywhere: Home dims, the cover zooms (0.55 s), info fades in at 85 %. ~0.8 s.
-  - Billboard: in place; only Home-only parts fade, then the zoom.
-  - Back: fade + shrink to 98 %; billboard Back is the in-place reverse.
+  - The billboard uses the SAME transition as any card (Home dims, its
+    picture zooms to Details', Details comes in; Back: fade + shrink).
+    Tried and dropped (2026-10-11): an in-place transition from the
+    billboard (Home's parts moving out, Details' rising in, reversed on
+    Back) — every version needed workarounds (seams, doubled pictures).
+  - Back: fade + shrink to 98 %.
   - Lessons: two identical layers crossfading dip (flicker); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.
+- **Card edge**: every card (posters, the fixed box, Continue Watching,
+  episodes, Saved for Later, cast, studios, Search's banner) has a printed
+  card's light frame — a 2 pt line, white 30 %, inside its corner
+  (`FixedFocusCardEdge.rim`, the default; the other edges stay in Render
+  Lab). Focus keeps its own outline outside the card.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
   next press). Glass panel beside the card; pressed −3 %, open +2 %.
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
@@ -186,7 +233,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
   (no late updates).
-- **Collections**: one panel row per collection on Home; folder grid page.
+- **Collections**: one panel row per collection on Home. A folder page is
+  Home's rows (`FixedFocusRows`): a catalog per row, all its titles, the
+  focused row at Home's spot, the next peeking; the folder's name and
+  subtitle above the first row. A one-catalog folder opens the poster grid instead (the
+  browse pages' grid, with the folder's cover). Every collection shows this
+  way, whatever its Nuvio `viewMode` (the value isn't touched). The old
+  two-lines-per-catalog blocks, tabs and "See All" pages are gone.
+  The header is the rows' `pageHeader`: it moves up with the first row in
+  the rows' own animation. Movies / Series show the collections too, only
+  folders with sources of that kind (`CollectionSourceDTO.kind`; unknown
+  counts), at Home's place; a folder opened there shows only that type
+  (`Route.folder(type:)`).
 
 ## Removed / rejected (don't bring back)
 
@@ -195,8 +253,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Trakt/SIMKL accounts (public Trakt lists stay), Stremio account.
 - Ask before touching the Nuvio sync.
 - Rejected looks: glows, underlines, dimming the screen for the top bar or
-  hold menus, bouncy springs, buttons rising in, "through colour" / cascade /
-  wipe transitions, billboard strip above the rows.
+  hold menus, bouncy springs, "through colour" / cascade /
+  wipe transitions, billboard strip above the rows; on the billboard's
+  Left/Right: a full page scroll (too much movement), the text's parts
+  staggered (cascade).
 
 ## Open / later
 

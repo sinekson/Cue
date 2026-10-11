@@ -73,7 +73,6 @@
 		83D6CD6DD7692CDB2FB2D512 /* AnimatedGIFView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 016C1FE1365C9DD670632EA5 /* AnimatedGIFView.swift */; };
 		862DFBD0817FD88823C61B10 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 53F8C4744F7B239600918FE3 /* VLCKitSPM */; };
 		8A528A8674DA8255C41E9CFC /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BFF6963EAAD2C29809A7AB /* LibraryView.swift */; };
-		8CD54B701A3D6463BD137778 /* CastDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31738959269E9F20883D1260 /* CastDetailView.swift */; };
 		93A87DE56F5855D2C0ABFD2F /* TopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A324DBCCDD1DEFB66AC24EC /* TopShelfProvider.swift */; };
 		9739D0BCDDEB2FA6FA7E096D /* CollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5060F1AAC74B03DBDBE0F658 /* CollectionView.swift */; };
 		97E1E3C1E9EEC4FE32E3710A /* CueTopShelf.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4E4AA107295EA31FE200B3C4 /* CueTopShelf.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -179,7 +178,6 @@
 		2D8EA33A7A9ABD7C430A3FAF /* AddonPhoneAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddonPhoneAddView.swift; sourceTree = "<group>"; };
 		2EA57CC4516DF2158767C8B3 /* NuvioSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioSyncManager.swift; sourceTree = "<group>"; };
 		300808B71D35000E1EB1F5B0 /* DeepLinkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkService.swift; sourceTree = "<group>"; };
-		31738959269E9F20883D1260 /* CastDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastDetailView.swift; sourceTree = "<group>"; };
 		3B5596CA45C7D2E4C6011D27 /* SettingsAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAccountView.swift; sourceTree = "<group>"; };
 		3EACF68D973258EB865160C5 /* PlayerTempSweep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerTempSweep.swift; sourceTree = "<group>"; };
 		41B44EB13FCAD5AF6E54A859 /* SettingsPerformanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPerformanceView.swift; sourceTree = "<group>"; };
@@ -311,7 +309,6 @@
 			children = (
 				2D8EA33A7A9ABD7C430A3FAF /* AddonPhoneAddView.swift */,
 				4E2AA54994F2EEFCB7172538 /* ATVSettingsView.swift */,
-				31738959269E9F20883D1260 /* CastDetailView.swift */,
 				CD91FD94B5269CC2A747976F /* CatalogSeeAllView.swift */,
 				5CF51E8649C717680599B3A4 /* CollectionSourcePickerView.swift */,
 				5060F1AAC74B03DBDBE0F658 /* CollectionView.swift */,
@@ -688,7 +685,6 @@
 				38065B64097111CBD3F90A75 /* AudioLanguageMatch.swift in Sources */,
 				EC263304AE7415B356028A1A /* BillboardPicks.swift in Sources */,
 				C726E04055FB457A18739D04 /* BoundedConcurrency.swift in Sources */,
-				8CD54B701A3D6463BD137778 /* CastDetailView.swift in Sources */,
 				3E103EA7B8316CF8B0C69B87 /* CatalogSeeAllView.swift in Sources */,
 				2A5D67319BBE83D40A353516 /* CollectionResolver.swift in Sources */,
 				5A2A157A9F10BD924D7CF61B /* CollectionSourcePickerView.swift in Sources */,

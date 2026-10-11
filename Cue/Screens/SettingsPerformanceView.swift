@@ -313,21 +313,18 @@ struct RenderLabSettings: View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
             SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
                 PerfToggleRow(
+                    icon: "chart.bar.doc.horizontal",
+                    title: "Details: season progress on the billboard",
+                    subtitle: "The season's progress (\"Season 2 • 3 of 13 watched\", ticks under it) on the billboard, just above the peeking episodes; Down carries it up with them to above the season buttons. Off: the progress on the line between the season buttons and the episodes.",
+                    isOn: Binding(get: { probe.flags.detailsProgressOnBillboard },
+                                  set: { probe.flags.detailsProgressOnBillboard = $0 })
+                )
+                PerfToggleRow(
                     icon: "gauge.with.dots.needle.67percent",
                     title: "Launch: show numbers",
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                CueDropdown(
-                    title: "Billboard change",
-                    subtitle: "Left / Right on the billboard: text and picture drift together — or depth + cascade: the text further, the picture less, the text's parts one after another (logo, chips, facts, tagline) — or a real scroll: the whole page slides out as the next slides in.",
-                    icon: "square.stack.3d.forward.dottedline",
-                    selection: probe.flags.billboardChange,
-                    options: [("drift", "Drift"), ("depthCascade", "Depth + cascade"), ("scroll", "Scroll")]
-                        .map { CueDropdownOption($0.0, $0.1) }
-                ) { raw in
-                    probe.flags.billboardChange = raw
-                }
                 PerfToggleRow(
                     icon: "plus.magnifyingglass",
                     title: "Billboard: slow zoom",

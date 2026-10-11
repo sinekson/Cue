@@ -3,41 +3,32 @@ import UIKit
 
 // MARK: - A folder
 
-/// A collection's folder, opened: an overview of its catalogs — as ROWS
-/// (each catalog a part: its name and count, two lines of its titles, a
-/// "See All" tile when it has more) or a TABBED GRID (a tab per catalog, its
-/// titles in the grid), as the collection is set up in Nuvio (rows when
-/// unset). With `part`, one catalog's titles in full (its "See All").
-/// Only ever scrolls vertically; the header scrolls away with the titles.
-/// Poster style of Saved for Later and Search, on the folder's own colour
-/// (its cover's).
+/// A collection's folder, opened: its catalogs as Home's rows (fixed focus,
+/// the focused row at its spot, the next one peeking), the folder's header
+/// above the first — it moves up with it. One catalog: its titles
+/// in the poster grid instead (a single row on its own page looks empty).
+/// The same for every collection, whatever its layout in Nuvio (`viewMode`
+/// is kept as it is). On the folder's own colour (its cover's).
 struct FolderView: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
-    @EnvironmentObject private var mdblist: MDBListSettingsStore
     let collection: CueCollection
     let folder: CueCollectionFolder
-    /// One catalog (its id), in full.
-    var part: String? = nil
+    /// Opened from Movies / Series: only that type ("movie" / "series").
+    var type: String? = nil
     let onSelect: (MetaItem) -> Void
     /// Details pushed without the system's slide (the zoom brings it in).
     var onOpenInPlace: ((MetaItem) -> Void)? = nil
-    /// A part's "See All": its catalog id.
-    var onSeeAll: (String) -> Void = { _ in }
 
     @State private var catalogs: [CollectionResolver.FolderCatalog]?
     @State private var tint: Color?
-    /// The grid's tab (a catalog's id; `allTab` for every title).
-    @State private var tab: String?
-    private static let allTab = "all"
-    /// A part on the overview: two lines of seven (the last a "See All"
-    /// tile when there are more).
-    private static let partCap = 14
 
-    /// The folder's catalogs as last resolved, for its parts' pages.
-    @MainActor private static var resolved: [String: [CollectionResolver.FolderCatalog]] = [:]
-
-    private var isGrid: Bool { part == nil && collection.viewMode.uppercased() == "TABBED_GRID" }
+    /// Above the header.
+    private static let headerTop: CGFloat = 60
+    /// The rows' header: name and subtitle (no cover — the rows need the room).
+    private static let headerHeight: CGFloat = 100
+    /// The focused row's name: under the header.
+    private static var rowTop: CGFloat { max(FixedFocusMetrics.rowTop, headerTop + headerHeight + 36) }
 
     private var providers: CollectionProviders {
         CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: TraktService.isConfigured)
@@ -50,44 +41,58 @@ struct FolderView: View {
         }
         .task(id: folder.id) {
             guard catalogs == nil else { return }
-            // A part's page: what the folder just showed.
-            if part != nil, let known = Self.resolved[folder.id] { catalogs = known; return }
-            let found = await CollectionResolver.catalogs(
+            catalogs = await CollectionResolver.catalogs(
                 of: folder, addonManager: addonManager, addons: addonManager.addons,
-                providers: providers, tmdbLanguage: tmdbSettings.settings.language)
-            Self.resolved[folder.id] = found
-            catalogs = found
+                providers: providers, tmdbLanguage: tmdbSettings.settings.language, type: type)
         }
         .task(id: folder.tileCoverImageUrl) {
-            guard let cover = folder.tileCoverImageUrl else { return }
-            FixedFocusColors.color(for: cover) { tint = Color($0) }
+            // Home's own colour from a picture (its brightness), not brighter.
+            guard let cover = folder.tileCoverImageUrl,
+                  let colors = await FixedFocusTint.colors(for: cover, flags: RenderProbe.shared.flags) else { return }
+            tint = colors.first
         }
     }
 
-    /// The header: the folder's cover, its name (a part's: the part's), and
-    /// where it is with what's in it.
-    private var header: FolderHeader {
-        let shown = part.flatMap { id in catalogs?.first { $0.id == id } }
+    /// The header: the folder's name, where it is and what's in it; with a
+    /// cover over the grid (it scrolls away there).
+    private func header(cover: Bool) -> FolderHeader {
         let subtitle: String
-        if let shown {
-            subtitle = [collection.title, folder.title, Self.count(shown.items.count)].joined(separator: " · ")
-        } else if let catalogs, catalogs.count > 1 {
+        if let catalogs, catalogs.count > 1 {
             subtitle = "\(collection.title) · \(catalogs.count) catalogs"
+        } else if let only = catalogs?.first {
+            subtitle = "\(collection.title) · \(Self.count(only.items.count))"
         } else {
             subtitle = collection.title
         }
-        return FolderHeader(title: shown?.title ?? folder.title, subtitle: subtitle,
-                            cover: folder.tileCoverImageUrl, emoji: folder.coverEmoji, shape: folder.tileShape)
+        return FolderHeader(title: folder.title, subtitle: subtitle,
+                            cover: cover ? folder.tileCoverImageUrl : nil, emoji: cover ? folder.coverEmoji : nil,
+                            shape: folder.tileShape)
     }
 
     static func count(_ n: Int) -> String { n == 1 ? "1 title" : "\(n) titles" }
 
+    /// Titles open Details through `DetailTransition`.
+    private var openDetails: ((MetaItem) -> Void)? {
+        onOpenInPlace.map { push in
+            { item in DetailTransition.shared.open(item) { push(item) } }
+        }
+    }
+
+    private static func years(_ items: [MetaItem]) -> [String: String] {
+        Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } }, uniquingKeysWith: { a, _ in a })
+    }
+
     @ViewBuilder private var content: some View {
-        if let catalogs, !catalogs.isEmpty {
-            if isGrid { grid(catalogs) } else { rows(catalogs) }
+        if let catalogs, catalogs.count > 1 {
+            rows(catalogs)
+        } else if let only = catalogs?.first {
+            FolderPosterGrid(header: AnyView(header(cover: true)), headerHeight: FolderGridController.defaultHeaderHeight,
+                             items: only.items, subtitles: Self.years(only.items),
+                             onSelect: onSelect, onOpenDetails: openDetails)
+                .ignoresSafeArea()
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                header
+                header(cover: true)
                     .padding(.top, 30)
                     .ignoresSafeArea(edges: .horizontal)
                 Group {
@@ -106,75 +111,23 @@ struct FolderView: View {
         }
     }
 
-    /// Titles open Details through `DetailTransition`.
-    private var openDetails: ((MetaItem) -> Void)? {
-        onOpenInPlace.map { push in
-            { item in DetailTransition.shared.open(item) { push(item) } }
-        }
-    }
-
-    private static func years(_ items: [MetaItem]) -> [String: String] {
-        Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } }, uniquingKeysWith: { a, _ in a })
-    }
-
     // MARK: Rows
 
-    /// The overview: each catalog a part (capped, its "See All" beyond) —
-    /// or, for a part's page, that catalog in full.
+    /// Each catalog a row, Home's (the box tells the focused title).
     private func rows(_ catalogs: [CollectionResolver.FolderCatalog]) -> some View {
-        let shown = part.map { id in catalogs.filter { $0.id == id } } ?? catalogs
-        return FolderPosterGrid(header: header,
-                                sections: shown.map {
-                                    FolderSection(id: $0.id, title: part == nil ? $0.title : nil, items: $0.items,
-                                                  subtitles: Self.years($0.items))
-                                },
-                                cap: part == nil ? Self.partCap : nil,
-                                onSelect: onSelect, onOpenDetails: openDetails, onSeeAll: onSeeAll)
+        FixedFocusRows(rows: catalogs.map { HomeRow(id: $0.id, title: $0.title, items: $0.items) },
+                       featuredRowID: "", continueRowID: "", active: true, progress: [:],
+                       rowTop: Self.rowTop,
+                       aboveVisible: Self.rowTop - FixedFocusMetrics.peekGap,
+                       onSelect: onSelect, onSelectFeatured: onSelect, onResume: { _ in },
+                       onOpenDetails: openDetails,
+                       titleMenu: { item, _ in TitleMenu.shared.entries(for: item) },
+                       pageHeader: AnyView(header(cover: false)
+                           .frame(height: Self.headerHeight, alignment: .bottomLeading)
+                           .padding(.top, Self.headerTop)
+                           .frame(maxHeight: .infinity, alignment: .top)),
+                       pageHeaderHeight: Self.headerTop + Self.headerHeight) { _, _ in }
             .ignoresSafeArea()
-    }
-
-    // MARK: Grid
-
-    /// A tab per catalog ("All" first, when the collection has it) — the
-    /// grid follows the focused tab — and its titles in a poster grid.
-    private func grid(_ catalogs: [CollectionResolver.FolderCatalog]) -> some View {
-        let tabs = (collection.showAllTab && catalogs.count > 1
-                    ? [(Self.allTab, "All")] : []) + catalogs.map { ($0.id, $0.title) }
-        let current = tab ?? tabs.first?.0
-        let items = current == Self.allTab ? merged(catalogs) : catalogs.first { $0.id == current }?.items ?? []
-        return VStack(alignment: .leading, spacing: 24) {
-            header
-                .padding(.top, 30)
-                .ignoresSafeArea(edges: .horizontal)
-            if tabs.count > 1 {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 16) {
-                        ForEach(tabs, id: \.0) { id, title in
-                            Button { tab = id } label: { Text(title) }
-                                .buttonStyle(PillButtonStyle(selected: id == current))
-                                // Focus picks the tab (as the top bar does).
-                                .onFocusChange(id: id) { tab = $0 }
-                        }
-                    }
-                    .padding(.horizontal, FixedFocusMetrics.titleInset)
-                    .padding(.vertical, 12)
-                }
-                .scrollClipDisabled()
-                .focusSection()
-            }
-            FolderPosterGrid(header: nil,
-                             sections: [FolderSection(id: current ?? "", title: nil, items: items,
-                                                      subtitles: Self.years(items))],
-                             cap: nil, onSelect: onSelect, onOpenDetails: openDetails, onSeeAll: { _ in })
-                .id(current)
-                .ignoresSafeArea(edges: [.horizontal, .bottom])
-        }
-    }
-
-    /// Every catalog's titles, each once.
-    private func merged(_ catalogs: [CollectionResolver.FolderCatalog]) -> [MetaItem] {
-        var seen = Set<String>()
-        return catalogs.flatMap(\.items).filter { seen.insert($0.id).inserted }
     }
 
     private var emptyMessage: String {
@@ -237,52 +190,29 @@ struct FolderHeader: View {
     }
 }
 
-private extension View {
-    /// Calls `action(id)` when this gets focus.
-    func onFocusChange(id: String, _ action: @escaping (String) -> Void) -> some View {
-        modifier(FocusPick(id: id, action: action))
-    }
-}
-
-private struct FocusPick: ViewModifier {
-    let id: String
-    let action: (String) -> Void
-    @FocusState private var focused: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .focused($focused)
-            .onChange(of: focused) { _, now in if now { action(id) } }
-    }
-}
-
-/// A part of the folder's grid: a catalog's name (nil: none) and titles.
-struct FolderSection {
-    let id: String
-    let title: String?
+/// Titles as a poster grid (a one-catalog folder, a browse page): Home's
+/// destination cards (outline, grow, shadow; name and year below), six to a
+/// line; scrolls vertically only, the header (when given) scrolling with it.
+struct FolderPosterGrid: UIViewControllerRepresentable {
+    let header: AnyView?
+    /// The header's height (its content's, as laid out), fixed from the
+    /// first frame.
+    var headerHeight: CGFloat = FolderGridController.defaultHeaderHeight
     let items: [MetaItem]
+    /// The line under each title's name (its year), by title id.
     let subtitles: [String: String]
-}
-
-/// A folder's titles as a poster grid in parts: Home's destination cards
-/// (outline, grow, shadow; name and year below), seven to a line; scrolls
-/// vertically only, the header (when given) scrolling with it.
-private struct FolderPosterGrid: UIViewControllerRepresentable {
-    let header: FolderHeader?
-    let sections: [FolderSection]
-    /// Titles a part shows at most (the last place then "See All"); nil: all.
-    let cap: Int?
     let onSelect: (MetaItem) -> Void
     let onOpenDetails: ((MetaItem) -> Void)?
-    let onSeeAll: (String) -> Void
+    /// A title is about to show (more can load as the end nears).
+    var onDisplay: ((MetaItem) -> Void)? = nil
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
     func updateUIViewController(_ controller: FolderGridController, context: Context) {
         controller.onSelect = onSelect
         controller.onOpenDetails = onOpenDetails
-        controller.onSeeAll = onSeeAll
-        controller.show(header: header.map { AnyView($0) }, sections: sections, cap: cap)
+        controller.onDisplay = onDisplay
+        controller.show(header: header, headerHeight: headerHeight, items: items, subtitles: subtitles)
     }
 }
 
@@ -290,27 +220,38 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                                   UICollectionViewDelegateFlowLayout, HoldMenuProviding {
     var onSelect: (MetaItem) -> Void = { _ in }
     var onOpenDetails: ((MetaItem) -> Void)?
-    var onSeeAll: (String) -> Void = { _ in }
+    var onDisplay: ((MetaItem) -> Void)?
 
     private var header: AnyView?
-    private var sections: [FolderSection] = []
-    private var cap: Int?
+    private var items: [MetaItem] = []
+    private var subtitles: [String: String] = [:]
     private var collectionView: UICollectionView!
 
-    private static let columns = 7
+    private static let columns = 6
     private static let gap = FixedFocusMetrics.destinationGap
-    private static let headerHeight: CGFloat = 150
-    /// Between one part and the next.
-    private static let partGap: CGFloat = 72
+    static let defaultHeaderHeight: CGFloat = 150
+    private var headerHeight = FolderGridController.defaultHeaderHeight
+    private var filledOnce = false
+    /// The first titles are where focus lands, until it has moved by itself
+    /// (controls in the header would take it otherwise).
+    private var prefersFirstTitle = false
 
-    /// A poster: seven fill the content's width.
-    static var card: CGSize {
+    /// A poster: `columns` fill the content's width.
+    private static var card: CGSize {
         let width = ((FixedFocusMetrics.bannerWidth - gap * CGFloat(columns - 1)) / CGFloat(columns)).rounded(.down)
         return CGSize(width: width, height: (width * 1.5).rounded())
     }
 
-    /// The header takes the first section (one cell, never focused).
-    private var offset: Int { header == nil ? 0 : 1 }
+    /// The header: a view of its own in the scroll view's top inset, there
+    /// while it scrolls (a cell goes once scrolled off, and its controls with
+    /// it, out of reach).
+    private var headerHost: UIHostingController<AnyView>?
+    private var headerPositioned = false
+    /// Above the header, in the inset.
+    private static let headerTopMargin: CGFloat = 60
+    /// How close to the screen's top or bottom a focused line may come before
+    /// the page moves.
+    private static let edgeMargin: CGFloat = 60
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -318,6 +259,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = Self.gap
         layout.minimumLineSpacing = 24
+        layout.sectionInset = UIEdgeInsets(top: 12, left: FixedFocusMetrics.inset, bottom: 48,
+                                           right: FixedFocusMetrics.inset)
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         collectionView.backgroundColor = .clear
@@ -329,115 +272,159 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "poster")
-        collectionView.register(FolderSeeAllCell.self, forCellWithReuseIdentifier: "seeAll")
-        collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "header")
-        collectionView.register(FolderSectionHeader.self,
-                                forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
-                                withReuseIdentifier: FolderSectionHeader.id)
         view.addSubview(collectionView)
+        syncHeaderHost()
     }
 
-    func show(header: AnyView?, sections: [FolderSection], cap: Int?) {
-        let changed = (header == nil) != (self.header == nil) || cap != self.cap
-            || sections.map(\.id) != self.sections.map(\.id)
-            || sections.map(\.items.count) != self.sections.map(\.items.count)
-        self.header = header
-        guard changed else {
-            // The header's text can change (the catalogs' count): just it.
-            if isViewLoaded, header != nil { collectionView.reloadItems(at: [IndexPath(item: 0, section: 0)]) }
+    /// The header as a view in the scroll view's top inset: its height above
+    /// the first title. Under it a focus guide, the page's width: Up from a
+    /// title far to the right of the header's controls (they sit at the
+    /// left) goes to them — the focus engine only looks straight up.
+    private func syncHeaderHost() {
+        guard isViewLoaded else { return }
+        guard let header else {
+            if let host = headerHost {
+                host.willMove(toParent: nil)
+                host.view.removeFromSuperview()
+                host.removeFromParent()
+                headerHost = nil
+                collectionView.contentInset.top = 0
+            }
             return
         }
-        self.sections = sections
-        self.cap = cap
-        if isViewLoaded { collectionView.reloadData() }
+        let host: UIHostingController<AnyView>
+        if let existing = headerHost {
+            host = existing
+        } else {
+            host = UIHostingController(rootView: AnyView(header.ignoresSafeArea()))
+            host.view.backgroundColor = .clear
+            addChild(host)
+            collectionView.addSubview(host.view)
+            host.didMove(toParent: self)
+            // On the page, not in the scroll view (there focus never finds
+            // it); placed under the header, on while the page is at its top.
+            let guide = UIFocusGuide()
+            view.addLayoutGuide(guide)
+            let guideTop = guide.topAnchor.constraint(equalTo: view.topAnchor)
+            NSLayoutConstraint.activate([
+                guide.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                guide.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                guide.heightAnchor.constraint(equalToConstant: 8),
+                guideTop,
+            ])
+            guide.preferredFocusEnvironments = [host.view]
+            controlsGuide = guide
+            controlsGuideTop = guideTop
+            headerHost = host
+        }
+        let top = headerHeight + Self.headerTopMargin
+        if collectionView.contentInset.top != top { collectionView.contentInset.top = top }
+        if !headerPositioned, collectionView.bounds.height > 0 {
+            headerPositioned = true
+            collectionView.contentOffset = CGPoint(x: 0, y: -top)
+        }
+        host.view.frame = CGRect(x: 0, y: -headerHeight, width: collectionView.bounds.width, height: headerHeight)
+        controlsGuideTop?.constant = Self.headerTopMargin + headerHeight - 8
+        syncControlsGuide()
     }
 
-    // MARK: Parts
+    private var controlsGuide: UIFocusGuide?
+    private var controlsGuideTop: NSLayoutConstraint?
 
-    private func part(_ section: Int) -> FolderSection? {
-        sections.indices.contains(section - offset) ? sections[section - offset] : nil
+    /// The guide under the header only while the header shows whole (else
+    /// it would sit among the titles).
+    private func syncControlsGuide() {
+        controlsGuide?.isEnabled = collectionView.contentOffset.y <= -collectionView.contentInset.top + 1
     }
 
-    /// More titles than the part shows: its last place is "See All".
-    private func isCapped(_ part: FolderSection) -> Bool {
-        cap.map { part.items.count > $0 } ?? false
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        syncControlsGuide()
     }
 
-    private func isSeeAll(_ path: IndexPath) -> Bool {
-        guard let part = part(path.section), let cap, isCapped(part) else { return false }
-        return path.item == cap - 1
+    /// Where focus scrolls the page (tvOS asks here for focus moves too): the
+    /// first line — or the header's controls — the page at its top, the
+    /// header whole; any other line only moves the page once it would reach
+    /// the screen's edge, then just far enough to show it whole. Within what
+    /// shows: still.
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                   targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        let top = -collectionView.contentInset.top
+        guard let path = focusedPath, path.item >= Self.columns,
+              let frame = collectionView.layoutAttributesForItem(at: path)?.frame else {
+            targetContentOffset.pointee.y = top
+            return
+        }
+        let maxY = max(top, collectionView.contentSize.height + collectionView.contentInset.bottom
+                       - collectionView.bounds.height)
+        let current = scrollView.contentOffset.y
+        var y = current
+        if frame.maxY > current + scrollView.bounds.height - Self.edgeMargin {
+            y = frame.maxY - scrollView.bounds.height + Self.edgeMargin
+        } else if frame.minY < current + Self.edgeMargin {
+            y = frame.minY - Self.edgeMargin
+        }
+        targetContentOffset.pointee.y = min(maxY, max(top, y))
     }
 
-    func numberOfSections(in collectionView: UICollectionView) -> Int { sections.count + offset }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        syncHeaderHost()
+    }
+
+    /// The header is never reloaded (it updates itself, its focus stays).
+    func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem], subtitles: [String: String]) {
+        let changed = items.map(\.id) != self.items.map(\.id)
+        let heightChanged = headerHeight != self.headerHeight
+        self.header = header
+        self.headerHeight = headerHeight
+        syncHeaderHost()
+        if heightChanged, isViewLoaded { collectionView.collectionViewLayout.invalidateLayout() }
+        guard changed else { return }
+        self.items = items
+        self.subtitles = subtitles
+        guard isViewLoaded else { return }
+        collectionView.reloadData()
+        if !filledOnce, !items.isEmpty {
+            filledOnce = true
+            // The first titles in: focus to the first, unless it has moved on
+            // (the loading state, which held focus, goes in the same update).
+            prefersFirstTitle = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.prefersFirstTitle else { return }
+                self.collectionView.layoutIfNeeded()
+                self.setNeedsFocusUpdate()
+                self.updateFocusIfNeeded()
+            }
+        }
+    }
+
+    // MARK: Titles
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        guard let part = part(section) else { return 1 }
-        return isCapped(part) ? cap! : part.items.count
+        items.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        guard let part = part(indexPath.section) else {
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "header", for: indexPath)
-            // Its own lead (the rows' names'), not the screen's safe area too.
-            if let header {
-                cell.contentConfiguration = UIHostingConfiguration { header.ignoresSafeArea() }.margins(.all, 0)
-            }
-            return cell
-        }
-        if isSeeAll(indexPath) {
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "seeAll", for: indexPath)
-                as! FolderSeeAllCell
-            cell.configure(count: part.items.count, card: Self.card)
-            return cell
-        }
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath)
             as! FixedFocusDestinationCell
-        let item = part.items[indexPath.item]
-        cell.configure(item, subtitle: part.subtitles[item.id], index: indexPath.item, rowCell: nil,
-                       card: Self.card)
+        let item = items[indexPath.item]
+        cell.configure(item, subtitle: subtitles[item.id], index: indexPath.item, rowCell: nil, card: Self.card)
         return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool {
-        part(indexPath.section) != nil
     }
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        guard part(indexPath.section) != nil else {
-            return CGSize(width: collectionView.bounds.width, height: Self.headerHeight)
-        }
-        return CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
+        CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
     }
 
-    func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String,
-                        at indexPath: IndexPath) -> UICollectionReusableView {
-        let view = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: FolderSectionHeader.id,
-                                                                   for: indexPath) as! FolderSectionHeader
-        if let part = part(indexPath.section), let title = part.title {
-            view.show(title: title, count: part.items.count)
-        }
-        return view
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
-                        referenceSizeForHeaderInSection section: Int) -> CGSize {
-        guard part(section)?.title != nil else { return .zero }
-        return CGSize(width: collectionView.bounds.width, height: FixedFocusMetrics.titleHeight)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
-                        insetForSectionAt section: Int) -> UIEdgeInsets {
-        guard part(section) != nil else { return UIEdgeInsets(top: 60, left: 0, bottom: 24, right: 0) }
-        let last = section == sections.count + offset - 1
-        return UIEdgeInsets(top: 12, left: FixedFocusMetrics.inset, bottom: last ? 48 : Self.partGap,
-                            right: FixedFocusMetrics.inset)
+    func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        guard items.indices.contains(indexPath.item) else { return }
+        onDisplay?(items[indexPath.item])
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard let part = part(indexPath.section) else { return }
-        if isSeeAll(indexPath) { onSeeAll(part.id); return }
-        let item = part.items[indexPath.item]
+        let item = items[indexPath.item]
         if let onOpenDetails {
             onOpenDetails(item)
         } else {
@@ -448,8 +435,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// Select held on a title: its menu (`TitleMenu`, see `HoldMenu`).
     func holdMenu(for focused: UIView) -> HoldMenuRequest? {
         guard let cell = focused as? UICollectionViewCell, let path = collectionView.indexPath(for: cell),
-              let part = part(path.section), !isSeeAll(path) else { return nil }
-        let entries = TitleMenu.shared.entries(for: part.items[path.item])
+              items.indices.contains(path.item) else { return nil }
+        let entries = TitleMenu.shared.entries(for: items[path.item])
         guard !entries.isEmpty else { return nil }
         // The card, without its caption (a destination card's picture).
         let card = (cell as? FixedFocusDestinationCell)?.cardFrame ?? cell.bounds
@@ -464,9 +451,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     // MARK: Back to the top
 
     /// Where focus goes back to: the first title.
-    private var firstTitle: IndexPath? {
-        sections.isEmpty ? nil : IndexPath(item: 0, section: offset)
-    }
+    private var firstTitle: IndexPath? { items.isEmpty ? nil : IndexPath(item: 0, section: 0) }
     /// Going back up to the first title.
     private var backToTop = false
     /// Its Back press: not passed on.
@@ -480,9 +465,10 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         else { return super.pressesBegan(presses, with: event) }
         backToTop = true
         swallowing = true
-        if collectionView.contentOffset.y > 0 {
+        let top = CGPoint(x: 0, y: -collectionView.contentInset.top)
+        if collectionView.contentOffset.y > top.y {
             // Up to the top, then focus onto the first title.
-            collectionView.setContentOffset(.zero, animated: true)
+            collectionView.setContentOffset(top, animated: true)
         } else {
             focusFirst()
         }
@@ -507,7 +493,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
-        if backToTop, let first = firstTitle, let cell = collectionView.cellForItem(at: first) { return [cell] }
+        if backToTop || prefersFirstTitle, let first = firstTitle,
+           let cell = collectionView.cellForItem(at: first) { return [cell] }
         return super.preferredFocusEnvironments
     }
 
@@ -516,78 +503,10 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
-    }
-}
-
-/// A part's name, as Home's row names, with how many titles it has.
-final class FolderSectionHeader: UICollectionReusableView {
-    static let id = "folder.section"
-    private let label = UILabel()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        label.frame = CGRect(x: FixedFocusMetrics.titleInset, y: 0, width: 1400, height: FixedFocusMetrics.titleLine)
-        addSubview(label)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func show(title: String, count: Int) {
-        let text = NSMutableAttributedString(string: title, attributes: [
-            .font: UIFont.systemFont(ofSize: Spotlight.headerTitleSize, weight: .semibold),
-            .foregroundColor: UIColor.white,
-        ])
-        text.append(NSAttributedString(string: "   \(count)", attributes: [
-            .font: UIFont.systemFont(ofSize: Spotlight.headerTitleSize * 0.8, weight: .medium),
-            .foregroundColor: UIColor.white.withAlphaComponent(0.45),
-        ]))
-        label.attributedText = text
-    }
-}
-
-/// A part's last place on the overview: "See All" and how many titles —
-/// a poster-sized tile, lit and grown like a poster when focused.
-final class FolderSeeAllCell: UICollectionViewCell {
-    private let tile = UIView()
-    private let title = UILabel()
-    private let detail = UILabel()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        tile.layer.cornerRadius = TileArt.radius
-        tile.layer.cornerCurve = .continuous
-        contentView.addSubview(tile)
-        title.text = "See All"
-        title.font = .systemFont(ofSize: 30, weight: .semibold)
-        title.textAlignment = .center
-        detail.font = .systemFont(ofSize: 22, weight: .medium)
-        detail.textAlignment = .center
-        tile.addSubview(title)
-        tile.addSubview(detail)
-        style(focused: false)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(count: Int, card: CGSize) {
-        // Bounds and centre: the tile may be grown (a transform) right now.
-        tile.bounds = CGRect(origin: .zero, size: card)
-        tile.center = CGPoint(x: card.width / 2, y: card.height / 2)
-        title.frame = CGRect(x: 0, y: card.height / 2 - 40, width: card.width, height: 40)
-        detail.frame = CGRect(x: 0, y: card.height / 2 + 6, width: card.width, height: 30)
-        detail.text = FolderView.count(count)
-    }
-
-    private func style(focused: Bool) {
-        tile.backgroundColor = UIColor(focused ? FlatControl.focus : FlatControl.rest)
-        title.textColor = focused ? .black : .white
-        detail.textColor = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(0.6)
-        tile.transform = focused ? CGAffineTransform(scaleX: 1.08, y: 1.08) : .identity
-    }
-
-    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
-        let focused = context.nextFocusedView === self
-        coordinator.addCoordinatedAnimations { self.style(focused: focused) }
+        // Moved by the viewer (from something in the page): no longer ours.
+        if prefersFirstTitle, context.previouslyFocusedView?.isDescendant(of: collectionView) == true {
+            prefersFirstTitle = false
+        }
     }
 }
 

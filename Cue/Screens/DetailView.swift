@@ -1447,7 +1447,7 @@ struct DetailView: View {
                                    : [Self.castRowID, Self.studiosRowID].contains(rowID) ? []
                                    : TitleMenu.shared.entries(for: item)
                            },
-                           onDepth: { rowsDepth.depth = $0; DetailTransition.shared.detailsAtTop = $0 == 0 },
+                           onDepth: { rowsDepth.depth = $0 },
                            externalBillboard: true,
                            cardStates: episodeCardStates,
                            onSelectInRow: { item, rowID in
@@ -1490,7 +1490,11 @@ struct DetailView: View {
                            onTitleFocus: { _, focused in seasonNameFocused = focused },
                            // (Season buttons: the same line, between them and
                            // the episodes.)
-                           rowTitleAccessories: rowProgressAccessory,
+                           rowTitleAccessories: progressOnBillboard ? [:] : rowProgressAccessory,
+                           // Render Lab → season progress on the billboard:
+                           // the whole progress, above the peek, riding up
+                           // with the episodes.
+                           rowTopAccessories: progressOnBillboard ? rowTopProgress : [:],
                            // The seasons: glass buttons over the episodes (Up
                            // from them); focus on one jumps the row there.
                            rowHeaders: seasonButtons ? seasonHeader : [:],
@@ -1623,6 +1627,19 @@ struct DetailView: View {
 
     /// Where you are in the season, under the row's name (or the season
     /// buttons): its ticks, then "3 of 7".
+    private var progressOnBillboard: Bool { RenderProbe.shared.flags.detailsProgressOnBillboard }
+
+    /// The season's progress in full: "Season 2 • 3 of 13 watched", the
+    /// ticks under it (`rowTopAccessories`).
+    private var rowTopProgress: [String: AnyView] {
+        guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
+        let map = SeasonProgressMap(ticks: seasonTicks(for: episode), label: seasonProgressLabel(for: episode),
+                                    centered: true)
+            .frame(width: SeasonProgressMap.width)
+            .fixedSize()
+        return [Self.episodesRowID: AnyView(map)]
+    }
+
     private var rowProgressAccessory: [String: AnyView] {
         guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
         let season = episode.season ?? 0

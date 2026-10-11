@@ -47,6 +47,27 @@ struct CollectionSourceDTO: Codable, Hashable {
 
     var isAddonSource: Bool { provider.lowercased() == "addon" }
 
+    /// What it lists: "movie" or "series" (Cue's tab filters), nil when it
+    /// doesn't say (or lists both).
+    var kind: String? {
+        if isAddonSource {
+            switch type?.lowercased() {
+            case "movie": return "movie"
+            case "series", "tv": return "series"
+            default: return nil
+            }
+        }
+        if let endpoint = traktEndpoint?.lowercased() {
+            if endpoint.hasPrefix("shows") { return "series" }
+            if endpoint.hasPrefix("movies") { return "movie" }
+        }
+        switch mediaType?.lowercased() {
+        case "movie", "movies": return "movie"
+        case "tv", "show", "shows", "series": return "series"
+        default: return nil
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? "addon"
@@ -190,6 +211,13 @@ struct CueCollectionFolder: Codable, Identifiable, Hashable {
     var coverSetId: String?
 
     /// Effective sources: modern `sources` wins, legacy `catalogSources` as fallback.
+    /// On Movies / Series (`type`: "movie" / "series"): it has a source of
+    /// that kind, or one that doesn't say.
+    func lists(_ type: String) -> Bool {
+        let kinds = effectiveSources.map(\.kind)
+        return kinds.isEmpty || kinds.contains { $0 == nil || $0 == type }
+    }
+
     var effectiveSources: [CollectionSourceDTO] {
         if let sources, !sources.isEmpty { return sources }
         return catalogSources ?? []

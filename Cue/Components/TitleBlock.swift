@@ -334,8 +334,6 @@ final class ModeSwap: ObservableObject {
 
     /// The backdrop at a depth progress `p` (0 = the billboard, 1 = Details).
     static func depthScale(_ p: CGFloat) -> CGFloat { 1 + (depthScale - 1) * p }
-    /// The top bar moves up (and fades) this far.
-    static let chromeTravel: CGFloat = 80
 }
 
 struct TitleBlockView: View {

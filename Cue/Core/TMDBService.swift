@@ -749,7 +749,7 @@ enum TMDBService {
 
     /// A TMDB entity flattened to the fields we need before IMDB resolution.
     /// `Sendable` so `mapToMetaItems` can hand items to `boundedConcurrentMap`.
-    private struct TMDBRawItem: Sendable {
+    fileprivate struct TMDBRawItem: Sendable {
         let tmdbID: Int
         let isMovie: Bool
         let name: String
@@ -1875,24 +1875,6 @@ enum TMDBService {
         return await mapToMetaItems(raw)
     }
 
-    /// Browse a production company's catalog (movies + TV), most-popular first.
-    /// Backs the TMDB entity-browse screen reached from a company logo.
-    static func browseCompany(id: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        async let movies = discover(path: "/discover/movie", with: ["with_companies": String(id)], isMovie: true, language: language)
-        async let tv = discover(path: "/discover/tv", with: ["with_companies": String(id)], isMovie: false, language: language)
-        let raw = (await movies) + (await tv)
-        let sorted = raw.sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
-        return await mapToMetaItems(Array(sorted.prefix(40)))
-    }
-
-    /// A network's shows, best rated first.
-    static func browseNetwork(id: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        let raw = await discover(path: "/discover/tv", with: ["with_networks": String(id)], isMovie: false,
-                                 language: language)
-        let sorted = raw.sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
-        return await mapToMetaItems(Array(sorted.prefix(40)))
-    }
-
     /// Whether a genre NAME is known for movies / TV (so callers can decide which
     /// media type(s) to query for a Categories genre).
     static func hasMovieGenre(_ name: String) -> Bool { movieGenres.values.contains(name) }
@@ -1902,38 +1884,80 @@ enum TMDBService {
     }
     static func hasTVGenre(_ name: String) -> Bool { tvGenres.values.contains(name) }
 
-    /// ONE page of a genre's catalog (movies or TV), popularity-desc. Paginated
-    /// so a browse grid can keep appending pages until the genre is exhausted.
-    /// The titles with a keyword (a tag), most popular first.
-    static func titlesByKeyword(id: Int, isMovie: Bool, page: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        let path = isMovie ? "/discover/movie" : "/discover/tv"
-        let raw = await discover(path: path,
-                                 with: ["with_keywords": String(id), "sort_by": "popularity.desc", "page": String(page)],
-                                 isMovie: isMovie, language: language)
-        return await mapToMetaItems(raw)
+    // MARK: Browse pages (genre, tag, studio, network, person)
+
+    /// How a browse page orders its titles.
+    enum BrowseSort: String, CaseIterable, Sendable {
+        case popular, topRated, newest, alphabetical
+
+        var label: String {
+            switch self {
+            case .popular: return "Popular"
+            case .topRated: return "Top rated"
+            case .newest: return "Newest"
+            case .alphabetical: return "A–Z"
+            }
+        }
     }
 
-    /// A genre's titles, most popular first.
-    static func titlesByGenre(id: Int, isMovie: Bool, page: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        let path = isMovie ? "/discover/movie" : "/discover/tv"
-        let raw = await discover(path: path,
-                                 with: ["with_genres": String(id), "sort_by": "popularity.desc", "page": String(page)],
-                                 isMovie: isMovie, language: language)
-        return await mapToMetaItems(raw)
+    /// One page of a browse list (twenty titles): the total TMDB knows of,
+    /// and whether more follow.
+    struct BrowsePage: Sendable {
+        let items: [MetaItem]
+        let total: Int
+        let hasMore: Bool
     }
 
-    private static func discover(path: String, with extra: [String: String], isMovie: Bool, language: String) async -> [TMDBRawItem] {
+    private static let browsePageSize = 20
+
+    /// A page of titles by a discover filter (`with_genres`, `with_keywords`,
+    /// `with_companies`, `with_networks`), movies or shows, in `sort`'s order.
+    static func browse(filter: [String: String], isMovie: Bool, sort: BrowseSort, page: Int,
+                       language: String = preferredLanguage) async -> BrowsePage {
+        var query = filter
+        let today = Date().formatted(.iso8601.year().month().day())
+        let dateKey = isMovie ? "primary_release_date" : "first_air_date"
+        switch sort {
+        case .popular:
+            query["sort_by"] = "popularity.desc"
+        case .topRated:
+            // (A few votes on a hidden gem is no ranking.)
+            query["sort_by"] = "vote_average.desc"
+            query["vote_count.gte"] = "200"
+        case .newest:
+            query["sort_by"] = "\(dateKey).desc"
+            query["\(dateKey).lte"] = today
+            query["vote_count.gte"] = "10"
+        case .alphabetical:
+            // (Else it opens on "!", "#" and digits: tiny unknown entries.)
+            query["sort_by"] = isMovie ? "title.asc" : "name.asc"
+            query["vote_count.gte"] = "50"
+        }
+        query["page"] = String(page)
+        let result = await discoverPage(path: isMovie ? "/discover/movie" : "/discover/tv", with: query,
+                                        isMovie: isMovie, language: language)
+        let shown = result.items.filter { $0.poster != nil }
+        return BrowsePage(items: await mapToMetaItems(shown), total: result.total,
+                          hasMore: page < min(result.pages, 500))
+    }
+
+    private static func discoverPage(path: String, with extra: [String: String], isMovie: Bool,
+                                     language: String) async -> (items: [TMDBRawItem], total: Int, pages: Int) {
         var query = ["language": language, "page": "1", "sort_by": "popularity.desc"]
         extra.forEach { query[$0.key] = $0.value }
-        struct DiscoverResponse: Decodable { let results: [Result]? }
+        struct DiscoverResponse: Decodable {
+            let results: [Result]?
+            let total_results: Int?
+            let total_pages: Int?
+        }
         struct Result: Decodable {
             let id: Int; let title: String?; let name: String?
             let poster_path: String?; let backdrop_path: String?
             let overview: String?; let release_date: String?; let first_air_date: String?
             let vote_average: Double?
         }
-        guard let body: DiscoverResponse = try? await get(path, query: query) else { return [] }
-        return (body.results ?? []).compactMap { r in
+        guard let body: DiscoverResponse = try? await get(path, query: query) else { return ([], 0, 0) }
+        let items: [TMDBRawItem] = (body.results ?? []).compactMap { r in
             guard let title = r.title ?? r.name, !title.isEmpty else { return nil }
             return TMDBRawItem(
                 tmdbID: r.id, isMovie: isMovie, name: title,
@@ -1944,40 +1968,128 @@ enum TMDBService {
                 rating: r.vote_average
             )
         }
+        return (items, body.total_results ?? items.count, body.total_pages ?? 1)
     }
 
-    /// A person's full filmography (cast credits, movies + TV), most-acclaimed
-    /// first. Used by the Cast Detail screen.
-    static func personFilmography(personID: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        struct CreditsResponse: Decodable { let cast: [Credit]? }
+    /// A studio's or network's page header: its logo and where it is from.
+    struct BrandProfile: Sendable {
+        let logoURL: String?
+        let country: String?
+    }
+
+    static func brandProfile(id: Int, isNetwork: Bool) async -> BrandProfile? {
+        struct Response: Decodable { let logo_path: String?; let origin_country: String? }
+        guard let body: Response = try? await get(isNetwork ? "/network/\(id)" : "/company/\(id)") else { return nil }
+        return BrandProfile(logoURL: imageURL(body.logo_path, size: "w500"),
+                            country: (body.origin_country?.isEmpty == false) ? body.origin_country : nil)
+    }
+
+    /// A person's page header.
+    struct PersonProfile: Sendable {
+        let photoURL: String?
+        let biography: String?
+        /// TMDB's department: "Acting", "Directing", …
+        let department: String?
+        let bornYear: String?
+        let birthplace: String?
+    }
+
+    static func person(id: Int, language: String = preferredLanguage) async -> PersonProfile? {
+        struct Response: Decodable {
+            let biography: String?; let birthday: String?; let place_of_birth: String?
+            let profile_path: String?; let known_for_department: String?
+        }
+        guard var body: Response = try? await get("/person/\(id)", query: ["language": language]) else { return nil }
+        // No translation of the biography: TMDB's own (English).
+        if (body.biography ?? "").isEmpty, language != "en-US",
+           let english: Response = try? await get("/person/\(id)", query: ["language": "en-US"]) {
+            body = Response(biography: english.biography, birthday: body.birthday,
+                            place_of_birth: body.place_of_birth, profile_path: body.profile_path,
+                            known_for_department: body.known_for_department)
+        }
+        let bio = body.biography?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PersonProfile(photoURL: imageURL(body.profile_path, size: "w500"),
+                             biography: (bio?.isEmpty == false) ? bio : nil,
+                             department: body.known_for_department,
+                             bornYear: body.birthday.map { String($0.prefix(4)) }.flatMap { $0.count == 4 ? $0 : nil },
+                             birthplace: (body.place_of_birth?.isEmpty == false) ? body.place_of_birth : nil)
+    }
+
+    /// A person's titles — their cast credits and what they directed, movies
+    /// and shows — kept whole: a page of them is cut from it (`credits`).
+    struct PersonCredits: Sendable {
+        fileprivate struct Entry: Sendable {
+            let raw: TMDBRawItem
+            let popularity: Double
+            let votes: Int
+            let date: String
+        }
+        fileprivate let entries: [Entry]
+
+        static let empty = PersonCredits(entries: [])
+
+        func count(isMovie: Bool) -> Int { entries.filter { $0.raw.isMovie == isMovie }.count }
+    }
+
+    static func personCredits(id: Int, language: String = preferredLanguage) async -> PersonCredits {
+        struct Response: Decodable { let cast: [Credit]?; let crew: [Credit]? }
         struct Credit: Decodable {
             let id: Int; let title: String?; let name: String?; let media_type: String?
             let poster_path: String?; let backdrop_path: String?
             let overview: String?; let release_date: String?; let first_air_date: String?
-            let vote_average: Double?
+            let vote_average: Double?; let vote_count: Int?; let popularity: Double?
+            let genre_ids: [Int]?; let job: String?
         }
-        guard let body: CreditsResponse = try? await get(
-            "/person/\(personID)/combined_credits", query: ["language": language]
-        ) else { return [] }
+        guard let body: Response = try? await get("/person/\(id)/combined_credits",
+                                                   query: ["language": language]) else { return .empty }
+        // Talk shows and news: the person appearing as themselves, not work.
+        let notWork: Set<Int> = [10767, 10763]
+        let credits = (body.cast ?? []) + (body.crew ?? []).filter { $0.job == "Director" }
         var seen = Set<String>()
-        let raw: [TMDBRawItem] = (body.cast ?? [])
-            .sorted { ($0.vote_average ?? 0) > ($1.vote_average ?? 0) }
-            .compactMap { c in
-                let isTV = c.media_type?.lowercased() == "tv"
-                // Movie and TV ids are separate TMDB namespaces: dedupe per
-                // namespace or a film and a show sharing a number lose one.
-                guard let title = c.title ?? c.name, !title.isEmpty,
-                      seen.insert((isTV ? "t" : "m") + String(c.id)).inserted else { return nil }
-                return TMDBRawItem(
+        let entries: [PersonCredits.Entry] = credits.compactMap { c in
+            let isTV = c.media_type?.lowercased() == "tv"
+            // Movie and TV ids are separate TMDB namespaces: dedupe per
+            // namespace or a film and a show sharing a number lose one.
+            guard let title = c.title ?? c.name, !title.isEmpty,
+                  c.poster_path != nil,
+                  notWork.isDisjoint(with: c.genre_ids ?? []),
+                  seen.insert((isTV ? "t" : "m") + String(c.id)).inserted else { return nil }
+            let date = c.release_date ?? c.first_air_date ?? ""
+            return PersonCredits.Entry(
+                raw: TMDBRawItem(
                     tmdbID: c.id, isMovie: !isTV, name: title,
-                    poster: imageURL(c.poster_path, size: "w500") ?? imageURL(c.backdrop_path, size: "w780"),
+                    poster: imageURL(c.poster_path, size: "w500"),
                     background: imageURL(c.backdrop_path, size: "original"),
                     description: c.overview,
-                    releaseInfo: (c.release_date ?? c.first_air_date).map { String($0.prefix(4)) },
-                    rating: c.vote_average
-                )
-            }
-        return await mapToMetaItems(Array(raw.prefix(40)))
+                    releaseInfo: date.isEmpty ? nil : String(date.prefix(4)),
+                    rating: c.vote_average),
+                popularity: c.popularity ?? 0, votes: c.vote_count ?? 0, date: date)
+        }
+        return PersonCredits(entries: entries)
+    }
+
+    /// A page of a person's movies or shows in `sort`'s order.
+    static func credits(_ credits: PersonCredits, isMovie: Bool, sort: BrowseSort, page: Int) async -> BrowsePage {
+        let today = Date().formatted(.iso8601.year().month().day())
+        var list = credits.entries.filter { $0.raw.isMovie == isMovie }
+        let total = list.count
+        switch sort {
+        case .popular:
+            list.sort { $0.popularity > $1.popularity }
+        case .topRated:
+            list = list.filter { $0.votes >= 50 }
+            list.sort { ($0.raw.rating ?? 0) > ($1.raw.rating ?? 0) }
+        case .newest:
+            list = list.filter { !$0.date.isEmpty && $0.date <= today }
+            list.sort { $0.date > $1.date }
+        case .alphabetical:
+            list.sort { $0.raw.name.localizedStandardCompare($1.raw.name) == .orderedAscending }
+        }
+        let start = (page - 1) * browsePageSize
+        guard start < list.count else { return BrowsePage(items: [], total: total, hasMore: false) }
+        let end = min(start + browsePageSize, list.count)
+        return BrowsePage(items: await mapToMetaItems(list[start ..< end].map(\.raw)),
+                          total: total, hasMore: end < list.count)
     }
 }
 

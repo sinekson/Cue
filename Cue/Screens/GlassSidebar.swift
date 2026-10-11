@@ -58,10 +58,10 @@ struct GlassSidebar: View {
     /// can tell whether this is actually a change of tab (vs. re-tapping the
     /// tab you're already on) and react accordingly.
     var onTabSelected: (Int) -> Void = { _ in }
-    /// The billboard ⇄ Details swap: the items move away (`ModeSwap`). On
-    /// the items themselves — an offset on the whole full-screen bar view
-    /// never showed.
-    var swapAway = false
+    /// Hidden: the bar moves out the top (shown: back in) — the one way it
+    /// hides, app-wide. On the items themselves — an offset on the whole
+    /// full-screen bar view never showed.
+    var hidden = false
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
@@ -132,8 +132,8 @@ struct GlassSidebar: View {
             .animation(.smooth(duration: 0.3), value: navFocused)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .offset(y: swapAway ? -ModeSwap.chromeTravel : 0)
-        .animation(ModeSwap.swap, value: swapAway)
+        .offset(y: hidden ? -Self.hideTravel : 0)
+        .animation(Self.motion, value: hidden)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
@@ -157,6 +157,10 @@ struct GlassSidebar: View {
             selected = focused
         }
     }
+
+    /// Hiding: up past the screen's top edge, on the app's move.
+    static var hideTravel: CGFloat { topBarTop + topBarItemHeight + 30 }
+    static var motion: Animation { Motion.move }
 
     /// The tab pill: how much it grows while the navigation has focus.
     static let focusedScale: CGFloat = 1.06

@@ -9,6 +9,8 @@ struct MenuEntry {
     var destructive = false
     /// A second step before it acts (a whole series marked watched).
     var confirm: String?
+    /// A dropdown's current choice: a check at the row's end.
+    var checked = false
     let run: () -> Void
 }
 
@@ -29,6 +31,8 @@ struct HoldMenuRequest {
     /// then starts where the next card does (right) or ends where the one
     /// before ends (left). Nil: just beside the held card.
     var row: (rest: CGRect, gap: CGFloat)? = nil
+    /// A dropdown: the panel opens under the anchor, on its left edge.
+    var below = false
 }
 
 /// A UIKit screen with hold menus: the menu for the focused card (nil: none
@@ -142,6 +146,16 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
         present(request)
     }
 
+    /// A dropdown: `entries` in a panel under `anchor` (window points), opened
+    /// by Select on a control — not a hold. `onHeld`: the control while its
+    /// list is open (true) and back (false).
+    func openDropdown(_ entries: [MenuEntry], below anchor: CGRect, onHeld: ((Bool) -> Void)? = nil) {
+        install()
+        var request = HoldMenuRequest(entries: entries, anchor: anchor, onHeld: onHeld)
+        request.below = true
+        present(request)
+    }
+
     /// The menu, over whatever is in front.
     private func present(_ request: HoldMenuRequest) {
         guard let window else { return }
@@ -250,6 +264,18 @@ private final class HoldMenuController: UIViewController {
             let rest = view.convert(row.rest, from: nil)
             return (rest.maxX + row.gap, rest.minX - row.gap)
         } ?? (anchor.maxX + Self.gap, anchor.minX - Self.gap)
+        if request.below {
+            // Under the button, sharing its left edge — or its right edge, for
+            // a button on the screen's right half.
+            let alignRight = anchor.midX > view.bounds.midX
+            let x = min(max(alignRight ? anchor.maxX - size.width : anchor.minX, Self.margin),
+                        view.bounds.width - Self.margin - size.width)
+            let y = min(anchor.maxY + 14, view.bounds.height - Self.margin - size.height)
+            panel.view.layer.anchorPoint = CGPoint(x: alignRight ? 1 : 0, y: 0)
+            panel.view.bounds = CGRect(origin: .zero, size: size)
+            panel.view.center = CGPoint(x: alignRight ? x + size.width : x, y: y)
+            return
+        }
         let right = start + size.width <= view.bounds.width - Self.margin
         let x = right ? start : end - size.width
         let y = min(max(anchor.minY, Self.margin), view.bounds.height - Self.margin - size.height)
@@ -316,7 +342,8 @@ private struct HoldMenuPanel: View {
                 row("Cancel", icon: "xmark", destructive: false, id: 1) { confirming = nil; focused = index }
             } else {
                 ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
-                    row(entry.title, icon: entry.icon, destructive: entry.destructive, id: index) {
+                    row(entry.title, icon: entry.icon, destructive: entry.destructive, id: index,
+                        checked: entry.checked) {
                         if entry.confirm != nil {
                             confirming = index
                             focused = 0
@@ -338,13 +365,25 @@ private struct HoldMenuPanel: View {
         }
     }
 
-    private func row(_ title: String, icon: String, destructive: Bool, id: Int,
+    /// A dropdown (a check somewhere): every row keeps room for it in front
+    /// (the system menus' way), so the titles line up, checked or not.
+    private var reservesCheck: Bool { entries.contains { $0.checked } }
+
+    private func row(_ title: String, icon: String, destructive: Bool, id: Int, checked: Bool = false,
                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 18) {
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .semibold))
-                    .frame(width: 32)
+                if reservesCheck {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 22, weight: .bold))
+                        .frame(width: 28)
+                        .opacity(checked ? 1 : 0)
+                }
+                if !icon.isEmpty {
+                    Image(systemName: icon)
+                        .font(.system(size: 24, weight: .semibold))
+                        .frame(width: 32)
+                }
                 Text(title)
                     .font(.system(size: 26, weight: .medium))
                     .lineLimit(1)

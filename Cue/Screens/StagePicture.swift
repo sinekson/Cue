@@ -16,14 +16,9 @@ import UIKit
 /// exactly the rows' animation.
 final class StagePictureView: UIView {
     static let pictureSize = CGSize(width: 1920, height: 1080)
-    /// How far the picture drifts on a change (the box's 30 pt).
-    static let drift: CGFloat = 30
-    /// The picture's drift with Depth + cascade (the text's: 44).
-    static let depthDrift: CGFloat = 12
-    /// Billboard change → Scroll: the dark gap between two pages, and the
-    /// time a page takes to cross (longer than a move: it's the screen).
-    static let scrollGap: CGFloat = 40
-    static let scrollTime: Double = 0.55
+    /// How far the billboard's picture drifts on a change (its text only
+    /// crossfades — `BillboardCrossfade`).
+    static let drift: CGFloat = 16
     /// Render Lab → Billboard: slow zoom — to this, over this long.
     static let slowZoom: CGFloat = 1.04
     static let slowZoomTime: Double = 9
@@ -125,84 +120,32 @@ final class StagePictureView: UIView {
             breathe(page)
             return
         }
-        // DRIFT (Home's box): the new picture fades in shifting a little the
-        // way you went, the old one fades out shifting on. (Render Lab →
-        // Billboard change → Depth + cascade: less — the picture is far.)
-        // (Billboard change → Scroll: a real page scroll — the whole width
-        // and a gap, no fade: the old page slides out as the new slides in.)
-        let change = RenderProbe.shared.flags.billboardChange
-        let scrolls = change == "scroll"
-        let dx = direction * (scrolls ? pageFrame.width + Self.scrollGap
-            : change == "depthCascade" ? Self.depthDrift : Self.drift)
+        // DRIFT: the new picture fades in shifting a little the way you
+        // went, the old one fades out shifting on.
+        let dx = direction * Self.drift
         let incoming = UIImageView(frame: pageFrame.offsetBy(dx: dx, dy: 0))
         Self.style(incoming)
         load(url, into: incoming)
         breathe(incoming)
-        incoming.alpha = scrolls ? 1 : 0
+        incoming.alpha = 0
         zoom.addSubview(incoming)
         let outgoing = page
         page = incoming
         let target = pageFrame
-        FixedFocusMotion.run(vertical: false, duration: scrolls ? Self.scrollTime : Motion.durations.move,
-                             damping: 1) {
+        FixedFocusMotion.run(vertical: false, duration: Motion.durations.move, damping: 1) {
             incoming.frame = target
             incoming.alpha = 1
             outgoing.frame = target.offsetBy(dx: -dx, dy: 0)
-            outgoing.alpha = scrolls ? 1 : 0
+            outgoing.alpha = 0
         } completion: { _ in
             if outgoing !== self.page { outgoing.removeFromSuperview() }
         }
-    }
-
-    /// Billboard change → Scroll, with the text (the rows' controller runs
-    /// it — `FixedFocusRowsController.scrollBillboard`): the next picture put
-    /// a page over, and what moves both pages, to run in the SAME animation
-    /// as the text. (`show` would run its own.)
-    func prepareScroll(_ url: String?, direction: CGFloat) -> (distance: CGFloat, moves: () -> Void,
-                                                                 done: () -> Void)? {
-        guard url != shownURL else { return nil }
-        shownURL = url
-        applyTint(for: url, animated: true)
-        if blursBelow { loadBlurred(url) }
-        let dx = direction * (pageFrame.width + Self.scrollGap)
-        let incoming = UIImageView(frame: pageFrame.offsetBy(dx: dx, dy: 0))
-        Self.style(incoming)
-        load(url, into: incoming)
-        zoom.addSubview(incoming)
-        let outgoing = page
-        // (The old one's slow zoom stopped where it is: it slides out still.)
-        freezeBreathe(outgoing)
-        page = incoming
-        let target = pageFrame
-        return (dx, {
-            incoming.frame = target
-            outgoing.frame = target.offsetBy(dx: -dx, dy: 0)
-        }, {
-            if outgoing !== self.page { outgoing.removeFromSuperview() }
-            // The slow zoom only once the page has landed — zooming while it
-            // moves, the picture swam under the text.
-            if incoming === self.page { self.breathe(incoming) }
-        })
     }
 
     /// Render Lab → Billboard: slow zoom — the picture zooms in very slowly
     /// while it shows (from the start of each title). A layer animation
     /// only: the view's own transform and frame stay as they are (the drift
     /// moves the frame at the same time).
-    /// The slow zoom held where it is now (a page leaving).
-    private func freezeBreathe(_ view: UIImageView) {
-        guard view.layer.animation(forKey: "breathe") != nil,
-              let scale = view.layer.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat else { return }
-        view.layer.removeAnimation(forKey: "breathe")
-        let hold = CABasicAnimation(keyPath: "transform.scale")
-        hold.fromValue = scale
-        hold.toValue = scale
-        hold.duration = 60
-        hold.fillMode = .forwards
-        hold.isRemovedOnCompletion = false
-        view.layer.add(hold, forKey: "breathe")
-    }
-
     /// The billboard picture slowly zooming now (`DetailTransition` starts
     /// Details' picture at its exact size).
     static weak var breathing: UIImageView?

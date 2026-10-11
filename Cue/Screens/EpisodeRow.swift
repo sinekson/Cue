@@ -788,6 +788,8 @@ struct SeasonProgressMap: View {
     /// line, the label's end at its end.
     var inline = false
     var width: CGFloat = Self.width
+    /// Not inline: the label over the ticks' middle (centred on the screen).
+    var centered = false
 
     /// The map's width: the box's text column.
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
@@ -821,7 +823,7 @@ struct SeasonProgressMap: View {
                     labelText
                 }
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: centered ? .center : .leading, spacing: 12) {
                     labelText
                     if asBar { bar } else { row }
                 }

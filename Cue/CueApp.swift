@@ -99,7 +99,6 @@ extension Route {
         case .detail: return "Detail"
         case .collection: return "Collection"
         case .folder: return "Folder"
-        case .folderPart: return "Folder Part"
         case .person: return "Cast"
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
@@ -115,8 +114,7 @@ extension Route {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
         case .collection(let c): return c.title
-        case .folder(let c, let f): return "\(c.title) → \(f.title)"
-        case .folderPart(let c, let f, let part): return "\(c.title) → \(f.title) → \(part)"
+        case .folder(let c, let f, _): return "\(c.title) → \(f.title)"
         case .person(_, let name): return name
         case .tmdbCompany(_, let name, _): return name
         case .genre(_, let name, _): return name
@@ -141,10 +139,9 @@ enum Route: Hashable {
     /// Over) instead of the saved position.
     case streamsResume(MetaItem, MetaVideo?, fromStart: Bool)
     case collection(CueCollection)
-    /// A folder of a collection, opened from its Home row.
-    case folder(CueCollection, CueCollectionFolder)
-    /// One catalog of a folder, in full (its part's "See All").
-    case folderPart(CueCollection, CueCollectionFolder, String)
+    /// A folder of a collection, opened from its Home row — on Movies /
+    /// Series, only that type (`type`).
+    case folder(CueCollection, CueCollectionFolder, type: String? = nil)
     case person(id: Int, name: String)
     /// A studio's titles — or a network's (`network`), its shows.
     case tmdbCompany(id: Int, name: String, network: Bool = false)
@@ -497,6 +494,7 @@ struct RootView: View {
                     }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
+                    if args.contains("-moviesDemo") { selectedTab = AppTab.movies.rawValue }
                     // A collection's folder, opened from Home (the simulator can't
                     // select): `-folderDemo <n>` — the n-th collection's first.
                     if let flag = args.firstIndex(of: "-folderDemo") {
@@ -506,6 +504,26 @@ struct RootView: View {
                             let shelves = collections.collections.filter { !$0.folders.isEmpty }
                             if shelves.indices.contains(n), let folder = shelves[n].folders.first {
                                 homePath.append(Route.folder(shelves[n], folder))
+                            }
+                        }
+                    }
+                    // A browse page (genre, tag, studio, network, person),
+                    // opened from Home: `-browseDemo <kind> <tmdb id> <name>`.
+                    if let flag = args.firstIndex(of: "-browseDemo"), flag + 3 < args.count,
+                       let id = Int(args[flag + 2]) {
+                        let name = args[flag + 3]
+                        let route: Route? = switch args[flag + 1] {
+                        case "person": .person(id: id, name: name)
+                        case "genre": .genre(id: id, name: name, isMovie: true)
+                        case "keyword": .keyword(id: id, name: name, isMovie: true)
+                        case "company": .tmdbCompany(id: id, name: name, network: false)
+                        case "network": .tmdbCompany(id: id, name: name, network: true)
+                        default: nil
+                        }
+                        if let route {
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .seconds(2))
+                                homePath.append(route)
                             }
                         }
                     }
@@ -1030,18 +1048,16 @@ struct RootView: View {
                     }
                 }
 
-            if showSidebar {
+            // Always there: hidden, it moves out the top (and back in) — one
+            // motion app-wide (`GlassSidebar.hidden`).
+            do {
+                let barHidden = !showSidebar || homeChromeOut
                 GlassSidebar(selected: $selectedTab, focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             // The billboard ⇄ Details swap: the bar moves
-                             // away (up) — inside the bar, on its items (see
-                             // `GlassSidebar.swapAway`).
-                             swapAway: homeChromeOut)
-                    .opacity(homeChromeOut ? 0 : 1)
-                    .animation(ModeSwap.swap, value: homeChromeOut)
+                             hidden: barHidden)
                     .focusSection()
-                    .disabled(!sidebarEnabled || homeChromeOut || !atTabRoot || topBarLock.locked)
+                    .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
                     // of falling through to the system (which quit the app).
                     .onExitCommand { collapseSidebarFromExit() }
@@ -1391,7 +1407,7 @@ struct RootView: View {
             onResume: { resume($0) },
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
-            onOpenFolder: { path.wrappedValue.append(Route.folder($0, $1)) },
+            onOpenFolder: { path.wrappedValue.append(Route.folder($0, $1, type: filter)) },
             onContentReady: {
                 // Give the freshly-loaded rows a beat to render and take
                 // initial focus before the rail becomes focusable. This must
@@ -1411,6 +1427,15 @@ struct RootView: View {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { append(Route.detail(item)) }
+        }
+    }
+
+    /// Details pushed without the system's slide (a title's zoom brings it in).
+    private func openInPlace(_ path: Binding<NavigationPath>) -> (MetaItem) -> Void {
+        { item in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
         }
     }
 
@@ -1446,17 +1471,16 @@ struct RootView: View {
             .probeScreen(route.probeName) { route.probeDetail }
     }
 
-    /// A collection's folder (or one of its parts, in full).
-    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, part: String?,
+    /// A collection's folder.
+    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, type: String?,
                             path: Binding<NavigationPath>) -> some View {
-        FolderView(collection: collection, folder: folder, part: part,
+        FolderView(collection: collection, folder: folder, type: type,
                    onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                    onOpenInPlace: { item in
                        var transaction = Transaction()
                        transaction.disablesAnimations = true
                        withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
-                   },
-                   onSeeAll: { path.wrappedValue.append(Route.folderPart(collection, folder, $0)) })
+                   })
     }
 
     @ViewBuilder
@@ -1491,18 +1515,24 @@ struct RootView: View {
             )
         case .collection(let collection):
             CollectionView(collection: collection) { openDetail($0) { path.wrappedValue.append($0) } }
-        case .folder(let collection, let folder):
-            folderView(collection, folder, part: nil, path: path)
-        case .folderPart(let collection, let folder, let part):
-            folderView(collection, folder, part: part, path: path)
+        case .folder(let collection, let folder, let type):
+            folderView(collection, folder, type: type, path: path)
         case .person(let id, let name):
-            CastDetailView(personID: id, personName: name) { openDetail($0) { path.wrappedValue.append($0) } }
+            TMDBBrowseView(personID: id, title: name,
+                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
+                          onOpenInPlace: openInPlace(path))
         case .genre(let id, let name, let isMovie):
-            TMDBBrowseView(genreID: id, title: name, isMovie: isMovie) { openDetail($0) { path.wrappedValue.append($0) } }
+            TMDBBrowseView(genreID: id, title: name, isMovie: isMovie,
+                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
+                          onOpenInPlace: openInPlace(path))
         case .keyword(let id, let name, let isMovie):
-            TMDBBrowseView(keywordID: id, title: name, isMovie: isMovie) { openDetail($0) { path.wrappedValue.append($0) } }
+            TMDBBrowseView(keywordID: id, title: name, isMovie: isMovie,
+                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
+                          onOpenInPlace: openInPlace(path))
         case .tmdbCompany(let id, let name, let network):
-            TMDBBrowseView(companyID: id, title: name, network: network) { openDetail($0) { path.wrappedValue.append($0) } }
+            TMDBBrowseView(companyID: id, title: name, network: network,
+                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
+                          onOpenInPlace: openInPlace(path))
         case .catalogSeeAll(let addon, let catalog, let title):
             CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { openDetail($0) { path.wrappedValue.append($0) } }
         case .streams(let meta, let video):

@@ -387,6 +387,11 @@ final class RenderProbe: ObservableObject {
         /// Details: under the billboard the episodes' cards peek (their top
         /// at the bottom edge, dimmed) instead of the "Episodes ⌄" hint.
         var detailsPeekEpisodes = true
+        /// Details: the season's progress ("Season 2 • 3 of 13 watched",
+        /// the ticks under it) on the billboard, at the peek's name line —
+        /// it rides up with the episodes to above their season buttons
+        /// (instead of the line between the buttons and the cards).
+        var detailsProgressOnBillboard = false
         /// Home (billboard like Details): under the billboard the first row
         /// peeks — its name above its cards' top, darkened — instead of its
         /// name on the billboard.
@@ -462,7 +467,7 @@ final class RenderProbe: ObservableObject {
         var buttonCaptions = true
         /// New Home: how the cards stand off the background
         /// (`FixedFocusCardEdge`).
-        var cardEdge = "topLight"
+        var cardEdge = "rim"
         /// Every focused card's outline: "strong" (4 pt, 85 %) or "soft"
         /// (3 pt, 75 %).
         var focusOutline = "soft"
@@ -482,10 +487,6 @@ final class RenderProbe: ObservableObject {
         /// The billboard's chips (status, ratings): "first" right under the
         /// logo, "last" under the tagline.
         var billboardChips = "first"
-        /// The billboard's Left/Right change: "drift" (text and picture
-        /// drift together) or "depthCascade" (the text further, the picture
-        /// less; the text's parts one after another).
-        var billboardChange = "drift"
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
         /// The billboard's picture zooms very slowly while it shows.
@@ -542,6 +543,8 @@ final class RenderProbe: ObservableObject {
             detailsOnRows = (try? c.decode(Bool.self, forKey: .detailsOnRows)) ?? d.detailsOnRows
             detailsSeasonButtons = (try? c.decode(Bool.self, forKey: .detailsSeasonButtons)) ?? d.detailsSeasonButtons
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
+            detailsProgressOnBillboard = (try? c.decode(Bool.self, forKey: .detailsProgressOnBillboard))
+                ?? d.detailsProgressOnBillboard
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
@@ -573,13 +576,14 @@ final class RenderProbe: ObservableObject {
             detailsPictureDim = (try? c.decode(Double.self, forKey: .detailsPictureDim)) ?? d.detailsPictureDim
             buttonCaptions = (try? c.decode(Bool.self, forKey: .buttonCaptions)) ?? d.buttonCaptions
             cardEdge = (try? c.decode(String.self, forKey: .cardEdge)) ?? d.cardEdge
+            // (The rim's trial versions — "rimSoft", "rimThin" — are the rim.)
+            if cardEdge.hasPrefix("rim") { cardEdge = "rim" }
             focusOutline = (try? c.decode(String.self, forKey: .focusOutline)) ?? d.focusOutline
             detailsPictureBlur = (try? c.decode(Double.self, forKey: .detailsPictureBlur)) ?? d.detailsPictureBlur
             detailsBlurCap = (try? c.decode(Double.self, forKey: .detailsBlurCap)) ?? d.detailsBlurCap
             detailsVignetteBelow = (try? c.decode(Bool.self, forKey: .detailsVignetteBelow)) ?? d.detailsVignetteBelow
             buttonFocusTime = (try? c.decode(Double.self, forKey: .buttonFocusTime)) ?? d.buttonFocusTime
             billboardChips = (try? c.decode(String.self, forKey: .billboardChips)) ?? d.billboardChips
-            billboardChange = (try? c.decode(String.self, forKey: .billboardChange)) ?? d.billboardChange
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
             billboardSlowZoom = (try? c.decode(Bool.self, forKey: .billboardSlowZoom)) ?? d.billboardSlowZoom
             episodesLeftFade = (try? c.decode(Double.self, forKey: .episodesLeftFade)) ?? d.episodesLeftFade
