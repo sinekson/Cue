@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Details' last row, About: what the overview leaves out. The full
-/// description (focused: a card; Select reads it whole), the facts three to
-/// a line
-/// — when, how long, genres, who made it; original title, language,
-/// country, rating, network; budget and box office — every rating source
-/// shown, and the studios as logos that open their titles.
+/// Details' last row, About: three columns of one width side by side, each
+/// as long as it needs (down to the screen's bottom), read left to right —
+/// what it is, what happens, the details. The genres, then the tags (TMDB's
+/// keywords), as chips shaped like the ratings' — each opens its titles
+/// (focus comes in on the first genre); the summary, whole; the facts, two
+/// to a line — when/how long/rated → who → where from → how big — and every
+/// rating, wrapping. (The network and studios are a row of their own,
+/// before this one.)
 struct DetailAbout: View {
     let meta: MetaItem
     let about: TMDBService.About?
@@ -15,138 +17,226 @@ struct DetailAbout: View {
     let language: String?
     let ratings: MDBListRatings?
     let settings: MDBListSettings
-    let companies: [TMDBService.Company]
-    let onExpand: () -> Void
-    let onSelectCompany: (TMDBService.Company) -> Void
+    /// The studios have logos (shown in their row): none here by name.
+    var studiosShown = false
+    /// The title's crew (a film's writers come from it).
+    var crew: [TMDBService.CastMember] = []
+    var onSelectGenre: (TMDBService.Genre) -> Void = { _ in }
+    var onSelectKeyword: (TMDBService.Keyword) -> Void = { _ in }
     let onFocus: (Bool) -> Void
-    /// Goes up: focus onto the description (else the first logo).
+    /// Its content's height, as laid out (the rows rest it so it just fits).
+    var onContentHeight: (CGFloat) -> Void = { _ in }
+    /// Goes up: focus onto the first genre (else tag).
     var focusRequest = 0
 
-    private enum Focus: Hashable { case description, company(TMDBService.Company) }
-    @FocusState private var focus: Focus?
+    private enum Chip: Hashable { case genre(TMDBService.Genre), keyword(TMDBService.Keyword) }
+    @FocusState private var focused: Chip?
 
-    static let descriptionWidth: CGFloat = 700
-    /// The card's text inset: the text itself lines up with the heading.
-    private static let inset: CGFloat = 28
+    /// TMDB's genres (else the catalog's, where TMDB knows the name).
+    private var genres: [TMDBService.Genre] {
+        if let genres = about?.genres, !genres.isEmpty { return genres }
+        return (meta.genres ?? []).compactMap { TMDBService.genre(named: $0, isMovie: !meta.isSeries) }
+    }
+    private var keywords: [TMDBService.Keyword] { about?.keywords ?? [] }
+
+    static let boxGap: CGFloat = 64
+    static var boxWidth: CGFloat {
+        ((1920 - FixedFocusMetrics.titleInset - Spotlight.screenInset - 2 * boxGap) / 3).rounded(.down)
+    }
+    static let columnGap: CGFloat = 24
+    /// Between the title's name above and About's first line.
+    static let topGap: CGFloat = 8
+
+    private var columnWidth: CGFloat { ((Self.boxWidth - Self.columnGap) / 2).rounded(.down) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 80) {
-            if let text = meta.description, !text.isEmpty {
-                // Plain text at rest; focused, the plate comes up around it.
-                Button(action: onExpand) {
-                    Text(text)
-                        .font(.system(size: 24))
-                        .lineSpacing(5)
-                        .lineLimit(9)
-                        .frame(width: Self.descriptionWidth, alignment: .topLeading)
-                        .padding(Self.inset)
-                }
-                .buttonStyle(AboutCardStyle(rest: 0))
-                .padding(.leading, -Self.inset)
-                .padding(.top, -Self.inset)
-                .focused($focus, equals: .description)
-            }
-            VStack(alignment: .leading, spacing: 36) {
-                factGrid
-                let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating)
-                if !entries.isEmpty {
-                    labelled("Ratings") {
-                        MDBListRatingsRow(entries: entries, inline: true, chips: .chips)
-                    }
-                }
-                if !companies.isEmpty {
-                    labelled(companies.contains(where: \.isNetwork) ? "Network & Studios" : "Studios") {
-                        HStack(spacing: 20) {
-                            ForEach(companies.prefix(6), id: \.self) { company in
-                                Button { onSelectCompany(company) } label: { StudioLogo(company: company) }
-                                    .buttonStyle(AboutCardStyle(corner: 12, rest: 0.9))
-                                    .focused($focus, equals: .company(company))
-                            }
-                        }
-                    }
-                    // Right from the description reaches the logos, wherever
-                    // they sit below it.
-                    .focusSection()
-                }
-            }
+        HStack(alignment: .top, spacing: Self.boxGap) {
+            genresBox
+            summaryBox
+            factsBox
         }
-        .padding(.trailing, Spotlight.screenInset)
-        .onChange(of: focus) { _, now in onFocus(now != nil) }
+        .padding(.top, Self.topGap)
+        .background { GeometryReader { geo in
+            Color.clear
+                .onAppear { onContentHeight(geo.size.height) }
+                .onChange(of: geo.size.height) { _, height in onContentHeight(height) }
+        } }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // The page's end: a dark band from a little above About's name, the
+        // screen's width, all the way down — a clean edge at its top.
+        .background(alignment: .topLeading) { band }
+        .onChange(of: focused) { _, now in onFocus(now != nil) }
         .onChange(of: focusRequest) { _, _ in
-            if meta.description?.isEmpty == false { focus = .description }
-            else if let first = companies.first { focus = .company(first) }
+            if let first = genres.first { focused = .genre(first) }
+            else if let first = keywords.first { focused = .keyword(first) }
         }
     }
 
-    /// The facts, three to a line: the name small above, the value.
-    private var factGrid: some View {
-        let facts = leftFacts + rightFacts
-        let rows = stride(from: 0, to: facts.count, by: 3).map { Array(facts[$0 ..< min($0 + 3, facts.count)]) }
-        return Grid(alignment: .topLeading, horizontalSpacing: 48, verticalSpacing: 26) {
+    /// About's band: black at half.
+    static let bandOpacity = 0.5
+    /// How far above About's name the band starts (its name: above this
+    /// view — see `FixedFocusRows.customRows`).
+    static var bandRise: CGFloat { FixedFocusMetrics.titleHeight + 36 }
+
+    private var band: some View {
+        Color.black.opacity(Self.bandOpacity)
+        // (The whole screen's width, from the screen's left edge; past the
+        // screen's bottom.)
+        .frame(width: 1920, height: 1400)
+        .offset(x: -FixedFocusMetrics.titleInset, y: -Self.bandRise)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: Boxes
+
+    /// The summary, whole, under its name (as the other columns' parts).
+    private var summaryBox: some View {
+        Group {
+            if let text = meta.description, !text.isEmpty {
+                labelled("Summary") {
+                    Text(text)
+                        .font(.system(size: 24))
+                        .lineSpacing(5)
+                        .foregroundStyle(Color.white.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(width: Self.boxWidth, alignment: .topLeading)
+    }
+
+    /// The facts two to a line (an empty one leaves no gap), then every
+    /// rating.
+    private var factsBox: some View {
+        let all = factLines.flatMap { $0 }
+        let rows = stride(from: 0, to: all.count, by: 2).map { Array(all[$0 ..< min($0 + 2, all.count)]) }
+        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating)
+        return VStack(alignment: .leading, spacing: 18) {
             ForEach(rows.indices, id: \.self) { r in
-                GridRow {
+                HStack(alignment: .top, spacing: Self.columnGap) {
                     ForEach(rows[r], id: \.0) { label, value in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(label.uppercased())
-                                .font(.system(size: 17, weight: .semibold))
-                                .tracking(1)
-                                .foregroundStyle(Color.white.opacity(0.5))
-                            Text(value)
-                                .font(.system(size: 24))
-                                .foregroundStyle(Color.white.opacity(0.9))
-                                .lineLimit(2)
+                        fact(label, value).frame(width: columnWidth, alignment: .leading)
+                    }
+                }
+            }
+            if !entries.isEmpty {
+                labelled("Ratings") {
+                    MDBListRatingsRow(entries: entries, inline: true, chips: .chips, wraps: true)
+                }
+            }
+        }
+        .frame(width: Self.boxWidth, alignment: .topLeading)
+    }
+
+    /// The genres, then the tags — chips, wrapping, each opening its titles.
+    private var genresBox: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            if !genres.isEmpty {
+                labelled("Genres") {
+                    InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                        ForEach(genres, id: \.self) { genre in
+                            Button { onSelectGenre(genre) } label: { Text(genre.name) }
+                                .buttonStyle(AboutChipStyle())
+                                .focused($focused, equals: .genre(genre))
                         }
-                        .frame(width: 290, alignment: .leading)
+                    }
+                }
+            }
+            if !keywords.isEmpty {
+                labelled("Tags") {
+                    InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                        ForEach(keywords, id: \.self) { keyword in
+                            Button { onSelectKeyword(keyword) } label: { Text(keyword.name) }
+                                .buttonStyle(AboutChipStyle())
+                                .focused($focused, equals: .keyword(keyword))
+                        }
                     }
                 }
             }
         }
+        .frame(width: Self.boxWidth, alignment: .topLeading)
+        // Into About from above: on the first genre (else tag), not the chip
+        // nearest to where focus came from.
+        .focusSection()
+        .defaultFocus($focused, genres.first.map(Chip.genre) ?? keywords.first.map(Chip.keyword),
+                      priority: .userInitiated)
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Self.label(label)
+            Text(value)
+                .font(.system(size: 24))
+                .foregroundStyle(Color.white.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private static func label(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 17, weight: .semibold))
+            .tracking(1)
+            .foregroundStyle(Color.white.opacity(0.5))
     }
 
     // MARK: Facts
 
-    private var leftFacts: [(String, String)] {
-        var rows: [(String, String)] = []
+    /// When and how long, for whom → who made it → where from → how big.
+    private var factLines: [[(String, String)]] {
+        var when: [(String, String)] = []
+        var who: [(String, String)] = []
         if meta.isSeries {
-            if let years = airYears { rows.append(("Aired", years)) }
+            if let years = airYears { when.append(("Aired", years)) }
             if let size = SeriesEpisodes.size(of: meta) {
-                rows.append(("Episodes", "\(size.episodes) in \(size.seasons) \(size.seasons == 1 ? "season" : "seasons")"))
+                when.append(("Episodes", "\(size.episodes) in \(size.seasons) \(size.seasons == 1 ? "season" : "seasons")"))
             }
         } else {
-            if let released = DateFormat.releaseDate(releaseDate) ?? meta.releaseInfo { rows.append(("Released", released)) }
-            if let minutes = facts?.runtimeMinutes, minutes > 0 { rows.append(("Runtime", Self.duration(minutes))) }
+            if let released = Self.shortDate(releaseDate) ?? meta.releaseInfo { when.append(("Released", released)) }
+            if let minutes = facts?.runtimeMinutes, minutes > 0 { when.append(("Runtime", Self.duration(minutes))) }
         }
-        if let genres = meta.genres, !genres.isEmpty { rows.append(("Genres", genres.joined(separator: ", "))) }
-        // "Director: …" / "Creators: …" as its own row.
+        if let rating = contentRating, !rating.isEmpty { when.append(("Rated", rating)) }
+        // "Director: …" / "Creators: …".
         if let line = facts?.creatorLine, let colon = line.firstIndex(of: ":") {
-            rows.append((String(line[..<colon]), line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)))
+            who.append((String(line[..<colon]), line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)))
         }
-        return rows
-    }
-
-    private var rightFacts: [(String, String)] {
-        var rows: [(String, String)] = []
-        if let original = about?.originalTitle, !original.isEmpty, original != meta.name {
-            rows.append(("Original Title", original))
+        if !meta.isSeries {
+            let writers = crew.filter { member in
+                let jobs = member.character?.split(separator: "·").first ?? ""
+                return jobs.contains("Writer") || jobs.contains("Screenplay")
+            }.map(\.name)
+            if !writers.isEmpty { who.append((writers.count == 1 ? "Writer" : "Writers", writers.prefix(2).joined(separator: ", "))) }
         }
+        // Studios with no logo to show (no row of them): by name.
+        if !studiosShown, let studios = about?.studios, !studios.isEmpty {
+            who.append(("Studio", studios.prefix(2).joined(separator: ", ")))
+        }
+        var origin: [(String, String)] = []
         if let code = language?.lowercased(), let name = Locale.current.localizedString(forLanguageCode: code) {
-            rows.append(("Language", name))
+            origin.append(("Language", name))
         }
         if let countries = about?.countries, !countries.isEmpty {
-            rows.append((countries.count == 1 ? "Country" : "Countries", countries.prefix(3).joined(separator: ", ")))
+            origin.append((countries.count == 1 ? "Country" : "Countries", countries.prefix(2).joined(separator: ", ")))
         }
-        if let rating = contentRating, !rating.isEmpty { rows.append(("Rated", rating)) }
-        if let networks = about?.networks, !networks.isEmpty {
-            rows.append(("Network", networks.prefix(2).joined(separator: ", ")))
+        if let original = about?.originalTitle, !original.isEmpty, original != meta.name {
+            origin.append(("Original Title", original))
         }
-        // Studios with no logo to show: by name.
-        if companies.isEmpty, let studios = about?.studios, !studios.isEmpty {
-            rows.append(("Studios", studios.prefix(3).joined(separator: ", ")))
-        }
-        if let budget = about?.budget { rows.append(("Budget", Self.money(budget))) }
-        if let revenue = about?.revenue { rows.append(("Box Office", Self.money(revenue))) }
-        return rows
+        var money: [(String, String)] = []
+        if let budget = about?.budget { money.append(("Budget", Self.money(budget))) }
+        if let revenue = about?.revenue { money.append(("Box Office", Self.money(revenue))) }
+        return [when, who, origin, money].filter { !$0.isEmpty }
     }
+
+    /// "18 Dec 2002" — the columns are narrow.
+    private static func shortDate(_ iso: String?) -> String? {
+        guard let iso, let date = isoDay.date(from: String(iso.prefix(10))) else { return nil }
+        return shortDay.string(from: date)
+    }
+    private static let isoDay: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX"); return f
+    }()
+    private static let shortDay: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none; return f
+    }()
 
     /// "2016 – 2024", "2016 – Present" while it runs.
     private var airYears: String? {
@@ -157,11 +247,9 @@ struct DetailAbout: View {
     }
 
     private func labelled<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(label.uppercased())
-                .font(.system(size: 17, weight: .semibold))
-                .tracking(1)
-                .foregroundStyle(Color.white.opacity(0.5))
+        // (The facts' gap: the boxes' values line up.)
+        VStack(alignment: .leading, spacing: 6) {
+            Self.label(label)
             content()
         }
     }
@@ -179,53 +267,46 @@ struct DetailAbout: View {
     }
 }
 
-/// A studio's logo on a light plate (logos are drawn for light ground).
-private struct StudioLogo: View {
-    let company: TMDBService.Company
+/// A genre or tag: the rating chips' shape and height, filled instead of
+/// outlined, as wide as its word. Focused: the white fill, dark text, a
+/// little larger; pressed, a little less.
+private struct AboutChipStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Chip(configuration: configuration) }
 
-    var body: some View {
-        RemoteImage(url: company.logoURL, contentMode: .fit, maxDimension: 140)
-            .frame(width: 130, height: 50)
-            .frame(width: 160, height: 74)
-    }
-}
-
-/// The About section's focusable cards: a faint plate at rest, the white
-/// highlight (dark text) when focused, a slight lift.
-private struct AboutCardStyle: ButtonStyle {
-    var corner: CGFloat = 24
-    /// The plate's white at rest.
-    var rest: Double = 0.08
-
-    func makeBody(configuration: Configuration) -> some View { Card(configuration: configuration, style: self) }
-
-    private struct Card: View {
+    private struct Chip: View {
         @Environment(\.isFocused) private var isFocused
         let configuration: ButtonStyle.Configuration
-        let style: AboutCardStyle
 
         var body: some View {
             configuration.label
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(isFocused ? FlatControl.contentOnFocus : Color.white.opacity(0.85))
-                .background(RoundedRectangle(cornerRadius: style.corner, style: .continuous)
-                    .fill(isFocused ? FlatControl.focus : Color.white.opacity(style.rest)))
-                .scaleEffect(isFocused ? 1.04 : 1)
-                .shadow(color: .black.opacity(isFocused ? 0.35 : 0), radius: 16, y: 8)
-                .animation(.smooth(duration: 0.2), value: isFocused)
+                .lineLimit(1)
+                .frame(height: 21)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isFocused ? FlatControl.focus : Color.white.opacity(0.14)))
+                .scaleEffect(isFocused ? (configuration.isPressed ? 1.04 : 1.1) : 1)
+                .animation(Motion.focus, value: isFocused)
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
         }
     }
 }
 
-/// The description in full, over Details (the About card's Select).
-struct DetailAboutFull: View {
+/// Details' Info: the summary in full, in a glass panel over the page (it
+/// floats — glass). Select or Back closes it.
+struct DetailSummaryPanel: View {
     let title: String
     let text: String
     let onClose: () -> Void
+    /// Focus comes to it when it opens (over the UIKit rows: Back must close
+    /// it, not the page).
+    @FocusState private var focused: Bool
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 44, style: .continuous)
         ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
+            Color.black.opacity(0.4).ignoresSafeArea()
             Button(action: onClose) {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(title)
@@ -239,18 +320,17 @@ struct DetailAboutFull: View {
                 }
                 .padding(56)
                 .frame(maxWidth: 1240, alignment: .leading)
-                .background {
-                    Color.clear
-                        .liquidGlass(in: shape)
-                }
+                .background { Color.clear.liquidGlass(in: RoundedRectangle(cornerRadius: 44, style: .continuous)) }
             }
-            .buttonStyle(PlainNoChromeStyle())
+            .buttonStyle(SummaryPanelStyle())
+            .focused($focused)
         }
+        .onAppear { focused = true }
         .onExitCommand(perform: onClose)
     }
 }
 
-/// A button with no chrome of its own (the card draws everything).
-private struct PlainNoChromeStyle: ButtonStyle {
+/// The panel draws itself: no focus chrome.
+private struct SummaryPanelStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
 }

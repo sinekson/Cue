@@ -7,23 +7,44 @@ final class TMDBBrowseViewModel: ObservableObject {
 
     private var hasLoaded = false
 
-    let companyID: Int
-    let title: String
-    /// A network (its shows), not a studio.
-    let network: Bool
-
-    init(companyID: Int, title: String, network: Bool = false) {
-        self.companyID = companyID
-        self.title = title
-        self.network = network
+    enum Source {
+        case company(Int)
+        /// A network's shows.
+        case network(Int)
+        /// A genre's films or shows.
+        case genre(Int, isMovie: Bool)
+        /// A keyword's (tag's) films or shows.
+        case keyword(Int, isMovie: Bool)
     }
+    let source: Source
+    let title: String
+
+    init(source: Source, title: String) {
+        self.source = source
+        self.title = title
+    }
+
+    /// A genre or tag: its first pages together (a page is twenty).
+    private static let discoverPages = 3
 
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true
         defer { isLoading = false }
-        items = network ? await TMDBService.browseNetwork(id: companyID)
-                        : await TMDBService.browseCompany(id: companyID)
+        switch source {
+        case let .company(id): items = await TMDBService.browseCompany(id: id)
+        case let .network(id): items = await TMDBService.browseNetwork(id: id)
+        case let .genre(id, isMovie):
+            items = await Self.pages { await TMDBService.titlesByGenre(id: id, isMovie: isMovie, page: $0) }
+        case let .keyword(id, isMovie):
+            items = await Self.pages { await TMDBService.titlesByKeyword(id: id, isMovie: isMovie, page: $0) }
+        }
+    }
+
+    private static func pages(_ load: (Int) async -> [MetaItem]) async -> [MetaItem] {
+        var all: [MetaItem] = []
+        for page in 1...discoverPages { all += await load(page) }
+        return all.deduplicatedByID()
     }
 }
 
@@ -49,8 +70,22 @@ struct TMDBBrowseView: View {
     }
 
     init(companyID: Int, title: String, network: Bool = false, onSelect: @escaping (MetaItem) -> Void) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(companyID: companyID, title: title,
-                                                                   network: network))
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(
+            source: network ? .network(companyID) : .company(companyID), title: title))
+        self.onSelect = onSelect
+    }
+
+    /// A tag's titles (Details' tags).
+    init(keywordID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(source: .keyword(keywordID, isMovie: isMovie),
+                                                                   title: title))
+        self.onSelect = onSelect
+    }
+
+    /// A genre's titles (Details' genre tags).
+    init(genreID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(source: .genre(genreID, isMovie: isMovie),
+                                                                   title: title))
         self.onSelect = onSelect
     }
 
@@ -63,7 +98,7 @@ struct TMDBBrowseView: View {
                 CueEmptyState(
                     icon: "building.2.fill",
                     title: viewModel.title,
-                    message: "No titles available for this studio.",
+                    message: "No titles available.",
                     holdsFocus: true
                 )
             } else {

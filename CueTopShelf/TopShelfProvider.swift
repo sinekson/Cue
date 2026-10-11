@@ -65,7 +65,7 @@ final class TopShelfProvider: TVTopShelfContentProvider {
         if !libraryEntries.isEmpty {
             let items = libraryEntries.map { makeItem($0, scheme: scheme, shape: .poster) }
             let section = TVTopShelfItemCollection(items: items)
-            section.title = "Library"
+            section.title = "Saved for Later"
             sections.append(section)
         }
 

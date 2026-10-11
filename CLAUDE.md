@@ -41,7 +41,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`schemes.Cue.run.commandLineArguments`), back up and diff the scheme after,
   tell the user. Prefer adding code to existing files over new files.
 - `Cue/Secrets.swift` holds real keys and is gitignored — never commit it.
-- Dev launch args: `-detailDemo -detailID tt…`, `-detailDemoSeries [tt…]`
+- Dev launch args: `-detailDemo -detailID tt…` (a show; add `-detailMovie`
+  for a film — The Two Towers tt0167261 has a collection), `-detailDemoSeries [tt…]`
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
   `-transitionSlowMo` (4×), `-detailsHold`, `-holdMenuDemo`, `-browseDemo`,
   `-folderDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
@@ -85,13 +86,90 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Animation in `didUpdateFocus`. Fixed box at the focus spot for most rows;
   Continue Watching / Saved for Later use the box at their card size.
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
+  The focused row stays at its fixed spot near the top (not centred). The
+  row below always starts the same gap (`peekGap`) below what the focused
+  row draws — box info, captions, a panel's edge — so the peek varies, the
+  gap doesn't; at least `minimumPeek` (70) of its cards always shows. The
+  rows after it keep the same gap, so a row doesn't move again as it
+  becomes the next one; the rows above too (below the cards of the one
+  over them). Into a custom row (About) the rows only scroll as far as
+  needed to show all of it, ending `customBottomGap` (60) above the
+  screen's bottom — not at all if it already shows (`customContent`).
 - **Billboard**: Featured row with invisible cells; picture in UIKit, text in
   SwiftUI above. Content = `BillboardPicks` (new episodes → "Because you
   watched" → trending) with a reason label above the logo. Compact text: logo,
   chips (status + 3 ratings), facts, tagline — no summary. Down scrolls one
   whole screen. Pages by itself every 5 s, stops at the last title.
-- **Details** uses the billboard's text and shade. Exactly three buttons:
-  Play, Library, Trailer. Hold Play → straight to the source list.
+- **Details** uses the billboard's text and shade. Four buttons: Play,
+  Library, Trailer, Summary (`text.alignleft`). Hold Play → straight to the
+  source list. Summary opens the summary in place, in a glass panel
+  (`DetailSummaryPanel`); Back closes it, focus back on the button.
+  Play's pill says only "Play"; its caption (like the circles', only while
+  focused) says which episode and the time left ("S2:E13  ·  46m left"),
+  or "Finding a source…" while it searches.
+- **Details' episode row**: the billboard hint reads "Episodes ⌄" (not
+  "Season X"). In the row, glass season buttons replace the row's name
+  (moving focus; focusing one jumps the row there; Up from any card lands
+  on the row's season); the season progress ("Season 2 • 3 of 13
+  watched", ticks) between the buttons and the cards. Down from the billboard:
+  "Episodes ⌄" never fades or brightens — it trails the billboard's
+  buttons up and out (≥ 32 pt below them while they're on screen); the
+  season buttons and the map come up with the row, fading in (the Apple
+  TV app's way). Up reverses it. (A shorter Details-only move, 0.48 s, was
+  tried and dropped: same time as Home's.)
+  Under trial against the old variant (Render Lab → "Details: season
+  buttons" off): the row's name "‹ Season X ›" is the season control,
+  "ticks · 3 of 13" on a line under it.
+  Also under trial: Render Lab → "Details: peek the episodes" (on): the
+  episodes' cards peek 60 pt up the bottom edge under the billboard,
+  darkened to 50 % (a black cover on the cards, not
+  transparency), instead of "Episodes ⌄" (`FixedFocusRows.rigidPeek`).
+  Home has the same as a trial, off by default: Render Lab → "Home: peek
+  the first row" (its name stays above the darkened cards; the page dots
+  sit on that name's line).
+  Tried and dropped: progress inside each season button; the map above
+  the buttons; the map under the episodes' captions.
+- **Details' collection** (films; TMDB's collection — not Cue's Collections):
+  the first row below the billboard, above More Like This, named "More from
+  the … Collection". Fixed focus; the other parts in release order (the film
+  itself left out), starting on the first; upcoming parts kept, parts
+  without a picture left out. Details' peek never shows a row name (one
+  title's page — Apple's rule); Home's does.
+- **Details' Cast & Crew**: after More Like This. Moving focus, portraits
+  (2:3, Search's poster size — `compactPosterHeight`, TMDB `h632`), name + role under each; creators /
+  director first, then the cast (a show: `aggregate_credits`, most episodes
+  first), about 20; no photo: initials; Select: the person's page; no menu.
+- **Details' About**: the page's last row — a SwiftUI view in the rows
+  (`FixedFocusRows.customRows`), not cards. `DetailAbout`: three columns of
+  one width, each as long as it needs (room to the screen's bottom), left
+  to right: genres, then tags (TMDB keywords), as chips shaped like the
+  ratings' (filled, no outline; focused: white, dark text) — Select: that
+  genre's / keyword's films or shows (`Route.genre`, `Route.keyword`,
+  `TMDBBrowseView`); focus comes in on the first genre — then the summary,
+  whole, under "SUMMARY"; then the facts, two to a line (when/how long/rated → who → where
+  from → budget/box office; no network — it's in the row above), and every
+  rating, wrapping (not pressable). Behind it a dark band (black 50 %, a clean
+  edge, no fade) from just above its name to the bottom — the page's end.
+  Never dimmed, in focus or not.
+  Before it, **Network & Studios**: a moving-focus row of logos on
+  light plates (`logoRowIDs`), Select: their titles.
+- **Details' Cast & Crew**: after More Like This. Moving focus, portraits
+  (2:3, Search's poster size — `compactPosterHeight`, TMDB `h632`), name + role under each; creators /
+  director first, then the cast (a show: `aggregate_credits`, most episodes
+  first), about 20; no photo: initials; Select: the person's page; no menu.
+- **Details' About**: the page's last row — a SwiftUI view in the rows
+  (`FixedFocusRows.customRows`), not cards. `DetailAbout`. To read: the
+  summary in a fixed box (560 × 280, 8 lines, "…"; Select: all of it), beside
+  it the facts in three columns — when/how long/rated → who → where from
+  (language, country, original title) → budget/box office, empty ones close
+  up — and one line with every rating (not pressable). Below, where to go:
+  one line per kind, its name on the left — Genres (flat, slightly rounded
+  tags: links, not the season buttons' capsules; TMDB genres → that genre's
+  films or shows, `Route.genre`), later Tags (TMDB keywords, same look),
+  Network & Studios (logos). Fixed height per title.
+- **Details' More Like This**: fixed focus (Home's catalog style — the box
+  tells the title). TMDB recommendations (else similar), 12 titles; titles
+  not yet out or without any picture left out; watched films last.
 - **Into Details** (`DetailTransition`, Core Animation overlay):
   - Fade everywhere: Home dims, the cover zooms (0.55 s), info fades in at 85 %. ~0.8 s.
   - Billboard: in place; only Home-only parts fade, then the zoom.
@@ -122,7 +200,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 ## Open / later
 
-- Details' More rows: the user is studying the Apple TV app first; don't redesign.
+- Details below the episodes, agreed order: Trailers & Extras (TMDB videos,
+  no image galleries — parked until the playback work), More Like This,
+  Collection (films; built — above More Like This), Cast & Crew (built),
+  About (built).
+  Styles decided one row at a time.
+- Search: the keyboard (SwiftUI `.searchable`, already the one-line
+  keyboard, ~340 pt with its field) stays at the top and takes room — the
+  wish is for it to scroll away with the results. Tried (2026-10-11):
+  UIKit's `UISearchContainerViewController` presents itself full screen
+  when not a tab's root (top bar gone); a `UISearchController` embedded as a
+  child shows the keyboard and collapses it through
+  `searchControllerObservedScrollView` (a hidden scroll view driven by the
+  focused row works — needs `contentInsetAdjustmentBehavior = .never`), but
+  its field isn't on screen so typing goes nowhere, and adding the search
+  bar by hand crashed. Left: debug that, or our own one-line keyboard as a
+  row (no dictation).
 - Animations that block input; flat vs glass consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.

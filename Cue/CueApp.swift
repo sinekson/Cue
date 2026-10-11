@@ -102,6 +102,8 @@ extension Route {
         case .folderPart: return "Folder Part"
         case .person: return "Cast"
         case .tmdbCompany: return "Studio"
+        case .genre: return "Genre"
+        case .keyword: return "Tag"
         case .catalogSeeAll: return "See All"
         case .streams: return "Sources"
         case .streamsFromStart: return "Sources (from start)"
@@ -117,6 +119,8 @@ extension Route {
         case .folderPart(let c, let f, let part): return "\(c.title) → \(f.title) → \(part)"
         case .person(_, let name): return name
         case .tmdbCompany(_, let name, _): return name
+        case .genre(_, let name, _): return name
+        case .keyword(_, let name, _): return name
         case .catalogSeeAll(_, _, let title): return title
         case .streams(let meta, let video),
              .streamsFromStart(let meta, let video),
@@ -144,6 +148,10 @@ enum Route: Hashable {
     case person(id: Int, name: String)
     /// A studio's titles — or a network's (`network`), its shows.
     case tmdbCompany(id: Int, name: String, network: Bool = false)
+    /// A genre's titles (films or shows).
+    case genre(id: Int, name: String, isMovie: Bool)
+    /// A tag's (TMDB keyword's) titles.
+    case keyword(id: Int, name: String, isMovie: Bool)
     case catalogSeeAll(addon: InstalledAddon, catalog: ManifestCatalog, title: String)
 }
 
@@ -786,12 +794,14 @@ struct RootView: View {
         if ProcessInfo.processInfo.arguments.contains("-detailDemo") {
             let args = ProcessInfo.processInfo.arguments
             let series = args.contains("-detailSeries")
-            // `-detailID tt…`: that series instead (e.g. a long one to profile).
+            // `-detailID tt…`: that series instead (e.g. a long one to profile)
+            // — with `-detailMovie`, that film.
             let picked = args.firstIndex(of: "-detailID").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
             if let picked {
+                let type = args.contains("-detailMovie") ? "movie" : "series"
                 return AnyView(ZStack {
                     theme.palette.background.ignoresSafeArea()
-                    DetailView(item: MetaItem(id: picked, type: "series", name: picked))
+                    DetailView(item: MetaItem(id: picked, type: type, name: picked))
                 })
             }
             return AnyView(
@@ -1461,6 +1471,12 @@ struct RootView: View {
                         path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
                                                                    network: company.isNetwork))
                     },
+                    onSelectGenre: { genre, isMovie in
+                        path.wrappedValue.append(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie))
+                    },
+                    onSelectKeyword: { keyword, isMovie in
+                        path.wrappedValue.append(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie))
+                    },
                     // Back: `DetailTransition` (the billboard's way backwards,
                     // else the simple exit) — no system slide.
                     onReturnToBillboard: {
@@ -1481,6 +1497,10 @@ struct RootView: View {
             folderView(collection, folder, part: part, path: path)
         case .person(let id, let name):
             CastDetailView(personID: id, personName: name) { openDetail($0) { path.wrappedValue.append($0) } }
+        case .genre(let id, let name, let isMovie):
+            TMDBBrowseView(genreID: id, title: name, isMovie: isMovie) { openDetail($0) { path.wrappedValue.append($0) } }
+        case .keyword(let id, let name, let isMovie):
+            TMDBBrowseView(keywordID: id, title: name, isMovie: isMovie) { openDetail($0) { path.wrappedValue.append($0) } }
         case .tmdbCompany(let id, let name, let network):
             TMDBBrowseView(companyID: id, title: name, network: network) { openDetail($0) { path.wrappedValue.append($0) } }
         case .catalogSeeAll(let addon, let catalog, let title):

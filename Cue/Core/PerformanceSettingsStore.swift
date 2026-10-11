@@ -363,6 +363,11 @@ final class RenderProbe: ObservableObject {
         /// percent (with a shadow under it); 0: it keeps its size, only
         /// outlined — as the fixed box.
         var movingFocusLift = 5
+        /// Details' episodes: every step also scrolls the row, so the focused
+        /// card is always at the first card's spot (the outline and the lift
+        /// pass to the next card as it slides in); off: the row scrolls only
+        /// at the edge of the cards in view, as the other moving-focus rows.
+        var movingFocusAnchored = true
         /// …and the shadow under the grown card.
         var movingFocusShadow = true
         /// New Home: the scroll between the billboard and the rows, in
@@ -374,6 +379,18 @@ final class RenderProbe: ObservableObject {
         /// Details on Home's rows (the billboard, then a row per season, More
         /// Like This…); off: the old pages.
         var detailsOnRows = true
+        /// Details' episode row: glass season buttons over the episodes, the
+        /// billboard's hint "Episodes", the season's map between them;
+        /// off: the row's name "‹ Season X ›" as the season control, the map
+        /// on a line under it.
+        var detailsSeasonButtons = true
+        /// Details: under the billboard the episodes' cards peek (their top
+        /// at the bottom edge, dimmed) instead of the "Episodes ⌄" hint.
+        var detailsPeekEpisodes = true
+        /// Home (billboard like Details): under the billboard the first row
+        /// peeks — its name above its cards' top, darkened — instead of its
+        /// name on the billboard.
+        var homePeekFirstRow = false
         /// Home: billboard ⇄ rows as Details' — one rigid move (≈ 800 pt, the
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
@@ -518,10 +535,14 @@ final class RenderProbe: ObservableObject {
             nextNameSamePace = (try? c.decode(Bool.self, forKey: .nextNameSamePace)) ?? d.nextNameSamePace
             rowsMovingFocus = (try? c.decode(Bool.self, forKey: .rowsMovingFocus)) ?? d.rowsMovingFocus
             movingFocusLift = (try? c.decode(Int.self, forKey: .movingFocusLift)) ?? d.movingFocusLift
+            movingFocusAnchored = (try? c.decode(Bool.self, forKey: .movingFocusAnchored)) ?? d.movingFocusAnchored
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             summaryJustified = (try? c.decode(Bool.self, forKey: .summaryJustified)) ?? d.summaryJustified
             detailsOnRows = (try? c.decode(Bool.self, forKey: .detailsOnRows)) ?? d.detailsOnRows
+            detailsSeasonButtons = (try? c.decode(Bool.self, forKey: .detailsSeasonButtons)) ?? d.detailsSeasonButtons
+            detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
+            homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
             boxRimColored = (try? c.decode(Bool.self, forKey: .boxRimColored)) ?? d.boxRimColored

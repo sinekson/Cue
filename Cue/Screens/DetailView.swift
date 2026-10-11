@@ -392,6 +392,7 @@ final class DetailViewModel: ObservableObject {
         enrichmentPending = false
         applyNow(detail: detail, tmdb: tmdb)
         if tmdb.useCollections, let collection {
+            // (The film itself left out: the row is the rest of its series.)
             collectionParts = await TMDBService.collectionItems(id: collection.id)
                 .filter { $0.id != meta.id }
                 .deduplicatedByID()
@@ -483,6 +484,10 @@ struct DetailView: View {
     var onSelectItem: (MetaItem) -> Void = { _ in }
     var onSelectPerson: (Int, String) -> Void = { _, _ in }
     var onSelectCompany: (TMDBService.Company) -> Void = { _ in }
+    /// A genre tag in About: that genre's titles (films or shows, as this one).
+    var onSelectGenre: (TMDBService.Genre, Bool) -> Void = { _, _ in }
+    /// A tag in About: the titles with that keyword (films or shows, as this one).
+    var onSelectKeyword: (TMDBService.Keyword, Bool) -> Void = { _, _ in }
     @State private var activeTrailer: TMDBService.Trailer?
     /// The series' size and status, once loaded (see `FixedFocusShowInfo`).
     @State private var showInfo: TMDBService.ShowSize?
@@ -491,7 +496,7 @@ struct DetailView: View {
     @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, library, trailer
+        case play, library, trailer, info
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -518,6 +523,12 @@ struct DetailView: View {
     @State private var pillAction: ActionControl = .play
     /// (From the billboard: Play lit from the first frame — the swap brought
     /// it in lit; focus lands on it a moment later without a visible change.)
+    /// About's content height, as laid out (see `FixedFocusCustomRow.contentHeight`).
+    @State private var aboutContentHeight: CGFloat = 0
+    /// Info's glass panel (the summary) is open.
+    @State private var summaryShown = false
+    /// Focus going back onto Info as its panel closes: not redirected to Play.
+    @State private var returningToInfo = false
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
@@ -659,6 +670,8 @@ struct DetailView: View {
         onSelectItem: @escaping (MetaItem) -> Void = { _ in },
         onSelectPerson: @escaping (Int, String) -> Void = { _, _ in },
         onSelectCompany: @escaping (TMDBService.Company) -> Void = { _ in },
+        onSelectGenre: @escaping (TMDBService.Genre, Bool) -> Void = { _, _ in },
+        onSelectKeyword: @escaping (TMDBService.Keyword, Bool) -> Void = { _, _ in },
         onReturnToBillboard: (() -> Void)? = nil
     ) {
         let fromBillboard = MainActor.assumeIsolated { ModeSwap.shared.billboardItemID == item.id }
@@ -691,6 +704,8 @@ struct DetailView: View {
         self.onSelectItem = onSelectItem
         self.onSelectPerson = onSelectPerson
         self.onSelectCompany = onSelectCompany
+        self.onSelectGenre = onSelectGenre
+        self.onSelectKeyword = onSelectKeyword
     }
 
     var body: some View {
@@ -776,7 +791,18 @@ struct DetailView: View {
             // Hidden is NOT unfocusable: without this, focus could stay on the
             // invisible synopsis during full-screen — whose move-handler then
             // swallowed every press, locking full-screen mode in.
-            .disabled(trailerFullscreen || aboutExpanded)
+            .disabled(trailerFullscreen)
+            }
+
+            // Info: the summary in a glass panel over the page; Back (or
+            // Select) closes it, focus back on Info.
+            if summaryShown, let text = viewModel.meta.description {
+                DetailSummaryPanel(title: viewModel.meta.name, text: text) {
+                    summaryShown = false
+                    returningToInfo = true
+                    actionFocus = .info
+                }
+                .transition(.opacity)
             }
 
             // Full-screen trailer mode: an invisible focusable overlay holds
@@ -794,14 +820,8 @@ struct DetailView: View {
                     .onPlayPauseCommand { exitTrailerFullscreen() }
                     .onTapGesture { exitTrailerFullscreen() }
             }
-
-            // About's description, whole.
-            if aboutExpanded, let text = viewModel.meta.description {
-                DetailAboutFull(title: viewModel.meta.name, text: text) { aboutExpanded = false }
-                    .transition(.opacity)
-            }
         }
-        .animation(.easeOut(duration: 0.2), value: aboutExpanded)
+        .animation(Motion.fade, value: summaryShown)
         // Arm the idle → full-screen countdown only while the viewer is resting
         // on the SYNOPSIS — never while focus is on the action row.
         //
@@ -1413,19 +1433,36 @@ struct DetailView: View {
                            // Episodes: landscape tiles (the collections' size —
                            // about 3½ in view), moving focus.
                            landscapeRowIDs: seasonIDs,
-                           destinationRowIDs: seasonIDs,
+                           // Cast & Crew: moving focus too — portraits, a
+                           // caption (name, role) under each.
+                           destinationRowIDs: seasonIDs.union([Self.castRowID, Self.studiosRowID]),
+                           destinationPosterHeight: Self.portraitHeight,
                            onSelect: onSelectItem,
                            onSelectFeatured: { _ in },
                            onResume: { _ in },
                            titleMenu: { item, rowID in
                                rowID.hasPrefix(Self.seasonRowPrefix)
                                    ? (rowEpisodes.firstIndex { $0.id == item.id }.flatMap { episodeMenu($0)?.entries } ?? [])
+                                   // (People: no menu.)
+                                   : [Self.castRowID, Self.studiosRowID].contains(rowID) ? []
                                    : TitleMenu.shared.entries(for: item)
                            },
                            onDepth: { rowsDepth.depth = $0; DetailTransition.shared.detailsAtTop = $0 == 0 },
                            externalBillboard: true,
                            cardStates: episodeCardStates,
                            onSelectInRow: { item, rowID in
+                               // A network or studio: its titles.
+                               if rowID == Self.studiosRowID,
+                                  let company = viewModel.companies.first(where: { Self.companyItemID($0) == item.id }) {
+                                   onSelectCompany(company)
+                                   return true
+                               }
+                               // A person: their page (filmography).
+                               if rowID == Self.castRowID, item.id.hasPrefix(Self.personPrefix),
+                                  let id = Int(item.id.dropFirst(Self.personPrefix.count)) {
+                                   onSelectPerson(id, item.name)
+                                   return true
+                               }
                                guard rowID.hasPrefix(Self.seasonRowPrefix) else { return false }
                                if let episode = rowEpisodes.first(where: { $0.id == item.id }) { play(episode) }
                                return true
@@ -1437,21 +1474,46 @@ struct DetailView: View {
                            // peek.
                            rigidRest: HomeUIKitView.rigidRowRest,
                            rigidNameY: FixedFocusRowsLayout.nextNameY,
+                           // Render Lab → peek the episodes: their cards' top
+                           // up the bottom edge instead of "Episodes ⌄".
+                           // (No name: the page is one title's — what peeks is
+                           // more of it, whatever the row. Home names its rows.)
+                           rigidPeek: RenderProbe.shared.flags.detailsPeekEpisodes ? Self.episodesPeek : nil,
                            hidesBillboardPicture: true,
-                           // The row's name is the season control: Up from the
-                           // episodes, Left / Right step the seasons.
-                           titleControlRowIDs: hasSeasonControl ? seasonIDs : [],
-                           titleArrows: seasonArrows,
+                           // Render Lab → season buttons off: the row's name
+                           // is the season control (Up from the episodes,
+                           // Left / Right step the seasons), the season's
+                           // progress on its own line under it.
+                           titleControlRowIDs: !seasonButtons && hasSeasonControl ? seasonIDs : [],
+                           titleArrows: seasonButtons ? [:] : seasonArrows,
                            onTitleMove: { _, step in stepSeason(by: step) },
                            onTitleFocus: { _, focused in seasonNameFocused = focused },
-                           // The season's progress: on its own line under the
-                           // row's name.
+                           // (Season buttons: the same line, between them and
+                           // the episodes.)
                            rowTitleAccessories: rowProgressAccessory,
+                           // The seasons: glass buttons over the episodes (Up
+                           // from them); focus on one jumps the row there.
+                           rowHeaders: seasonButtons ? seasonHeader : [:],
+                           onHeaderFocus: { _, index in
+                               guard rowSeasons.indices.contains(index), rowSeasons[index] != rowSeason else { return }
+                               stepSeason(to: rowSeasons[index])
+                           },
                            // The billboard's text and buttons: the engine's,
                            // moved with the rows in the same animation.
                            billboardOverlay: rowsBillboardOverlay,
                            billboardOverlayHeight: Self.overlayHeight,
-                           rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel) { item, position in
+                           rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel,
+                           // Render Lab → focus stays in place: the episode in
+                           // focus always at the first card's spot.
+                           anchoredRowIDs: RenderProbe.shared.flags.movingFocusAnchored ? seasonIDs : [],
+                           // About: the summary, facts and ratings, genres and tags.
+                           customRows: [Self.aboutRowID: FixedFocusCustomRow(
+                               height: Self.aboutHeight,
+                               view: aboutBlock,
+                               // (Short: About rests just high enough to show it all.)
+                               contentHeight: aboutContentHeight > 0 ? aboutContentHeight : nil)],
+                           // Network & studios: their logos on light plates.
+                           logoRowIDs: [Self.studiosRowID]) { item, position in
                 // Up into the billboard lands on its invisible card: on to
                 // Play (the billboard's focus is its buttons).
                 if position != nil { DispatchQueue.main.async { actionFocus = .play } }
@@ -1482,6 +1544,9 @@ struct DetailView: View {
     @State private var rowCommand: FixedFocusRowsCommand?
     /// The episode row's name (the season control) has focus.
     @State private var seasonNameFocused = false
+    /// Render Lab → Details: season buttons (off: the row's name is the
+    /// season control).
+    private var seasonButtons: Bool { RenderProbe.shared.flags.detailsSeasonButtons }
 
     /// THE PICTURE stays: sharp under the overview (the billboard's shade
     /// on it); below it, its blurred copy fades in over it and it steps
@@ -1556,8 +1621,8 @@ struct DetailView: View {
         .ignoresSafeArea()
     }
 
-    /// Where you are in the season, under the row's name (it's about the
-    /// season): its ticks, then "3 of 7".
+    /// Where you are in the season, under the row's name (or the season
+    /// buttons): its ticks, then "3 of 7".
     private var rowProgressAccessory: [String: AnyView] {
         guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
         let season = episode.season ?? 0
@@ -1584,7 +1649,44 @@ struct DetailView: View {
         stepSeason(to: seasons[index + step])
     }
 
+    /// More than one season: the row's name is the season control.
+    private var hasSeasonControl: Bool { rowSeasons.count > 1 }
+
+    /// The seasons over the episode row (more than one), the row's own marked.
+    private var seasonHeader: [String: FixedFocusRowHeader] {
+        let seasons = rowSeasons
+        guard seasons.count > 1, let index = rowSeason.flatMap({ seasons.firstIndex(of: $0) }) else { return [:] }
+        return [Self.episodesRowID: FixedFocusRowHeader(labels: seasons.map(seasonName), selected: index)]
+    }
+
     private static let episodesRowID = seasonRowPrefix + "all"
+    private static let collectionRowID = "detail.collection"
+    private static let castRowID = "detail.cast"
+    private static let aboutRowID = "detail.about"
+    /// About's room: from under its name at the rows' spot to the screen's
+    /// bottom margin.
+    private static var aboutHeight: CGFloat {
+        1080 - FixedFocusMetrics.rowTop - FixedFocusMetrics.titleHeight - Spotlight.screenInset
+    }
+    private static let studiosRowID = "detail.studios"
+    private static func companyItemID(_ company: TMDBService.Company) -> String {
+        "company:\(company.isNetwork ? "network" : "studio"):\(company.id)"
+    }
+    private static let personPrefix = "person:"
+    /// About this many people in Cast & Crew.
+    private static let castCount = 20
+    /// Cast & Crew's portraits: Search's poster size (smaller than Home's).
+    private static let portraitHeight = FixedFocusMetrics.compactPosterHeight
+    /// TMDB's "The Lord of the Rings Collection" as the row's name: "More
+    /// from the Lord of the Rings Collection" (a name not ending in
+    /// "Collection": "More from …").
+    private static func collectionRowName(_ name: String) -> String {
+        guard name.hasSuffix(" Collection") else { return "More from \(name)" }
+        let core = name.hasPrefix("The ") ? String(name.dropFirst(4)) : name
+        return "More from the \(core)"
+    }
+    /// Under the billboard: how much of the episodes' cards peeks up.
+    private static let episodesPeek: CGFloat = 60
 
     /// The episodes row: every season in the pill's order (Specials last).
     private var rowItemsInOrder: [EpisodeRowItem] { rowData.ordered }
@@ -1599,9 +1701,9 @@ struct DetailView: View {
             ?? data.playTarget?.season ?? data.seasons.first
     }
 
-    /// Before the episode list is in (held until the swap from Home has
-    /// played): the season Play starts, as the billboard knew it ("Play
-    /// S4:E19") — the row's name is there from the first frame.
+    /// Season buttons off — before the episode list is in (held until the
+    /// swap from Home has played): the season Play starts, as the billboard
+    /// knew it ("Play S4:E19") — the row's name is there from the first frame.
     private var provisionalSeasonTitle: String {
         if let title = handedPlayTitle,
            let match = title.firstMatch(of: /S(\d+):E\d+/), let season = Int(match.1) {
@@ -1634,9 +1736,6 @@ struct DetailView: View {
         let episodes = rowEpisodes, season = rowSeason
         return episodes.first { $0.id == id } ?? episodes.first { $0.season == season }
     }
-
-    /// More than one season: the row's name is the season control.
-    private var hasSeasonControl: Bool { rowSeasons.count > 1 }
 
     private func stepSeason(to season: Int) {
         guard let entry = entryEpisode(season: season) else { return }
@@ -1686,9 +1785,14 @@ struct DetailView: View {
     private var detailRows: [HomeRow] {
         var rows = [HomeRow(id: Self.billboardRowID, title: "", items: [viewModel.meta])]
         if viewModel.meta.isSeries {
-            // ONE row: every episode (the season pill above it jumps).
+            // ONE row: every episode. Season buttons: its name "Episodes"
+            // shows only on the billboard; in the row, the seasons. Off: its
+            // name is the season it's in.
             let data = rowData
-            if data.ordered.isEmpty {
+            if seasonButtons {
+                rows.append(HomeRow(id: Self.episodesRowID, title: "Episodes",
+                                    items: data.rowItems, subtitles: data.subtitles))
+            } else if data.ordered.isEmpty {
                 // Its name at once; its cards when the list is in.
                 rows.append(HomeRow(id: Self.episodesRowID, title: provisionalSeasonTitle, items: []))
             } else {
@@ -1697,13 +1801,69 @@ struct DetailView: View {
                     items: data.rowItems, subtitles: data.subtitles))
             }
         }
-        if !viewModel.moreLikeThis.isEmpty {
-            rows.append(HomeRow(id: "detail.more", title: "More Like This", items: viewModel.moreLikeThis))
-        }
+        // A film's series first — its next part is the likeliest next watch.
         if let collection = viewModel.collection, !viewModel.collectionParts.isEmpty {
-            rows.append(HomeRow(id: "detail.collection", title: collection.name, items: viewModel.collectionParts))
+            rows.append(HomeRow(id: Self.collectionRowID, title: Self.collectionRowName(collection.name),
+                                items: viewModel.collectionParts))
+        }
+        if !viewModel.moreLikeThis.isEmpty {
+            // (Films you've seen last — TMDB's order otherwise.)
+            let more = viewModel.moreLikeThis
+            let seen = more.filter { watched.isWatched($0) }
+            rows.append(HomeRow(id: "detail.more", title: "More Like This",
+                                items: more.filter { !watched.isWatched($0) } + seen))
+        }
+        // The people: creators / director first, then the cast — portraits.
+        let people = Array((viewModel.crew + viewModel.cast).prefix(Self.castCount))
+        if !people.isEmpty {
+            rows.append(HomeRow(
+                id: Self.castRowID, title: "Cast & Crew",
+                items: people.map { MetaItem(id: "\(Self.personPrefix)\($0.id)", type: "person",
+                                             name: $0.name, poster: $0.profileURL) },
+                subtitles: Dictionary(people.compactMap { person in
+                    person.character.flatMap { $0.isEmpty ? nil : ("\(Self.personPrefix)\(person.id)", $0) }
+                }, uniquingKeysWith: { a, _ in a })))
+        }
+        // The network and studios, by their logos — before About.
+        let companies = viewModel.companies
+        if !companies.isEmpty {
+            rows.append(HomeRow(
+                id: Self.studiosRowID,
+                title: companies.contains(where: \.isNetwork) ? "Network & Studios" : "Studios",
+                items: companies.map { MetaItem(id: Self.companyItemID($0), type: "company", name: $0.name,
+                                                poster: $0.logoURL, background: $0.logoURL) }))
+        }
+        // The page's end: About (a view, not cards — `customRows`).
+        if hasAbout {
+            rows.append(HomeRow(id: Self.aboutRowID, title: "About", items: []))
         }
         return rows
+    }
+
+    /// About has something to say: a description, or TMDB's facts.
+    private var hasAbout: Bool {
+        viewModel.meta.description?.isEmpty == false || viewModel.about != nil || !viewModel.companies.isEmpty
+    }
+
+    /// About: the summary, the facts and ratings, genres and tags — with the
+    /// page's stores.
+    private var aboutBlock: AnyView {
+        AnyView(DetailAbout(meta: viewModel.meta, about: viewModel.about, facts: viewModel.facts,
+                            releaseDate: viewModel.releaseDate, contentRating: viewModel.contentRating,
+                            language: viewModel.language, ratings: viewModel.mdbRatings,
+                            settings: mdblist.settings, studiosShown: !viewModel.companies.isEmpty,
+                            crew: viewModel.crew,
+                            onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries) },
+                            onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries) },
+                            onFocus: { _ in },
+                            onContentHeight: { height in
+                                if abs(height - aboutContentHeight) > 1 { aboutContentHeight = height }
+                            })
+            // (In line with the row's name.)
+            .padding(.leading, FixedFocusMetrics.titleInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .environmentObject(theme).environmentObject(mdblist)
+            .environmentObject(tmdbSettings).environmentObject(layout))
     }
 
     /// Each episode's state line on its card (Continue Watching's).
@@ -1893,9 +2053,12 @@ struct DetailView: View {
                 //
                 let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
                 let finding = launcher.searching == PlayLauncher.key(viewModel.meta, target)
+                // Short: "Play" — which episode (and how much is left) under
+                // it, while it has focus.
                 DetailActionButton(
-                    icon: "play.fill", title: finding ? "Finding a source…" : playTitle(target),
+                    icon: "play.fill", title: "Play",
                     isPrimary: true, lit: litAction == .play, busy: finding,
+                    caption: finding ? "Finding a source…" : playCaption(target),
                     action: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
                         else { play(target, onButton: true) }
@@ -1938,6 +2101,17 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .trailer)
+                    // The summary in place, over the page (the billboard
+                    // shows only the tagline).
+                    DetailActionButton(
+                        icon: "text.alignleft", title: "Summary",
+                        isPrimary: false, lit: litAction == .info,
+                        action: {
+                            if viewModel.meta.description?.isEmpty == false { summaryShown = true }
+                            else { ToastCenter.shared.show("No summary for this title", icon: "text.alignleft") }
+                        }
+                    )
+                    .focused(focus, equals: .info)
                 }
                 // Trailer mode: only Play stays (press it to play).
                 .opacity(trailerMode ? 0 : 1)
@@ -1992,6 +2166,8 @@ struct DetailView: View {
         if fullscreenCooldown, Date().timeIntervalSince(fullscreenExitedAt) > 1.0 {
             fullscreenCooldown = false
         }
+        // (Back from Info's panel: on Info, as asked — once.)
+        if new == .info, returningToInfo { returningToInfo = false; return }
         if old == nil, let new, new != .play {
             // DEFERRED, not immediate: setting @FocusState while the
             // engine's own move is still in flight made it revert —
@@ -2028,9 +2204,15 @@ struct DetailView: View {
         "S\(episode.season ?? 1):E\(episode.episode ?? 1)"
     }
 
-    /// Play's title: "Play", on a show "Play S1:E1".
-    private func playTitle(_ target: MetaVideo?) -> String {
-        target.map { "Play \(seriesPlayTitle($0))" } ?? handedPlayTitle ?? "Play"
+    /// Under Play: on a show its episode ("S1:E1"); started, the time left
+    /// ("S2:E13 · 46m left", a film "38m left"). Nil: nothing to say.
+    private func playCaption(_ target: MetaVideo?) -> String? {
+        let code = target.map(seriesPlayTitle)
+        let progress = progressStore.progress(for: target?.id ?? viewModel.meta.id)
+        let fraction = progress?.fraction ?? 0
+        let left = fraction > 0.02 && fraction < 0.95 ? progress?.remainingTimeText.map { "\($0) left" } : nil
+        let parts = [code, left].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
 
 
@@ -2500,7 +2682,6 @@ struct DetailView: View {
 
     // MARK: - About
 
-    @State private var aboutExpanded = false
 
     @ViewBuilder
     private var aboutSection: some View {
@@ -2508,9 +2689,9 @@ struct DetailView: View {
             DetailAbout(meta: viewModel.meta, about: viewModel.about, facts: viewModel.facts,
                         releaseDate: viewModel.releaseDate, contentRating: viewModel.contentRating,
                         language: viewModel.language, ratings: viewModel.mdbRatings,
-                        settings: mdblist.settings, companies: viewModel.companies,
-                        onExpand: { aboutExpanded = true },
-                        onSelectCompany: { onSelectCompany($0) },
+                        settings: mdblist.settings,
+                        onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries) },
+                        onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries) },
                         onFocus: { if $0 { focusMoreRow(.about) } },
                         focusRequest: moreFocusRequests[.about, default: 0])
         }
@@ -2816,6 +2997,9 @@ struct DetailActionButton: View {
     let lit: Bool
     /// Working (Play finding a source): a spinner instead of the icon.
     var busy = false
+    /// The primary button's line under it while focused (Play: its
+    /// episode, the time left).
+    var caption: String? = nil
     let action: () -> Void
     var onHold: (() -> Void)? = nil
 
@@ -2887,11 +3071,12 @@ struct DetailActionButton: View {
                 }
             }
             .animation(Self.open, value: shownLit)
-            // An icon button's name, under it while focused (outside its
-            // frame: the row never moves for it).
+            // An icon button's name — the primary one's caption — centred
+            // under it while focused (outside its frame: the row never moves
+            // for it).
             .overlay(alignment: .top) {
-                if !isPrimary, probe.flags.buttonCaptions {
-                    Text(title)
+                if let text = isPrimary ? caption : probe.flags.buttonCaptions ? title : nil {
+                    Text(text)
                         .font(.system(size: Self.captionSize, weight: .medium))
                         .foregroundStyle(AppGlass.textMuted)
                         .lineLimit(1)

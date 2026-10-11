@@ -828,7 +828,8 @@ enum TMDBService {
                 name: item.name,
                 poster: item.poster,
                 background: item.background,
-                logo: nil,
+                // (The logo as the add-ons' catalogs have it — by IMDb id.)
+                logo: id.hasPrefix("tt") ? "https://images.metahub.space/logo/medium/\(id)/img" : nil,
                 description: item.description,
                 releaseInfo: item.releaseInfo,
                 imdbRating: item.rating.map { String(format: "%.1f", $0) },
@@ -875,8 +876,14 @@ enum TMDBService {
             let overview: String?; let release_date: String?; let vote_average: Double?
         }
         let body: CollectionResponse = try await get("/collection/\(id)", query: ["language": language])
-        return (body.parts ?? []).compactMap { part in
+        // In release order (TMDB's isn't); parts with no date yet last.
+        // Without any picture (a blank card): left out.
+        let parts = (body.parts ?? []).sorted {
+            ($0.release_date.flatMap { $0.isEmpty ? nil : $0 } ?? "9999") < ($1.release_date.flatMap { $0.isEmpty ? nil : $0 } ?? "9999")
+        }
+        return parts.compactMap { part in
             guard let title = part.title, !title.isEmpty else { return nil }
+            guard part.poster_path != nil || part.backdrop_path != nil else { return nil }
             return TMDBRawItem(
                 tmdbID: part.id, isMovie: true, name: title,
                 poster: imageURL(part.poster_path, size: "w500") ?? imageURL(part.backdrop_path, size: "w780"),
@@ -1131,6 +1138,20 @@ enum TMDBService {
         var revenue: Int?
         /// A show's first and last air dates (ISO).
         var lastAirDate: String?
+        /// TMDB's genres (with their ids: a genre's titles — see `titlesByGenre`).
+        var genres: [Genre] = []
+        /// TMDB's keywords ("based on novel", "time travel"), shown as tags.
+        var keywords: [Keyword] = []
+    }
+
+    struct Keyword: Hashable, Sendable {
+        let id: Int
+        let name: String
+    }
+
+    struct Genre: Hashable, Sendable {
+        let id: Int
+        let name: String
     }
 
     /// What the title block (Detail overview and Home's billboard) shows
@@ -1321,6 +1342,11 @@ enum TMDBService {
         guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type) else { return nil }
         struct DetailResponse: Decodable {
             struct Credits: Decodable { let cast: [CastDTO]?; let crew: [CrewDTO]? }
+            struct GenreDTO: Decodable { let id: Int; let name: String }
+            let genres: [GenreDTO]?
+            /// A film's under `keywords`, a show's under `results`.
+            struct Keywords: Decodable { let keywords: [GenreDTO]?; let results: [GenreDTO]? }
+            let keywords: Keywords?
             struct CastDTO: Decodable {
                 let id: Int; let name: String; let character: String?; let profile_path: String?
             }
@@ -1365,16 +1391,24 @@ enum TMDBService {
             let videos: Videos?
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
-            struct Person: Decodable { let name: String }
+            struct Person: Decodable { let id: Int?; let name: String; let profile_path: String? }
             let created_by: [Person]?
+            /// A show's cast across all its seasons (with episode counts).
+            struct Aggregate: Decodable { let cast: [AggregateCast]? }
+            struct AggregateCast: Decodable {
+                let id: Int; let name: String; let profile_path: String?
+                let roles: [Role]?; let total_episode_count: Int?
+                struct Role: Decodable { let character: String?; let episode_count: Int? }
+            }
+            let aggregate_credits: Aggregate?
             let status: String?
             let runtime: Int?
             let episode_run_time: [Int]?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         let appended = isMovie
-            ? "credits,recommendations,similar,videos,release_dates"
-            : "credits,recommendations,similar,videos,content_ratings"
+            ? "credits,recommendations,similar,videos,release_dates,keywords"
+            : "credits,aggregate_credits,recommendations,similar,videos,content_ratings,keywords"
         // From disk when it can be (stale-while-revalidate): fresh 3 days,
         // 7 for an ended show; kept 30 (docs/LOADING-PLAN.md §2).
         guard let body: DetailResponse = try? await cachedGet(
@@ -1408,9 +1442,25 @@ enum TMDBService {
         }
 
         var detail = Detail()
-        var castMembers = (body.credits?.cast ?? []).prefix(24).map {
-            CastMember(id: $0.id, name: $0.name, character: $0.character,
-                       profileURL: imageURL($0.profile_path, size: "w300"))
+        // Portraits (2:3) at a size for Details' cards on a 4K screen.
+        let portrait = "h632"
+        // A show: everyone across its seasons, most episodes first (the
+        // main cast who left early too); its role with the most episodes.
+        // A film: the billing order.
+        var castMembers: [CastMember]
+        if !isMovie, let aggregate = body.aggregate_credits?.cast, !aggregate.isEmpty {
+            castMembers = aggregate
+                .sorted { ($0.total_episode_count ?? 0) > ($1.total_episode_count ?? 0) }
+                .prefix(24).map { member in
+                    let role = member.roles?.max { ($0.episode_count ?? 0) < ($1.episode_count ?? 0) }
+                    return CastMember(id: member.id, name: member.name, character: role?.character,
+                                      profileURL: imageURL(member.profile_path, size: portrait))
+                }
+        } else {
+            castMembers = (body.credits?.cast ?? []).prefix(24).map {
+                CastMember(id: $0.id, name: $0.name, character: $0.character,
+                           profileURL: imageURL($0.profile_path, size: portrait))
+            }
         }
         // Director + writers first (shown ahead of the cast in "Creator and
         // Cast"), ONE ENTRY PER PERSON.
@@ -1426,12 +1476,19 @@ enum TMDBService {
         var crewOrder: [Int] = []
         var crewJobs: [Int: [String]] = [:]
         var crewInfo: [Int: (name: String, profile: String?)] = [:]
+        // A show's creators first (TMDB lists them apart from the crew).
+        for creator in body.created_by ?? [] {
+            guard let id = creator.id, crewJobs[id] == nil else { continue }
+            crewOrder.append(id)
+            crewJobs[id] = ["Creator"]
+            crewInfo[id] = (creator.name, imageURL(creator.profile_path, size: portrait))
+        }
         for member in crew where importantJobs.contains(member.job ?? "") {
             let job = member.job ?? ""
             if crewJobs[member.id] == nil {
                 crewOrder.append(member.id)
                 crewJobs[member.id] = [job]
-                crewInfo[member.id] = (member.name, imageURL(member.profile_path, size: "w300"))
+                crewInfo[member.id] = (member.name, imageURL(member.profile_path, size: portrait))
             } else if !(crewJobs[member.id]?.contains(job) ?? true) {
                 crewJobs[member.id]?.append(job)
             }
@@ -1477,9 +1534,15 @@ enum TMDBService {
         let recoResults = (body.recommendations?.results?.isEmpty == false)
             ? body.recommendations?.results
             : body.similar?.results
+        // (Not yet out, or without any picture — a blank card: left out,
+        // before the cap, so the row still fills.)
+        let today = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate])
         let raw = (recoResults ?? []).compactMap { r -> TMDBRawItem? in
             let itemIsTV = (r.media_type?.lowercased() == "tv") || (!isMovie && r.media_type == nil)
             guard let title = r.title ?? r.name, !title.isEmpty else { return nil }
+            guard r.poster_path != nil || r.backdrop_path != nil else { return nil }
+            guard let released = r.release_date ?? r.first_air_date, !released.isEmpty, released <= today
+            else { return nil }
             return TMDBRawItem(
                 tmdbID: r.id, isMovie: !itemIsTV, name: title,
                 poster: imageURL(r.poster_path, size: "w500") ?? imageURL(r.backdrop_path, size: "w780"),
@@ -1508,7 +1571,9 @@ enum TMDBService {
             networks: (body.networks ?? []).map(\.name),
             budget: body.budget.flatMap { $0 > 0 ? $0 : nil },
             revenue: body.revenue.flatMap { $0 > 0 ? $0 : nil },
-            lastAirDate: isMovie ? nil : body.last_air_date)
+            lastAirDate: isMovie ? nil : body.last_air_date,
+            genres: (body.genres ?? []).map { Genre(id: $0.id, name: $0.name) },
+            keywords: (body.keywords?.keywords ?? body.keywords?.results ?? []).map { Keyword(id: $0.id, name: $0.name) })
         // A show's networks first (where it airs), then the studios.
         let networks = (body.networks ?? []).compactMap { n -> Company? in
             guard let logo = imageURL(n.logo_path, size: "w300") else { return nil }
@@ -1831,13 +1896,25 @@ enum TMDBService {
     /// Whether a genre NAME is known for movies / TV (so callers can decide which
     /// media type(s) to query for a Categories genre).
     static func hasMovieGenre(_ name: String) -> Bool { movieGenres.values.contains(name) }
+    /// A genre by its name, as TMDB has it for films / shows (nil: none).
+    static func genre(named name: String, isMovie: Bool) -> Genre? {
+        (isMovie ? movieGenres : tvGenres).first { $0.value == name }.map { Genre(id: $0.key, name: $0.value) }
+    }
     static func hasTVGenre(_ name: String) -> Bool { tvGenres.values.contains(name) }
 
     /// ONE page of a genre's catalog (movies or TV), popularity-desc. Paginated
     /// so a browse grid can keep appending pages until the genre is exhausted.
-    static func titlesByGenre(name: String, isMovie: Bool, page: Int, language: String = preferredLanguage) async -> [MetaItem] {
-        let map = isMovie ? movieGenres : tvGenres
-        guard let id = map.first(where: { $0.value == name })?.key else { return [] }
+    /// The titles with a keyword (a tag), most popular first.
+    static func titlesByKeyword(id: Int, isMovie: Bool, page: Int, language: String = preferredLanguage) async -> [MetaItem] {
+        let path = isMovie ? "/discover/movie" : "/discover/tv"
+        let raw = await discover(path: path,
+                                 with: ["with_keywords": String(id), "sort_by": "popularity.desc", "page": String(page)],
+                                 isMovie: isMovie, language: language)
+        return await mapToMetaItems(raw)
+    }
+
+    /// A genre's titles, most popular first.
+    static func titlesByGenre(id: Int, isMovie: Bool, page: Int, language: String = preferredLanguage) async -> [MetaItem] {
         let path = isMovie ? "/discover/movie" : "/discover/tv"
         let raw = await discover(path: path,
                                  with: ["with_genres": String(id), "sort_by": "popularity.desc", "page": String(page)],

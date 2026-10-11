@@ -783,26 +783,40 @@ struct SeasonProgressMap: View {
 
     let ticks: [Tick]
     let label: String
-    /// INLINE (beside the row's name, Details): the ticks, then the label
-    /// after them on the same line, in `width` at most.
+    /// INLINE (under the row's name or its season buttons, Details): the
+    /// ticks, then the label after them on the same line — `width` the whole
+    /// line, the label's end at its end.
     var inline = false
     var width: CGFloat = Self.width
 
     /// The map's width: the box's text column.
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
-    /// Inline: at most this wide (the ticks; the label follows).
-    static let inlineWidth: CGFloat = 360
+    /// Inline: an episode card's width — the label ends at the first
+    /// card's right edge below. (The line starts at the text indent.)
+    static let inlineWidth = FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight)
+        - FixedFocusMetrics.textIndent
+    /// Inline: between the ticks and the label.
+    static let labelGap: CGFloat = 16
     static let height: CGFloat = 8
     static let gap: CGFloat = 4
     static let barFrom = 60
 
     /// Over this many episodes: one bar (inline sooner — less room).
-    private var asBar: Bool { ticks.count > (inline ? 30 : Self.barFrom) }
+    private var asBar: Bool { ticks.count > (inline ? 36 : Self.barFrom) }
+
+    /// The ticks' (or the bar's) width: inline, what the label leaves.
+    private var ticksWidth: CGFloat {
+        guard inline else { return width }
+        let font = UIFont.systemFont(ofSize: Self.labelSize, weight: .medium)
+        let label = (label as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
+        return width - label - Self.labelGap
+    }
+    static let labelSize: CGFloat = 21
 
     var body: some View {
         Group {
             if inline {
-                HStack(spacing: 16) {
+                HStack(spacing: Self.labelGap) {
                     if asBar { bar } else { row }
                     labelText
                 }
@@ -818,7 +832,7 @@ struct SeasonProgressMap: View {
 
     private var labelText: some View {
         Text(label)
-            .font(.system(size: 21, weight: .medium))
+            .font(.system(size: Self.labelSize, weight: .medium))
             .foregroundStyle(AppGlass.textMuted)
             .lineLimit(1)
             .fixedSize()
@@ -826,12 +840,14 @@ struct SeasonProgressMap: View {
 
     private var row: some View {
         let n = max(ticks.count, 1)
-        let tick = (width - CGFloat(n - 1) * Self.gap) / CGFloat(n)
+        let tick = (ticksWidth - CGFloat(n - 1) * Self.gap) / CGFloat(n)
         return HStack(spacing: Self.gap) {
             ForEach(ticks, id: \.id) { t in
                 Capsule()
                     .fill(Color.white.opacity(t.current ? 1 : t.watched ? 0.62 : 0.2))
-                    .frame(width: max(min(tick, 44), 3),
+                    // (Inline: always the full width — the label stays put
+                    // from season to season.)
+                    .frame(width: inline ? max(tick, 3) : max(min(tick, 44), 3),
                            height: t.current ? Self.height + 4 : Self.height)
             }
         }
@@ -841,6 +857,7 @@ struct SeasonProgressMap: View {
     /// Many episodes: the share watched as one bar, the episode in the box
     /// as a marker on it.
     private var bar: some View {
+        let width = ticksWidth
         let watched = CGFloat(ticks.filter(\.watched).count) / CGFloat(max(ticks.count, 1))
         let at = CGFloat(ticks.firstIndex(where: \.current) ?? 0) / CGFloat(max(ticks.count - 1, 1))
         return ZStack(alignment: .leading) {

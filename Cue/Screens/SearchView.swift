@@ -155,7 +155,7 @@ struct SearchView: View {
     private static let rowsTop: CGFloat = 24
     /// Posters here: smaller than Home's — about half its space is the
     /// keyboard's — seven across.
-    private static let posterHeight: CGFloat = 330
+    private static let posterHeight = FixedFocusMetrics.compactPosterHeight
     /// The gap between a row (with its captions) and the next one's name.
     private static let rowGap: CGFloat = 48
 

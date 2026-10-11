@@ -1969,6 +1969,8 @@ struct MDBListRatingsRow: View {
     /// it as one row of equals: the source's short name in its brand colour,
     /// then the score — the outline in the brand colour too, or neutral.
     var chips: ChipStyle? = nil
+    /// Chips onto further lines when they don't fit (About), not cut.
+    var wraps = false
 
     /// Render Lab → Billboard ratings.
     enum ChipStyle: String, CaseIterable {
@@ -2033,8 +2035,14 @@ struct MDBListRatingsRow: View {
 
     var body: some View {
         if let chips, chips != .logos {
-            HStack(spacing: 10) {
-                ForEach(entries) { chip($0, brandOutline: chips == .chips) }
+            if wraps {
+                InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                    ForEach(entries) { chip($0, brandOutline: chips == .chips) }
+                }
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(entries) { chip($0, brandOutline: chips == .chips) }
+                }
             }
         } else {
             logos

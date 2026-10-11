@@ -684,10 +684,28 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.detailsOnRows }, set: { probe.flags.detailsOnRows = $0 })
                 )
                 PerfToggleRow(
+                    icon: "square.stack",
+                    title: "Details: season buttons",
+                    subtitle: "Glass season buttons over the episodes, \"Episodes\" as the hint on the billboard, the season's progress between them and the episodes. Off: the row's name \"‹ Season 2 ›\" is the season control, its progress on a line under it.",
+                    isOn: Binding(get: { probe.flags.detailsSeasonButtons }, set: { probe.flags.detailsSeasonButtons = $0 })
+                )
+                PerfToggleRow(
+                    icon: "rectangle.bottomhalf.inset.filled",
+                    title: "Details: peek the episodes",
+                    subtitle: "Under the billboard the first row's cards peek up from the bottom edge, dimmed — as in the Apple TV app. Off: the row's name with ⌄ instead (\"Episodes ⌄\").",
+                    isOn: Binding(get: { probe.flags.detailsPeekEpisodes }, set: { probe.flags.detailsPeekEpisodes = $0 })
+                )
+                PerfToggleRow(
                     icon: "rectangle.stack",
                     title: "Home: billboard like Details",
                     subtitle: "Down from the billboard as on Details: one shorter move, the dots end beside the first row's name, the picture stays, blurs and gives way to the colours. Off: the picture scrolls away whole.",
                     isOn: Binding(get: { probe.flags.homeBillboardRigid }, set: { probe.flags.homeBillboardRigid = $0 })
+                )
+                PerfToggleRow(
+                    icon: "rectangle.bottomhalf.inset.filled",
+                    title: "Home: peek the first row",
+                    subtitle: "With the billboard like Details: under it the first row peeks up from the bottom edge — its name above its cards, darkened — as in the Apple TV app. Off: its name on the billboard with ⌄.",
+                    isOn: Binding(get: { probe.flags.homePeekFirstRow }, set: { probe.flags.homePeekFirstRow = $0 })
                 )
                 PerfToggleRow(
                     icon: "text.justify",
@@ -816,6 +834,12 @@ struct RenderLabSettings: View {
                 ) { raw in
                     if let v = Int(raw) { probe.flags.movingFocusLift = v }
                 }
+                PerfToggleRow(
+                    icon: "scope",
+                    title: "Details' episodes: focus stays in place",
+                    subtitle: "Each step also scrolls the row — the focus passes to the next episode as it slides into the first card's spot. Off: the row scrolls only at the edge, as the other moving-focus rows.",
+                    isOn: Binding(get: { probe.flags.movingFocusAnchored }, set: { probe.flags.movingFocusAnchored = $0 })
+                )
                 PerfToggleRow(
                     icon: "shadow",
                     title: "Moving focus: shadow",
