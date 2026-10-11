@@ -395,26 +395,12 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        /// New Home, title colour: how long to rest on a title before the
-        /// background changes, and how long the change takes (seconds).
-        var tintDelay: Double = 0.08
-        var tintFade: Double = 0.2
-        /// The background's colour change moves WITH the focus: no rest, on
-        /// the focus move's curve and duration, the neighbours' colours
-        /// ready beforehand; off: after `tintDelay`, over `tintFade`.
-        var tintFollowsFocus = false
-        /// With `tintFollowsFocus`: presses closer together than
-        /// `tintBurstGap` are a burst — the colours change at most every
-        /// `tintBurstEvery`, over a calm `tintBurstBlend`; on landing (no
-        /// press for a moment) the focus move's spring again.
         /// Picture's colour layout: the grid ("3x3"), the saturation
         /// multiplier, and how much of the picture's own light and dark is
         /// kept (0: every cell equally bright).
         var layoutGrid = "3x3"
         var layoutSaturation: Double = 1.1
         var layoutLightness: Double = 0
-        var tintBurstCalm = true
-        var tintBurstGap: Double = 0.3
         var tintBurstEvery: Double = 0.3
         var tintBurstBlend: Double = 0.5
         /// New Home, title colour: how strongly the colour covers the
@@ -520,12 +506,9 @@ final class RenderProbe: ObservableObject {
             tintStrength = (try? c.decode(Double.self, forKey: .tintStrength)) ?? d.tintStrength
             tintMode = (try? c.decode(String.self, forKey: .tintMode)) ?? d.tintMode
             tintAlwaysTwo = (try? c.decode(Bool.self, forKey: .tintAlwaysTwo)) ?? d.tintAlwaysTwo
-            tintFollowsFocus = (try? c.decode(Bool.self, forKey: .tintFollowsFocus)) ?? d.tintFollowsFocus
-            tintBurstCalm = (try? c.decode(Bool.self, forKey: .tintBurstCalm)) ?? d.tintBurstCalm
             layoutGrid = (try? c.decode(String.self, forKey: .layoutGrid)) ?? d.layoutGrid
             layoutSaturation = (try? c.decode(Double.self, forKey: .layoutSaturation)) ?? d.layoutSaturation
             layoutLightness = (try? c.decode(Double.self, forKey: .layoutLightness)) ?? d.layoutLightness
-            tintBurstGap = (try? c.decode(Double.self, forKey: .tintBurstGap)) ?? d.tintBurstGap
             tintBurstEvery = (try? c.decode(Double.self, forKey: .tintBurstEvery)) ?? d.tintBurstEvery
             tintBurstBlend = (try? c.decode(Double.self, forKey: .tintBurstBlend)) ?? d.tintBurstBlend
             tintBrightness = (try? c.decode(Double.self, forKey: .tintBrightness)) ?? d.tintBrightness
@@ -553,8 +536,6 @@ final class RenderProbe: ObservableObject {
             noMDBList = (try? c.decode(Bool.self, forKey: .noMDBList)) ?? d.noMDBList
             billboardVignette = (try? c.decode(Bool.self, forKey: .billboardVignette)) ?? d.billboardVignette
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha
-            tintDelay = (try? c.decode(Double.self, forKey: .tintDelay)) ?? d.tintDelay
-            tintFade = (try? c.decode(Double.self, forKey: .tintFade)) ?? d.tintFade
             horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve
             verticalCurve = (try? c.decode(String.self, forKey: .verticalCurve)) ?? d.verticalCurve
         }

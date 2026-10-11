@@ -1607,30 +1607,23 @@ struct HomeUIKitView: View {
         // Follows the focused title once you've paused on it.
         .task(id: tintKey) {
             guard followsTitle, let item = focused, let url = focusedArt ?? item.background ?? item.poster else { return }
-            // A brief rest on the title first (Render Lab → Tint delay): long
-            // enough that fast scrolling doesn't flicker, short enough to
-            // feel immediate.
-            // Scrolling to or from the billboard: at once, over the whole
-            // scroll. Otherwise after a brief rest, with the usual fade.
+            // Scrolling to or from the billboard: over the whole scroll.
+            // Otherwise it moves with focus — no rest, the focus move's curve
+            // and time.
             let scrolling = tintScroll
             tintScroll = false
-            // Render Lab → Tint: move with focus — no rest, the focus move's
-            // curve and time.
-            var follows = probe.flags.tintFollowsFocus && !scrolling
-            var fade = scrolling ? FixedFocusMotion.billboardScroll
-                : follows ? Motion.durations.move : probe.flags.tintFade
-            if !scrolling && !follows { try? await Task.sleep(for: .seconds(probe.flags.tintDelay)) }
-            // FAST SCROLLING (Render Lab → Tint: calm while scrolling fast):
-            // a press soon after the last is part of a burst. Then the colours
+            var follows = !scrolling
+            var fade = scrolling ? FixedFocusMotion.billboardScroll : Motion.durations.move
+            // FAST SCROLLING: a press soon after the last is part of a burst. Then the colours
             // change at most every `tintBurstEvery` (the cards in between are
             // skipped — a new press cancels this wait), over a calm blend; once
             // no press has come for a moment, it has landed: the spring again.
-            if follows, probe.flags.tintBurstCalm {
+            if follows {
                 let flags = probe.flags
                 let now = Date()
                 let gap = now.timeIntervalSince(tintPace.lastPress)
                 tintPace.lastPress = now
-                if gap < flags.tintBurstGap {
+                if gap < Self.tintBurstGap {
                     let quiet = 0.15
                     let due = min(tintPace.lastChange.addingTimeInterval(flags.tintBurstEvery),
                                   now.addingTimeInterval(quiet))
@@ -1668,6 +1661,10 @@ struct HomeUIKitView: View {
             }
         }
     }
+
+    /// Presses closer together than this are fast scrolling: the tint
+    /// calms down (changes now and then, over a blend).
+    static let tintBurstGap: Double = 0.3
 
     /// What the tint follows: the focused title and the tint's own settings
     /// (so a change in Render Lab shows on return).
@@ -1871,12 +1868,12 @@ enum FixedFocusTint {
         }
     }
 
-    /// "Tint: move with focus": the colours (and layout) of the cards you
+    /// The tint moves with focus: the colours (and layout) of the cards you
     /// may go to next, found beforehand — on the press there is nothing left
     /// to work out. (Both are cached per picture.)
     @MainActor static func prepare(_ urls: [String]) {
         let flags = RenderProbe.shared.flags
-        guard flags.tintFollowsFocus, !urls.isEmpty else { return }
+        guard !urls.isEmpty else { return }
         let layout = Mode(rawValue: flags.tintMode) == .layout
         Task { @MainActor in
             for url in urls {

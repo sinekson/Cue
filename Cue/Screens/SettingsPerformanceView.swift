@@ -319,45 +319,6 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
                 CueDropdown(
-                    title: "Tint delay",
-                    subtitle: "Title colour: how long you rest on a title before the background changes.",
-                    icon: "timer",
-                    selection: String(probe.flags.tintDelay),
-                    options: [0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.18, 0.25].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintDelay = v }
-                }
-                CueDropdown(
-                    title: "Tint fade",
-                    subtitle: "Title colour: how long the change of colour takes.",
-                    icon: "circle.lefthalf.filled",
-                    selection: String(probe.flags.tintFade),
-                    options: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintFade = v }
-                }
-                PerfToggleRow(
-                    icon: "arrow.left.and.right.circle",
-                    title: "Tint: move with focus",
-                    subtitle: "The background's colours change on the same press as the focus, on the same curve and in the same time (Motion: Left / Right), the next cards' colours ready beforehand. Off: after the tint delay, over the tint fade.",
-                    isOn: Binding(get: { probe.flags.tintFollowsFocus }, set: { probe.flags.tintFollowsFocus = $0 })
-                )
-                PerfToggleRow(
-                    icon: "hare",
-                    title: "Tint: calm while scrolling fast",
-                    subtitle: "With move with focus: presses in quick succession are a burst — the colours change only now and then, over a calm blend, skipping the cards you pass; on landing, the focus spring again.",
-                    isOn: Binding(get: { probe.flags.tintBurstCalm }, set: { probe.flags.tintBurstCalm = $0 })
-                )
-                CueDropdown(
-                    title: "Tint burst: press gap",
-                    subtitle: "Presses closer together than this count as fast scrolling.",
-                    icon: "timer",
-                    selection: String(probe.flags.tintBurstGap),
-                    options: [0.2, 0.25, 0.3, 0.4, 0.5].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.tintBurstGap = v }
-                }
-                CueDropdown(
                     title: "Tint burst: change every",
                     subtitle: "While scrolling fast: at most one colour change this often.",
                     icon: "metronome",
