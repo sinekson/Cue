@@ -318,42 +318,6 @@ struct RenderLabSettings: View {
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                PerfToggleRow(
-                    icon: "paintpalette",
-                    title: "Poster rims",
-                    subtitle: "Each poster gets a subtle rim in its own colour (pre-rendered; switch tabs to refresh).",
-                    isOn: Binding(get: { probe.flags.posterRims }, set: { probe.flags.posterRims = $0 })
-                )
-                CueDropdown(
-                    title: "Rim",
-                    subtitle: "Posters' and box's rim: a colour of its own, or glass-like — lighter over the poster's own edge (switch tabs to refresh).",
-                    icon: "square.dashed",
-                    selection: probe.flags.rimStyle,
-                    options: FixedFocusRim.Style.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.rimStyle = raw
-                }
-                PerfToggleRow(
-                    icon: "rectangle.dashed",
-                    title: "Box outline: rim",
-                    subtitle: "The box's outline as a rim (see Rim). Off: plain white.",
-                    isOn: Binding(get: { probe.flags.boxRimColored }, set: { probe.flags.boxRimColored = $0 })
-                )
-                PerfToggleRow(
-                    icon: "circle.lefthalf.filled.righthalf.striped.horizontal",
-                    title: "Background tint",
-                    subtitle: "The background takes the focused title's colour, strongest around the box.",
-                    isOn: Binding(get: { probe.flags.backgroundTint }, set: { probe.flags.backgroundTint = $0 })
-                )
-                CueDropdown(
-                    title: "Background",
-                    subtitle: "A fixed, dark colour with a soft glow — or the focused title's colour (with a dark left third and foot).",
-                    icon: "photo.on.rectangle",
-                    selection: probe.flags.backgroundStyle,
-                    options: FixedFocusBackground.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.backgroundStyle = raw
-                }
                 CueDropdown(
                     title: "Tint delay",
                     subtitle: "Title colour: how long you rest on a title before the background changes.",
@@ -688,12 +652,6 @@ struct RenderLabSettings: View {
                 ) { raw in
                     if let v = Double(raw) { probe.flags.previousPosterAlpha = v }
                 }
-                PerfToggleRow(
-                    icon: "sun.max",
-                    title: "Background glow",
-                    subtitle: "A soft glow in the background's colour. Off: an even gradient.",
-                    isOn: Binding(get: { probe.flags.backgroundGlow }, set: { probe.flags.backgroundGlow = $0 })
-                )
             }
 
             SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {

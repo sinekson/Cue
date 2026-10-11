@@ -1519,7 +1519,7 @@ struct HomeUIKitView: View {
                 LinearGradient(colors: [Color(white: 0.10), Color(white: 0.03)],
                                startPoint: .top, endPoint: .bottom)
                     .ignoresSafeArea()
-                if probe.flags.backgroundTint { background }
+                background
             } else {
                 ATVBackground()
             }
@@ -1604,12 +1604,9 @@ struct HomeUIKitView: View {
             billboardLayer
         }
         .ignoresSafeArea()
-        // Title colour style only: follows the focused title once you've
-        // paused on it.
+        // Follows the focused title once you've paused on it.
         .task(id: tintKey) {
-            let style = FixedFocusBackground.current
-            guard followsTitle, style == .titleColor || style == .blurredArtwork,
-                  let item = focused, let url = focusedArt ?? item.background ?? item.poster else { return }
+            guard followsTitle, let item = focused, let url = focusedArt ?? item.background ?? item.poster else { return }
             // A brief rest on the title first (Render Lab → Tint delay): long
             // enough that fast scrolling doesn't flicker, short enough to
             // feel immediate.
@@ -1648,17 +1645,6 @@ struct HomeUIKitView: View {
                 }
             }
             let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
-            if style == .blurredArtwork {
-                // The title's backdrop, blurred (a still, made once — the
-                // Detail page's Episodes background), crossfading.
-                guard !Task.isCancelled,
-                      let image = await BlurredBackdrop.image(for: url, strength: probe.flags.detailsPictureBlur),
-                      !Task.isCancelled else { return }
-                withAnimation(.easeInOut(duration: fade)) {
-                    picture = FixedFocusPicture(key: item.id, image: image)
-                }
-                return
-            }
             // Picture's colour layout: the background is the picture's own
             // colours where they sit (`FixedFocusTint.layout`) — made while
             // the colours are found, not after.
@@ -1688,15 +1674,12 @@ struct HomeUIKitView: View {
     private var tintKey: String {
         let flags = probe.flags
         return "\(focused?.id ?? "")|\(flags.tintMode)|\(flags.tintWarmBoost)|\(flags.tintBrightness)"
-            + "|\(flags.backgroundStyle)|\(flags.detailsPictureBlur)|\(followsTitle)"
+            + "|\(followsTitle)"
     }
 
-    /// The background (Render Lab → Background): one fixed, designed colour —
-    /// a deep gradient with a soft glow — or (for comparison) the focused
-    /// title's colour. A black fade over the left third keeps text readable.
+    /// The background: the focused title's colour.
     @ViewBuilder
     private var background: some View {
-        let style = FixedFocusBackground.current
         ZStack {
             TitleTintBackground(tint: tint, second: tintSecond, picture: picture)
             // Behind the fixed box (it never moves: still pictures): a soft
@@ -1782,23 +1765,14 @@ struct TitleTintBackground: View {
     @ObservedObject private var probe = RenderProbe.shared
     let tint: Color?
     var second: Color? = nil
-    /// "Artwork, blurred": the title's picture, dimmed (crossfades per title).
+    /// The picture's colour layout (Render Lab → Tint colour: layout).
     var picture: FixedFocusPicture? = nil
 
     var body: some View {
-        let style = FixedFocusBackground.current
         ZStack {
             // Even from top to bottom: no darker lower half, no corners.
             Color(white: 0.06)
-            if let palette = style.palette {
-                palette.top
-                // Optional (Render Lab → Background glow). Large enough to
-                // reach the right edge and corners evenly.
-                if probe.flags.backgroundGlow {
-                    RadialGradient(colors: [palette.glow.opacity(0.55), palette.glow.opacity(0.22), .clear],
-                                   center: UnitPoint(x: 0.62, y: 0.45), startRadius: 0, endRadius: 1900)
-                }
-            } else if FixedFocusTint.Mode(rawValue: probe.flags.tintMode) == .layout, let picture {
+            if FixedFocusTint.Mode(rawValue: probe.flags.tintMode) == .layout, let picture {
                 // The picture's colour layout, at the tint's strength.
                 LayoutPictureView(picture: picture)
                     .frame(width: 1920, height: 1080)
@@ -1815,20 +1789,6 @@ struct TitleTintBackground: View {
                                                      .init(color: .black, location: 0.95)],
                                              startPoint: UnitPoint(x: 0.95, y: 0),
                                              endPoint: UnitPoint(x: 0.5, y: 1)))
-                }
-            }
-            if style == .blurredArtwork, let picture {
-                ZStack {
-                    Image(uiImage: picture.image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 1920, height: 1080)
-                        .clipped()
-                        .id(picture.key)
-                        .transition(.opacity)
-                    // As on the Detail page's Episodes (Render Lab → Picture
-                    // dim).
-                    Color.black.opacity(probe.flags.detailsPictureDim)
                 }
             }
             // The billboard's left fade, lighter (Render Lab → Left fade:
@@ -3051,41 +3011,6 @@ enum FixedFocusCardEdge: String, CaseIterable {
             }.resizableImage(withCapInsets: UIEdgeInsets(top: pad + radius + 20, left: pad + radius + 20,
                                                          bottom: pad + radius + 20, right: pad + radius + 20),
                              resizingMode: .stretch)
-        }
-    }
-}
-
-/// The new Home's background choices.
-enum FixedFocusBackground: String, CaseIterable {
-    case midnight, charcoal, teal, titleColor, blurredArtwork
-
-    @MainActor static var current: FixedFocusBackground {
-        FixedFocusBackground(rawValue: RenderProbe.shared.flags.backgroundStyle) ?? .titleColor
-    }
-
-    var displayName: String {
-        switch self {
-        case .midnight: return "Midnight (blue-violet)"
-        case .charcoal: return "Charcoal (warm grey)"
-        case .teal: return "Deep teal"
-        case .titleColor: return "Title colour (changes)"
-        case .blurredArtwork: return "Artwork, blurred (changes)"
-        }
-    }
-
-    /// Fixed palettes: a dark top-to-bottom base and the glow's colour.
-    var palette: (top: Color, bottom: Color, glow: Color)? {
-        switch self {
-        case .midnight: return (Color(red: 0.07, green: 0.05, blue: 0.14),
-                                Color(red: 0.02, green: 0.02, blue: 0.05),
-                                Color(red: 0.32, green: 0.16, blue: 0.62))
-        case .charcoal: return (Color(red: 0.11, green: 0.10, blue: 0.09),
-                                Color(red: 0.04, green: 0.04, blue: 0.035),
-                                Color(red: 0.38, green: 0.32, blue: 0.26))
-        case .teal: return (Color(red: 0.03, green: 0.09, blue: 0.10),
-                            Color(red: 0.01, green: 0.03, blue: 0.04),
-                            Color(red: 0.08, green: 0.40, blue: 0.42))
-        case .titleColor, .blurredArtwork: return nil
         }
     }
 }
@@ -5420,9 +5345,6 @@ final class FixedFocusBoxView: UIView {
                           options: [.transitionCrossDissolve, .allowUserInteraction],
                           animations: { self.infoPage.show(item, progress: self.shownProgress) })
     }
-    /// The box's outline in the title's colour (Render Lab → Box outline:
-    /// title colour); off: white.
-    private let rim = UIImageView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -5440,8 +5362,6 @@ final class FixedFocusBoxView: UIView {
         addSubview(edge)
         focusRing.isUserInteractionEnabled = false
         addSubview(focusRing)
-        rim.image = FixedFocusRim.image(.box, lineWidth: 4)
-        addSubview(rim)
         // (A layer's border is drawn above its sublayers: above the pages.)
         layer.cornerRadius = Spotlight.cornerRadius
         layer.cornerCurve = .continuous
@@ -5449,39 +5369,20 @@ final class FixedFocusBoxView: UIView {
         applyOutlineStyle()
     }
 
-    /// White border, or the rim (title colour / light / vivid).
+    /// The focus outline: the top bar's light or a white line.
     /// Focus is elsewhere (Search: on the keyboard or the top result): the
     /// box keeps showing its title, without the focus outline.
     var ringHidden = false {
         didSet { if ringHidden != oldValue { applyOutlineStyle() } }
     }
     private func applyOutlineStyle() {
-        let colored = RenderProbe.shared.flags.boxRimColored
         // The focus outline: the top bar's light, clearer (Render Lab →
         // Focus outline), or a plain white line.
-        let lit = !colored && FixedFocusCardEdge.focusLight
+        let lit = FixedFocusCardEdge.focusLight
         let hidden = ringHidden
         focusRing.image = lit && !hidden ? FixedFocusCardEdge.focusImage : nil
-        layer.borderWidth = colored || lit || hidden ? 0 : FixedFocusRing.width
+        layer.borderWidth = lit || hidden ? 0 : FixedFocusRing.width
         layer.borderColor = FixedFocusRing.color.cgColor
-        rim.isHidden = !colored || hidden
-        let style = FixedFocusRim.style
-        FixedFocusRim.apply(style, to: rim.layer)
-        rim.image = FixedFocusRim.image(.box, lineWidth: 4)
-        if style != .titleColor { rim.tintColor = .white }
-    }
-
-    private func tintRim(for item: MetaItem, progress: WatchProgress?) {
-        applyOutlineStyle()
-        // (The poster's colour — the same the cells use, so the handover
-        // between cell and box is seamless.)
-        guard RenderProbe.shared.flags.boxRimColored, FixedFocusRim.style == .titleColor,
-              let url = item.poster ?? item.background else { return }
-        let id = item.id
-        FixedFocusColors.color(for: url) { [weak self] color in
-            guard let self, self.shownID == id else { return }
-            UIView.animate(withDuration: Motion.durations.move) { self.rim.tintColor = color }
-        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -5501,7 +5402,6 @@ final class FixedFocusBoxView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         clip.frame = bounds
-        rim.frame = bounds
         // The cards' edge (Render Lab → Card edge) — no shadow here: the
         // grown cell right under the box casts it.
         edge.image = FixedFocusCardEdge.current.edgeImage
@@ -5529,7 +5429,7 @@ final class FixedFocusBoxView: UIView {
         guard item.id != shownID else { return }
         shownID = item.id
         shownProgress = progress
-        tintRim(for: item, progress: progress)
+        applyOutlineStyle()
         let portrait = self.portrait()
         guard animated else {
             page.show(item, progress: progress, portrait: portrait)
@@ -7786,12 +7686,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let facts = UILabel()
     private var item: MetaItem?
     private var backdropFor: String?
-    /// The poster's own-coloured rim (pre-rendered, tinted — see
-    /// `FixedFocusRim`). Sits with the poster; the box covers it.
-    private let rim = UIImageView()
-    /// The opening's outline in the title's colour (matches the box's).
-    private let outlineRim = UIImageView()
-    private var rimColor: UIColor?
     /// Continue Watching: a landscape card (backdrop always), with its state.
     private var landscape = false
     private let state = FixedFocusProgressView()
@@ -7822,9 +7716,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         backdrop.addSubview(logo)
         state.alpha = 0
         backdrop.addSubview(state)
-        rim.isUserInteractionEnabled = false
-        rim.alpha = 0
-        contentView.addSubview(rim)
         // The card's edge (on top of its pictures) and its shadow (under
         // the card, outside it) — Render Lab → Card edge.
         edge.isUserInteractionEnabled = false
@@ -7835,10 +7726,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         contentView.addSubview(dimCover)
         cardShadow.isUserInteractionEnabled = false
         insertSubview(cardShadow, at: 0)
-        outlineRim.isUserInteractionEnabled = false
-        outlineRim.image = FixedFocusRim.image(.box, lineWidth: 4)
-        outlineRim.alpha = 0
-        addSubview(outlineRim)
         outline.isUserInteractionEnabled = false
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         outline.layer.borderWidth = FixedFocusRing.width
@@ -7888,11 +7775,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         contentView.bringSubviewToFront(edge)
         cardShadow.image = style.hasShadow ? FixedFocusCardEdge.shadowImage : nil
         cardShadow.frame = card.insetBy(dx: -FixedFocusCardEdge.shadowPad, dy: -FixedFocusCardEdge.shadowPad)
-        outlineRim.frame = CGRect(x: 0, y: 0, width: landscapeWidth, height: cardHeight)
-        let rimSize = landscape
-            ? CGSize(width: landscapeWidth, height: cardHeight)
-            : CGSize(width: FixedFocusMetrics.posterWidth, height: cardHeight)
-        rim.frame = CGRect(origin: .zero, size: rimSize)
         state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
@@ -7926,34 +7808,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             info.alpha = 0
             return
         }
-        // The rim, in the poster's own colour (subtle).
-        let rimOn = RenderProbe.shared.flags.posterRims
-        rim.image = rimOn ? FixedFocusRim.image(landscape ? .box : .poster, lineWidth: 2) : nil
-        rim.alpha = 0
-        rimColor = nil
-        let style = FixedFocusRim.style
-        FixedFocusRim.apply(style, to: rim.layer)
-        FixedFocusRim.apply(style, to: outlineRim.layer)
-        outlineRim.image = FixedFocusRim.image(.box, lineWidth: 4)
-        if style == .titleColor {
-            if let url = item.poster ?? item.background {
-                let id = item.id
-                FixedFocusColors.color(for: url) { [weak self] color in
-                    guard let self, self.item?.id == id else { return }
-                    self.rimColor = color
-                    self.rim.tintColor = color
-                    self.outlineRim.tintColor = color
-                    if rimOn { self.rim.alpha = self.backdrop.alpha > 0.5 ? 0 : FixedFocusRim.posterAlpha }
-                }
-            }
-        } else {
-            // Light / vivid: white — over the poster's own edge it reads as
-            // a lighter version of exactly that colour (glass-like).
-            rimColor = .white
-            rim.tintColor = .white
-            outlineRim.tintColor = .white
-            if rimOn { rim.alpha = FixedFocusRim.posterAlpha }
-        }
         setNeedsLayout()
         if landscape {
             // Landscape: the art right away. Continue Watching: its art is
@@ -7984,12 +7838,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         facts.text = FixedFocusShowInfo.factsLine(item)
     }
 
-    /// The cell's outline: white, or the rim in the title's colour (as the
-    /// box's — Render Lab → Box outline: title colour).
+    /// The cell's outline.
     private func setOutline(_ on: Bool) {
-        let colored = RenderProbe.shared.flags.boxRimColored
-        outline.alpha = on && !colored ? 1 : 0
-        outlineRim.alpha = on && colored ? 1 : 0
+        outline.alpha = on ? 1 : 0
     }
 
     /// The billboard's cells: focus targets only, nothing drawn.
@@ -8101,10 +7952,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             }
         } else {
             setOutline(shows)
-        }
-        // The poster's own rim steps back while the cell shows the box.
-        if RenderProbe.shared.flags.posterRims, rimColor != nil {
-            rim.alpha = shows ? 0 : FixedFocusRim.posterAlpha
         }
     }
 }
@@ -8701,195 +8548,6 @@ enum FixedFocusMotion {
     }
 }
 
-
-/// The rim, drawn ONCE per size as a white gradient ring (bright at the
-/// top-right, fading around, gone at the bottom-left) and used as a
-/// template image — each poster tints it with its own colour. A picture that
-/// moves with its poster: no per-frame drawing (a live gradient stroke on
-/// moving cards is what cost the old Home its frames).
-@MainActor
-enum FixedFocusRim {
-    enum Size { case poster, box }
-
-    /// Render Lab → Rim: the title's colour, or glass-like — white over the
-    /// poster's own edge (light: plain blend; vivid: overlay blend, which
-    /// brightens the edge colours without washing them out).
-    enum Style: String, CaseIterable {
-        case titleColor, light, vivid, glass
-        var displayName: String {
-            switch self {
-            case .titleColor: return "Title colour"
-            case .light: return "Light (glass)"
-            case .vivid: return "Vivid (glass)"
-            case .glass: return "Vivid glass (depth)"
-            }
-        }
-    }
-
-    static var style: Style { Style(rawValue: RenderProbe.shared.flags.rimStyle) ?? .light }
-
-    /// The posters' rim strength (the box's is full).
-    static var posterAlpha: CGFloat {
-        switch style {
-        case .titleColor: return 0.8
-        case .light: return 0.45
-        case .vivid: return 0.9
-        case .glass: return 0.95
-        }
-    }
-
-    /// Vivid / vivid glass: the rim is blended with what's beneath
-    /// (overlay) — it brightens the edge's own colours (and the glass's dark
-    /// counter-edge deepens them). Same cost for both.
-    static func apply(_ style: Style, to layer: CALayer) {
-        layer.compositingFilter = style == .vivid || style == .glass ? "overlayBlendMode" : nil
-    }
-    private static var cache: [String: UIImage] = [:]
-
-    static func image(_ size: Size, lineWidth: CGFloat) -> UIImage {
-        if style == .glass { return glassImage(size, lineWidth: lineWidth) }
-        let w = size == .box ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
-        let h = FixedFocusMetrics.height
-        let key = "\(size)-\(lineWidth)"
-        if let hit = cache[key] { return hit }
-        let rect = CGRect(x: 0, y: 0, width: w, height: h)
-        let image = UIGraphicsImageRenderer(size: rect.size).image { ctx in
-            let cg = ctx.cgContext
-            let inset = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
-            let path = UIBezierPath(roundedRect: inset,
-                                    cornerRadius: max(Spotlight.cornerRadius - lineWidth / 2, 0))
-            cg.addPath(path.cgPath)
-            cg.setLineWidth(lineWidth)
-            cg.replacePathWithStrokedPath()
-            cg.clip()
-            // Pure directional light from the TOP RIGHT (the dark fade on the
-            // left reads as shadow, so the scene is lit from the right):
-            // peak there, fading steadily around the frame, gone at the
-            // bottom-left.
-            let colors = [1.0, 0.45, 0.12, 0.0].map { UIColor(white: 1, alpha: $0).cgColor } as CFArray
-            let locations: [CGFloat] = [0, 0.3, 0.6, 1]
-            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                         colors: colors, locations: locations) {
-                cg.drawLinearGradient(gradient, start: CGPoint(x: w, y: 0), end: CGPoint(x: 0, y: h), options: [])
-            }
-        }.withRenderingMode(.alwaysTemplate)
-        cache[key] = image
-        return image
-    }
-}
-
-extension FixedFocusRim {
-    /// GLASS (depth): an edge that looks physical, all baked into one image
-    /// per size (so it costs the same as the flat rim):
-    /// - a soft specular sheen INSIDE the lit (top-right) corner, over the art;
-    /// - a fine dark counter-edge on the shadow side (bottom-left);
-    /// - a fine light line all around, fading from the lit corner;
-    /// - the edge THICKER where the light hits, thinning out around it.
-    /// Not a template: its light and shadow are baked in.
-    static func glassImage(_ size: Size, lineWidth: CGFloat) -> UIImage {
-        let w = size == .box ? FixedFocusMetrics.boxWidth : FixedFocusMetrics.posterWidth
-        let h = FixedFocusMetrics.height
-        let key = "glass-\(size)-\(lineWidth)"
-        if let hit = cache[key] { return hit }
-        let rect = CGRect(x: 0, y: 0, width: w, height: h)
-        let radius = Spotlight.cornerRadius
-        let space = CGColorSpaceCreateDeviceRGB()
-        let light = CGPoint(x: w, y: 0)
-        let reach = max(w, h)
-
-        func ring(_ cg: CGContext, width: CGFloat) {
-            let inset = rect.insetBy(dx: width / 2, dy: width / 2)
-            cg.addPath(UIBezierPath(roundedRect: inset, cornerRadius: max(radius - width / 2, 0)).cgPath)
-            cg.setLineWidth(width)
-            cg.replacePathWithStrokedPath()
-            cg.clip()
-        }
-        func gradient(_ colors: [UIColor], _ locations: [CGFloat]) -> CGGradient? {
-            CGGradient(colorsSpace: space, colors: colors.map(\.cgColor) as CFArray, locations: locations)
-        }
-
-        // Soft INNER edge: the light is brightest right at the edge and
-        // fades into the image over `feather` points (a hard inner boundary
-        // read as a line painted on top). Wider on the box.
-        let feather: CGFloat = size == .box ? 12 : 6
-        let outer = UIBezierPath(roundedRect: rect, cornerRadius: radius)
-
-        /// Masks must cover the WHOLE image: a gradient only paints between
-        /// its ends, and `.destinationIn` leaves unpainted pixels untouched —
-        /// the glow stayed at full strength beyond the mask's radius (a hard
-        /// cut-off on the box's top and bottom edges).
-        let extend: CGGradientDrawingOptions = [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-
-        /// An inner glow (or shadow) of `color`, feathered inward, masked by
-        /// `mask` (the directional falloff).
-        func innerGlow(_ cg: CGContext, color: UIColor, blur: CGFloat, passes: Int = 1,
-                       mask: () -> Void) {
-            cg.saveGState()
-            cg.beginTransparencyLayer(auxiliaryInfo: nil)
-            cg.addPath(outer.cgPath)
-            cg.clip()
-            // Fill everything OUTSIDE the shape with a shadow: only the
-            // shadow falls inside — soft, from the edge inward.
-            let frame = UIBezierPath(rect: rect.insetBy(dx: -blur * 4, dy: -blur * 4))
-            frame.append(outer)
-            frame.usesEvenOddFillRule = true
-            // (A soft shadow is only about half as strong right at the edge:
-            // drawn several times to bring the edge up to full light.)
-            cg.setShadow(offset: .zero, blur: blur, color: color.cgColor)
-            cg.setFillColor(color.cgColor)
-            for _ in 0..<passes {
-                cg.addPath(frame.cgPath)
-                cg.fillPath(using: .evenOdd)
-            }
-            cg.setShadow(offset: .zero, blur: 0, color: nil)
-            // Keep it only where the light (or shadow) falls.
-            cg.setBlendMode(.destinationIn)
-            mask()
-            cg.endTransparencyLayer()
-            cg.restoreGState()
-        }
-
-        let image = UIGraphicsImageRenderer(size: rect.size).image { ctx in
-            let cg = ctx.cgContext
-            // Sheen inside the lit corner.
-            cg.saveGState()
-            cg.addPath(outer.cgPath)
-            cg.clip()
-            if let g = gradient([UIColor(white: 1, alpha: 0.06), UIColor(white: 1, alpha: 0)], [0, 1]) {
-                cg.drawRadialGradient(g, startCenter: light, startRadius: 0,
-                                      endCenter: light, endRadius: reach * 0.55, options: [])
-            }
-            cg.restoreGState()
-            // Shadow side: a soft dark inner edge, strongest at the bottom-left.
-            innerGlow(cg, color: UIColor(white: 0, alpha: 0.5), blur: feather * 0.7, passes: 2) {
-                if let g = gradient([UIColor(white: 0, alpha: 0), UIColor(white: 0, alpha: 0),
-                                     UIColor(white: 0, alpha: 1)], [0, 0.5, 1]) {
-                    cg.drawLinearGradient(g, start: light, end: CGPoint(x: 0, y: h), options: extend)
-                }
-            }
-            // Light side: a soft light inner edge — widest and brightest at the
-            // top-right corner, fading around the frame.
-            innerGlow(cg, color: UIColor(white: 1, alpha: 1), blur: feather,
-                      passes: size == .box ? 4 : 3) {
-                if let g = gradient([UIColor(white: 1, alpha: 1), UIColor(white: 1, alpha: 0.4),
-                                     UIColor(white: 1, alpha: 0)], [0, 0.35, 1]) {
-                    cg.drawRadialGradient(g, startCenter: light, startRadius: 0,
-                                          endCenter: light, endRadius: reach * 0.75, options: extend)
-                }
-            }
-            // The very edge: a fine crisp catch-light, fading from the corner.
-            cg.saveGState()
-            ring(cg, width: size == .box ? 2 : 1)
-            if let g = gradient([UIColor(white: 1, alpha: 0.9), UIColor(white: 1, alpha: 0.3),
-                                 UIColor(white: 1, alpha: 0)], [0, 0.45, 0.75]) {
-                cg.drawLinearGradient(g, start: light, end: CGPoint(x: 0, y: h), options: [])
-            }
-            cg.restoreGState()
-        }
-        cache[key] = image
-        return image
-    }
-}
 
 /// Each title's colour (from `SpotlightTint`, cached), lifted so it reads as
 /// light on the dark background rather than muddy.

@@ -395,16 +395,6 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        /// New Home: each poster's rim in its own colour (subtle).
-        var posterRims = false
-        /// New Home: the box's outline in the title's colour (off: white).
-        var boxRimColored = false
-        /// New Home: the rims' look (`FixedFocusRim.Style`).
-        var rimStyle = "glass"
-        /// New Home: the background takes the focused title's colour.
-        var backgroundTint = true
-        /// New Home: the background (`FixedFocusBackground`).
-        var backgroundStyle = "titleColor"
         /// New Home, title colour: how long to rest on a title before the
         /// background changes, and how long the change takes (seconds).
         var tintDelay: Double = 0.08
@@ -427,8 +417,6 @@ final class RenderProbe: ObservableObject {
         var tintBurstGap: Double = 0.3
         var tintBurstEvery: Double = 0.3
         var tintBurstBlend: Double = 0.5
-        /// New Home: a soft glow in the background's colour.
-        var backgroundGlow = false
         /// New Home, title colour: how strongly the colour covers the
         /// background (its opacity).
         var tintStrength: Double = 0.5
@@ -529,12 +517,6 @@ final class RenderProbe: ObservableObject {
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
-            posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
-            boxRimColored = (try? c.decode(Bool.self, forKey: .boxRimColored)) ?? d.boxRimColored
-            rimStyle = (try? c.decode(String.self, forKey: .rimStyle)) ?? d.rimStyle
-            backgroundTint = (try? c.decode(Bool.self, forKey: .backgroundTint)) ?? d.backgroundTint
-            backgroundStyle = (try? c.decode(String.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
-            backgroundGlow = (try? c.decode(Bool.self, forKey: .backgroundGlow)) ?? d.backgroundGlow
             tintStrength = (try? c.decode(Double.self, forKey: .tintStrength)) ?? d.tintStrength
             tintMode = (try? c.decode(String.self, forKey: .tintMode)) ?? d.tintMode
             tintAlwaysTwo = (try? c.decode(Bool.self, forKey: .tintAlwaysTwo)) ?? d.tintAlwaysTwo
