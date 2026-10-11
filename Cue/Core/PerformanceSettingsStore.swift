@@ -329,7 +329,7 @@ final class RenderProbe: ObservableObject {
     struct Flags: Codable, Equatable {
         /// Live glass (glassEffect / material) → a flat translucent fill.
         var noGlass = false
-        /// The 3-gradient `StageScrim` over the whole stage.
+        /// The billboard's shade (`BillboardShade`) off.
         var noScrim = false
         /// Every drop shadow on Home (cards, box, logos, focus glow).
         var noShadows = false
@@ -387,11 +387,6 @@ final class RenderProbe: ObservableObject {
         /// Details: under the billboard the episodes' cards peek (their top
         /// at the bottom edge, dimmed) instead of the "Episodes ⌄" hint.
         var detailsPeekEpisodes = true
-        /// Details: the season's progress ("Season 2 • 3 of 13 watched",
-        /// the ticks under it) on the billboard, at the peek's name line —
-        /// it rides up with the episodes to above their season buttons
-        /// (instead of the line between the buttons and the cards).
-        var detailsProgressOnBillboard = false
         /// Home (billboard like Details): under the billboard the first row
         /// peeks — its name above its cards' top, darkened — instead of its
         /// name on the billboard.
@@ -474,23 +469,14 @@ final class RenderProbe: ObservableObject {
         /// Details: how strongly the picture blurs on Episodes / More (the
         /// blur's radius on a 640 px copy; 0: none).
         var detailsPictureBlur: Double = 12
-        /// Details: the blurred picture's brightness capped at this (a soft
-        /// shoulder, sRGB 0…1 — `BlurredBackdrop.capCurve`): bright pictures
-        /// come down, dark ones stay. 0: no cap.
-        var detailsBlurCap: Double = 0
         /// Details: the rows' vignette over the blurred picture below the
         /// billboard.
         var detailsVignetteBelow = true
         /// Details' buttons: how fast they light up and grow (0: the focus
         /// motion's time — Motion: Focus).
         var buttonFocusTime: Double = 0.15
-        /// The billboard's chips (status, ratings): "first" right under the
-        /// logo, "last" under the tagline.
-        var billboardChips = "first"
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// The billboard's picture zooms very slowly while it shows.
-        var billboardSlowZoom = false
         /// The left fade's strength on the Detail page's Episodes / More and
         /// behind Home's rows (0: none, 1: as on the overview / billboard).
         var episodesLeftFade: Double = 0.9
@@ -502,8 +488,6 @@ final class RenderProbe: ObservableObject {
         var noMDBList = false
         /// New Home: the billboard's own, stronger vignette.
         var billboardVignette = true
-        /// New Home: the billboard's scrim (`FixedFocusBillboardScrim`).
-        var billboardScrim = "blackTint"
         /// New Home: the posters left of the box in the focused row (1: not
         /// dimmed).
         var previousPosterAlpha: Double = 0.45
@@ -543,8 +527,6 @@ final class RenderProbe: ObservableObject {
             detailsOnRows = (try? c.decode(Bool.self, forKey: .detailsOnRows)) ?? d.detailsOnRows
             detailsSeasonButtons = (try? c.decode(Bool.self, forKey: .detailsSeasonButtons)) ?? d.detailsSeasonButtons
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
-            detailsProgressOnBillboard = (try? c.decode(Bool.self, forKey: .detailsProgressOnBillboard))
-                ?? d.detailsProgressOnBillboard
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             posterRims = (try? c.decode(Bool.self, forKey: .posterRims)) ?? d.posterRims
@@ -580,18 +562,14 @@ final class RenderProbe: ObservableObject {
             if cardEdge.hasPrefix("rim") { cardEdge = "rim" }
             focusOutline = (try? c.decode(String.self, forKey: .focusOutline)) ?? d.focusOutline
             detailsPictureBlur = (try? c.decode(Double.self, forKey: .detailsPictureBlur)) ?? d.detailsPictureBlur
-            detailsBlurCap = (try? c.decode(Double.self, forKey: .detailsBlurCap)) ?? d.detailsBlurCap
             detailsVignetteBelow = (try? c.decode(Bool.self, forKey: .detailsVignetteBelow)) ?? d.detailsVignetteBelow
             buttonFocusTime = (try? c.decode(Double.self, forKey: .buttonFocusTime)) ?? d.buttonFocusTime
-            billboardChips = (try? c.decode(String.self, forKey: .billboardChips)) ?? d.billboardChips
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
-            billboardSlowZoom = (try? c.decode(Bool.self, forKey: .billboardSlowZoom)) ?? d.billboardSlowZoom
             episodesLeftFade = (try? c.decode(Double.self, forKey: .episodesLeftFade)) ?? d.episodesLeftFade
             homeLeftFade = (try? c.decode(Double.self, forKey: .homeLeftFade)) ?? d.homeLeftFade
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
             noMDBList = (try? c.decode(Bool.self, forKey: .noMDBList)) ?? d.noMDBList
             billboardVignette = (try? c.decode(Bool.self, forKey: .billboardVignette)) ?? d.billboardVignette
-            billboardScrim = (try? c.decode(String.self, forKey: .billboardScrim)) ?? d.billboardScrim
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha
             tintDelay = (try? c.decode(Double.self, forKey: .tintDelay)) ?? d.tintDelay
             tintFade = (try? c.decode(Double.self, forKey: .tintFade)) ?? d.tintFade

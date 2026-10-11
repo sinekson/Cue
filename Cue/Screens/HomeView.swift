@@ -1828,7 +1828,7 @@ struct TitleTintBackground: View {
                         .transition(.opacity)
                     // As on the Detail page's Episodes (Render Lab → Picture
                     // dim).
-                    Color.black.opacity(probe.flags.detailsBlurCap > 0 ? 0 : probe.flags.detailsPictureDim)
+                    Color.black.opacity(probe.flags.detailsPictureDim)
                 }
             }
             // The billboard's left fade, lighter (Render Lab → Left fade:
@@ -2127,9 +2127,6 @@ struct FixedFocusBillboardText: View {
         .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
     }
 
-    /// Render Lab → Billboard chips: right under the logo (else last).
-    private var chipsFirst: Bool { probe.flags.billboardChips != "last" }
-
     /// The logo's room (the reason above it).
     private var logoRoom: some View {
         Group {
@@ -2250,9 +2247,8 @@ struct FixedFocusBillboardText: View {
                         .frame(height: 30, alignment: .leading)
                         .padding(.top, FixedFocusMetrics.infoGap)
                 }
-                // Render Lab → Billboard chips: the status badge and ratings
-                // right under the logo, or last (under the tagline).
-                if compact, chipsFirst { chips }
+                // The status badge and ratings, right under the logo.
+                if compact { chips }
                 // THE FACTS — what it is: the relevant line, so the bright one.
                 // (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
@@ -2260,7 +2256,7 @@ struct FixedFocusBillboardText: View {
                     .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                     .lineLimit(1)
                     .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
-                    .padding(.top, compact && !chipsFirst ? 0 : compact ? FixedFocusMetrics.factsOffset - 30 + Self.chipsGap
+                    .padding(.top, compact ? FixedFocusMetrics.factsOffset - 30 + Self.chipsGap
                              : FixedFocusMetrics.factsOffset - 30)
                 if compact {
                     // The tagline — the mood, quiet and italic; no tagline:
@@ -2272,7 +2268,6 @@ struct FixedFocusBillboardText: View {
                         .lineLimit(1)
                         .frame(height: 30, alignment: .leading)
                         .padding(.top, FixedFocusMetrics.factsOffset - 30)
-                    if !chipsFirst { chips.padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap) }
                 } else {
                     chips.padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap)
                 }
@@ -2280,15 +2275,6 @@ struct FixedFocusBillboardText: View {
             .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
         }
         .frame(width: Self.width, alignment: .leading)
-        // Faint shades (Render Lab → Billboard scrim): a soft shadow under
-        // all the text, so it reads over bright patches of the picture.
-        .shadow(color: .black.opacity(Self.faintShade ? 0.55 : 0), radius: 14, y: 2)
-    }
-
-    /// The billboard's shade is a faint one (corner / bottom).
-    @MainActor static var faintShade: Bool {
-        let style = FixedFocusBillboardScrim(rawValue: RenderProbe.shared.flags.billboardScrim)
-        return style == .corner || style == .bottom || style == .blackTint
     }
 }
 
@@ -2372,31 +2358,6 @@ private struct BillboardReasonLabel: View {
 }
 
 /// Render Lab → Billboard scrim.
-enum FixedFocusBillboardScrim: String, CaseIterable {
-    case sun, twoFades, smooth, leftFade, black, tinted, column, columnTinted, corner, bottom, blackTint
-
-    var tinted: Bool { self == .tinted || self == .columnTinted || self == .blackTint }
-    /// The faint scrims: their strength follows the picture's brightness
-    /// where the text sits (`StageArt.boost`).
-    var adaptive: Bool { self == .corner || self == .bottom || self == .blackTint }
-    var column: Bool { self == .column || self == .columnTinted }
-    var displayName: String {
-        switch self {
-        case .sun: return "Sun (light from the top right)"
-        case .twoFades: return "Two fades (left + bottom)"
-        case .smooth: return "Black, smooth"
-        case .leftFade: return "Left fade (soft, flat dim)"
-        case .black: return "Black (as before)"
-        case .tinted: return "Title colour"
-        case .column: return "Text column only, black"
-        case .columnTinted: return "Text column only, title colour"
-        case .corner: return "Bottom-left corner (soft)"
-        case .bottom: return "Bottom only (soft)"
-        case .blackTint: return "Black + title colour, with text shadow"
-        }
-    }
-}
-
 /// What Home's text needs from TMDB for a series: its season count (catalog
 /// entries often carry no episode list) — one light request per title, kept
 /// for the session.
@@ -2498,16 +2459,10 @@ enum FixedFocusShowInfo {
 }
 
 /// THE STAGE'S SHADE — what lies over a full-screen backdrop so text reads
-/// on it: the left fade (or another scrim, Render Lab → Billboard scrim) and
-/// the vignette. ONE definition for Home's billboard and the Detail page:
+/// on it: two fades (left, bottom) and the vignette. ONE definition for Home's billboard and the Detail page:
 /// the same picture looks the same on both.
 struct BillboardShade: View {
     @ObservedObject private var probe = RenderProbe.shared
-    /// The title's colour, very dark (the tinted scrims; nil: black).
-    var tint: Color? = nil
-    /// How strong the black + title colour scrim is (1: as designed; more on
-    /// a bright picture, less on a dark one — `StageArt.boost`).
-    var boost: Double = 1
 
     var body: some View {
         ZStack {
@@ -2537,136 +2492,13 @@ struct BillboardShade: View {
                            center: UnitPoint(x: 0.5, y: 0.45), startRadiusFraction: 0, endRadiusFraction: 0.75)
     }
 
-    /// What keeps the billboard's text readable (Render Lab → Billboard
-    /// scrim): the shared stage scrim (left, bottom, top), or a soft dark
-    /// area only around the text column — each in black or in the title's
-    /// own colour, very dark.
+    /// What keeps the billboard's text readable: two fades, left and
+    /// bottom (`twoFadesImage`).
     @ViewBuilder
     var billboardScrim: some View {
-        let style = FixedFocusBillboardScrim(rawValue: probe.flags.billboardScrim) ?? .leftFade
-        let color = style.tinted ? (tint ?? .black) : .black
-        let s = StageScrimStyle.self
-        if probe.flags.noScrim {
-            EmptyView()
-        } else if style == .sun {
-            // SUN: light from the top right corner, darker with distance
-            // from it (`sunImage`).
-            Image(uiImage: Self.sunImage).resizable()
-                .allowsHitTesting(false)
-        } else if style == .twoFades {
-            // TWO FADES: left and bottom, stacked (`twoFadesImage`).
+        if !probe.flags.noScrim {
             Image(uiImage: Self.twoFadesImage).resizable()
                 .allowsHitTesting(false)
-        } else if style == .smooth {
-            // BLACK, SMOOTH: the stage scrim's bands (left, bottom, top),
-            // each one smooth curve (`smoothLeftStops`…).
-            ZStack {
-                LinearGradient(stops: Self.smoothLeftStops, startPoint: .leading, endPoint: .trailing)
-                LinearGradient(stops: Self.smoothBottomStops, startPoint: .top, endPoint: .bottom)
-                LinearGradient(stops: Self.smoothTopStops, startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else if style == .corner || style == .bottom {
-            // FAINT, where the text is: the rest of the picture stays clear
-            // (the text's own soft shadow carries it over bright patches).
-            ZStack {
-                if style == .corner {
-                    // Bottom left: under the text column and the hint.
-                    EllipticalGradient(stops: [.init(color: .black.opacity(min(0.72 * boost, 0.95)), location: 0),
-                                               .init(color: .black.opacity(min(0.55 * boost, 0.9)), location: 0.3),
-                                               .init(color: .black.opacity(min(0.25 * boost, 0.6)), location: 0.6),
-                                               .init(color: .black.opacity(0), location: 1)],
-                                       center: UnitPoint(x: 0.05, y: 0.82),
-                                       startRadiusFraction: 0, endRadiusFraction: 0.75)
-                } else {
-                    LinearGradient(stops: [.init(color: .black.opacity(0), location: 0.3),
-                                           .init(color: .black.opacity(min(0.35 * boost, 0.9)), location: 0.6),
-                                           .init(color: .black.opacity(min(0.75 * boost, 0.95)), location: 1)],
-                                   startPoint: .top, endPoint: .bottom)
-                }
-                // A little at the top for the navigation.
-                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
-                                       .init(color: .clear, location: s.topReach)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else if style == .leftFade {
-            // The left fade (the hint at the bottom left sits on it too; no
-            // bottom fade) over a flat dim (`softLeftStops`), and a little at
-            // the top for the navigation.
-            ZStack {
-                LinearGradient(stops: Self.softLeftStops, startPoint: .leading, endPoint: .trailing)
-                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
-                                       .init(color: .clear, location: s.topReach)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else if style.column {
-            ZStack {
-                // Around the text column (the fixed box's place), soft on
-                // every side; the rest of the picture stays clear.
-                EllipticalGradient(stops: [.init(color: color.opacity(0.78), location: 0),
-                                           .init(color: color.opacity(0.7), location: 0.35),
-                                           .init(color: color.opacity(0.4), location: 0.62),
-                                           .init(color: color.opacity(0.12), location: 0.85),
-                                           .init(color: color.opacity(0), location: 1)],
-                                   center: UnitPoint(x: 0.2, y: 0.5),
-                                   startRadiusFraction: 0, endRadiusFraction: 0.5)
-                // Just enough at the bottom for the hint and the dots, and
-                // at the top for the navigation.
-                LinearGradient(stops: [.init(color: color.opacity(0), location: 0.84),
-                                       .init(color: color.opacity(0.55), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
-                                       .init(color: .clear, location: s.topReach)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else if style == .blackTint {
-            // BLACK + TITLE COLOUR: the stage scrim's shape, part black (the
-            // depth) and part the title's colour (keeps the picture's mood) —
-            // a touch lighter than either alone; the text's soft shadow
-            // (`faintShade`) makes up for it.
-            ZStack {
-                ForEach(0..<2, id: \.self) { layer in
-                    let c = layer == 0 ? Color.black : color
-                    let k = (layer == 0 ? 0.55 : 0.5) * boost
-                    ZStack {
-                        LinearGradient(stops: [.init(color: c.opacity(s.left * k), location: 0),
-                                               .init(color: c.opacity(s.left * k * 0.8), location: s.leftReach * 0.3),
-                                               .init(color: c.opacity(s.left * k * 0.45), location: s.leftReach * 0.6),
-                                               .init(color: c.opacity(0), location: s.leftReach)],
-                                       startPoint: .leading, endPoint: .trailing)
-                        LinearGradient(stops: [.init(color: c.opacity(0), location: s.bottomStart),
-                                               .init(color: c.opacity(s.bottom * k * 0.45), location: (s.bottomStart + 1) / 2),
-                                               .init(color: c.opacity(s.bottom * k), location: 1)],
-                                       startPoint: .top, endPoint: .bottom)
-                    }
-                }
-                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
-                                       .init(color: .clear, location: s.topReach)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else if style.tinted {
-            // The stage scrim's shape, in the title's colour.
-            ZStack {
-                LinearGradient(stops: [.init(color: color.opacity(s.left), location: 0),
-                                       .init(color: color.opacity(s.left * 0.8), location: s.leftReach * 0.3),
-                                       .init(color: color.opacity(s.left * 0.45), location: s.leftReach * 0.6),
-                                       .init(color: color.opacity(0), location: s.leftReach)],
-                               startPoint: .leading, endPoint: .trailing)
-                LinearGradient(stops: [.init(color: color.opacity(0), location: s.bottomStart),
-                                       .init(color: color.opacity(s.bottom * 0.45), location: (s.bottomStart + 1) / 2),
-                                       .init(color: color.opacity(s.bottom), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                LinearGradient(stops: [.init(color: .black.opacity(s.top), location: 0),
-                                       .init(color: .clear, location: s.topReach)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .allowsHitTesting(false)
-        } else {
-            StageScrim()
         }
     }
 
@@ -2692,44 +2524,6 @@ struct BillboardShade: View {
         ]
         return smoothStops(points, levelStart: false)
     }()
-
-    /// "Left fade" (Render Lab → Billboard scrim): lighter than the rows'
-    /// `billboardLeftStops` (85 % at the edge for 97, ~50 % at the column's
-    /// right edge for 75) and one even ease — level at the edge, steepest
-    /// just past the column, landing softly on a flat 15 % dim that holds
-    /// across the rest of the picture.
-    static let softLeftStops = smoothStops([
-        (0, 0.95),                                      // the screen's edge
-        (0.2, 0.88),                                    // the column's middle
-        (0.4, 0.65),                                    // its right edge
-        (0.58, 0.4),
-        (0.78, 0.15),                                   // the flat dim, from here on
-    ])
-
-    /// "Black, smooth" (Render Lab → Billboard scrim): the stage scrim's
-    /// three bands, each ONE smooth curve. A little lighter than the stage
-    /// scrim at the screen's edges (left 70 % for 80, bottom 72 for 85),
-    /// darker over the info block (at the column's right edge ~50 % for
-    /// ~25) — and the bottom-left corner ~92 % for ~97.
-    static let smoothLeftStops = smoothStops([
-        (0, 0.7),                                       // the screen's edge
-        (0.2, 0.66),                                    // the column's middle
-        (0.36, 0.52),
-        (0.48, 0.28),                                   // past the column
-        (0.64, 0),
-    ])
-    static let smoothBottomStops = smoothStops([
-        (0.4, 0),
-        (0.6, 0.25),
-        (0.75, 0.47),                                   // the info block's foot
-        (0.9, 0.62),
-        (1, 0.72),                                      // the screen's edge
-    ])
-    static let smoothTopStops = smoothStops([
-        (0, 0.45),
-        (0.1, 0.2),
-        (0.24, 0),
-    ])
 
     /// Black stops along one smooth curve through `points` (share of the
     /// gradient, darkness) — monotone cubic interpolation (Fritsch–Carlson):
@@ -2777,7 +2571,7 @@ struct BillboardShade: View {
         }
     }
 
-    /// "Two fades" (Render Lab → Billboard scrim): the left and the bottom
+    /// "Two fades": the left and the bottom
     /// curve below, stacked — the darkening comes out of the bottom-left
     /// corner. (Tried: the darker of the two at every point.)
     /// No top band, no vignette. Made once (half size, stretched: all soft).
@@ -2798,35 +2592,6 @@ struct BillboardShade: View {
         (0.95, 0.74),
         (1, 0.8),                                      // the screen's edge
     ]
-    /// "Sun" (Render Lab → Billboard scrim): a light at the top right
-    /// corner — the further from it, the darker (one smooth curve). The
-    /// distance in the screen's own proportions (0…1 each way), so the
-    /// edge of the light runs from the top, left of the middle, round to
-    /// the bottom right: the text, the hint and the bottom-left corner in
-    /// the dark, the picture's right half in the light. (share of the
-    /// distance to the far corner, √2 → 1; darkness)
-    static let sunCurve: [(x: Double, y: Double)] = [
-        (0.42, 0.2),                                    // the light: a flat 20 %
-        (0.53, 0.37),                                   // its edge: an even rise,
-        (0.64, 0.58),                                   // steepest here,
-        (0.76, 0.76),                                   // easing off
-        (0.88, 0.87),
-        (1, 0.95),                                      // the bottom-left corner
-    ]
-    static let sunImage: UIImage = {
-        let w = 960, h = 540
-        let curve = smoothCurve(sunCurve)
-        var pixels = [UInt8](repeating: 0, count: w * h * 4)
-        for y in 0..<h {
-            for x in 0..<w {
-                let dx = 1 - (Double(x) + 0.5) / Double(w), dy = (Double(y) + 0.5) / Double(h)
-                let r = (dx * dx + dy * dy).squareRoot() / 2.0.squareRoot()
-                pixels[(y * w + x) * 4 + 3] = UInt8((curve(r) * 255).rounded())
-            }
-        }
-        return blackImage(pixels, width: w, height: h)
-    }()
-
     /// A black shade from its alpha bytes (RGBA, premultiplied).
     static func blackImage(_ pixels: [UInt8], width w: Int, height h: Int) -> UIImage {
         let provider = CGDataProvider(data: Data(pixels) as CFData)!
@@ -2852,12 +2617,7 @@ struct BillboardShade: View {
                 pixels[(y * w + x) * 4 + 3] = UInt8((dark * 255).rounded())
             }
         }
-        let provider = CGDataProvider(data: Data(pixels) as CFData)!
-        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-                         space: CGColorSpaceCreateDeviceRGB(),
-                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: cg)
+        return blackImage(pixels, width: w, height: h)
     }()
 
     /// How much black a WHITE picture needs over it for white text of
@@ -3058,7 +2818,7 @@ extension HomeUIKitView {
         guard let onSelectFeatured else { onSelect(item); return }
         // As from any card (`DetailTransition.open`): Home dims, its picture
         // zooms to Details', Details comes in.
-        DetailTransition.shared.open(item, fromBillboard: true) { onSelectFeatured(item) }
+        DetailTransition.shared.open(item) { onSelectFeatured(item) }
     }
 
     /// Play's label as Details will first show it: where Continue Watching
@@ -3427,11 +3187,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// `headerAccessoryHeight`); shown while the row has focus (Details'
     /// season progress).
     var rowTitleAccessories: [String: AnyView] = [:]
-    /// SwiftUI ABOVE a row, centred: resting under a rigid billboard, on the
-    /// row's name line (the peek's — Home's page dots' spot); with the row in
-    /// focus, above its name or header. It moves with the row, in the same
-    /// animation, never dimmed (Details' season progress on the billboard).
-    var rowTopAccessories: [String: AnyView] = [:]
     /// Rows with glass buttons in their name's place while they have focus
     /// (Details' seasons): moving focus along them (Up from the cards),
     /// Up to the billboard, Down into the row. A button taking focus is
@@ -3514,7 +3269,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.onTitleMove = onTitleMove
         controller.onTitleFocus = onTitleFocus
         controller.rowTitleAccessories = rowTitleAccessories
-        controller.rowTopAccessories = rowTopAccessories
         controller.anchoredRowIDs = anchoredRowIDs
         controller.customRows = customRows
         controller.logoRowIDs = logoRowIDs
@@ -4611,14 +4365,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-    var rowTopAccessories: [String: AnyView] = [:] {
-        didSet {
-            guard isViewLoaded else { return }
-            for case let cell as FixedFocusRowCell in outer.visibleCells { cell.showTopAccessory() }
-        }
-    }
-    /// Between a top accessory and the row's header (or name) below it.
-    static let topAccessoryGap: CGFloat = 28
 
     var rowHeaders: [String: FixedFocusRowHeader] = [:] {
         didSet {
@@ -5066,7 +4812,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         for case let cell as FixedFocusRowCell in outer.visibleCells {
             cell.contentView.alpha = rowAlpha(cell.rowIndex)
             cell.applyCaptions()
-            cell.applyTopAccessory()
             cell.applyCardDim()
             // (Rigid: by a line fixed on the screen, moved in the scroll —
             // see `concealTravel`.)
@@ -6076,40 +5821,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     func applyAccessory() { accessory?.view.alpha = isFocusRow ? 1 : 0 }
 
-    /// Above the row (see `FixedFocusRows.rowTopAccessories`): on the cell,
-    /// not its content (that is dimmed out of focus).
-    private var topAccessory: UIHostingController<AnyView>?
-
-    func showTopAccessory() {
-        guard let controller, let row, let view = controller.rowTopAccessories[row.id] else {
-            topAccessory?.view.isHidden = true
-            return
-        }
-        if let topAccessory {
-            topAccessory.rootView = view
-            topAccessory.view.isHidden = false
-        } else {
-            let host = UIHostingController(rootView: view)
-            host.view.backgroundColor = .clear
-            host.view.isUserInteractionEnabled = false
-            host.safeAreaRegions = []
-            addSubview(host.view)
-            topAccessory = host
-        }
-        UIView.performWithoutAnimation { applyTopAccessory() }
-    }
-
-    /// Resting: its foot on the name's line; in focus: above the name or
-    /// header, a gap between. Centred on the screen (as the billboard's page
-    /// dots).
-    func applyTopAccessory() {
-        guard let host = topAccessory?.view, !host.isHidden else { return }
-        let size = host.sizeThatFits(CGSize(width: 1920, height: 300))
-        let y = isFocusRow ? -size.height - FixedFocusRowsController.topAccessoryGap
-            : FixedFocusMetrics.titleLine - size.height
-        host.bounds = CGRect(origin: .zero, size: size)
-        host.center = CGPoint(x: bounds.midX, y: y + size.height / 2)
-    }
 
     private func placeArrows() {
         for arrow in [prevArrow, nextArrow] where arrow.superview == nil { title.addSubview(arrow) }
@@ -6550,7 +6261,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         setNeedsLayout()
         applyTitleControl()
         showAccessory()
-        showTopAccessory()
         showHeader()
         showCustom()
         if isPanel {
@@ -6999,10 +6709,9 @@ final class DetailTransition {
         Opening(picture: detailsPicture(scale: startScale))
     }
 
-    func open(_ item: MetaItem, fromBillboard: Bool = false, push: @escaping () -> Void) {
+    func open(_ item: MetaItem, push: @escaping () -> Void) {
         guard !busy, let window = Self.window else { return }
-        // From the billboard: its picture, as large as it is right now.
-        let opening = Self.opening(startScale: fromBillboard ? StagePictureView.shownScale : 1)
+        let opening = Self.opening(startScale: 1)
         busy = true
         ModeSwap.shared.handingOver = true
         DetailOpenProbe.pressed()
@@ -7036,9 +6745,8 @@ final class DetailTransition {
                 pictures[item.id] = url
                 openings[item.id] = opening
                 overlay.picture.image = image
-                // The billboard's own shade for it (Details uses the same).
-                overlay.place(opening, shade: DetailPreparer.shared.peek(item.id)?.shade
-                              ?? StageArt.knownShade(for: url))
+                // The billboard's own shade (Details uses the same).
+                overlay.place(opening, shade: StageArt.shade)
                 zoomEnd = CACurrentMediaTime() + Self.pictureSettle * k
                 moves.append(Task {
                     await Self.run {
@@ -7123,21 +6831,6 @@ final class DetailTransition {
         }
     }
 
-    /// Details' shade (`BillboardShade`, as the Render Lab has it), drawn
-    /// once into a picture — the same view, so it matches whatever the
-    /// settings. Made again when they change.
-    static var shadeImage: UIImage? {
-        let flags = RenderProbe.shared.flags
-        let key = "\(flags.billboardScrim)|\(flags.billboardVignette)|\(flags.noScrim)"
-        if let cached = shadeCache, cached.key == key { return cached.image }
-        let renderer = ImageRenderer(content: BillboardShade()
-            .frame(width: screen.width, height: screen.height))
-        renderer.scale = 1
-        let image = renderer.uiImage
-        shadeCache = image.map { (key, $0) }
-        return image
-    }
-    private static var shadeCache: (key: String, image: UIImage)?
 
     /// 1 — or 4 with the dev slow motion.
     static var length: Double { slowMotion ? 4 : 1 }
@@ -7358,7 +7051,7 @@ final class DetailTransitionOverlay {
 
     /// The picture at the opening's start, Home's framing (no animation).
     func place(_ opening: DetailTransitionOpening, shade image: UIImage?) {
-        shade.image = image ?? DetailTransition.shadeImage
+        shade.image = image
         DetailTransition.place(picture.layer, opening.picture)
     }
 

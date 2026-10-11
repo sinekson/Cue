@@ -294,8 +294,6 @@ enum Spotlight {
     ///   drops frames when scrolling fast).
     enum BackgroundStyle { case plain, tint, glow }
     static let backgroundStyle: BackgroundStyle = .tint
-    /// (`.tint`) Darkened by the shared `StageScrim` (see `StageScrimStyle`),
-    /// the same layer as the billboard and the Detail page.
     /// (`.tint`) The title's artwork, pre-blurred, faintly over the colour.
     /// Blurred ahead of time for the neighbours (like the colour), so it
     /// usually follows the press as fast as the colour does.
@@ -504,48 +502,6 @@ enum SpotlightTint {
 }
 
 extension SpotlightTint {
-    @MainActor private static var grounds: [String: Double] = [:]
-
-    /// How bright the picture is where the billboard's text sits (the left
-    /// 45 %, from the top bar down): mean relative luminance, 0...1. The
-    /// shade's strength follows it (`StageArt.boost`): a bright picture gets
-    /// the darkening it needs, a dark one is left alone.
-    @MainActor
-    static func textGround(for url: String) async -> Double? {
-        if let cached = grounds[url] { return cached }
-        let value: Double? = await Task.detached(priority: .utility) {
-            guard let cg = await smallImage(url)?.cgImage else { return nil }
-            let width = 32, height = 18
-            var pixels = [UInt8](repeating: 0, count: width * height * 4)
-            let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
-                guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height,
-                                          bitsPerComponent: 8, bytesPerRow: width * 4,
-                                          space: CGColorSpaceCreateDeviceRGB(),
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-                else { return false }
-                ctx.interpolationQuality = .medium
-                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
-                return true
-            }
-            guard drawn else { return nil }
-            func linear(_ v: UInt8) -> Double {
-                let c = Double(v) / 255
-                return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
-            }
-            var sum = 0.0, count = 0.0
-            for y in 3..<height {
-                for x in 0..<Int(Double(width) * 0.45) {
-                    let i = (y * width + x) * 4
-                    sum += 0.2126 * linear(pixels[i]) + 0.7152 * linear(pixels[i + 1]) + 0.0722 * linear(pixels[i + 2])
-                    count += 1
-                }
-            }
-            return count > 0 ? sum / count : nil
-        }.value
-        if let value { grounds[url] = value }
-        return value
-    }
-
     /// One of the artwork's main colours (hue and saturation only; whoever
     /// shows it picks the brightness).
     struct Swatch {

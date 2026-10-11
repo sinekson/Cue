@@ -2223,54 +2223,6 @@ struct LibrarySection<Content: View>: View {
 
 // MARK: - Hero gradients (ported from Cue's ModernHeroGradientLayer)
 
-/// THE dark layer over artwork, the same on every screen that puts text
-/// over a picture (Home's rows and billboard, the Detail page): neutral
-/// black, tuned for the hardest case — text on a photo.
-/// - left: carries the titles, meta lines, descriptions (bottom-left);
-/// - bottom: the "▾" hints and the preview row;
-/// - top: just enough for the top navigation over bright art.
-/// Only the artwork beneath it changes from screen to screen.
-enum StageScrimStyle {
-    /// Darkness at the left edge, and how far across it reaches (share of
-    /// the width).
-    static let left: Double = 0.8
-    static let leftReach: CGFloat = 0.6
-    /// Darkness at the bottom edge, and where (from the top) it begins.
-    static let bottom: Double = 0.85
-    static let bottomStart: CGFloat = 0.45
-    /// Darkness at the top edge, and how far down it reaches.
-    static let top: Double = 0.5
-    static let topReach: CGFloat = 0.22
-}
-
-struct StageScrim: View {
-    var body: some View {
-        if !RenderProbe.shared.flags.noScrim { scrim }
-    }
-
-    private var scrim: some View {
-        let s = StageScrimStyle.self
-        return ZStack {
-            LinearGradient(stops: [
-                .init(color: .black.opacity(s.left), location: 0),
-                .init(color: .black.opacity(s.left * 0.8), location: s.leftReach * 0.3),
-                .init(color: .black.opacity(s.left * 0.45), location: s.leftReach * 0.6),
-                .init(color: .clear, location: s.leftReach)
-            ], startPoint: .leading, endPoint: .trailing)
-            LinearGradient(stops: [
-                .init(color: .clear, location: s.bottomStart),
-                .init(color: .black.opacity(s.bottom * 0.45), location: (s.bottomStart + 1) / 2),
-                .init(color: .black.opacity(s.bottom), location: 1)
-            ], startPoint: .top, endPoint: .bottom)
-            LinearGradient(stops: [
-                .init(color: .black.opacity(s.top), location: 0),
-                .init(color: .clear, location: s.topReach)
-            ], startPoint: .top, endPoint: .bottom)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 struct HeroGradient: View {
     let background: Color
     var fullBleed: Bool = false

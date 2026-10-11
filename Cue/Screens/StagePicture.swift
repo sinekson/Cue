@@ -19,9 +19,6 @@ final class StagePictureView: UIView {
     /// How far the billboard's picture drifts on a change (its text only
     /// crossfades — `BillboardCrossfade`).
     static let drift: CGFloat = 16
-    /// Render Lab → Billboard: slow zoom — to this, over this long.
-    static let slowZoom: CGFloat = 1.04
-    static let slowZoomTime: Double = 9
 
     /// The picture and its shade, faded out at the bottom.
     private let sheet = UIView()
@@ -90,7 +87,7 @@ final class StagePictureView: UIView {
         }
         if page.layer.animationKeys()?.isEmpty ?? true { page.frame = pageFrame }
         blurred.frame = pageFrame
-        if !StageArt.adapts || shade.image == nil { shade.image = StageArt.shade }
+        shade.image = StageArt.shade
         shade.frame = picture
         dim.frame = picture
         CATransaction.begin()
@@ -106,7 +103,6 @@ final class StagePictureView: UIView {
     func show(_ url: String?, direction: CGFloat, animated: Bool) {
         guard url != shownURL else { return }
         shownURL = url
-        applyTint(for: url, animated: animated)
         if blursBelow { loadBlurred(url) }
         setNeedsLayout()
         guard animated, RenderProbe.shared.flags.boxDrift else {
@@ -117,7 +113,6 @@ final class StagePictureView: UIView {
             } else {
                 load(url, into: page)
             }
-            breathe(page)
             return
         }
         // DRIFT: the new picture fades in shifting a little the way you
@@ -126,7 +121,6 @@ final class StagePictureView: UIView {
         let incoming = UIImageView(frame: pageFrame.offsetBy(dx: dx, dy: 0))
         Self.style(incoming)
         load(url, into: incoming)
-        breathe(incoming)
         incoming.alpha = 0
         zoom.addSubview(incoming)
         let outgoing = page
@@ -142,31 +136,6 @@ final class StagePictureView: UIView {
         }
     }
 
-    /// Render Lab → Billboard: slow zoom — the picture zooms in very slowly
-    /// while it shows (from the start of each title). A layer animation
-    /// only: the view's own transform and frame stay as they are (the drift
-    /// moves the frame at the same time).
-    /// The billboard picture slowly zooming now (`DetailTransition` starts
-    /// Details' picture at its exact size).
-    static weak var breathing: UIImageView?
-    static var shownScale: CGFloat {
-        (breathing?.layer.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1
-    }
-
-    private func breathe(_ view: UIImageView) {
-        view.layer.removeAnimation(forKey: "breathe")
-        Self.breathing = view
-        guard RenderProbe.shared.flags.billboardSlowZoom else { return }
-        let zoom = CABasicAnimation(keyPath: "transform.scale")
-        zoom.fromValue = 1
-        zoom.toValue = Self.slowZoom
-        zoom.duration = Self.slowZoomTime
-        zoom.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        zoom.fillMode = .forwards
-        zoom.isRemovedOnCompletion = false
-        view.layer.add(zoom, forKey: "breathe")
-    }
-
     /// Below the billboard (pinned): blurred and darker — set inside the
     /// rows' move, it rides it. The shade lightens as the blur and dim take
     /// over (Render Lab → Left fade: Episodes).
@@ -174,7 +143,7 @@ final class StagePictureView: UIView {
         let flags = RenderProbe.shared.flags
         blurred.alpha = below ? 1 : 0
         // The brightness cap replaces the dim (both: near black).
-        dim.alpha = below && flags.detailsBlurCap == 0 ? CGFloat(flags.detailsPictureDim) : 0
+        dim.alpha = below ? CGFloat(flags.detailsPictureDim) : 0
         shade.alpha = below ? CGFloat(flags.episodesLeftFade) : 1
     }
 
@@ -189,27 +158,15 @@ final class StagePictureView: UIView {
         }
     }
 
-    /// The shade in the title's colour (tinted scrims): crossfades in once
-    /// the colour is known.
-    private func applyTint(for url: String?, animated: Bool) {
-        guard StageArt.adapts, let url else { return }
-        Task { @MainActor [weak self] in
-            guard let image = await StageArt.shade(for: url), let self, self.shownURL == url else { return }
-            UIView.transition(with: self.shade, duration: animated ? Motion.durations.move : 0,
-                              options: [.transitionCrossDissolve, .allowUserInteraction]) {
-                self.shade.image = image
-            }
-        }
-    }
-
     private func load(_ url: String?, into view: UIImageView) {
         FixedFocusImages.load(url, into: view, maxDimension: Self.pictureSize.width)
     }
 }
 
-/// The billboard's shade (the SwiftUI `BillboardShade`: its left fade,
-/// vignette, top) as a still image, made once — and again when its Render
-/// Lab settings change.
+/// The billboard's shade (the SwiftUI `BillboardShade`: its two fades,
+/// vignette) as a still image, made once — and again when its Render Lab
+/// settings change. THE shade: the billboard's, Details' and the
+/// transition's alike.
 @MainActor
 enum StageArt {
     private static var shadeKey = ""
@@ -217,7 +174,7 @@ enum StageArt {
 
     static var shade: UIImage? {
         let flags = RenderProbe.shared.flags
-        let key = "\(flags.billboardScrim)|\(flags.billboardVignette)|\(flags.noScrim)"
+        let key = "\(flags.billboardVignette)|\(flags.noScrim)"
         if key != shadeKey || shadeImage == nil {
             let renderer = ImageRenderer(content: BillboardShade()
                 .frame(width: StagePictureView.pictureSize.width,
@@ -227,66 +184,5 @@ enum StageArt {
             shadeKey = key
         }
         return shadeImage
-    }
-
-    /// The shade in a title's own colour (the tinted scrims), made once per
-    /// colour (a few dozen at most) — at the screen's half size, stretched:
-    /// it's all soft gradients.
-    private static var tinted: [String: UIImage] = [:]
-    static var usesTint: Bool {
-        (FixedFocusBillboardScrim(rawValue: RenderProbe.shared.flags.billboardScrim) ?? .leftFade).tinted
-    }
-    /// The scrim's strength for a picture whose text area has this
-    /// luminance: 1 at a middling picture (as designed), down to 0.7 on a
-    /// dark one, up to 1.5 on a bright one (steps of 0.1: few images made).
-    static func boost(ground: Double?) -> Double {
-        guard let ground else { return 1 }
-        let raw = min(max(0.65 + 1.25 * ground, 0.7), 1.5)
-        return (raw * 10).rounded() / 10
-    }
-
-    private static var style: FixedFocusBillboardScrim {
-        FixedFocusBillboardScrim(rawValue: RenderProbe.shared.flags.billboardScrim) ?? .leftFade
-    }
-    static var adapts: Bool { style.adaptive }
-
-    /// THE shade for a picture — the billboard's, Details' and the
-    /// transition's alike (they must be identical): the plain one, or —
-    /// adaptive scrims — in the title's deep colour and as strong as its
-    /// text area needs. nil: not yet known (the colour not found).
-    static func shade(for url: String?) async -> UIImage? {
-        guard adapts, let url else { return shade }
-        let key = "\(url)|\(RenderProbe.shared.flags.billboardScrim)|\(RenderProbe.shared.flags.billboardVignette)"
-        if let hit = forPicture[key] { return hit }
-        let flags = RenderProbe.shared.flags
-        let colors = usesTint ? await FixedFocusTint.colors(for: url, flags: flags) : nil
-        guard colors != nil || !usesTint else { return nil }
-        let ground = await SpotlightTint.textGround(for: url)
-        let image = shade(tint: colors.map { UIColor($0.deep) }, boost: boost(ground: ground))
-        if forPicture.count > 120 { forPicture.removeAll() }
-        forPicture[key] = image
-        return image
-    }
-    /// …already made (no wait).
-    static func knownShade(for url: String?) -> UIImage? {
-        guard adapts, let url else { return shade }
-        return forPicture["\(url)|\(RenderProbe.shared.flags.billboardScrim)|\(RenderProbe.shared.flags.billboardVignette)"]
-    }
-    private static var forPicture: [String: UIImage] = [:]
-    static func shade(tint: UIColor?, boost: Double = 1) -> UIImage? {
-        guard adapts, tint != nil || !usesTint else { return shade }
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        tint?.getRed(&r, green: &g, blue: &b, alpha: &a)
-        let flags = RenderProbe.shared.flags
-        let key = String(format: "%@|%d|%.2f%.2f%.2f|%.1f", flags.billboardScrim, flags.billboardVignette ? 1 : 0, r, g, b, boost)
-        if let hit = tinted[key] { return hit }
-        let renderer = ImageRenderer(content: BillboardShade(tint: tint.map { Color(uiColor: $0) }, boost: boost)
-            .frame(width: StagePictureView.pictureSize.width / 2,
-                   height: StagePictureView.pictureSize.height / 2))
-        renderer.scale = 1
-        let image = renderer.uiImage
-        if tinted.count > 60 { tinted.removeAll() }
-        tinted[key] = image
-        return image
     }
 }

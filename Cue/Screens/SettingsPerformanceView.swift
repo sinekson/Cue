@@ -313,53 +313,11 @@ struct RenderLabSettings: View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
             SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
                 PerfToggleRow(
-                    icon: "chart.bar.doc.horizontal",
-                    title: "Details: season progress on the billboard",
-                    subtitle: "The season's progress (\"Season 2 • 3 of 13 watched\", ticks under it) on the billboard, just above the peeking episodes; Down carries it up with them to above the season buttons. Off: the progress on the line between the season buttons and the episodes.",
-                    isOn: Binding(get: { probe.flags.detailsProgressOnBillboard },
-                                  set: { probe.flags.detailsProgressOnBillboard = $0 })
-                )
-                PerfToggleRow(
                     icon: "gauge.with.dots.needle.67percent",
                     title: "Launch: show numbers",
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                PerfToggleRow(
-                    icon: "plus.magnifyingglass",
-                    title: "Billboard: slow zoom",
-                    subtitle: "Each billboard picture zooms in very slowly (to 104 %) while it shows — it never looks frozen.",
-                    isOn: Binding(get: { probe.flags.billboardSlowZoom }, set: { probe.flags.billboardSlowZoom = $0 })
-                )
-                CueDropdown(
-                    title: "Billboard scrim",
-                    subtitle: "What darkens the billboard's artwork behind the text: the whole left and bottom, or only around the text — in black or in the title's own colour.",
-                    icon: "text.below.photo",
-                    selection: probe.flags.billboardScrim,
-                    options: FixedFocusBillboardScrim.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.billboardScrim = raw
-                }
-                CueDropdown(
-                    title: "Billboard chips",
-                    subtitle: "Billboard and Details: the status badge and ratings right under the logo, or last, under the tagline.",
-                    icon: "rectangle.stack",
-                    selection: probe.flags.billboardChips,
-                    options: [("first", "Under the logo"), ("last", "Under the tagline")]
-                        .map { CueDropdownOption($0.0, $0.1) }
-                ) { raw in
-                    probe.flags.billboardChips = raw
-                }
-                CueDropdown(
-                    title: "Details: blurred picture, brightness cap",
-                    subtitle: "Below the billboard: the blurred picture no brighter than this — its bright parts pulled down softly, dark parts untouched, so text reads on any picture (it replaces the picture dim below while on). Applies to the next title.",
-                    icon: "sun.max.trianglebadge.exclamationmark",
-                    selection: String(probe.flags.detailsBlurCap),
-                    options: [(0.0, "Off"), (0.55, "55 %"), (0.45, "45 %"), (0.35, "35 %"), (0.25, "25 %")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.detailsBlurCap = v }
-                }
                 PerfToggleRow(
                     icon: "paintpalette",
                     title: "Poster rims",

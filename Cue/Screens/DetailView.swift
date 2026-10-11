@@ -551,9 +551,6 @@ struct DetailView: View {
     }
     /// The picture blurred, for Episodes / More (nil: none / not yet).
     @State private var blurredBackdrop: UIImage?
-    /// The billboard's shade for this picture — exactly the one Home's
-    /// billboard uses (`StageArt.shade(for:)`).
-    @State private var pictureShade: UIImage?
     /// Opened from Home's billboard: this page plays its half of the swap
     /// in, and Back plays it out and returns (see `ModeSwap`).
     @State private var fromBillboard: Bool
@@ -682,7 +679,6 @@ struct DetailView: View {
             MainActor.assumeIsolated { model.seed(prepared) }
             _showInfo = State(initialValue: prepared.showInfo)
             _billboardTagline = State(initialValue: prepared.tagline)
-            _pictureShade = State(initialValue: prepared.shade)
         }
         _prepared = State(initialValue: prepared != nil)
         if fromBillboard, prepared == nil {
@@ -1062,7 +1058,7 @@ struct DetailView: View {
                 // Details: picture dim below), so the cards on the right —
                 // outside the left fade — sit on calm ground.
                 Color.black
-                    .opacity(page == .overview || RenderProbe.shared.flags.detailsBlurCap > 0 ? 0 : RenderProbe.shared.flags.detailsPictureDim)
+                    .opacity(page == .overview ? 0 : RenderProbe.shared.flags.detailsPictureDim)
                     .animation(detailPageScroll, value: page == .overview)
                     .allowsHitTesting(false)
             }
@@ -1490,11 +1486,7 @@ struct DetailView: View {
                            onTitleFocus: { _, focused in seasonNameFocused = focused },
                            // (Season buttons: the same line, between them and
                            // the episodes.)
-                           rowTitleAccessories: progressOnBillboard ? [:] : rowProgressAccessory,
-                           // Render Lab → season progress on the billboard:
-                           // the whole progress, above the peek, riding up
-                           // with the episodes.
-                           rowTopAccessories: progressOnBillboard ? rowTopProgress : [:],
+                           rowTitleAccessories: rowProgressAccessory,
                            // The seasons: glass buttons over the episodes (Up
                            // from them); focus on one jumps the row there.
                            rowHeaders: seasonButtons ? seasonHeader : [:],
@@ -1592,21 +1584,17 @@ struct DetailView: View {
             .scaleEffect(ModeSwap.depthScale(depth))
             .frame(width: 1920, height: 1080)
             .clipped()
-            Color.black.opacity(below && flags.detailsBlurCap == 0 ? flags.detailsPictureDim : 0)
-            // The billboard's shade, exactly Home's (in the title's colour,
-            // as strong as its text area needs — `StageArt.shade(for:)`).
+            Color.black.opacity(below ? flags.detailsPictureDim : 0)
+            // The billboard's shade, exactly Home's (`StageArt.shade`).
             Group {
-                if let pictureShade {
-                    Image(uiImage: pictureShade).resizable()
+                if let shade = StageArt.shade {
+                    Image(uiImage: shade).resizable()
                 } else {
                     BillboardShade()
                 }
             }
             .frame(width: 1920, height: 1080)
             .opacity(below ? flags.episodesLeftFade : scrim)
-            .task(id: url) {
-                if let made = await StageArt.shade(for: url) { pictureShade = made }
-            }
             // Below: the rows' vignette over the blur (Render Lab → Details:
             // vignette below).
             if flags.detailsVignetteBelow {
@@ -1627,19 +1615,6 @@ struct DetailView: View {
 
     /// Where you are in the season, under the row's name (or the season
     /// buttons): its ticks, then "3 of 7".
-    private var progressOnBillboard: Bool { RenderProbe.shared.flags.detailsProgressOnBillboard }
-
-    /// The season's progress in full: "Season 2 • 3 of 13 watched", the
-    /// ticks under it (`rowTopAccessories`).
-    private var rowTopProgress: [String: AnyView] {
-        guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
-        let map = SeasonProgressMap(ticks: seasonTicks(for: episode), label: seasonProgressLabel(for: episode),
-                                    centered: true)
-            .frame(width: SeasonProgressMap.width)
-            .fixedSize()
-        return [Self.episodesRowID: AnyView(map)]
-    }
-
     private var rowProgressAccessory: [String: AnyView] {
         guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
         let season = episode.season ?? 0
@@ -3412,8 +3387,6 @@ final class DetailPreparer {
         /// The picture Details shows: Home's for it (TMDB's original file),
         /// else — once it's in — the record's.
         var picture: String?
-        /// Its shade — the billboard's own (`StageArt.shade(for:)`).
-        var shade: UIImage?
         /// The logo Home showed (else the record's).
         var logo: String?
         init(id: String, tmdb: TMDBSettings) { self.id = id; self.tmdb = tmdb }
@@ -3496,8 +3469,6 @@ final class DetailPreparer {
             try? await Task.sleep(for: .milliseconds(5))
         }
         guard let url = prepared.picture else { return nil }
-        // Its shade too (the colours are known for what Home showed).
-        if prepared.shade == nil { prepared.shade = await StageArt.shade(for: url) }
         let decoded = await withTaskGroup(of: Bool.self) { group in
             group.addTask { await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width) }
             group.addTask {

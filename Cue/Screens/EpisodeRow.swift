@@ -724,17 +724,9 @@ enum BlurredBackdrop {
     /// The working width (`strength` is the blur's radius in its pixels).
     private static let width: CGFloat = 640
 
-    /// The brightness cap's soft shoulder (sRGB in → out) for a ceiling
-    /// `c`: untouched up to half of it, then easing into it — white ends at
-    /// `c`. (Render Lab → Details: blurred picture, brightness cap.)
-    nonisolated static func capCurve(_ c: Double) -> [(Double, Double)] {
-        [(0, 0), (0.5 * c, 0.5 * c), (c, 0.82 * c), ((1 + c) / 2, 0.95 * c), (1, c)]
-    }
-
     static func image(for url: String?, strength: Double) async -> UIImage? {
         guard let url, strength > 0 else { return nil }
-        let cap = RenderProbe.shared.flags.detailsBlurCap
-        let key = "\(url)|\(strength)|\(cap)" as NSString
+        let key = "\(url)|\(strength)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
         var source = await ImageCache.shared.diskImage(for: url, budget: width)
         if source == nil, let remote = URL(string: url),
@@ -745,20 +737,9 @@ enum BlurredBackdrop {
         guard let cgImage = source?.cgImage else { return nil }
         let blurred = await Task.detached(priority: .utility) { () -> UIImage? in
             let input = CIImage(cgImage: cgImage)
-            var output = input.clampedToExtent()
+            let output = input.clampedToExtent()
                 .applyingGaussianBlur(sigma: strength)
                 .cropped(to: input.extent)
-            // The cap: bright parts pulled down (one rule for every picture).
-            if cap > 0, let tone = CIFilter(name: "CIToneCurve") {
-                tone.setValue(output, forKey: kCIInputImageKey)
-                for (i, point) in capCurve(cap).enumerated() {
-                    tone.setValue(CIVector(x: point.0, y: point.1), forKey: "inputPoint\(i)")
-                }
-                output = tone.outputImage ?? output
-            }
-            // Core Image's own working space: the curve's numbers come out as
-            // display values (white → `cap`). (A plain sRGB working space
-            // darkened and greyed everything to ~15 %.)
             let context = CIContext()
             guard let result = context.createCGImage(output, from: input.extent) else { return nil }
             return UIImage(cgImage: result)
@@ -788,8 +769,6 @@ struct SeasonProgressMap: View {
     /// line, the label's end at its end.
     var inline = false
     var width: CGFloat = Self.width
-    /// Not inline: the label over the ticks' middle (centred on the screen).
-    var centered = false
 
     /// The map's width: the box's text column.
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
@@ -823,7 +802,7 @@ struct SeasonProgressMap: View {
                     labelText
                 }
             } else {
-                VStack(alignment: centered ? .center : .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     labelText
                     if asBar { bar } else { row }
                 }

@@ -1975,8 +1975,7 @@ final class LaunchPreloader: ObservableObject {
         _ = FixedFocusBackdropArt.shadow
         _ = FixedFocusBackdropArt.glow
         _ = FixedFocusCardEdge.shadowImage
-        _ = BillboardShade.sunImage
-        _ = DetailTransition.shadeImage
+        _ = BillboardShade.twoFadesImage
         line(String(format: "Setup     artwork 7 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
         progress = 0.25
 
