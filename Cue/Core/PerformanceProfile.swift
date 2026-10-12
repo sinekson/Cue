@@ -115,7 +115,7 @@ enum PerformanceProfile {
     /// 4 GB boxes keep the full framebuffer.
     @MainActor
     static var backdropPixelCap: CGFloat? {
-        isMidPower || RenderProbe.shared.flags.capBackdrop ? 2560 : nil
+        isMidPower ? 2560 : nil
     }
 
     /// Decoded-pixel memory-cache budget, sized to what the box can spare.

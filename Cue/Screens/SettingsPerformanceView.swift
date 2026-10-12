@@ -299,8 +299,8 @@ private struct PerfRowLabel<Accessory: View>: View {
 }
 
 
-/// Settings → Developer, first half (Render Lab): the FPS overlay and the
-/// render bisect switches in one place, for quick A/B runs while tuning.
+/// Settings → Developer, first half (Render Lab): the launch numbers and the
+/// FPS overlay.
 struct RenderLabSettings: View {
     @ObservedObject private var store = PerformanceSettingsStore.shared
     @ObservedObject private var probe = RenderProbe.shared
@@ -324,77 +324,10 @@ struct RenderLabSettings: View {
                 PerfToggleRow(
                     icon: "speedometer",
                     title: "Show FPS overlay",
-                    subtitle: "Overlay a live frames-per-second read-out on the whole app (green = smooth, amber = some drops, red = janky), so you can see the effect of these switches while you browse. Off by default.",
+                    subtitle: "Overlay a live frames-per-second read-out on the whole app (green = smooth, amber = some drops, red = janky), while you browse. Off by default.",
                     isOn: s.showFPSOverlay
                 )
             }
-
-            SettingsGroupCard(
-                title: "Render bisect",
-                subtitle: "Temporary: remove one render cost at a time on Home and watch the FPS overlay"
-            ) {
-                PerfToggleRow(
-                    icon: "drop.fill",
-                    title: "No live glass",
-                    subtitle: "Glass surfaces (end cards, chevrons, dots, top bar) become a flat fill.",
-                    isOn: Binding(get: { probe.flags.noGlass }, set: { probe.flags.noGlass = $0 })
-                )
-                PerfToggleRow(
-                    icon: "square.3.layers.3d.down.backward",
-                    title: "No stage scrim",
-                    subtitle: "Removes the three full-screen darkening gradients.",
-                    isOn: Binding(get: { probe.flags.noScrim }, set: { probe.flags.noScrim = $0 })
-                )
-                PerfToggleRow(
-                    icon: "shadow",
-                    title: "No shadows",
-                    subtitle: "Every shadow on Home: cards, box, logos, focus glow.",
-                    isOn: Binding(get: { probe.flags.noShadows }, set: { probe.flags.noShadows = $0 })
-                )
-                PerfToggleRow(
-                    icon: "square.dashed",
-                    title: "No card rims",
-                    subtitle: "The thin gradient edge on every card.",
-                    isOn: Binding(get: { probe.flags.noRims }, set: { probe.flags.noRims = $0 })
-                )
-                PerfToggleRow(
-                    icon: "circle.lefthalf.filled",
-                    title: "No ambient backdrop",
-                    subtitle: "The blurred artwork behind the rows.",
-                    isOn: Binding(get: { probe.flags.noAmbient }, set: { probe.flags.noAmbient = $0 })
-                )
-                PerfToggleRow(
-                    icon: "paintbrush",
-                    title: "No title tint",
-                    subtitle: "Fixed dark background instead of the colour taken from the focused title.",
-                    isOn: Binding(get: { probe.flags.noTint }, set: { probe.flags.noTint = $0 })
-                )
-                PerfToggleRow(
-                    icon: "photo",
-                    title: "No billboard artwork",
-                    subtitle: "The billboard's full-screen image.",
-                    isOn: Binding(get: { probe.flags.noBackdrop }, set: { probe.flags.noBackdrop = $0 })
-                )
-                PerfToggleRow(
-                    icon: "arrow.down.right.and.arrow.up.left",
-                    title: "Cap backdrops at 2560 px",
-                    subtitle: "Decode full-screen art smaller (relaunch or browse to reload images).",
-                    isOn: Binding(get: { probe.flags.capBackdrop }, set: { probe.flags.capBackdrop = $0 })
-                )
-                PerfToggleRow(
-                    icon: "pause.circle",
-                    title: "No Home animations",
-                    subtitle: "Every step snaps. Separates animation cost from drawing cost.",
-                    isOn: Binding(get: { probe.flags.noAnimations }, set: { probe.flags.noAnimations = $0 })
-                )
-                PerfActionRow(
-                    icon: "arrow.counterclockwise",
-                    title: "Reset bisect switches",
-                    subtitle: "Everything back on.",
-                    action: { probe.flags = .init() }
-                )
-            }
-
         }
     }
 }

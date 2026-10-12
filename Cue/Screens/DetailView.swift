@@ -1404,7 +1404,6 @@ struct DetailView: View {
 /// holding Select for half a second runs it instead of the action (a press
 /// that became a hold never also taps).
 struct DetailActionButton: View {
-    @ObservedObject private var probe = RenderProbe.shared
     let icon: String
     let title: String
     let isPrimary: Bool

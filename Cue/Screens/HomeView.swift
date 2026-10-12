@@ -580,7 +580,6 @@ final class HomeViewModel: ObservableObject {
 }
 
 struct HomeView: View {
-    @ObservedObject private var probe = RenderProbe.shared
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
@@ -1410,7 +1409,6 @@ private struct FocusChangeModifier: ViewModifier {
 /// runs in Core Animation (off the main thread, cleanly re-aimable), and
 /// the focused cell grows to box width in the same animation.
 struct HomeUIKitView: View {
-    @ObservedObject private var probe = RenderProbe.shared
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @EnvironmentObject private var library: LibraryStore
     let rows: [HomeRow]
@@ -2158,26 +2156,17 @@ enum FixedFocusShowInfo {
 /// on it: two fades (left, bottom). ONE definition for Home's billboard and the Detail page:
 /// the same picture looks the same on both.
 struct BillboardShade: View {
-    @ObservedObject private var probe = RenderProbe.shared
-
+    /// What keeps the billboard's text readable: two fades, left and
+    /// bottom (`twoFadesImage`).
     var body: some View {
-        billboardScrim
+        Image(uiImage: Self.twoFadesImage).resizable()
+            .allowsHitTesting(false)
     }
 
     /// The billboard's dark fade over the left side (see
     /// `billboardLeftStops`). Not under the rows: their background is plain.
     var leftFade: some View {
         LinearGradient(stops: Self.billboardLeftStops, startPoint: .leading, endPoint: .trailing)
-    }
-
-    /// What keeps the billboard's text readable: two fades, left and
-    /// bottom (`twoFadesImage`).
-    @ViewBuilder
-    var billboardScrim: some View {
-        if !probe.flags.noScrim {
-            Image(uiImage: Self.twoFadesImage).resizable()
-                .allowsHitTesting(false)
-        }
     }
 
     /// The billboard's left fade, built around ONE requirement: at the text

@@ -141,25 +141,15 @@ final class StagePictureView: UIView {
 }
 
 /// The billboard's shade (the SwiftUI `BillboardShade`: its two fades)
-/// as a still image, made once — and again when its Render Lab
-/// settings change. THE shade: the billboard's, Details' and the
-/// transition's alike.
+/// as a still image, made once. THE shade: the billboard's, Details' and
+/// the transition's alike.
 @MainActor
 enum StageArt {
-    private static var shadeKey = ""
-    private static var shadeImage: UIImage?
-
-    static var shade: UIImage? {
-        let flags = RenderProbe.shared.flags
-        let key = "\(flags.noScrim)"
-        if key != shadeKey || shadeImage == nil {
-            let renderer = ImageRenderer(content: BillboardShade()
-                .frame(width: StagePictureView.pictureSize.width,
-                       height: StagePictureView.pictureSize.height))
-            renderer.scale = 1
-            shadeImage = renderer.uiImage
-            shadeKey = key
-        }
-        return shadeImage
-    }
+    static let shade: UIImage? = {
+        let renderer = ImageRenderer(content: BillboardShade()
+            .frame(width: StagePictureView.pictureSize.width,
+                   height: StagePictureView.pictureSize.height))
+        renderer.scale = 1
+        return renderer.uiImage
+    }()
 }

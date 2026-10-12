@@ -1370,20 +1370,18 @@ struct GlassRim: View {
     var strength: Double = 1
 
     var body: some View {
-        if !RenderProbe.shared.flags.noRims {
-            // Pre-rendered once per size (see `GlassRimCache`): a live
-            // gradient stroke on every moving card was re-rasterised each
-            // frame and alone took catalog scrolling from ~50 to ~15-20 fps.
-            GeometryReader { geo in
-                if let image = GlassRimCache.image(size: geo.size, cornerRadius: cornerRadius,
-                                                   strength: strength) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                }
+        // Pre-rendered once per size (see `GlassRimCache`): a live gradient
+        // stroke on every moving card was re-rasterised each frame and alone
+        // took catalog scrolling from ~50 to ~15-20 fps.
+        GeometryReader { geo in
+            if let image = GlassRimCache.image(size: geo.size, cornerRadius: cornerRadius,
+                                               strength: strength) {
+                Image(uiImage: image)
+                    .resizable()
+                    .frame(width: geo.size.width, height: geo.size.height)
             }
-            .allowsHitTesting(false)
         }
+        .allowsHitTesting(false)
     }
 }
 
@@ -1455,7 +1453,7 @@ struct GlassHighlight<S: Shape>: View {
 
     var body: some View {
         let tint = tint ?? (focused ? AppGlass.focusTint : AppGlass.currentTint)
-        if #available(tvOS 26.0, *), glass, AppGlass.isReal, !RenderProbe.shared.flags.noGlass {
+        if #available(tvOS 26.0, *), glass, AppGlass.isReal {
             Color.clear.glassEffect(.regular.tint(tint), in: shape)
         } else {
             shape.fill(tint)
@@ -1549,9 +1547,7 @@ private struct GlassSurface<S: Shape>: ViewModifier {
         // — had none. A fifteen-season show meant fourteen live glass capsules
         // in one scroller, and the rail was a full-height live blur that
         // re-composited through its own expand/collapse animation.
-        if RenderProbe.shared.flags.noGlass {
-            content.background(Color.white.opacity(0.14), in: shape)
-        } else if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
+        if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
             content.background(FusionMaterials.dialog, in: shape)
         } else if #available(tvOS 26.0, *) {
             content.glassEffect(.regular.tint(AppGlass.surfaceTint), in: shape)
