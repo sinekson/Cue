@@ -205,14 +205,35 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
     let onOpenDetails: ((MetaItem) -> Void)?
     /// A title is about to show (more can load as the end nears).
     var onDisplay: ((MetaItem) -> Void)? = nil
+    /// Room above the header, part of the page (Search: under the keyboard,
+    /// which scrolls with it).
+    var topSpace: CGFloat = 0
+    /// The first titles in: focus onto the first (Search: it stays on the
+    /// keyboard).
+    var focusesFirstTitle = true
+    /// One title as the small billboard, instead of the posters (Search's
+    /// Top Result).
+    var banner: MetaItem? = nil
+    /// Its height (Search: the room under the header).
+    var bannerHeight = FixedFocusMetrics.bannerHeight
+    @EnvironmentObject private var mdblist: MDBListSettingsStore
+    @EnvironmentObject private var theme: ThemeManager
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
     func updateUIViewController(_ controller: FolderGridController, context: Context) {
+        controller.topSpace = topSpace
+        controller.focusesFirstTitle = focusesFirstTitle
+        controller.bannerHeight = bannerHeight
+        // The banner's chips get the app's stores.
+        controller.environment = { [mdblist, theme] in
+            AnyView($0.environmentObject(mdblist).environmentObject(theme))
+        }
         controller.onSelect = onSelect
         controller.onOpenDetails = onOpenDetails
         controller.onDisplay = onDisplay
-        controller.show(header: header, headerHeight: headerHeight, items: items, subtitles: subtitles)
+        controller.show(header: header, headerHeight: headerHeight, items: banner.map { [$0] } ?? items,
+                        banner: banner != nil, subtitles: subtitles)
     }
 }
 
@@ -221,6 +242,19 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     var onSelect: (MetaItem) -> Void = { _ in }
     var onOpenDetails: ((MetaItem) -> Void)?
     var onDisplay: ((MetaItem) -> Void)?
+
+    var topSpace: CGFloat = 0 {
+        didSet { if topSpace != oldValue { syncHeaderHost() } }
+    }
+    var focusesFirstTitle = true
+    var environment: (AnyView) -> AnyView = { $0 }
+    var bannerHeight = FixedFocusMetrics.bannerHeight {
+        didSet { if bannerHeight != oldValue, isViewLoaded { collectionView.collectionViewLayout.invalidateLayout() } }
+    }
+    /// The one title shows as the small billboard.
+    private var isBanner = false
+    /// The page (Search's keyboard follows it).
+    var scrollView: UIScrollView { collectionView }
 
     private var header: AnyView?
     private var items: [MetaItem] = []
@@ -248,10 +282,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     private var headerHost: UIHostingController<AnyView>?
     private var headerPositioned = false
     /// Above the header, in the inset.
-    private static let headerTopMargin: CGFloat = 60
+    static let headerTopMargin: CGFloat = 60
     /// How close to the screen's top or bottom a focused line may come before
     /// the page moves.
-    private static let edgeMargin: CGFloat = 60
+    static let edgeMargin: CGFloat = 60
+    /// Between the header and the first line.
+    static let firstLineGap: CGFloat = 12
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -259,7 +295,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = Self.gap
         layout.minimumLineSpacing = 24
-        layout.sectionInset = UIEdgeInsets(top: 12, left: FixedFocusMetrics.inset, bottom: 48,
+        layout.sectionInset = UIEdgeInsets(top: Self.firstLineGap, left: FixedFocusMetrics.inset, bottom: 48,
                                            right: FixedFocusMetrics.inset)
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -272,6 +308,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "poster")
+        collectionView.register(FixedFocusBannerCell.self, forCellWithReuseIdentifier: "banner")
         view.addSubview(collectionView)
         syncHeaderHost()
     }
@@ -288,8 +325,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                 host.view.removeFromSuperview()
                 host.removeFromParent()
                 headerHost = nil
-                collectionView.contentInset.top = 0
             }
+            // No header (Search): the titles still start under `topSpace`.
+            applyTopInset(topSpace + Self.headerTopMargin)
             return
         }
         let host: UIHostingController<AnyView>
@@ -317,15 +355,26 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
             controlsGuideTop = guideTop
             headerHost = host
         }
-        let top = headerHeight + Self.headerTopMargin
-        if collectionView.contentInset.top != top { collectionView.contentInset.top = top }
+        applyTopInset(topSpace + headerHeight + Self.headerTopMargin)
+        host.view.frame = CGRect(x: 0, y: -headerHeight, width: collectionView.bounds.width, height: headerHeight)
+        controlsGuideTop?.constant = topSpace + Self.headerTopMargin + headerHeight - 8
+        syncControlsGuide()
+    }
+
+    /// The titles' start (the header and what's above it in the inset);
+    /// at the top, the page stays at the top.
+    private func applyTopInset(_ top: CGFloat) {
+        let oldTop = collectionView.contentInset.top
+        if oldTop != top {
+            collectionView.contentInset.top = top
+            if headerPositioned, collectionView.contentOffset.y == -oldTop {
+                collectionView.contentOffset = CGPoint(x: 0, y: -top)
+            }
+        }
         if !headerPositioned, collectionView.bounds.height > 0 {
             headerPositioned = true
             collectionView.contentOffset = CGPoint(x: 0, y: -top)
         }
-        host.view.frame = CGRect(x: 0, y: -headerHeight, width: collectionView.bounds.width, height: headerHeight)
-        controlsGuideTop?.constant = Self.headerTopMargin + headerHeight - 8
-        syncControlsGuide()
     }
 
     private var controlsGuide: UIFocusGuide?
@@ -372,8 +421,10 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     /// The header is never reloaded (it updates itself, its focus stays).
-    func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem], subtitles: [String: String]) {
-        let changed = items.map(\.id) != self.items.map(\.id)
+    func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem], banner: Bool = false,
+              subtitles: [String: String]) {
+        let changed = items.map(\.id) != self.items.map(\.id) || banner != isBanner
+        isBanner = banner
         let heightChanged = headerHeight != self.headerHeight
         self.header = header
         self.headerHeight = headerHeight
@@ -383,8 +434,15 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         self.items = items
         self.subtitles = subtitles
         guard isViewLoaded else { return }
-        collectionView.reloadData()
-        if !filledOnce, !items.isEmpty {
+        // A pill pressed (Search's Movies | Series): reloadData takes focus
+        // away from the header (it's in the collection view) to the first
+        // title. A section reload leaves it there.
+        if let host = headerHost?.view, Self.focus(in: host) {
+            UIView.performWithoutAnimation { collectionView.reloadSections(IndexSet(integer: 0)) }
+        } else {
+            collectionView.reloadData()
+        }
+        if !filledOnce, !items.isEmpty, focusesFirstTitle {
             filledOnce = true
             // The first titles in: focus to the first, unless it has moved on
             // (the loading state, which held focus, goes in the same update).
@@ -405,16 +463,24 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let item = items[indexPath.item]
+        if isBanner {
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "banner", for: indexPath)
+                as! FixedFocusBannerCell
+            cell.environment = environment
+            cell.configure(item, index: indexPath.item, rowCell: nil)
+            return cell
+        }
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath)
             as! FixedFocusDestinationCell
-        let item = items[indexPath.item]
         cell.configure(item, subtitle: subtitles[item.id], index: indexPath.item, rowCell: nil, card: Self.card)
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
+        if isBanner { return CGSize(width: FixedFocusMetrics.bannerWidth, height: bannerHeight) }
+        return CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
     }
 
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
@@ -499,6 +565,17 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     private var focusedPath: IndexPath?
+    /// Focus somewhere in `view` (SwiftUI's controls aren't views: by
+    /// their environments).
+    private static func focus(in view: UIView) -> Bool {
+        var environment: UIFocusEnvironment? = view.window?.windowScene?.focusSystem?.focusedItem
+        while let current = environment {
+            if current === view { return true }
+            environment = current.parentFocusEnvironment
+        }
+        return false
+    }
+
 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {

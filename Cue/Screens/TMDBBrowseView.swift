@@ -430,7 +430,7 @@ private struct CardRim: View {
 
 /// A control of the page: Search's glass pill — the selected one lighter, the
 /// focused one lit (the season buttons' look).
-private struct BrowseButton: View {
+struct BrowseButton: View {
     let label: String
     let selected: Bool
     let action: () -> Void

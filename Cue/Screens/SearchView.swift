@@ -7,11 +7,15 @@ final class SearchViewModel: ObservableObject {
     /// How well known the titles of this search are (TMDB) — for the order.
     @Published var fame: [TMDBService.SearchFame] = []
     @Published var isSearching = false
+    /// The scope chosen in the search bar: Top Result, Movies or Series
+    /// (back to Top Result with each new search).
+    @Published var scope: SearchScope = .top
 
     private var searchTask: Task<Void, Never>?
 
     func search(addonManager: AddonManager) {
         searchTask?.cancel()
+        scope = .top
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2 else {
             results = []
@@ -147,127 +151,156 @@ struct SearchView: View {
     @AppStorage("cue.search.recent") private var recentStorage = ""
     private var recent: [String] { recentStorage.split(separator: "\n").map(String.init) }
 
-    static let topRowID = "search.top"
-    static let moviesRowID = "search.movies"
-    static let seriesRowID = "search.series"
-
-    /// The focused row's name, in the area below the keyboard.
-    private static let rowsTop: CGFloat = 24
-    /// Posters here: smaller than Home's — about half its space is the
-    /// keyboard's — seven across.
-    private static let posterHeight = FixedFocusMetrics.compactPosterHeight
-    /// The gap between a row (with its captions) and the next one's name.
-    private static let rowGap: CGFloat = 48
-
-    /// The top result's banner: at most the usual banner's height, less
-    /// when the area is tight (the next row's name still shows).
-    private static func topResultHeight(area: CGFloat) -> CGFloat {
-        min(FixedFocusMetrics.bannerHeight, area - rowsTop - 2 * FixedFocusMetrics.titleHeight - rowGap - 40)
-    }
-
-    /// The next row starts right under the focused one (the taller of the
-    /// banner and a poster row with its captions, then the gap): its name
-    /// and the top of its posters show — no empty band.
-    private static func belowVisible(area: CGFloat) -> CGFloat {
-        let tallest = max(topResultHeight(area: area), posterHeight + FixedFocusMetrics.captionRoom)
-        let nextTop = rowsTop + FixedFocusMetrics.titleHeight + tallest + rowGap
-        return max(18, area - nextTop - FixedFocusMetrics.titleHeight)
-    }
-
-    /// The system's search field is sized for a whole screen of search;
-    /// here it sits above results: a calmer size (the text it shows — the
-    /// keyboard is the system's own).
-    private static func styleSearchField() {
-        UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).font =
-            .systemFont(ofSize: 40, weight: .medium)
-    }
+    /// Recent searches (or what the page says) this far under the
+    /// keyboard's line.
+    private static let statusTop: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ATVBackground()
-            // The full width and down to the bottom edge, as on Home: the
-            // rows place themselves in screen coordinates.
-            GeometryReader { geo in
-                results(area: geo.size.height)
+            // (Read here, not by this view: a change of the keyboard's height
+            // needn't re-run this body — that re-applies the suggestions and
+            // the system reloads them.)
+            SearchKeyboardReader(metrics: keyboard) { keyboardHeight in
+            if hasRows {
+                // The whole page, under the keyboard too: it scrolls with
+                // the grid.
+                GeometryReader { geo in grid(height: geo.size.height, keyboardHeight: keyboardHeight) }
+                    .ignoresSafeArea()
+                // The scope bar on the page, not in the grid's scroll view
+                // (from the keyboard, Down never found it there); it scrolls
+                // with the grid all the same (`SearchKeyboardScroll`).
+                GeometryReader { _ in
+                    SearchScopeBarHost(viewModel: viewModel, mover: barMover)
+                        .frame(height: SearchScopeBar.pillHeight)
+                        .padding(.top, max(0, keyboardHeight + SearchScopeBar.top))
+                }
+                .ignoresSafeArea()
+            } else {
+                // In the grid's place: from the screen's edges (as the grid),
+                // just under the keyboard's line.
+                GeometryReader { _ in
+                    status
+                        .padding(.leading, FixedFocusMetrics.inset)
+                        .padding(.top, keyboardHeight + Self.statusTop)
+                }
+                .ignoresSafeArea()
             }
-            .ignoresSafeArea(edges: [.horizontal, .bottom])
+            }
+            SearchKeyboardScroll(enabled: hasRows, hidesLine: hasRows, mover: barMover) { height in
+                if keyboard.height != height { keyboard.height = height }
+            }
+            .frame(width: 1, height: 1)
         }
-        .searchable(text: $viewModel.query, prompt: "Movies and series")
-        .onAppear(perform: Self.styleSearchField)
+        // Only a real change (the field writes its text back as the system
+        // re-applies the suggestions; the same text needn't rebuild the page).
+        .searchable(text: Binding(get: { viewModel.query },
+                                  set: { if $0 != viewModel.query { viewModel.query = $0 } }),
+                    prompt: "Movies and series")
+        // As in the Apple TV app, between the keys and the line: the field
+        // empty, the recent searches (newest first); with text, what you may
+        // mean — the best matches' names. Select searches. (Only
+        // completions: a Button among them — Clear — sent tvOS into an
+        // endless focus/reload loop that froze Search.)
+        .searchSuggestions {
+            if shownSuggestions.recent {
+                ForEach(shownSuggestions.items, id: \.self) { search in
+                    Label(search, systemImage: "clock.arrow.circlepath").searchCompletion(search)
+                }
+            } else {
+                ForEach(shownSuggestions.items, id: \.self) { name in
+                    Text(name).searchCompletion(name)
+                }
+            }
+        }
         .onChange(of: viewModel.query) { _, _ in
             viewModel.search(addonManager: addonManager)
+            refreshSuggestions()
         }
+        .onChange(of: viewModel.results.map(\.id)) { _, _ in refreshSuggestions() }
+        .onChange(of: recentStorage) { _, _ in refreshSuggestions(force: true) }
+        .onAppear { refreshSuggestions(force: true) }
     }
 
+    /// The system's field and keyboard, above the results (`SearchKeyboardScroll`).
+    @State private var keyboard = SearchKeyboardMetrics()
+    /// The scope bar's view, moved with the grid's scroll.
+    @State private var barMover = SearchBarMover()
+
+    private var hasRows: Bool { !viewModel.results.isEmpty }
+
+    /// The suggestions: the best matches' names (lowercased), each once,
+    /// without what's typed itself.
+    /// The suggestions on show — kept while the field shows one of them:
+    /// focusing a suggestion puts its text in the field (tvOS); a row
+    /// rebuilt for that text would take the focused one away.
+    @State private var shownSuggestions: (recent: Bool, items: [String]) = (true, [])
+
+    private func refreshSuggestions(force: Bool = false) {
+        let query = viewModel.query
+        if !force, shownSuggestions.items.contains(where: { $0.caseInsensitiveCompare(query) == .orderedSame }) {
+            return
+        }
+        shownSuggestions = query.isEmpty ? (true, recent) : (false, suggestions)
+    }
+
+    private var suggestions: [String] {
+        guard !viewModel.query.isEmpty else { return [] }
+        let typed = viewModel.query.lowercased().trimmingCharacters(in: .whitespaces)
+        var seen = Set<String>()
+        return Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
+            .map { $0.name.lowercased() }
+            .filter { $0 != typed && seen.insert($0).inserted }
+            .prefix(8).map { $0 }
+    }
+
+    /// The results as the browse pages' grid: the best match as the small
+    /// billboard (Top Result), or one type's posters, best match first.
+    private func grid(height: CGFloat, keyboardHeight: CGFloat) -> some View {
+        // Under the scope bar (on the line under the keyboard).
+        let topSpace = max(0, keyboardHeight + SearchScopeBar.top + SearchScopeBar.height
+                              - FolderGridController.headerTopMargin)
+        // The Top Result fills the room under it, the grid's margin to the
+        // screen's edge below.
+        let bannerTop = topSpace + FolderGridController.headerTopMargin + FolderGridController.firstLineGap
+        let ranked = Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
+        let scope = viewModel.scope
+        let items = scope == .top ? [] : ranked.filter { ($0.type == "movie") == (scope == .movies) }
+        return FolderPosterGrid(
+            header: nil,
+            headerHeight: 0,
+            items: items, subtitles: Self.years(items),
+            onSelect: select, onOpenDetails: openDetails,
+            topSpace: topSpace,
+            focusesFirstTitle: false,
+            banner: scope == .top ? ranked.first.map(Self.withArt) : nil,
+            bannerHeight: max(FixedFocusMetrics.bannerHeight, height - bannerTop - FolderGridController.edgeMargin))
+    }
+
+    /// Under each poster: its year.
+    private static func years(_ items: [MetaItem]) -> [String: String] {
+        Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    /// No results to show: searching, nothing found, the recent searches or
+    /// what to do.
     @ViewBuilder
-    private func results(area: CGFloat) -> some View {
-        let rows = Self.rows(Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
-            .map(Self.withArt))
-        if !rows.isEmpty {
-            FixedFocusRows(rows: rows, featuredRowID: "", continueRowID: "", active: active,
-                           progress: [:],
-                           // Movies and Series: posters at a glance, Home's
-                           // destination rows (Saved for Later's look).
-                           destinationRowIDs: [Self.moviesRowID, Self.seriesRowID],
-                           // The Top Result: a small billboard.
-                           bannerRowIDs: [Self.topRowID],
-                           bannerHeight: Self.topResultHeight(area: area),
-                           destinationPosterHeight: Self.posterHeight,
-                           rowTop: Self.rowsTop,
-                           // Rows above: entirely out of the area, the name
-                           // and facts under their cards too.
-                           aboveVisible: -(FixedFocusMetrics.infoHeight + 24),
-                           belowVisible: Self.belowVisible(area: area),
-                           ringOnlyWithFocus: true,
-                           startsOverOnChange: true,
-                           onSelect: select, onSelectFeatured: select,
-                           onResume: { _ in },
-                           onOpenDetails: openDetails,
-                           titleMenu: { item, _ in TitleMenu.shared.entries(for: item) }) { _, _ in }
-                .frame(width: 1920, height: area)
-                // Nothing slides over the keyboard.
-                .clipped()
-        } else if viewModel.isSearching {
+    private var status: some View {
+        if viewModel.isSearching {
             CueLoadingView(label: "Searching").frame(maxWidth: .infinity).frame(height: 420)
         } else if viewModel.query.count >= 2 {
             CueEmptyState(icon: "magnifyingglass", title: "No results",
                           message: "Nothing matched “\(viewModel.query)”.")
                 .frame(maxWidth: .infinity).frame(height: 420)
         } else if viewModel.query.isEmpty, !recent.isEmpty {
-            recentSearches
+            // (The recent searches are the suggestions, under the keys.)
+            EmptyView()
         } else {
             Text("Search for a movie or a series — or hold the microphone button and say it.")
                 .font(.system(size: FixedFocusMetrics.textSize))
                 .foregroundStyle(AppGlass.textMuted)
-                .padding(.leading, FixedFocusMetrics.titleInset)
-                .padding(.top, 64)
         }
-    }
-
-    /// The field empty: the recent searches (newest first) as small pills —
-    /// Select searches again — and Clear. Ours, not the system's
-    /// suggestions (those can't be sized: they were huge above results).
-    private var recentSearches: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Recent searches")
-                .font(.system(size: FixedFocusMetrics.textSize, weight: .semibold))
-                .foregroundStyle(AppGlass.textMuted)
-            HStack(spacing: 16) {
-                ForEach(recent, id: \.self) { search in
-                    Button { viewModel.query = search } label: {
-                        Label(search, systemImage: "clock.arrow.circlepath")
-                    }
-                    .buttonStyle(PillButtonStyle())
-                }
-                Button { recentStorage = "" } label: {
-                    Label("Clear", systemImage: "xmark")
-                }
-                .buttonStyle(PillButtonStyle(quiet: true))
-            }
-        }
-        .padding(.leading, FixedFocusMetrics.titleInset)
-        .padding(.top, 48)
-        .focusSection()
     }
 
     /// A result's Select: into Details (`DetailTransition`), and the query
@@ -289,21 +322,6 @@ struct SearchView: View {
     private func select(_ item: MetaItem) {
         remember()
         onSelect(item)
-    }
-
-    /// Top Result, then Movies and Series — the top result's kind first.
-    static func rows(_ ranked: [MetaItem]) -> [HomeRow] {
-        guard let top = ranked.first else { return [] }
-        let rest = ranked.dropFirst()
-        // Under each poster: its year.
-        let years = Dictionary(rest.compactMap { item in item.year.map { (item.id, $0) } },
-                               uniquingKeysWith: { first, _ in first })
-        let movies = HomeRow(id: moviesRowID, title: "Movies", items: rest.filter { $0.type == "movie" },
-                             subtitles: years)
-        let series = HomeRow(id: seriesRowID, title: "Series", items: rest.filter { $0.type != "movie" },
-                             subtitles: years)
-        let kinds = top.type == "movie" ? [movies, series] : [series, movies]
-        return [HomeRow(id: topRowID, title: "Top Result", items: [top])] + kinds.filter { !$0.items.isEmpty }
     }
 
     /// The order: how well the NAME matches what was typed (exactly, from
@@ -375,5 +393,284 @@ struct SearchView: View {
                         description: item.description, releaseInfo: item.releaseInfo,
                         imdbRating: item.imdbRating, runtime: item.runtime, genres: item.genres,
                         cast: item.cast, videos: item.videos)
+    }
+}
+
+/// Search's scopes.
+enum SearchScope: Hashable, CaseIterable {
+    case top, movies, series
+
+    var label: String {
+        switch self {
+        case .top: return "Top Result"
+        case .movies: return "Movies"
+        case .series: return "Series"
+        }
+    }
+}
+
+/// The keyboard's height (the page's scroll), observed only by what's laid
+/// out under it (`SearchKeyboardReader`).
+final class SearchKeyboardMetrics: ObservableObject {
+    @Published var height: CGFloat = 0
+}
+
+private struct SearchKeyboardReader<Content: View>: View {
+    @ObservedObject var metrics: SearchKeyboardMetrics
+    @ViewBuilder let content: (CGFloat) -> Content
+    var body: some View { content(metrics.height) }
+}
+
+/// The scope bar's UIKit view, for `SearchKeyboardScroll` to move.
+final class SearchBarMover {
+    weak var view: UIView?
+}
+
+/// The scope bar in its own hosting view, so it can be moved with the
+/// grid's scroll point for point without a SwiftUI update per frame. (In a
+/// container: SwiftUI places the container and resets its transform; the
+/// bar inside is ours to move.)
+private struct SearchScopeBarHost: UIViewControllerRepresentable {
+    @ObservedObject var viewModel: SearchViewModel
+    let mover: SearchBarMover
+
+    final class Container: UIViewController {
+        let host: UIHostingController<SearchScopeBar>
+        init(_ bar: SearchScopeBar) {
+            host = UIHostingController(rootView: bar)
+            super.init(nibName: nil, bundle: nil)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = .clear
+            host.view.backgroundColor = .clear
+            host.safeAreaRegions = []
+            addChild(host)
+            host.view.frame = view.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+        }
+    }
+
+    func makeUIViewController(context: Context) -> Container {
+        let container = Container(SearchScopeBar(viewModel: viewModel))
+        container.loadViewIfNeeded()
+        mover.view = container.host.view
+        return container
+    }
+
+    func updateUIViewController(_ container: Container, context: Context) {
+        container.host.rootView = SearchScopeBar(viewModel: viewModel)
+    }
+}
+
+/// THE SCOPE BAR, as in the Apple TV app: Top Result | Movies | Series in
+/// the top bar's glass pill (`glassPill` — its size, type and highlight),
+/// set into the line under the keyboard (the system's own line is hidden
+/// meanwhile — `SearchKeyboardScroll.hidesLine`). Moving focus along it
+/// switches the scope, as along the top bar.
+struct SearchScopeBar: View {
+    @ObservedObject var viewModel: SearchViewModel
+    @FocusState private var focus: SearchScope?
+    @Namespace private var highlight
+
+    static let pillHeight = GlassPill.itemHeight + 2 * GlassPill.inset
+    /// Its top, from the keyboard's bottom: the line 12 pt under the
+    /// keyboard (where the Apple TV app's moves to).
+    static let top: CGFloat = 12 - pillHeight / 2
+    /// The pill, then the gap to the results.
+    static let height = pillHeight + 24
+    /// The line's gap around the pill.
+    private static let lineGap: CGFloat = 40
+
+    var body: some View { scopeRow }
+
+    private var scopeRow: some View {
+        let focused = focus != nil
+        let lit = focus ?? viewModel.scope
+        return HStack(spacing: Self.lineGap) {
+            line
+            HStack(spacing: 0) {
+                ForEach(SearchScope.allCases, id: \.self) { scope in
+                    Button { viewModel.scope = scope } label: {
+                        Text(scope.label)
+                            .font(.system(size: GlassPill.textSize, weight: .semibold))
+                            .padding(.horizontal, GlassPill.textPadding)
+                            .foregroundStyle(GlassPill.contentColor(current: lit == scope,
+                                                                    onFocusHighlight: focused && lit == scope))
+                            .frame(height: GlassPill.itemHeight)
+                            .animation(.easeOut(duration: 0.18), value: lit)
+                            .glassPillItem(scope, in: highlight)
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                    .focused($focus, equals: scope)
+                }
+            }
+            .glassPill(highlight: lit, in: highlight, focused: focused)
+            .defaultFocus($focus, viewModel.scope)
+            // Focused, it grows a little (as the top bar).
+            .scaleEffect(focused ? GlassSidebar.focusedScale : 1)
+            .animation(.smooth(duration: 0.3), value: focused)
+            line
+        }
+        .focusSection()
+        .frame(height: Self.pillHeight)
+        .padding(.horizontal, FixedFocusMetrics.inset)
+        .onChange(of: focus) { old, now in
+            guard let now else { return }
+            if old == nil {
+                // Coming in (Down from the keyboard, Up from the results):
+                // onto the current scope, not the nearest one.
+                if now != viewModel.scope {
+                    let scope = viewModel.scope
+                    DispatchQueue.main.async { focus = scope }
+                }
+            } else if now != viewModel.scope {
+                // Along the pill: the scope follows.
+                viewModel.scope = now
+            }
+        }
+    }
+
+    /// The line's halves: as the system's (tertiary label colour, 1 pt).
+    private var line: some View {
+        Rectangle().fill(Color(uiColor: .tertiaryLabel)).frame(height: 1)
+    }
+}
+
+/// The system's search field and keyboard scroll with the results' grid,
+/// point for point — the page scrolls, as in the Apple TV app (at the
+/// grid's top — the first line — the keyboard shows: Up reaches it, the
+/// engine never finds it once it's out). The results controller's content
+/// scroll view is a hidden one we move — the system scrolls its keyboard
+/// with it. Placed at the top of the results area (where the keyboard
+/// ends).
+struct SearchKeyboardScroll: UIViewRepresentable {
+    /// Results showing: only then does the keyboard make way.
+    var enabled: Bool
+    /// The system's line under the keyboard hidden (the scope bar draws its
+    /// own, lower).
+    var hidesLine = false
+    /// The scope bar, moved with the grid as the keyboard is.
+    var mover: SearchBarMover?
+    /// The keyboard's height (the page's scroll), once known.
+    var onHeight: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> Anchor { Anchor() }
+
+    func updateUIView(_ anchor: Anchor, context: Context) {
+        anchor.onHeight = onHeight
+        anchor.enabled = enabled
+        anchor.hidesLine = hidesLine
+        anchor.mover = mover
+        // The grid comes in this same update: once it's there.
+        DispatchQueue.main.async { anchor.followGrid() }
+    }
+
+    final class Anchor: UIView {
+        var onHeight: (CGFloat) -> Void = { _ in }
+        var enabled = false
+        var mover: SearchBarMover?
+        var hidesLine = false {
+            didSet { if hidesLine != oldValue { applyLine() } }
+        }
+        /// The grid's page, followed.
+        private var gridObservation: NSKeyValueObservation?
+        private weak var followedGrid: UIScrollView?
+        private let tracker = UIScrollView()
+        private weak var search: UISearchController?
+        /// The results' hosting view (the grid is in it).
+        private weak var page: UIView?
+        private var height: CGFloat = 0
+        /// From the system's line to where the results start (as without
+        /// suggestions).
+        private static let lineToResults: CGFloat = 31
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            tracker.isHidden = true
+            tracker.isUserInteractionEnabled = false
+            tracker.contentInsetAdjustmentBehavior = .never
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil, search == nil else { return }
+            var responder: UIResponder? = self
+            while let next = responder, !(next is UISearchController) { responder = next.next }
+            guard let search = responder as? UISearchController,
+                  let results = search.searchResultsController else { return }
+            var view: UIView? = self
+            while let current = view, current.superview !== results.view { view = current.superview }
+            self.search = search
+            page = view
+            results.view.insertSubview(tracker, at: 0)
+            results.setContentScrollView(tracker, for: .top)
+            measure()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            measure()
+        }
+
+        private func measure() {
+            guard let page else { return }
+            // Where the results start: the keyboard's bottom — lower with
+            // the system's suggestions under the keys (they lie over the
+            // results; the system's line, hidden or not, goes down under
+            // them). As the keyboard scrolls away, its offset is added back.
+            var top = convert(CGPoint.zero, to: page).y - page.bounds.minY
+            if let root = search?.view, let line = lines(root).first {
+                let lineY = line.convert(line.bounds, to: page).maxY - page.bounds.minY + tracker.contentOffset.y
+                top = max(top, lineY + Self.lineToResults)
+            }
+            tracker.frame = CGRect(origin: .zero, size: page.bounds.size)
+            tracker.contentSize = CGSize(width: page.bounds.width, height: page.bounds.height + top)
+            if top != height, top > 0 {
+                height = top
+                onHeight(top)
+            }
+        }
+
+        /// The system's line under the keyboard: a 1 pt view across it.
+        private func lines(_ view: UIView) -> [UIView] {
+            let hairline = view.bounds.height <= 1.5 && view.bounds.width > 1000
+                && view.backgroundColor == .tertiaryLabel
+            return (hairline ? [view] : []) + view.subviews.flatMap(lines)
+        }
+
+        private func applyLine() {
+            guard let root = search?.view else { return }
+            for line in lines(root) { line.isHidden = hidesLine }
+        }
+
+        /// The grid's page: the keyboard scrolls with it.
+        func followGrid() {
+            applyLine()
+            measure()
+            func find(_ view: UIView) -> UIScrollView? {
+                (view.next as? FolderGridController)?.scrollView ?? view.subviews.lazy.compactMap(find).first
+            }
+            let grid = enabled ? page.flatMap(find) : nil
+            guard grid !== followedGrid || grid == nil && gridObservation != nil else { return }
+            followedGrid = grid
+            gridObservation = grid?.observe(\.contentOffset, options: [.initial, .new]) { [weak self] grid, _ in
+                MainActor.assumeIsolated {
+                    let offset = max(0, grid.contentOffset.y + grid.contentInset.top)
+                    self?.tracker.contentOffset.y = offset
+                    self?.mover?.view?.transform = CGAffineTransform(translationX: 0, y: -offset)
+                }
+            }
+            if grid == nil {
+                tracker.contentOffset.y = 0
+                mover?.view?.transform = .identity
+            }
+        }
     }
 }

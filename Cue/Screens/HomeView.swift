@@ -3292,7 +3292,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Taller than the screen: rows sliding out of (or into) the screen
         // stay inside the list's visible area, so UIKit keeps their cells
         // and they SLIDE — outside it, it drops them and fades them in place.
-        outer.frame = view.bounds.insetBy(dx: 0, dy: -FixedFocusRowsLayout.overscan)
+        // (From the size only: Search scrolls the whole page by the
+        // view's bounds origin — `SearchKeyboardScroll`.)
+        outer.frame = CGRect(origin: .zero, size: view.bounds.size).insetBy(dx: 0, dy: -FixedFocusRowsLayout.overscan)
         if let stage = pinnedStage {
             stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
             stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
@@ -6431,7 +6433,10 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell) {
+    /// Outside a row (Search's grid): the app's stores for its chips.
+    var environment: (AnyView) -> AnyView = { $0 }
+
+    func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell?) {
         itemIndex = index
         self.rowCell = rowCell
         if self.item?.id != item.id {
@@ -6443,7 +6448,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         let changed = self.item?.id != item.id
         self.item = item
         name.text = item.name
-        chips.rootView = rowCell.hosted(TitleChipsLine(item: item))
+        chips.rootView = rowCell?.hosted(TitleChipsLine(item: item)) ?? environment(AnyView(TitleChipsLine(item: item)))
         if changed {
             facts.text = FixedFocusShowInfo.factsLine(item)
             tagline.text = TMDBService.knownFacts(for: item)?.tagline ?? item.name
@@ -6476,7 +6481,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         // A WINDOW onto the full-screen picture: the backdrop at the size and
         // place Details (and Home's billboard) give it, seen through the
         // card — the very same picture.
-        let origin = rowCell?.restingCardOrigin() ?? .zero
+        let origin = rowCell.map { $0.restingCardOrigin() ?? .zero } ?? convert(CGPoint.zero, to: nil)
         let drift = StagePictureView.drift
         backdrop.frame = CGRect(x: -drift - origin.x, y: -origin.y,
                                 width: StagePictureView.pictureSize.width + 2 * drift,

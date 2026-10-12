@@ -220,6 +220,43 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
   (no late updates).
+- **Search's results** are the browse pages' grid (`FolderPosterGrid`,
+  six across), in the ranked order. The scope bar (`SearchScopeBar`, the
+  Apple TV app's way): before results only the system's line under the
+  keyboard; with results that line hides and ours sits lower, the top
+  bar's glass pill in it (`glassPill`, same size, type, highlight; grows
+  focused) — Top Result | Movies | Series, all three always. Moving along
+  it switches the scope; coming in (Down from the keyboard, Up from the
+  grid) lands on the current one. Top Result (chosen with each new
+  search): only the #1 as the small billboard (`FixedFocusBannerCell`, the
+  grid's `banner`); Movies / Series: their posters. The bar is on the
+  page, not in the grid's header (from the keyboard, Down never found it
+  in the scroll view), in its own hosting view that `SearchKeyboardScroll`
+  moves with the grid. Focus stays on the keyboard as results arrive.
+  Suggestions (`.searchSuggestions`, the system's row between the keys and
+  the line): the field empty, the recent searches; with text, the best
+  matches' names, lowercased. Select searches for one. Only completions —
+  a Button among them (a Clear) sent tvOS into an endless focus/reload
+  loop that froze Search. The row is kept while the field shows one of
+  them (focusing a suggestion puts its text in the field). They lie over
+  the results: we start our line where the system's (hidden) line goes
+  under them. Field text: the system's size. (Tried and dropped: our own
+  row in the recent searches' size — the system's can't be sized, 38 pt
+  in private cells; our "Recent searches" pills.)
+  (Tried and dropped: the results as rows; the system's scope bar
+  — `.searchScopes`, a `UISegmentedControl`, can't take our glass; our
+  pills in the grid's header.)
+- **Search's keyboard scrolls away** (`SearchKeyboardScroll`, SwiftUI
+  `.searchable` kept): the results controller's content scroll view is a
+  hidden one we move (`setContentScrollView`) — the system scrolls its
+  field and keyboard with it. The grid spans the page under the keyboard
+  (`topSpace`) and the keyboard follows its scroll point for point (KVO);
+  at the grid's top (first line, pills) it shows, so Up reaches it — the
+  engine never finds it once it's out, and programmatic focus into it is
+  ignored. Tried and dropped: moving the
+  results' hosting view (the system places it) or a transform on the
+  rows (SwiftUI's frame undoes it); `UISearchController` embedded by hand
+  (field not on screen, crashes).
 - **Collections**: one panel row per collection on Home. A folder page is
   Home's rows (`FixedFocusRows`): a catalog per row, all its titles, the
   focused row at Home's spot, the next peeking; the folder's name and
@@ -252,17 +289,6 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Collection (films; built — above More Like This), Cast & Crew (built),
   About (built).
   Styles decided one row at a time.
-- Search: the keyboard (SwiftUI `.searchable`, already the one-line
-  keyboard, ~340 pt with its field) stays at the top and takes room — the
-  wish is for it to scroll away with the results. Tried (2026-10-11):
-  UIKit's `UISearchContainerViewController` presents itself full screen
-  when not a tab's root (top bar gone); a `UISearchController` embedded as a
-  child shows the keyboard and collapses it through
-  `searchControllerObservedScrollView` (a hidden scroll view driven by the
-  focused row works — needs `contentInsetAdjustmentBehavior = .never`), but
-  its field isn't on screen so typing goes nowhere, and adding the search
-  bar by hand crashed. Left: debug that, or our own one-line keyboard as a
-  row (no dictation).
 - Animations that block input; flat vs glass consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
