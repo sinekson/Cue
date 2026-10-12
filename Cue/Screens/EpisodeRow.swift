@@ -222,10 +222,9 @@ final class EpisodeRowController: UIViewController, UICollectionViewDataSource, 
         } completion: { _ in }
     }
 
-    /// Left of the box: where you came from — dimmed (Render Lab → Previous
-    /// poster), as on Home's rows.
+    /// Left of the box: where you came from — dimmed, as on Home's rows.
     private func applyDimming() {
-        let dimmed = RenderProbe.shared.flags.previousPosterAlpha
+        let dimmed = FixedFocusMetrics.previousAlpha
         let spot = slotOf.indices.contains(current) ? slotOf[current] : 0
         for cell in strip.visibleCells {
             guard let path = strip.indexPath(for: cell) else { continue }
@@ -303,7 +302,7 @@ final class EpisodeRowController: UIViewController, UICollectionViewDataSource, 
     func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
                         forItemAt indexPath: IndexPath) {
         let spot = slotOf.indices.contains(current) ? slotOf[current] : 0
-        Self.dim(cell, indexPath.item < spot ? RenderProbe.shared.flags.previousPosterAlpha : 1)
+        Self.dim(cell, indexPath.item < spot ? FixedFocusMetrics.previousAlpha : 1)
     }
 
     private static func dim(_ cell: UICollectionViewCell, _ alpha: CGFloat) {

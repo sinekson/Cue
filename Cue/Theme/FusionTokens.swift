@@ -125,8 +125,6 @@ enum FusionMaterials {
 /// Durations of the four motion tokens, in seconds. Tunable live in
 /// Settings → Render Lab → Motion until they're locked.
 struct MotionDurations: Codable, Equatable {
-    var focus: Double = 0.2
-    var move: Double = 0.35
     var fade: Double = 0.25
     var present: Double = 0.45
     /// Home Up/Down (a whole row plus the box opening): longer than `move`.
@@ -143,8 +141,6 @@ struct MotionDurations: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MotionDurations()
-        focus = (try? c.decode(Double.self, forKey: .focus)) ?? d.focus
-        move = (try? c.decode(Double.self, forKey: .move)) ?? d.move
         fade = (try? c.decode(Double.self, forKey: .fade)) ?? d.fade
         present = (try? c.decode(Double.self, forKey: .present)) ?? d.present
         vertical = (try? c.decode(Double.self, forKey: .vertical)) ?? d.vertical
@@ -160,11 +156,13 @@ struct MotionDurations: Codable, Equatable {
 enum Motion {
     /// Mirrors `RenderProbe.flags.motion` (set there), readable anywhere.
     nonisolated(unsafe) static var durations = MotionDurations()
+    static let focusDuration: Double = 0.3
+    static let moveDuration: Double = 0.35
 
     /// Focus outline, highlights, button focus, presses.
-    static var focus: Animation { .spring(duration: durations.focus, bounce: 0) }
+    static let focus: Animation = .spring(duration: focusDuration, bounce: 0)
     /// Rows sliding, wrapping, changing row.
-    static var move: Animation { .spring(duration: durations.move, bounce: 0) }
+    static let move: Animation = .spring(duration: moveDuration, bounce: 0)
     /// Crossfades: box art, text, chrome in and out.
     static var fade: Animation { .easeInOut(duration: durations.fade) }
     /// Screen changes: billboard ⇄ Details, box → Details.

@@ -3,14 +3,7 @@ import UIKit
 
 /// THE STAGE PICTURE, in UIKit — the billboard's backdrop as a physical
 /// sheet: the picture (drifting on a change of title, as the box does) with
-/// the billboard's shade over it, both fading out at the bottom into the
-/// background's colours (Render Lab → Billboard bottom fade). Scrolling
-/// away it melts into the colours — which shift to the next title's through
-/// the scroll — instead of ending in a line.
-///
-/// (Earlier: a mirrored, blurred copy of the picture's bottom below the
-/// screen. The left fade's near-black carried into it, and that made the
-/// line it was meant to hide.)
+/// the billboard's shade over it, a plain bottom edge.
 ///
 /// Home: part of the Featured row (`FixedFocusRowCell`), so it moves with
 /// exactly the rows' animation.
@@ -24,9 +17,8 @@ final class StagePictureView: UIView {
     /// crossfades — `BillboardCrossfade`).
     static let drift: CGFloat = 16
 
-    /// The picture and its shade, faded out at the bottom.
+    /// The picture and its shade.
     private let sheet = UIView()
-    private let fade = CAGradientLayer()
     private let clip = UIView()
     /// Holds the pictures: the step-in zoom (the Details swap) scales it.
     private let zoom = UIView()
@@ -60,10 +52,6 @@ final class StagePictureView: UIView {
         dim.alpha = 0
         dim.isUserInteractionEnabled = false
         sheet.addSubview(dim)
-        fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
-        fade.startPoint = CGPoint(x: 0.5, y: 0)
-        fade.endPoint = CGPoint(x: 0.5, y: 1)
-        sheet.layer.mask = fade
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -94,13 +82,6 @@ final class StagePictureView: UIView {
         shade.image = StageArt.shade
         shade.frame = picture
         dim.frame = picture
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fade.frame = picture
-        let height = CGFloat(RenderProbe.shared.flags.billboardBottomFade)
-        let start = NSNumber(value: Double(max(picture.height - height, 0) / picture.height))
-        fade.locations = [0, start, 1]
-        CATransaction.commit()
     }
 
     /// `direction`: +1 paging right (the new one comes from the right).
@@ -130,7 +111,7 @@ final class StagePictureView: UIView {
         let outgoing = page
         page = incoming
         let target = pageFrame
-        FixedFocusMotion.run(vertical: false, duration: Motion.durations.move, damping: 1) {
+        FixedFocusMotion.run(vertical: false, duration: Motion.moveDuration, damping: 1) {
             incoming.frame = target
             incoming.alpha = 1
             outgoing.frame = target.offsetBy(dx: -dx, dy: 0)

@@ -373,17 +373,8 @@ final class RenderProbe: ObservableObject {
         /// New Home: the scroll between the billboard and the rows, in
         /// seconds; 0: derived from Up / Down (√ of the longer distance).
         var billboardScrollDuration: Double = 0
-        /// New Home: the billboard's / Details' summary justified (word gaps
-        /// stretched to fill each line, with hyphenation); off: ragged right.
-        var summaryJustified = false
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// New Home: how far up the billboard's picture fades into the
-        /// background's colours at its bottom (points; 0: a plain edge).
-        var billboardBottomFade: Double = 200
-        /// New Home: the posters left of the box in the focused row (1: not
-        /// dimmed).
-        var previousPosterAlpha: Double = 0.45
         /// New Home: the Left/Right curve (`FixedFocusMotion.Curve`).
         var horizontalCurve = "easeInOut"
         /// New Home: the Up/Down curve.
@@ -416,10 +407,7 @@ final class RenderProbe: ObservableObject {
             movingFocusAnchored = (try? c.decode(Bool.self, forKey: .movingFocusAnchored)) ?? d.movingFocusAnchored
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
-            summaryJustified = (try? c.decode(Bool.self, forKey: .summaryJustified)) ?? d.summaryJustified
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
-            billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
-            previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha
             horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve
             verticalCurve = (try? c.decode(String.self, forKey: .verticalCurve)) ?? d.verticalCurve
         }

@@ -78,7 +78,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Everything in the page is flat (`FlatControl`). Exception: Details' buttons.
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
-- Motion tokens (`Motion`): focus 0.2 s, move 0.35 s, present 0.45 s
+- Motion tokens (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s
   (no-bounce springs), fade 0.25 s. One press, one movement.
 - Animate transforms and opacity only. Never alpha 0 on a focusable list
   (tvOS skips transparent views); hide cell contents or mask instead.

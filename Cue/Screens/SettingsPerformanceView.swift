@@ -318,53 +318,9 @@ struct RenderLabSettings: View {
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                PerfToggleRow(
-                    icon: "text.justify",
-                    title: "Summary: justified",
-                    subtitle: "Billboard and Details: the summary's lines filled to the full width (word gaps stretched, long words hyphenated). Off: ragged right.",
-                    isOn: Binding(get: { probe.flags.summaryJustified }, set: { probe.flags.summaryJustified = $0 })
-                )
-                CueDropdown(
-                    title: "Billboard bottom fade",
-                    subtitle: "How far up the billboard's picture fades into the colours at its bottom — where it melts away scrolling down.",
-                    icon: "rectangle.bottomhalf.inset.filled",
-                    selection: String(probe.flags.billboardBottomFade),
-                    options: [(0.0, "Off (plain edge)"), (120.0, "120 pt"), (200.0, "200 pt"), (300.0, "300 pt"), (420.0, "420 pt")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.billboardBottomFade = v }
-                }
-                CueDropdown(
-                    title: "Previous poster",
-                    subtitle: "The poster left of the box in the focused row: how visible it stays.",
-                    icon: "rectangle.portrait.lefthalf.inset.filled",
-                    selection: String(probe.flags.previousPosterAlpha),
-                    options: [(0.3, "30 %"), (0.45, "45 %"), (0.6, "60 %"), (0.75, "75 %"), (1.0, "Not dimmed")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.previousPosterAlpha = v }
-                }
             }
 
             SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {
-                CueDropdown(
-                    title: "Focus",
-                    subtitle: "Focus outline, highlights, button focus.",
-                    icon: "scope",
-                    selection: String(probe.flags.motion.focus),
-                    options: [0.12, 0.16, 0.2, 0.25, 0.3].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.focus = v }
-                }
-                CueDropdown(
-                    title: "Move",
-                    subtitle: "Rows sliding, wrapping, changing row.",
-                    icon: "arrow.left.and.right",
-                    selection: String(probe.flags.motion.move),
-                    options: [0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.move = v }
-                }
                 CueDropdown(
                     title: "Fade",
                     subtitle: "Crossfades: box art, text, chrome.",

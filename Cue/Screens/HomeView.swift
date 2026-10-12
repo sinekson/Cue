@@ -1586,7 +1586,7 @@ struct HomeUIKitView: View {
                                 group.cancelAll()
                             }
                         }
-                        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)) { billboardItem = item }
+                        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) { billboardItem = item }
                         warmNeighbourLogos(around: position.index)
                     }
                 }
@@ -1607,7 +1607,7 @@ struct HomeUIKitView: View {
             let scrolling = tintScroll
             tintScroll = false
             var follows = !scrolling
-            var fade = scrolling ? FixedFocusMotion.billboardScroll : Motion.durations.move
+            var fade = scrolling ? FixedFocusMotion.billboardScroll : Motion.moveDuration
             // FAST SCROLLING: a press soon after the last is part of a burst. Then the colours
             // change at most every `tintBurstEvery` (the cards in between are
             // skipped — a new press cancels this wait), over a calm blend; once
@@ -1787,7 +1787,7 @@ enum FixedFocusTint {
     /// "Tint: move with focus": the focus move's own curve and time (Motion
     /// → Left / Right) — SwiftUI's spring is UIKit's system spring.
     @MainActor static var focusAnimation: Animation {
-        let duration = Motion.durations.move
+        let duration = Motion.moveDuration
         switch FixedFocusMotion.curve {
         case .systemSpring, .spring: return .spring(duration: duration, bounce: 0)
         case .easeOut: return .easeOut(duration: duration)
@@ -1901,16 +1901,11 @@ enum FixedFocusTint {
     }
 }
 
-/// The billboard's text, laid out ON THE ROWS' GRID: where a row has its
-/// fixed box, the billboard has logo, ratings and summary (within the box's
-/// width, less the text indent on both sides); and under it, at the very
-/// same spots and in the same type as under the box, the title's name and
-/// its facts line. Moving between the billboard and a row, those two lines
-/// stay put.
+/// The billboard's text (Home's and Details'): the logo (the name), then
+/// the status badge and ratings, the facts and the tagline — no summary,
+/// within the box's width less the text indent on both sides.
 struct FixedFocusBillboardText: View {
     @EnvironmentObject private var theme: ThemeManager
-    /// (Render Lab → Summary: justified, live.)
-    @ObservedObject private var probe = RenderProbe.shared
     let item: MetaItem
     /// TMDB's season count, once loaded.
     let info: TMDBService.ShowSize?
@@ -1919,17 +1914,14 @@ struct FixedFocusBillboardText: View {
     var reason: BillboardReason? = nil
     /// The ratings row (its room is kept either way).
     let ratings: AnyView?
-    /// HOME'S BILLBOARD: no summary and no name line (the logo is the
-    /// name) — the tagline instead, the logo lower by the room freed; the
-    /// facts and chips where they always are. (Details keeps the summary.)
-    var compact = false
+    /// The tagline (none: the name).
     var tagline: String? = nil
     /// The logo to show instead of the item's (Details: the one Home
     /// showed — the record's is often another image).
     var logo: String? = nil
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
-    static let logoToSummary: CGFloat = 20
+    static let logoToChips: CGFloat = 20
     /// The status badge, then the ratings (outlined boxes: `chipsGap` of
     /// extra room next to text).
     private var chips: some View {
@@ -1956,8 +1948,6 @@ struct FixedFocusBillboardText: View {
                 nameText
             }
         }
-        // (Compact: the logo centred in its room — the room is centred
-        // on the screen.)
         .frame(height: TitleBlock.logoHeight, alignment: .bottomLeading)
         // Above the logo's room, at the same spot for every title.
         .overlay(alignment: .topLeading) {
@@ -1976,18 +1966,6 @@ struct FixedFocusBillboardText: View {
     static let reasonRise: CGFloat = 40
     /// How many rating sources show (the first ones, in Settings' order).
     static let ratingsShown = 3
-    static let summarySize = FixedFocusMetrics.textSize
-    static let summaryOpacity: Double = 0.8
-    static let summaryLineSpacing: CGFloat = 5
-    static let summaryLines = 5
-    /// Room for the longest summary; it ends at the box's bottom edge.
-    static let summaryRoom: CGFloat = 170
-    /// The summary between the logo and the name: at most this many lines,
-    /// then "…" (the whole of it: Details, Select on it). Its slot is the same
-    /// height for every title; the name and all below stay where they were —
-    /// the logo (and the reason) moved up by the slot.
-    static let shortSummaryLines = 3
-    static let shortSummaryHeight: CGFloat = 98
     /// Where the Detail page's buttons start: below the chips line.
     static var buttonsY: CGFloat {
         FixedFocusMetrics.boxFrame.maxY + FixedFocusMetrics.infoHeight + 44
@@ -1999,12 +1977,6 @@ struct FixedFocusBillboardText: View {
         return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(
             entries: Array(entries.prefix(ratingsShown))))
     }
-    /// The block's top, so the logo's room ends `logoToSummary` above where
-    /// the box does (no summary: the name, facts and chips are as before).
-    static var topY: CGFloat {
-        FixedFocusMetrics.boxFrame.maxY - (TitleBlock.logoHeight + logoToSummary + shortSummaryHeight)
-    }
-
     private var nameText: some View {
         Text(item.name)
             .font(FusionType.heroTitle(theme.font))
@@ -2015,54 +1987,19 @@ struct FixedFocusBillboardText: View {
             .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
     }
 
-    /// Three lines at most, then "…" — its slot kept even without one.
-    @ViewBuilder
-    private var summary: some View {
-        // (Runs of spaces and line breaks in the source: one space.)
-        let text = (item.description ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let lines = Text(text)
-            .font(.system(size: Self.summarySize, weight: .regular))
-            .foregroundStyle(Color.white.opacity(Self.summaryOpacity))
-            .lineSpacing(Self.summaryLineSpacing)
-            .lineLimit(Self.shortSummaryLines)
-            .truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        if RenderProbe.shared.flags.summaryJustified {
-            // (Render Lab: justified — UIKit's text layout; SwiftUI can't.)
-            JustifiedSummary(text: text, lines: Self.shortSummaryLines, width: Self.width)
-                .frame(width: Self.width, height: Self.shortSummaryHeight, alignment: .topLeading)
-        } else {
-            lines.frame(height: Self.shortSummaryHeight, alignment: .topLeading)
-        }
-    }
-
-    /// Compact: the room the summary and the name line took, less the
-    /// tagline's line — the logo moves down by it.
-    /// Compact: the block's BOTTOM (the chips) stands here — it grows up
-    /// with what it has, as the Apple TV app's text sits on its buttons.
-    /// (Where the chips end on Details: room for the buttons right below.)
-    static var compactBottom: CGFloat { buttonsY - 44 }
+    /// The block's BOTTOM (the tagline) stands here — it grows up with
+    /// what it has, as the Apple TV app's text sits on its buttons. (On
+    /// Details: room for the buttons right below.)
+    static var bottom: CGFloat { buttonsY - 44 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             logoRoom
 
             VStack(alignment: .leading, spacing: 0) {
-                Color.clear.frame(height: Self.logoToSummary)
-
-                if !compact {
-                    summary
-
-                    // As under the fixed box: the name, then the facts.
-                    Text(item.name)
-                        .font(.system(size: FixedFocusMetrics.textSize, weight: .regular))
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
-                        .frame(height: 30, alignment: .leading)
-                        .padding(.top, FixedFocusMetrics.infoGap)
-                }
+                Color.clear.frame(height: Self.logoToChips)
                 // The status badge and ratings, right under the logo.
-                if compact { chips }
+                chips
                 // THE FACTS — what it is: the relevant line, so the bright one.
                 // (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
@@ -2070,61 +2007,20 @@ struct FixedFocusBillboardText: View {
                     .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                     .lineLimit(1)
                     .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
-                    .padding(.top, compact ? FixedFocusMetrics.factsOffset - 30 + Self.chipsGap
-                             : FixedFocusMetrics.factsOffset - 30)
-                if compact {
-                    // The tagline — the mood, quiet and italic; no tagline:
-                    // the name (ALWAYS a line here: every title's block has
-                    // the same height, nothing moves).
-                    Text(tagline ?? item.name)
-                        .font(.system(size: FixedFocusMetrics.textSize, weight: .regular).italic())
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.tagline))
-                        .lineLimit(1)
-                        .frame(height: 30, alignment: .leading)
-                        .padding(.top, FixedFocusMetrics.factsOffset - 30)
-                } else {
-                    chips.padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap)
-                }
+                    .padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap)
+                // The tagline — the mood, quiet and italic; no tagline: the
+                // name (ALWAYS a line here: every title's block has the same
+                // height, nothing moves).
+                Text(tagline ?? item.name)
+                    .font(.system(size: FixedFocusMetrics.textSize, weight: .regular).italic())
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.tagline))
+                    .lineLimit(1)
+                    .frame(height: 30, alignment: .leading)
+                    .padding(.top, FixedFocusMetrics.factsOffset - 30)
             }
             .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
         }
         .frame(width: Self.width, alignment: .leading)
-    }
-}
-
-/// The summary justified (Render Lab): word gaps stretched to fill each
-/// line, long words hyphenated, the last line cut with "…".
-private struct JustifiedSummary: UIViewRepresentable {
-    let text: String
-    let lines: Int
-    let width: CGFloat
-
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.numberOfLines = lines
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
-    }
-
-    func updateUIView(_ label: UILabel, context: Context) {
-        let style = NSMutableParagraphStyle()
-        style.alignment = .justified
-        style.hyphenationFactor = 0.9
-        style.lineSpacing = FixedFocusBillboardText.summaryLineSpacing
-        style.lineBreakMode = .byWordWrapping
-        label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: FixedFocusBillboardText.summarySize),
-            .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusBillboardText.summaryOpacity),
-            .paragraphStyle: style,
-        ])
-        label.lineBreakMode = .byTruncatingTail
-        label.preferredMaxLayoutWidth = width
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
-        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: fit.height)
     }
 }
 
@@ -2496,7 +2392,7 @@ extension HomeUIKitView {
     /// into the rows' host).
     var billboardOverlay: AnyView {
         AnyView(billboardContent
-            .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move),
+            .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration),
                        value: billboardItem?.id)
             .environmentObject(mdblist))
     }
@@ -2606,7 +2502,7 @@ extension HomeUIKitView {
         guard item.id != billboardItem?.id else { return }
         billboard = FixedFocusBillboardPosition(index: index, count: row.items.count)
         focused = item
-        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)) { billboardItem = item }
+        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) { billboardItem = item }
     }
 
     /// The logos either side of the billboard's title, decoded ahead so the
@@ -2640,9 +2536,8 @@ extension HomeUIKitView {
         FixedFocusBillboardText(item: item, info: billboardInfo[item.id],
                                 reason: billboardReasons[item.id],
                                 ratings: billboardRatingsRow(item),
-                                compact: true,
                                 tagline: billboardTaglines[item.id])
-            .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
+            .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
             .padding(.leading, FixedFocusMetrics.titleInset)
     }
 
@@ -2676,7 +2571,7 @@ struct BillboardCrossfade<Page: View>: View {
         }
         .onAppear { if shown == nil { shown = item } }
         .onChange(of: item.id) { _, _ in
-            withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.durations.move)) {
+            withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) {
                 shown = item
             }
         }
@@ -3013,6 +2908,8 @@ enum FixedFocusMetrics {
     static var belowVisible: CGFloat { Spotlight.previewVisibleHeight }
     /// Rows other than the focused one (the preview below).
     static let dimmedAlpha: CGFloat = 0.45
+    /// The posters left of the box in the focused row.
+    static let previousAlpha: CGFloat = 0.45
     /// The focused row's name: exactly where the original Home had it.
     static var rowTop: CGFloat {
         Spotlight.catalogTitleY(screenHeight: 1080, topPadding: Spotlight.topPaddingUnderNav)
@@ -3062,7 +2959,7 @@ enum FixedFocusMetrics {
     /// A step along them, on Home's own curve: as long as a step along the
     /// other rows (landscape: Continue Watching's, its steps are as wide).
     @MainActor static func destinationStep(landscape: Bool) -> Double {
-        landscape ? Motion.durations.continueMove : Motion.durations.move
+        landscape ? Motion.durations.continueMove : Motion.moveDuration
     }
     /// The least of the cards before / after that shows once a row moves.
     static let destinationSliver: CGFloat = 24
@@ -3634,7 +3531,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // as a poster step — its own, slightly longer duration.
         let duration = billboardScroll ? FixedFocusMotion.billboardScroll
             : rowChanged ? Motion.durations.vertical
-            : continueRow ? Motion.durations.continueMove : Motion.durations.move
+            : continueRow ? Motion.durations.continueMove : Motion.moveDuration
         let damping = rowChanged ? Motion.durations.verticalDamping : 1
         // For the cells' Up/Down details: the image drift's direction and
         // the outlines' own, gradual crossfade (see `setGrown`).
@@ -4729,7 +4626,7 @@ final class FixedFocusHeaderButton: UIView {
     private func render() {
         host.rootView = FixedFocusHeaderPill(label: label, lit: lit, selected: selected)
         let scale = lit ? FixedFocusHeaderPill.focusScale - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
-        UIView.animate(withDuration: Motion.durations.focus, delay: 0,
+        UIView.animate(withDuration: Motion.focusDuration, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.transform = CGAffineTransform(scaleX: scale, y: scale)
         }
@@ -5099,7 +4996,7 @@ final class FixedFocusBoxView: UIView {
             infoPage = infoIn
             let infoTarget = infoFrame
             FixedFocusMotion.run(vertical: vertical,
-                                 duration: vertical ? Motion.durations.vertical : Motion.durations.move,
+                                 duration: vertical ? Motion.durations.vertical : Motion.moveDuration,
                                  damping: 1) {
                 incoming.frame = self.bounds
                 incoming.alpha = 1
@@ -5471,7 +5368,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         guard x != headerScroll.contentOffset.x else { return }
         let move = { self.headerScroll.contentOffset.x = x }
         if animated {
-            UIView.animate(withDuration: Motion.durations.move, delay: 0,
+            UIView.animate(withDuration: Motion.moveDuration, delay: 0,
                            usingSpringWithDamping: 1, initialSpringVelocity: 0,
                            options: [.beginFromCurrentState, .allowUserInteraction], animations: move)
         } else {
@@ -6839,11 +6736,11 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         let line = FixedFocusMetrics.factsHeight
         let gap = FixedFocusMetrics.factsOffset - 30   // the billboard's line step
         let chipsGap = gap + FixedFocusBillboardText.chipsGap
-        let total = titleHeight + FixedFocusBillboardText.logoToSummary + line + chipsGap + line + gap + 30
+        let total = titleHeight + FixedFocusBillboardText.logoToChips + line + chipsGap + line + gap + 30
         var y = max(24, (bounds.height - total) / 2)
         logo.frame = CGRect(x: x, y: y, width: width * 0.7, height: Self.logoHeight)
         name.frame = CGRect(x: x, y: y, width: width, height: titleHeight)
-        y += titleHeight + FixedFocusBillboardText.logoToSummary
+        y += titleHeight + FixedFocusBillboardText.logoToChips
         chips.view.frame = CGRect(x: x, y: y, width: width, height: line)
         y += line + chipsGap
         facts.frame = CGRect(x: x, y: y, width: width, height: line)
@@ -6853,7 +6750,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         let focused = isFocused
-        FixedFocusMotion.run(vertical: false, duration: Motion.durations.move, damping: 1) {
+        FixedFocusMotion.run(vertical: false, duration: Motion.moveDuration, damping: 1) {
             self.applyFocus(focused)
         } completion: { _ in }
     }
@@ -7445,7 +7342,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private var concealed = false
 
     private func applyAlpha() {
-        contentView.alpha = concealed || underPressedBox ? 0 : past ? RenderProbe.shared.flags.previousPosterAlpha : 1
+        contentView.alpha = concealed || underPressedBox ? 0 : past ? FixedFocusMetrics.previousAlpha : 1
     }
 
     /// Showing the box itself (grown, not under the fixed box).
@@ -8118,7 +8015,7 @@ enum FixedFocusMotion {
 
     /// Left/Right, for things moving with the row (the box's drift).
     static func horizontal(_ animations: @escaping () -> Void, completion: @escaping () -> Void) {
-        run(vertical: false, duration: Motion.durations.move, damping: 1,
+        run(vertical: false, duration: Motion.moveDuration, damping: 1,
             animations: animations, completion: { _ in completion() })
     }
 }

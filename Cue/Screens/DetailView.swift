@@ -972,11 +972,11 @@ struct DetailView: View {
             // Home's billboard text exactly (no summary: the tagline), on
             // its bottom line, the buttons below.
             FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
-                                    compact: true, tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline,
+                                    tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline,
                                     logo: viewModel.shownLogo)
                 .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
                 .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
-                .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
+                .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
                 .padding(.leading, FixedFocusMetrics.titleInset)
             headerExtras
                 .frame(height: TitleBlock.buttonHeight)
