@@ -60,22 +60,8 @@ final class PerformanceSettingsStore: ObservableObject {
     static let shared = PerformanceSettingsStore()
 
     struct Settings: Codable, Equatable {
-        /// Cards spring slightly larger when focused.
-        var focusZoom = true
-        /// Apple TV theme only: the native tvOS card platter — the focused
-        /// poster lifts and tilts/parallaxes with the trackpad. It's the
-        /// heaviest per-frame focus effect (the system re-composites the whole
-        /// focused card as the finger moves). OFF swaps in a lightweight
-        /// scale-only focus so cards still respond, without the tilt.
-        var cardParallax = true
-        /// Background download of below-the-fold row artwork.
-        var artworkPrefetch = true
         /// Fade posters in as they finish loading.
         var artworkFadeIn = true
-        /// The sidebar's expand/collapse spring + the dim over the content.
-        var sidebarAnimation = true
-        /// Scale/spring on small controls (See All, tab pills, presses).
-        var buttonAnimations = true
         /// Developer: live FPS counter overlaid on the app. Off by default,
         /// never set by the tier defaults — a diagnostic, not an effect.
         var showFPSOverlay = false
@@ -92,9 +78,7 @@ final class PerformanceSettingsStore: ObservableObject {
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case focusZoom, cardParallax, showHoldProbe
-            case artworkPrefetch, artworkFadeIn
-            case sidebarAnimation, buttonAnimations, showFPSOverlay, showPlayerDiagnostics
+            case showHoldProbe, artworkFadeIn, showFPSOverlay, showPlayerDiagnostics
             case collectionGifQuality
         }
 
@@ -103,12 +87,7 @@ final class PerformanceSettingsStore: ObservableObject {
         /// switch each time a new one ships).
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            focusZoom = (try? c.decode(Bool.self, forKey: .focusZoom)) ?? true
-            cardParallax = (try? c.decode(Bool.self, forKey: .cardParallax)) ?? true
-            artworkPrefetch = (try? c.decode(Bool.self, forKey: .artworkPrefetch)) ?? true
             artworkFadeIn = (try? c.decode(Bool.self, forKey: .artworkFadeIn)) ?? true
-            sidebarAnimation = (try? c.decode(Bool.self, forKey: .sidebarAnimation)) ?? true
-            buttonAnimations = (try? c.decode(Bool.self, forKey: .buttonAnimations)) ?? true
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
             showHoldProbe = (try? c.decode(Bool.self, forKey: .showHoldProbe)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
@@ -120,31 +99,23 @@ final class PerformanceSettingsStore: ObservableObject {
     @Published var settings: Settings { didSet { save() } }
 
     /// Live mirror of the system Accessibility → Reduce Motion switch. When ON
-    /// it forces the *motion* effects off regardless of the user's toggles (a
-    /// Reduce Motion user still keeps non-motion polish like backdrop art and
-    /// shadows). Read via the `…Effective` accessors below.
+    /// it turns the *motion* effects off (focus zoom, the card platter's
+    /// tilt, the top bar's and controls' springs, artwork fade-in); non-motion
+    /// polish like shadows stays.
     @Published private(set) var reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled
 
-    // MARK: Effective (motion) values — user switch AND not overridden by
-    // Reduce Motion. Call sites that gate an animation read these instead of
-    // `settings.x` so the system setting is honored in one place.
-    var focusZoomEffective: Bool { settings.focusZoom && !reduceMotion }
-    var sidebarAnimationEffective: Bool { settings.sidebarAnimation && !reduceMotion }
-    var buttonAnimationsEffective: Bool { settings.buttonAnimations && !reduceMotion }
+    /// Motion effects allowed: Reduce Motion is off.
+    var motionOn: Bool { !reduceMotion }
     var artworkFadeInEffective: Bool { settings.artworkFadeIn && !reduceMotion }
-    /// The native tvOS card platter's trackpad tilt/parallax. It is a *motion*
-    /// effect like the rest, so Reduce Motion suppresses it too — themes that
-    /// branch on this fall back to their own flat focus visual.
-    var cardParallaxEffective: Bool { settings.cardParallax && !reduceMotion }
 
     // MARK: Motion helpers — so every theme gates focus motion the same way
     // instead of each porting its own hardcoded scale/animation.
 
-    /// Focus zoom for a card/tile: the theme's scale when "Cards spring
-    /// slightly larger when focused" is on and Reduce Motion is off, else 1
-    /// (no lift at all). Every theme's focus scale should go through this.
+    /// Focus zoom for a card/tile: the theme's scale unless Reduce Motion
+    /// is on, else 1 (no lift at all). Every theme's focus scale should go
+    /// through this.
     func focusScale(_ scale: CGFloat, _ focused: Bool) -> CGFloat {
-        focusZoomEffective && focused ? scale : 1
+        motionOn && focused ? scale : 1
     }
 
     /// A focus/state animation that snaps instead of animating under Reduce
@@ -153,10 +124,9 @@ final class PerformanceSettingsStore: ObservableObject {
         reduceMotion ? nil : animation
     }
 
-    /// A press/control animation, additionally gated by the "Button
-    /// animations" switch (Settings → Performance).
+    /// A press/control animation (none under Reduce Motion).
     func buttonMotion(_ animation: Animation) -> Animation? {
-        buttonAnimationsEffective ? animation : nil
+        motionOn ? animation : nil
     }
 
     private static let key = "cue.performance.v1"
@@ -167,20 +137,9 @@ final class PerformanceSettingsStore: ObservableObject {
     /// Anything the user has ever saved wins over these (see init).
     static func tierDefaults() -> Settings {
         var s = Settings()
-        if PerformanceProfile.isLowPower {
-            // Apple TV HD (A8 / 2 GB): keep the core artwork, but drop recurring
-            // animation/composite cost. Focus is still clear via rings/borders.
-            s.focusZoom = false
-            s.artworkFadeIn = false
-            s.sidebarAnimation = false
-            s.buttonAnimations = false
-            // The native card platter re-composites the focused poster on every
-            // trackpad micro-movement — the heaviest per-frame focus cost on the
-            // A8. Default to the lightweight scale-only focus instead.
-            s.cardParallax = false
-        } else if PerformanceProfile.isMidPower {
-            // 4K gen 1 (A10X / 3 GB): per-cell fades are what visibly cost
-            // during row scrolls; the rest it handles fine.
+        if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
+            // Apple TV HD (A8 / 2 GB) and 4K gen 1 (A10X / 3 GB): per-cell
+            // fades are what visibly cost during row scrolls.
             s.artworkFadeIn = false
         }
         return s

@@ -806,7 +806,7 @@ struct PosterCard: View {
         // card: the platter's raise/wiggle, or the zoom. With Reduce Motion on,
         // BOTH of those are suppressed while the shadow stays, which left
         // a focused poster with no indicator at all.
-        return !(perf.cardParallaxEffective || perf.focusZoomEffective)
+        return !perf.motionOn
     }
 
     var body: some View {
@@ -970,7 +970,7 @@ struct LandscapeCard: View {
                     // once the platter and the zoom were suppressed, which is
                     // exactly what Reduce Motion does. Ring unless something else
                     // actually moves the card.
-                    .strokeBorder(isFocused && !(perf.cardParallaxEffective || perf.focusZoomEffective)
+                    .strokeBorder(isFocused && !perf.motionOn
                                       ? theme.palette.focusRing : .clear,
                                   lineWidth: 3)
             )
@@ -1053,7 +1053,7 @@ struct LandscapeCardCaption: View {
         }
         .frame(width: width, height: captionHeight, alignment: .topLeading)
         .clipped()
-        .offset(y: lowered && perf.cardParallaxEffective ? dropDistance : 0)
+        .offset(y: lowered && perf.motionOn ? dropDistance : 0)
         .animation(perf.motion(FusionMotion.focusEntry), value: lowered)
     }
 
@@ -1489,7 +1489,7 @@ struct ATVCardCaption: View {
         // defaults) the caption used to slide 18pt away from a poster that had
         // not moved: an unrequested animation AND a layout bug. It also had no
         // Reduce Motion gate of its own, unlike everything else on the card.
-        .offset(y: lowered && perf.cardParallaxEffective ? dropDistance : 0)
+        .offset(y: lowered && perf.motionOn ? dropDistance : 0)
         .animation(perf.motion(FusionMotion.focusEntry), value: lowered)
     }
 }
@@ -1560,7 +1560,7 @@ private struct MediaCardButtonStyleModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if perf.cardParallaxEffective {
+        if perf.motionOn {
             // Native platter: raised card + trackpad tilt/parallax.
             content.buttonStyle(CardButtonStyle())
         } else {
@@ -1635,7 +1635,7 @@ private struct CardPressDip: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(perf.buttonAnimationsEffective && isPressed ? FusionFocus.pressScale : 1)
+            .scaleEffect(perf.motionOn && isPressed ? FusionFocus.pressScale : 1)
             .animation(perf.buttonMotion(FusionFocus.pressAnimation), value: isPressed)
     }
 }

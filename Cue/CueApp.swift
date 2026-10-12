@@ -1112,9 +1112,9 @@ struct RootView: View {
                     }
             }
         }
-        .animation(perf.sidebarAnimationEffective
+        .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: showSidebar)
-        .animation(perf.sidebarAnimationEffective
+        .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: sidebarFocus != nil)
         // Focus ARRIVING in the rail counts as engaging it, however it got
         // there. `focusSidebar` and `revealSidebar` stamp their own way in, but

@@ -18,51 +18,9 @@ struct PerformanceSettings: View {
             if store.reduceMotion { reduceMotionBanner }
 
             SettingsGroupCard(
-                title: "Cards & rows",
-                subtitle: "Posters and the rows they live in"
-            ) {
-                PerfToggleRow(
-                    icon: "arrow.up.left.and.arrow.down.right",
-                    title: "Focus zoom",
-                    subtitle: "The focused card springs slightly larger. Off: only the highlight ring marks focus — the cheapest possible focus effect.",
-                    isOn: s.focusZoom
-                )
-                PerfToggleRow(
-                    icon: "move.3d",
-                    title: "Card wiggle & lift",
-                    subtitle: "The native Apple TV card effect: the focused poster raises and tilts/parallaxes as you move on the trackpad, like a Home-screen icon. The system re-composites the whole focused card as your finger moves — the heaviest per-frame focus cost, and rough on older Apple TVs. Off: cards do a light scale on focus instead, no tilt.",
-                    isOn: s.cardParallax
-                )
-            }
-
-            SettingsGroupCard(
-                title: "Animations",
-                subtitle: "Motion across the app's chrome"
-            ) {
-                PerfToggleRow(
-                    icon: "sidebar.left",
-                    title: "Sidebar animation",
-                    subtitle: "The sidebar's expand/collapse spring and the dim it casts over the content — a full-screen fade composited on every open/close. Off: the sidebar and dim appear/disappear instantly.",
-                    isOn: s.sidebarAnimation
-                )
-                PerfToggleRow(
-                    icon: "hand.tap",
-                    title: "Button & pill effects",
-                    subtitle: "Small controls (See All, tab pills, filter chips, button presses) scale and spring when focused or clicked. Off: they highlight instantly with no motion.",
-                    isOn: s.buttonAnimations
-                )
-            }
-
-            SettingsGroupCard(
                 title: "Artwork loading",
                 subtitle: "How poster images arrive on screen"
             ) {
-                PerfToggleRow(
-                    icon: "square.and.arrow.down.on.square",
-                    title: "Preload row artwork",
-                    subtitle: "Downloads posters for rows below the fold in the background so they're ready when you scroll. Off: less background work while browsing, but posters load as they appear.",
-                    isOn: s.artworkPrefetch
-                )
                 PerfToggleRow(
                     icon: "circle.lefthalf.filled",
                     title: "Artwork fade-in",
@@ -160,7 +118,7 @@ struct PerformanceSettings: View {
                 Text("Reduce Motion is on")
                     .font(.system(size: 23, weight: .semibold))
                     .foregroundStyle(theme.palette.textPrimary)
-                Text("Your system Accessibility setting is disabling the motion effects (card wiggle & lift, focus zoom, sidebar and button animations, artwork fade-in) regardless of the switches below.")
+                Text("Your system Accessibility setting turns off the motion effects: the cards' tilt and focus zoom, the top bar's and controls' springs, and artwork fade-in.")
                     .font(.system(size: 19))
                     .foregroundStyle(theme.palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

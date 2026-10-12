@@ -524,7 +524,7 @@ final class HomeViewModel: ObservableObject {
             guard case .catalog(let row) = entry else { return [] }
             return row.items.prefix(12).compactMap(\.poster)
         }
-        if !prefetchURLs.isEmpty, PerformanceSettingsStore.shared.settings.artworkPrefetch {
+        if !prefetchURLs.isEmpty {
             ImageCache.shared.prefetch(urls: Array(prefetchURLs))
         }
     }
@@ -546,10 +546,9 @@ final class HomeViewModel: ObservableObject {
     }
 
 
-    /// Pull the billboard's backdrops into the image cache. Gated on the same
-    /// switch as the poster prefetch — this is art that is not on screen yet.
+    /// Pull the billboard's backdrops into the image cache (art that is not
+    /// on screen yet).
     private func warmSpotlightArt() {
-        guard PerformanceSettingsStore.shared.settings.artworkPrefetch else { return }
         let art = highlights(max: 6).compactMap { $0.item.background ?? $0.item.poster }
         guard !art.isEmpty else { return }
         ImageCache.shared.warm(urls: art)
