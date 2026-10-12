@@ -222,8 +222,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
   episodes, Saved for Later, cast, studios, Search's banner) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner
-  (`FixedFocusCardEdge.rim`, the default; the other edges stay in Render
-  Lab). Focus keeps its own outline outside the card.
+  (`FixedFocusCardEdge.rim`). Focus keeps its own outline outside the card.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
   next press). Glass panel beside the card; pressed −3 %, open +2 %.
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).

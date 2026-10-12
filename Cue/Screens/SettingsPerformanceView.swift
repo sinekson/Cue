@@ -319,54 +319,6 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
                 CueDropdown(
-                    title: "Card edge",
-                    subtitle: "How the posters, cards and the box stand off the background.",
-                    icon: "rectangle.on.rectangle",
-                    selection: probe.flags.cardEdge,
-                    options: FixedFocusCardEdge.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.cardEdge = raw
-                }
-                CueDropdown(
-                    title: "Left fade: Episodes",
-                    subtitle: "The left fade on the Detail page's Episodes and More, compared to the overview's.",
-                    icon: "rectangle.lefthalf.inset.filled",
-                    selection: String(probe.flags.episodesLeftFade),
-                    options: [0.0, 0.4, 0.6, 0.8, 0.9, 1.0].map {
-                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
-                    }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.episodesLeftFade = v }
-                }
-                CueDropdown(
-                    title: "Left fade: Home rows",
-                    subtitle: "The billboard's left fade behind Home's rows, compared to the billboard's.",
-                    icon: "rectangle.lefthalf.inset.filled",
-                    selection: String(probe.flags.homeLeftFade),
-                    options: [0.0, 0.2, 0.3, 0.4, 0.6, 0.8, 0.9, 1.0].map {
-                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
-                    }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.homeLeftFade = v }
-                }
-                CueDropdown(
-                    title: "Details: buttons focus speed",
-                    subtitle: "How fast Play and the round buttons light up and grow when focused (spring, no bounce).",
-                    icon: "hand.tap",
-                    selection: String(probe.flags.buttonFocusTime),
-                    options: [(0.08, "0.08 s"), (0.1, "0.10 s"), (0.12, "0.12 s"), (0.15, "0.15 s"),
-                              (0.2, "0.20 s"), (0.0, "As Motion: Focus")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.buttonFocusTime = v }
-                }
-                PerfToggleRow(
-                    icon: "circle.dashed",
-                    title: "Details: vignette below",
-                    subtitle: "Below the billboard: the rows' vignette (corners and edges a little darker) over the blurred picture.",
-                    isOn: Binding(get: { probe.flags.detailsVignetteBelow }, set: { probe.flags.detailsVignetteBelow = $0 })
-                )
-                CueDropdown(
                     title: "Details: picture blur below",
                     subtitle: "How much the picture blurs on Episodes and More — and Home's \"Artwork, blurred\" background (a still, made once).",
                     icon: "drop.halffull",

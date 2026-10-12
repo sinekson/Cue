@@ -359,9 +359,8 @@ final class EpisodeStripLayout: UICollectionViewLayout {
 /// An episode's card: its still, the dark foot, the state line.
 final class EpisodeCardCell: UICollectionViewCell {
     private let art = EpisodeArtView()
-    /// The cards' edge and shadow — Home's (Render Lab → Card edge).
+    /// The cards' rim — Home's.
     private let edge = UIImageView()
-    private let cardShadow = UIImageView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -372,8 +371,6 @@ final class EpisodeCardCell: UICollectionViewCell {
         contentView.addSubview(art)
         edge.isUserInteractionEnabled = false
         contentView.addSubview(edge)
-        cardShadow.isUserInteractionEnabled = false
-        insertSubview(cardShadow, at: 0)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -381,17 +378,13 @@ final class EpisodeCardCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
         art.frame = contentView.bounds
-        let style = FixedFocusCardEdge.current
-        edge.image = style.edgeImage
+        edge.image = FixedFocusCardEdge.rim
         edge.frame = contentView.bounds
-        cardShadow.image = style.hasShadow ? FixedFocusCardEdge.shadowImage : nil
-        cardShadow.frame = bounds.insetBy(dx: -FixedFocusCardEdge.shadowPad, dy: -FixedFocusCardEdge.shadowPad)
     }
 
-    /// Dimmed (left of the box) — its shadow with it.
+    /// Dimmed (left of the box).
     func setDim(_ alpha: CGFloat) {
         contentView.alpha = alpha
-        cardShadow.alpha = alpha
     }
 
     func configure(_ episode: EpisodeRowItem) {
@@ -641,7 +634,7 @@ final class EpisodeBoxView: UIView {
         super.layoutSubviews()
         clip.frame = bounds
         outline.frame = bounds
-        edge.image = FixedFocusCardEdge.current.edgeImage
+        edge.image = FixedFocusCardEdge.rim
         edge.frame = bounds
         let lit = FixedFocusCardEdge.focusLight
         outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width

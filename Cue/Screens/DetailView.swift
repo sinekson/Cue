@@ -1127,8 +1127,8 @@ struct DetailView: View {
                 .opacity(trailerFullscreen ? 0 : trailerMode ? TrailerMode.scrimOpacity : scrim)
                 .animation(TrailerMode.fade, value: trailerMode)
                 // Episodes / More: lighter — the blur and the dim already
-                // darken (Render Lab → Left fade: Episodes).
-                .opacity(page != .overview ? RenderProbe.shared.flags.episodesLeftFade : 1)
+                // darken.
+                .opacity(page != .overview ? StagePictureView.shadeBelow : 1)
                 .animation(detailPageScroll, value: page == .overview)
         }
         .frame(width: size.width, height: size.height)
@@ -1593,12 +1593,9 @@ struct DetailView: View {
                 }
             }
             .frame(width: 1920, height: 1080)
-            .opacity(below ? flags.episodesLeftFade : scrim)
-            // Below: the rows' vignette over the blur (Render Lab → Details:
-            // vignette below).
-            if flags.detailsVignetteBelow {
-                TitleTintBackground.vignette.opacity(below ? 1 : 0)
-            }
+            .opacity(below ? StagePictureView.shadeBelow : scrim)
+            // Below: the rows' vignette over the blur.
+            TitleTintBackground.vignette.opacity(below ? 1 : 0)
         }
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the
@@ -3020,12 +3017,8 @@ struct DetailActionButton: View {
     static let height: CGFloat = 64
     static let textPadding: CGFloat = 25
     static let iconBox: CGFloat = 30
-    /// Lighting up / the caption coming in / the scale: a no-bounce spring
-    /// (Render Lab → Details: buttons focus speed; 0: Motion: Focus).
-    @MainActor static var open: Animation {
-        let time = RenderProbe.shared.flags.buttonFocusTime
-        return time > 0 ? .spring(duration: time, bounce: 0) : Motion.focus
-    }
+    /// Lighting up / the caption coming in / the scale: a no-bounce spring.
+    static let open: Animation = .spring(duration: 0.15, bounce: 0)
     /// The caption: small, under the circle.
     static let captionSize: CGFloat = 20
     static let captionGap: CGFloat = 12

@@ -417,12 +417,12 @@ private struct BrowseHeader: View {
     }
 }
 
-/// The card's light frame (`FixedFocusCardEdge`): the corners keep their
+/// The card's light frame (`FixedFocusCardEdge.rim`): the corners keep their
 /// shape, the edges between them stretch.
 private struct CardRim: View {
     var body: some View {
         let cap = Spotlight.cornerRadius + 4
-        Image(uiImage: FixedFocusCardEdge.current.edgeImage ?? UIImage())
+        Image(uiImage: FixedFocusCardEdge.rim)
             .resizable(capInsets: EdgeInsets(top: cap, leading: cap, bottom: cap, trailing: cap))
             .allowsHitTesting(false)
     }

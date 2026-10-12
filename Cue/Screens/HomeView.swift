@@ -1736,8 +1736,6 @@ struct TitleTintBackground: View {
                                    .init(color: .black.opacity(0.45), location: 1)],
                            center: .center, startRadiusFraction: 0, endRadiusFraction: 0.72)
     }
-
-    @ObservedObject private var probe = RenderProbe.shared
     let tint: Color?
     var second: Color? = nil
     /// The picture's colour layout (Home); without it, the title's colour.
@@ -1768,12 +1766,6 @@ struct TitleTintBackground: View {
                                              startPoint: UnitPoint(x: 0.95, y: 0),
                                              endPoint: UnitPoint(x: 0.5, y: 1)))
                 }
-            }
-            // The billboard's left fade, lighter (Render Lab → Left fade:
-            // Home rows).
-            if probe.flags.homeLeftFade > 0 {
-                LinearGradient(stops: BillboardShade.billboardLeftStops, startPoint: .leading, endPoint: .trailing)
-                    .opacity(probe.flags.homeLeftFade)
             }
             // Corners and edges a little darker.
             Self.vignette
@@ -2724,30 +2716,11 @@ struct BillboardCrossfade<Page: View>: View {
     }
 }
 
-/// How the cards stand off the background (Render Lab → Card edge): all
-/// pre-rendered, stretchable images (drawn once, they follow a card's size,
-/// also as it grows) — nothing drawn live on a moving card.
-enum FixedFocusCardEdge: String, CaseIterable {
-    case none, hairline, rim, bezel, topLight, shadow, shadowHairline
-
-    @MainActor static var current: FixedFocusCardEdge {
-        FixedFocusCardEdge(rawValue: RenderProbe.shared.flags.cardEdge) ?? .none
-    }
-
-    var displayName: String {
-        switch self {
-        case .none: return "None"
-        case .hairline: return "Hairline"
-        case .rim: return "Card rim (a printed card's light frame)"
-        case .bezel: return "Bezel (light in, dark out)"
-        case .topLight: return "Top bar's light (top & bottom)"
-        case .shadow: return "Soft shadow"
-        case .shadowHairline: return "Soft shadow + hairline"
-        }
-    }
-
-    var hasShadow: Bool { self == .shadow || self == .shadowHairline }
-
+/// The cards' light frame — a printed card's rim — and the soft shadow
+/// under a lifted card: pre-rendered, stretchable images (drawn once, they
+/// follow a card's size, also as it grows) — nothing drawn live on a moving
+/// card.
+enum FixedFocusCardEdge {
     /// The focus outline in the top bar's light (Render Lab → Focus outline)
     /// — off: a plain white line.
     /// (The top bar's light is no focus style any more: every focused card
@@ -2755,16 +2728,9 @@ enum FixedFocusCardEdge: String, CaseIterable {
     @MainActor static var focusLight: Bool { false }
     @MainActor static var focusImage: UIImage { art.focus }
 
-    /// The edge over the card (nil: none).
-    @MainActor var edgeImage: UIImage? {
-        switch self {
-        case .none, .shadow: return nil
-        case .hairline, .shadowHairline: return Self.art.hairline
-        case .rim: return Self.art.rim
-        case .bezel: return Self.art.bezel
-        case .topLight: return Self.art.topLight
-        }
-    }
+    /// The rim over the card: an even 2 pt line inside the corner, there
+    /// on dark artwork, quiet on light.
+    @MainActor static var rim: UIImage { art.rim }
 
     /// How far the shadow reaches beyond the card.
     static let shadowPad: CGFloat = 70
@@ -2775,10 +2741,7 @@ enum FixedFocusCardEdge: String, CaseIterable {
 
     @MainActor
     private struct Art {
-        let hairline: UIImage
         let rim: UIImage
-        let bezel: UIImage
-        let topLight: UIImage
         let focus: UIImage
         let shadow: UIImage
 
@@ -2799,33 +2762,8 @@ enum FixedFocusCardEdge: String, CaseIterable {
                 UIGraphicsImageRenderer(size: size).image { body($0.cgContext) }
                     .resizableImage(withCapInsets: caps, resizingMode: .stretch)
             }
-            // One even, faint white line all round.
-            hairline = draw { ring(0, 1, UIColor.white.withAlphaComponent(0.15), in: $0) }
-            // A printed card's light frame: an even 2 pt line inside the
-            // corner, there on dark artwork, quiet on light.
             rim = draw { ring(0, 2, UIColor.white.withAlphaComponent(0.3), in: $0) }
-            // A light line inside, a dark one outside: an edge on light and
-            // dark artwork alike.
-            bezel = draw {
-                ring(0, 1, UIColor.black.withAlphaComponent(0.4), in: $0)
-                ring(1, 1, UIColor.white.withAlphaComponent(0.18), in: $0)
-            }
-            // The top bar's glass: light along the top and the bottom, the
-            // sides dim.
-            topLight = draw { cg in
-                let width: CGFloat = 1.5
-                let rect = CGRect(origin: .zero, size: size).insetBy(dx: width / 2, dy: width / 2)
-                cg.addPath(UIBezierPath(roundedRect: rect, cornerRadius: radius - width / 2).cgPath)
-                cg.setLineWidth(width)
-                cg.replacePathWithStrokedPath()
-                cg.clip()
-                let colors = [0.55, 0.12, 0.05, 0.12, 0.4].map { UIColor(white: 1, alpha: $0).cgColor } as CFArray
-                if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors,
-                                      locations: [0, 0.2, 0.5, 0.8, 1]) {
-                    cg.drawLinearGradient(g, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
-                }
-            }
-            // FOCUS: the same light, clear — a full outline, brightest along
+            // FOCUS: the top bar's light, clear — a full outline, brightest along
             // the top and the bottom, the sides still well visible. (A
             // see-through version that let the picture's colour in was too
             // faint for focus.)
@@ -5181,7 +5119,7 @@ final class FixedFocusBoxView: UIView {
     private let infoHost = UIView()
     private var shownID: String?
     private var shownProgress: WatchProgress?
-    /// The cards' edge (see `FixedFocusCardEdge`), and the focus outline in
+    /// The cards' rim (see `FixedFocusCardEdge`), and the focus outline in
     /// the top bar's light.
     private let edge = UIImageView()
     private let focusRing = UIImageView()
@@ -5251,9 +5189,8 @@ final class FixedFocusBoxView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         clip.frame = bounds
-        // The cards' edge (Render Lab → Card edge) — no shadow here: the
-        // grown cell right under the box casts it.
-        edge.image = FixedFocusCardEdge.current.edgeImage
+        // The cards' rim.
+        edge.image = FixedFocusCardEdge.rim
         edge.frame = bounds
         focusRing.frame = bounds
         infoHost.bounds = CGRect(origin: .zero, size: bounds.size)
@@ -7082,7 +7019,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         shadow.bounds = CGRect(origin: .zero, size: bounds.insetBy(dx: -FixedFocusCardEdge.shadowPad,
                                                                     dy: -FixedFocusCardEdge.shadowPad).size)
         shadow.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        edge.image = FixedFocusCardEdge.current.edgeImage
+        edge.image = FixedFocusCardEdge.rim
         edge.frame = card.bounds
         // A WINDOW onto the full-screen picture: the backdrop at the size and
         // place Details (and Home's billboard) give it, seen through the
@@ -7349,7 +7286,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         shadow.bounds = CGRect(origin: .zero, size: card.insetBy(dx: -FixedFocusCardEdge.shadowPad,
                                                                     dy: -FixedFocusCardEdge.shadowPad).size)
         shadow.center = CGPoint(x: card.midX, y: card.midY)
-        edge.image = Self.lift ? nil : FixedFocusCardEdge.current.edgeImage
+        edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
         dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
@@ -7573,8 +7510,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         dimCover.alpha = 0
         dimCover.isUserInteractionEnabled = false
         contentView.addSubview(dimCover)
-        cardShadow.isUserInteractionEnabled = false
-        insertSubview(cardShadow, at: 0)
         outline.isUserInteractionEnabled = false
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         outline.layer.borderWidth = FixedFocusRing.width
@@ -7609,21 +7544,18 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                             y: cardHeight - Spotlight.logoInset - cardHeight * 0.28,
                             width: landscapeWidth * 0.55, height: cardHeight * 0.28)
         outline.frame = bounds
-        let style = FixedFocusCardEdge.current
         let lit = FixedFocusCardEdge.focusLight
         outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         outlineLight.image = lit ? FixedFocusCardEdge.focusImage : nil
         outlineLight.frame = outline.bounds
-        edge.image = style.edgeImage
+        edge.image = FixedFocusCardEdge.rim
         // Around what the card shows: the poster — not the box-wide gap a
         // grown cell under the fixed box is (its hairline trailed into the
         // box while sliding there) — or, showing the box itself, all of it.
         let card = landscape || showsBox ? contentView.bounds : poster.frame
         edge.frame = card
         contentView.bringSubviewToFront(edge)
-        cardShadow.image = style.hasShadow ? FixedFocusCardEdge.shadowImage : nil
-        cardShadow.frame = card.insetBy(dx: -FixedFocusCardEdge.shadowPad, dy: -FixedFocusCardEdge.shadowPad)
         state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
@@ -7648,7 +7580,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         self.landscape = landscape
         self.invisible = invisible
         contentView.isHidden = invisible
-        cardShadow.isHidden = invisible
         backdropFor = nil
         if invisible {
             // The billboard's focus target: nothing to show or load.
@@ -7718,7 +7649,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     private func applyAlpha() {
         contentView.alpha = concealed || underPressedBox ? 0 : past ? RenderProbe.shared.flags.previousPosterAlpha : 1
-        cardShadow.alpha = contentView.alpha
     }
 
     /// Showing the box itself (grown, not under the fixed box).
@@ -7754,9 +7684,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     }
     private var underPressedBox = false
 
-    /// The card's edge and shadow (see `FixedFocusCardEdge`).
+    /// The card's rim (see `FixedFocusCardEdge`).
     private let edge = UIImageView()
-    private let cardShadow = UIImageView()
     private let outlineLight = UIImageView()
 
     /// Grown: the backdrop shows — unless the fixed box shows it

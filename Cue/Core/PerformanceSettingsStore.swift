@@ -399,27 +399,14 @@ final class RenderProbe: ObservableObject {
         var badgeStyle = "outline"
         /// New Home: the billboard's ratings (`MDBListRatingsRow.ChipStyle`).
         var billboardRatings = "chips"
-        /// New Home: how the cards stand off the background
-        /// (`FixedFocusCardEdge`).
-        var cardEdge = "rim"
         /// Every focused card's outline: "strong" (4 pt, 85 %) or "soft"
         /// (3 pt, 75 %).
         var focusOutline = "soft"
         /// Details: how strongly the picture blurs on Episodes / More (the
         /// blur's radius on a 640 px copy; 0: none).
         var detailsPictureBlur: Double = 12
-        /// Details: the rows' vignette over the blurred picture below the
-        /// billboard.
-        var detailsVignetteBelow = true
-        /// Details' buttons: how fast they light up and grow (0: the focus
-        /// motion's time — Motion: Focus).
-        var buttonFocusTime: Double = 0.15
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// The left fade's strength on the Detail page's Episodes / More and
-        /// behind Home's rows (0: none, 1: as on the overview / billboard).
-        var episodesLeftFade: Double = 0.9
-        var homeLeftFade: Double = 0
         /// New Home: how far up the billboard's picture fades into the
         /// background's colours at its bottom (points; 0: a plain edge).
         var billboardBottomFade: Double = 200
@@ -466,16 +453,9 @@ final class RenderProbe: ObservableObject {
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             badgeStyle = (try? c.decode(String.self, forKey: .badgeStyle)) ?? d.badgeStyle
             billboardRatings = (try? c.decode(String.self, forKey: .billboardRatings)) ?? d.billboardRatings
-            cardEdge = (try? c.decode(String.self, forKey: .cardEdge)) ?? d.cardEdge
-            // (The rim's trial versions — "rimSoft", "rimThin" — are the rim.)
-            if cardEdge.hasPrefix("rim") { cardEdge = "rim" }
             focusOutline = (try? c.decode(String.self, forKey: .focusOutline)) ?? d.focusOutline
             detailsPictureBlur = (try? c.decode(Double.self, forKey: .detailsPictureBlur)) ?? d.detailsPictureBlur
-            detailsVignetteBelow = (try? c.decode(Bool.self, forKey: .detailsVignetteBelow)) ?? d.detailsVignetteBelow
-            buttonFocusTime = (try? c.decode(Double.self, forKey: .buttonFocusTime)) ?? d.buttonFocusTime
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
-            episodesLeftFade = (try? c.decode(Double.self, forKey: .episodesLeftFade)) ?? d.episodesLeftFade
-            homeLeftFade = (try? c.decode(Double.self, forKey: .homeLeftFade)) ?? d.homeLeftFade
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha
             horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve

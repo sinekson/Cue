@@ -18,6 +18,8 @@ final class StagePictureView: UIView {
     static let pictureSize = CGSize(width: 1920, height: 1080)
     /// Below the billboard the picture darkens by this much.
     static let dimBelow: CGFloat = 0.45
+    /// …and its shade (the left fade) shows this much of itself.
+    static let shadeBelow: CGFloat = 0.4
     /// How far the billboard's picture drifts on a change (its text only
     /// crossfades — `BillboardCrossfade`).
     static let drift: CGFloat = 16
@@ -140,13 +142,12 @@ final class StagePictureView: UIView {
 
     /// Below the billboard (pinned): blurred and darker — set inside the
     /// rows' move, it rides it. The shade lightens as the blur and dim take
-    /// over (Render Lab → Left fade: Episodes).
+    /// over.
     func setBelow(_ below: Bool) {
-        let flags = RenderProbe.shared.flags
         blurred.alpha = below ? 1 : 0
         // The brightness cap replaces the dim (both: near black).
         dim.alpha = below ? Self.dimBelow : 0
-        shade.alpha = below ? CGFloat(flags.episodesLeftFade) : 1
+        shade.alpha = below ? Self.shadeBelow : 1
     }
 
     private func loadBlurred(_ url: String?) {
