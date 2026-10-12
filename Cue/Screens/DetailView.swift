@@ -1054,11 +1054,10 @@ struct DetailView: View {
                 // the colours below the overview is still open (its edge,
                 // below the screen here, is for that).
                 stagePicture(size: geo.size)
-                // Episodes / More: the picture steps back (Render Lab →
-                // Details: picture dim below), so the cards on the right —
+                // Episodes / More: the picture steps back, so the cards on the right —
                 // outside the left fade — sit on calm ground.
                 Color.black
-                    .opacity(page == .overview ? 0 : RenderProbe.shared.flags.detailsPictureDim)
+                    .opacity(page == .overview ? 0 : StagePictureView.dimBelow)
                     .animation(detailPageScroll, value: page == .overview)
                     .allowsHitTesting(false)
             }
@@ -1584,7 +1583,7 @@ struct DetailView: View {
             .scaleEffect(ModeSwap.depthScale(depth))
             .frame(width: 1920, height: 1080)
             .clipped()
-            Color.black.opacity(below ? flags.detailsPictureDim : 0)
+            Color.black.opacity(below ? StagePictureView.dimBelow : 0)
             // The billboard's shade, exactly Home's (`StageArt.shade`).
             Group {
                 if let shade = StageArt.shade {
@@ -3067,7 +3066,7 @@ struct DetailActionButton: View {
             // under it while focused (outside its frame: the row never moves
             // for it).
             .overlay(alignment: .top) {
-                if let text = isPrimary ? caption : probe.flags.buttonCaptions ? title : nil {
+                if let text = isPrimary ? caption : title {
                     Text(text)
                         .font(.system(size: Self.captionSize, weight: .medium))
                         .foregroundStyle(AppGlass.textMuted)

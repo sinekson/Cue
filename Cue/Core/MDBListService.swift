@@ -359,7 +359,7 @@ enum MDBListService {
         let first = cacheLock.withLock { refreshing.insert(key).inserted }
         guard first else { return }
         Task.detached(priority: .utility) {
-            guard await mayAsk(settings),
+            guard mayAsk(settings),
                   let url = url("/imdb/\(mediaType(type))/\(imdbID)", apiKey: settings.apiKey),
                   let (data, response) = try? await session.data(from: url),
                   let http = response as? HTTPURLResponse else { return }
@@ -372,10 +372,9 @@ enum MDBListService {
     }
     nonisolated(unsafe) private static var refreshing = Set<String>()
 
-    /// No requests: no key, limited, or Render Lab → MDBList off.
-    private static func mayAsk(_ settings: MDBListSettings) async -> Bool {
-        guard settings.isConfigured, !isLimited else { return false }
-        return await !MainActor.run(body: { RenderProbe.shared.flags.noMDBList })
+    /// No requests: no key, or limited.
+    private static func mayAsk(_ settings: MDBListSettings) -> Bool {
+        settings.isConfigured && !isLimited
     }
 
     private static func mediaType(_ type: String) -> String {
@@ -420,7 +419,7 @@ enum MDBListService {
             if known.stale { refreshInBackground(imdbID: imdbID, type: type, key: key, settings: settings) }
             return known.ratings
         }
-        guard await mayAsk(settings),
+        guard mayAsk(settings),
               let url = url("/imdb/\(mediaType)/\(imdbID)", apiKey: settings.apiKey),
               let (data, response) = try? await session.data(from: url),
               let http = response as? HTTPURLResponse else { return nil }
@@ -450,7 +449,7 @@ enum MDBListService {
         for (mediaType, ids) in wanted {
             for start in stride(from: 0, to: ids.count, by: 200) {
                 let batch = Array(ids[start..<min(start + 200, ids.count)])
-                guard await mayAsk(settings),
+                guard mayAsk(settings),
                       let url = url("/imdb/\(mediaType)", apiKey: settings.apiKey) else { return }
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"

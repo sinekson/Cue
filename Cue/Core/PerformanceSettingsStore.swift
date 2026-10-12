@@ -399,13 +399,6 @@ final class RenderProbe: ObservableObject {
         var badgeStyle = "outline"
         /// New Home: the billboard's ratings (`MDBListRatingsRow.ChipStyle`).
         var billboardRatings = "chips"
-        /// Details: the scrolling picture's bottom edge — "melt" (its own
-        /// bottom mirrored, blurred, faded into the colours) or "shadow".
-        var detailsPictureEdge = "melt"
-        /// Details: how much the picture darkens on Episodes / More.
-        var detailsPictureDim: Double = 0.45
-        /// Details: an icon button's name under it while focused.
-        var buttonCaptions = true
         /// New Home: how the cards stand off the background
         /// (`FixedFocusCardEdge`).
         var cardEdge = "rim"
@@ -430,10 +423,6 @@ final class RenderProbe: ObservableObject {
         /// New Home: how far up the billboard's picture fades into the
         /// background's colours at its bottom (points; 0: a plain edge).
         var billboardBottomFade: Double = 200
-        /// No MDBList requests at all (while developing: its daily limit).
-        var noMDBList = false
-        /// New Home: the billboard's own, stronger vignette.
-        var billboardVignette = true
         /// New Home: the posters left of the box in the focused row (1: not
         /// dimmed).
         var previousPosterAlpha: Double = 0.45
@@ -477,9 +466,6 @@ final class RenderProbe: ObservableObject {
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             badgeStyle = (try? c.decode(String.self, forKey: .badgeStyle)) ?? d.badgeStyle
             billboardRatings = (try? c.decode(String.self, forKey: .billboardRatings)) ?? d.billboardRatings
-            detailsPictureEdge = (try? c.decode(String.self, forKey: .detailsPictureEdge)) ?? d.detailsPictureEdge
-            detailsPictureDim = (try? c.decode(Double.self, forKey: .detailsPictureDim)) ?? d.detailsPictureDim
-            buttonCaptions = (try? c.decode(Bool.self, forKey: .buttonCaptions)) ?? d.buttonCaptions
             cardEdge = (try? c.decode(String.self, forKey: .cardEdge)) ?? d.cardEdge
             // (The rim's trial versions — "rimSoft", "rimThin" — are the rim.)
             if cardEdge.hasPrefix("rim") { cardEdge = "rim" }
@@ -491,8 +477,6 @@ final class RenderProbe: ObservableObject {
             episodesLeftFade = (try? c.decode(Double.self, forKey: .episodesLeftFade)) ?? d.episodesLeftFade
             homeLeftFade = (try? c.decode(Double.self, forKey: .homeLeftFade)) ?? d.homeLeftFade
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
-            noMDBList = (try? c.decode(Bool.self, forKey: .noMDBList)) ?? d.noMDBList
-            billboardVignette = (try? c.decode(Bool.self, forKey: .billboardVignette)) ?? d.billboardVignette
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha
             horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve
             verticalCurve = (try? c.decode(String.self, forKey: .verticalCurve)) ?? d.verticalCurve

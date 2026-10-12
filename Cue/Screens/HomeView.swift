@@ -2286,37 +2286,19 @@ enum FixedFocusShowInfo {
 }
 
 /// THE STAGE'S SHADE — what lies over a full-screen backdrop so text reads
-/// on it: two fades (left, bottom) and the vignette. ONE definition for Home's billboard and the Detail page:
+/// on it: two fades (left, bottom). ONE definition for Home's billboard and the Detail page:
 /// the same picture looks the same on both.
 struct BillboardShade: View {
     @ObservedObject private var probe = RenderProbe.shared
 
     var body: some View {
-        ZStack {
-            billboardScrim
-            if probe.flags.billboardVignette { billboardVignette }
-        }
-        .allowsHitTesting(false)
+        billboardScrim
     }
 
     /// The billboard's dark fade over the left side (see
     /// `billboardLeftStops`). Not under the rows: their background is plain.
     var leftFade: some View {
         LinearGradient(stops: Self.billboardLeftStops, startPoint: .leading, endPoint: .trailing)
-    }
-
-    /// The billboard's vignette (its own switch): stronger than the rows', and
-    /// reaching along the edges, not just into the corners — about a quarter
-    /// black at the middle of the right edge, more along the bottom (its
-    /// centre sits a little high), so the dots at the bottom right have
-    /// ground to sit on whatever the picture.
-    var billboardVignette: some View {
-        EllipticalGradient(stops: [.init(color: .clear, location: 0.4),
-                                   .init(color: .black.opacity(0.1), location: 0.55),
-                                   .init(color: .black.opacity(0.25), location: 0.667),
-                                   .init(color: .black.opacity(0.45), location: 0.82),
-                                   .init(color: .black.opacity(0.6), location: 1)],
-                           center: UnitPoint(x: 0.5, y: 0.45), startRadiusFraction: 0, endRadiusFraction: 0.75)
     }
 
     /// What keeps the billboard's text readable: two fades, left and

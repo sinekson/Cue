@@ -318,45 +318,6 @@ struct RenderLabSettings: View {
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                PerfToggleRow(
-                    icon: "circle.dashed.inset.filled",
-                    title: "Billboard vignette",
-                    subtitle: "The billboard's edges and corners darker (stronger than the rows' vignette), so the dots read on any picture.",
-                    isOn: Binding(get: { probe.flags.billboardVignette }, set: { probe.flags.billboardVignette = $0 })
-                )
-                CueDropdown(
-                    title: "Details: picture edge",
-                    subtitle: "The picture's bottom edge as it scrolls away: melting into the colours, or a plain edge with a shadow.",
-                    icon: "square.3.layers.3d.down.right",
-                    selection: probe.flags.detailsPictureEdge,
-                    options: [CueDropdownOption("melt", "Melts into the colours"),
-                              CueDropdownOption("shadow", "Plain edge, shadow")]
-                ) { raw in
-                    probe.flags.detailsPictureEdge = raw
-                }
-                CueDropdown(
-                    title: "Details: picture dim below",
-                    subtitle: "How much the picture darkens on Episodes and More (the left fade stays).",
-                    icon: "circle.lefthalf.filled",
-                    selection: String(probe.flags.detailsPictureDim),
-                    options: [0.0, 0.3, 0.45, 0.6, 0.75].map {
-                        CueDropdownOption(String($0), $0 == 0 ? "Off" : "\(Int(($0 * 100).rounded())) %")
-                    }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.detailsPictureDim = v }
-                }
-                PerfToggleRow(
-                    icon: "captions.bubble",
-                    title: "Button captions",
-                    subtitle: "Details: the focused icon button's name, small, under it.",
-                    isOn: Binding(get: { probe.flags.buttonCaptions }, set: { probe.flags.buttonCaptions = $0 })
-                )
-                PerfToggleRow(
-                    icon: "network.slash",
-                    title: "MDBList off",
-                    subtitle: "No MDBList requests at all (its daily limit, while developing). Cached ratings still show; otherwise the catalog's IMDb score.",
-                    isOn: Binding(get: { probe.flags.noMDBList }, set: { probe.flags.noMDBList = $0 })
-                )
                 CueDropdown(
                     title: "Card edge",
                     subtitle: "How the posters, cards and the box stand off the background.",

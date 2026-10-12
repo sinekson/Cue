@@ -16,6 +16,8 @@ import UIKit
 /// exactly the rows' animation.
 final class StagePictureView: UIView {
     static let pictureSize = CGSize(width: 1920, height: 1080)
+    /// Below the billboard the picture darkens by this much.
+    static let dimBelow: CGFloat = 0.45
     /// How far the billboard's picture drifts on a change (its text only
     /// crossfades — `BillboardCrossfade`).
     static let drift: CGFloat = 16
@@ -143,7 +145,7 @@ final class StagePictureView: UIView {
         let flags = RenderProbe.shared.flags
         blurred.alpha = below ? 1 : 0
         // The brightness cap replaces the dim (both: near black).
-        dim.alpha = below ? CGFloat(flags.detailsPictureDim) : 0
+        dim.alpha = below ? Self.dimBelow : 0
         shade.alpha = below ? CGFloat(flags.episodesLeftFade) : 1
     }
 
@@ -163,8 +165,8 @@ final class StagePictureView: UIView {
     }
 }
 
-/// The billboard's shade (the SwiftUI `BillboardShade`: its two fades,
-/// vignette) as a still image, made once — and again when its Render Lab
+/// The billboard's shade (the SwiftUI `BillboardShade`: its two fades)
+/// as a still image, made once — and again when its Render Lab
 /// settings change. THE shade: the billboard's, Details' and the
 /// transition's alike.
 @MainActor
@@ -174,7 +176,7 @@ enum StageArt {
 
     static var shade: UIImage? {
         let flags = RenderProbe.shared.flags
-        let key = "\(flags.billboardVignette)|\(flags.noScrim)"
+        let key = "\(flags.noScrim)"
         if key != shadeKey || shadeImage == nil {
             let renderer = ImageRenderer(content: BillboardShade()
                 .frame(width: StagePictureView.pictureSize.width,
