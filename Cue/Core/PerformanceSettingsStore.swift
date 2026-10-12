@@ -347,12 +347,8 @@ final class RenderProbe: ObservableObject {
         /// Every animation on Home: steps snap. Tells animation cost from
         /// static drawing cost.
         var noAnimations = false
-        /// …and the shadow under the grown card.
-        var movingFocusShadow = true
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// The motion tokens' durations (see `Motion`).
-        var motion = MotionDurations()
 
         init() {}
 
@@ -369,15 +365,12 @@ final class RenderProbe: ObservableObject {
             noTint = (try? c.decode(Bool.self, forKey: .noTint)) ?? d.noTint
             capBackdrop = (try? c.decode(Bool.self, forKey: .capBackdrop)) ?? d.capBackdrop
             noAnimations = (try? c.decode(Bool.self, forKey: .noAnimations)) ?? d.noAnimations
-            motion = (try? c.decode(MotionDurations.self, forKey: .motion)) ?? d.motion
-            movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
         }
     }
 
     @Published var flags: Flags {
         didSet {
-            Motion.durations = flags.motion
             if let data = try? JSONEncoder().encode(flags) {
                 UserDefaults.standard.set(data, forKey: Self.key)
             }
@@ -395,7 +388,6 @@ final class RenderProbe: ObservableObject {
         } else {
             flags = Flags()
         }
-        Motion.durations = flags.motion
     }
 }
 

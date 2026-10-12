@@ -122,32 +122,17 @@ enum FusionMaterials {
 
 // MARK: - Motion (the ONE system, docs/UI-DESIGN.md §2)
 
-/// Durations of the four motion tokens, in seconds. Tunable live in
-/// Settings → Render Lab → Motion until they're locked.
-struct MotionDurations: Codable, Equatable {
-    var present: Double = 0.45
-    init() {}
-
-    /// Lenient: a value missing from an older save keeps its default.
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let d = MotionDurations()
-        present = (try? c.decode(Double.self, forKey: .present)) ?? d.present
-    }
-}
-
 /// Every animation in the app is one of these four. No bounce anywhere:
 /// springs with bounce 0 keep their speed when a new press interrupts them
 /// (fast remote swipes), which timing curves can't.
 /// Rule: one press, one movement.
 enum Motion {
-    /// Mirrors `RenderProbe.flags.motion` (set there), readable anywhere.
-    nonisolated(unsafe) static var durations = MotionDurations()
     static let focusDuration: Double = 0.3
     static let moveDuration: Double = 0.35
     static let fadeDuration: Double = 0.25
     /// Home Up/Down (a whole row plus the box opening): longer than `move`.
     static let verticalDuration: Double = 0.5
+    static let presentDuration: Double = 0.45
 
     /// Focus outline, highlights, button focus, presses.
     static let focus: Animation = .spring(duration: focusDuration, bounce: 0)
@@ -156,5 +141,5 @@ enum Motion {
     /// Crossfades: box art, text, chrome in and out.
     static let fade: Animation = .easeInOut(duration: fadeDuration)
     /// Screen changes: billboard ⇄ Details, box → Details.
-    static var present: Animation { .spring(duration: durations.present, bounce: 0) }
+    static let present: Animation = .spring(duration: presentDuration, bounce: 0)
 }

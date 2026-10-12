@@ -320,24 +320,6 @@ struct RenderLabSettings: View {
                 )
             }
 
-            SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {
-                PerfToggleRow(
-                    icon: "shadow",
-                    title: "Moving focus: shadow",
-                    subtitle: "Home, rows with moving focus: a soft shadow under the lifted card.",
-                    isOn: Binding(get: { probe.flags.movingFocusShadow }, set: { probe.flags.movingFocusShadow = $0 })
-                )
-                CueDropdown(
-                    title: "Present",
-                    subtitle: "Screen changes: billboard ⇄ Details, box → Details.",
-                    icon: "rectangle.expand.vertical",
-                    selection: String(probe.flags.motion.present),
-                    options: [0.35, 0.4, 0.45, 0.5, 0.6].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.present = v }
-                }
-            }
-
             SettingsGroupCard(title: "Measure", subtitle: "Live frame rate over the whole app") {
                 PerfToggleRow(
                     icon: "speedometer",

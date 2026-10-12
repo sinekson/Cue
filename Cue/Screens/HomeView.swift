@@ -2921,7 +2921,7 @@ enum FixedFocusMetrics {
     /// Between a row's cards: what the fixed rows keep beside their box
     /// (`gap`), around the LIFTED card — the gap at rest grows by as much
     /// as a card of that width grows on each side.
-    /// How much a moving-focus card grows when focused (with a shadow).
+    /// How much a moving-focus card grows when focused.
     static let movingFocusLift: CGFloat = 0.05
     @MainActor static func destinationGap(cardWidth: CGFloat) -> CGFloat {
         (gap + cardWidth * movingFocusLift / 2).rounded()
@@ -6641,7 +6641,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let outlineLight = UIImageView()
     /// The lift's scale the outline is sized to (see `setFocused`).
     private var outlineScale: CGFloat = 1
-    private let shadow = UIImageView()
     private let name = UILabel()
     private let detail = UILabel()
     /// A logo row's logo: fitted inside the picture's light plate.
@@ -6679,10 +6678,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             picture.layer.cornerRadius = Spotlight.cornerRadius
             picture.layer.cornerCurve = .continuous
         }
-        shadow.isUserInteractionEnabled = false
-        shadow.image = FixedFocusCardEdge.shadowImage
-        shadow.alpha = 0
-        contentView.addSubview(shadow)
         contentView.addSubview(picture)
         edge.isUserInteractionEnabled = false
         picture.addSubview(edge)
@@ -6747,9 +6742,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         }
         outline.bounds = CGRect(origin: .zero, size: CGSize(width: card.width * outlineScale,
                                                             height: card.height * outlineScale))
-        shadow.bounds = CGRect(origin: .zero, size: card.insetBy(dx: -FixedFocusCardEdge.shadowPad,
-                                                                    dy: -FixedFocusCardEdge.shadowPad).size)
-        shadow.center = CGPoint(x: card.midX, y: card.midY)
         edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
         dimCover.frame = picture.bounds
@@ -6870,8 +6862,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         focusedNow = focused
         name.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : 0.7)
         guard !Self.lift else { return }
-        // Grown, outlined, a shadow under it — the captions step down with it.
-        // (Render Lab → Moving focus: lift; off: only outlined, as the box.)
+        // Grown and outlined — the captions step down with it.
         let lift = FixedFocusMetrics.movingFocusLift
         let grows = lift > 0
         // Pressed: a little less lifted (as the fixed box sinks, `pressScale`).
@@ -6885,9 +6876,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         outlineScale = scale
         outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: cardHeight * scale))
         outline.layer.cornerRadius = Spotlight.cornerRadius * scale
-        shadow.transform = grown
         outline.alpha = focused ? 1 : 0
-        shadow.alpha = focused && grows && RenderProbe.shared.flags.movingFocusShadow ? 1 : 0
         // The caption keeps its distance to the card at its FOCUSED size:
         // pressing or holding (brief, the card's own feedback) doesn't move it.
         let focusedScale = focused && grows ? 1 + lift : 1
