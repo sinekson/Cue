@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Settings → Developer, second half: per-effect switches so slower Apple TVs (HD,
-/// 4K 1st gen) can turn off exactly the things causing lag — each row says
-/// what the effect costs and what OFF looks like. All ON = the full look.
+/// Settings → Developer, second half: the diagnostics (player HUD, scrub
+/// previews, input debug, the LAN log).
 struct PerformanceSettings: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var playerStore: PlayerSettingsStore
@@ -14,51 +13,10 @@ struct PerformanceSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
-
-            if store.reduceMotion { reduceMotionBanner }
-
-            SettingsGroupCard(
-                title: "Artwork loading",
-                subtitle: "How poster images arrive on screen"
-            ) {
-                PerfToggleRow(
-                    icon: "circle.lefthalf.filled",
-                    title: "Artwork fade-in",
-                    subtitle: "Posters fade in when they finish loading; each fade re-renders its card for the duration. Off: artwork pops in instantly.",
-                    isOn: s.artworkFadeIn
-                )
-            }
-
-            SettingsGroupCard(
-                title: "Collections",
-                subtitle: "Focus artwork on collection folder tiles"
-            ) {
-                CueDropdown(
-                    title: "Collection focus artwork",
-                    subtitle: store.settings.collectionGifQuality.summary,
-                    icon: "sparkles.tv",
-                    selection: store.settings.collectionGifQuality.rawValue,
-                    options: CollectionGifQuality.allCases.map {
-                        CueDropdownOption($0.rawValue, $0.displayName)
-                    }
-                ) { raw in
-                    store.settings.collectionGifQuality =
-                        CollectionGifQuality(rawValue: raw) ?? .deviceDefault
-                }
-            }
-
             SettingsGroupCard(
                 title: "Developer",
                 subtitle: "Diagnostics — safe to leave off"
             ) {
-
-                PerfToggleRow(
-                    icon: "hand.tap",
-                    title: "Hold menu probe",
-                    subtitle: "Trace hold-Select on screen: whether a card takes focus, whether the press reaches the app, whether a long press is recognised, and whether tvOS actually builds the menu. For diagnosing hold menus that do nothing.",
-                    isOn: s.showHoldProbe
-                )
-
                 PerfToggleRow(
                     icon: "waveform.path.ecg",
                     title: "Playback diagnostics HUD",
@@ -102,38 +60,11 @@ struct PerformanceSettings: View {
                 )
             }
 
-            Text("Everything ON is the app's full look. Turn things OFF top-to-bottom until the Home screen feels right — each switch only removes visual polish, never content or features. These switches are per-device and don't sync to your account.")
+            Text("These switches are per-device and don't sync to your account.")
                 .font(.system(size: 18))
                 .foregroundStyle(theme.palette.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    /// Shown when the system Accessibility → Reduce Motion switch is on: the
-    /// motion effects are forced off no matter what the switches below say.
-    private var reduceMotionBanner: some View {
-        HStack(spacing: CueSpacing.md) {
-            SettingsIconTile(symbol: "figure.walk.motion")
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Reduce Motion is on")
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                Text("Your system Accessibility setting turns off the motion effects: the cards' tilt and focus zoom, the top bar's and controls' springs, and artwork fade-in.")
-                    .font(.system(size: 19))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(CueSpacing.lg)
-        .background(
-            RoundedRectangle(cornerRadius: theme.settingsCardRadius, style: .continuous)
-                .fill(theme.palette.secondary.opacity(0.14))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.settingsCardRadius, style: .continuous)
-                .strokeBorder(theme.palette.secondary.opacity(0.4), lineWidth: 1)
-        )
     }
 }
 

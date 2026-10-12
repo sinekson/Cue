@@ -116,7 +116,6 @@
 		EC263304AE7415B356028A1A /* BillboardPicks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FD9D8AECB46DB5C84D9072 /* BillboardPicks.swift */; };
 		EFDDCD3EBCE1FCE62EA7F955 /* AddonPhoneAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8EA33A7A9ABD7C430A3FAF /* AddonPhoneAddView.swift */; };
 		F0D6D65ED902C89B63119D9F /* PlaybackDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = B12B3ABC7ABF8DBCE85F04C2 /* PlaybackDecision.swift */; };
-		F1DB2C5437EA80E4BFE9F631 /* HoldProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 528705066160A57FBE9D4DBA /* HoldProbe.swift */; };
 		F2A8F790785D5A0080D23E1E /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA24B3B033C18205E72FE90A /* HomeView.swift */; };
 		F529A4C51A32B6AA00E2F639 /* DiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19BB826C599895B8120AEDD2 /* DiagnosticsService.swift */; };
 		F600D8657D36CFB980F9ACFC /* PlaybackMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA3147397BAD4C058679BF21 /* PlaybackMemory.swift */; };
@@ -190,7 +189,6 @@
 		4ED2098EB7561EB5475D336C /* PlusJakartaSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Regular.ttf"; sourceTree = "<group>"; };
 		4EF563F2FFBC5E55203E23FF /* AtmosHLS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtmosHLS.swift; sourceTree = "<group>"; };
 		4F1FA5D4ACFC3745DE4DA4AD /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
-		528705066160A57FBE9D4DBA /* HoldProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoldProbe.swift; sourceTree = "<group>"; };
 		586DFC0A2C5A9D694A40702C /* AppGroupResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupResolver.swift; sourceTree = "<group>"; };
 		58D8180984B4284D3CA243B6 /* GlassSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassSidebar.swift; sourceTree = "<group>"; };
 		590F588898362B6240111504 /* ScrubThumbnailer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubThumbnailer.swift; sourceTree = "<group>"; };
@@ -434,7 +432,6 @@
 				B4EDB66B1027E31D29B8CFB1 /* ContentFocusRouter.swift */,
 				300808B71D35000E1EB1F5B0 /* DeepLinkService.swift */,
 				19BB826C599895B8120AEDD2 /* DiagnosticsService.swift */,
-				528705066160A57FBE9D4DBA /* HoldProbe.swift */,
 				1BD92367FC04C571B51AF825 /* HomeCatalogSettingsStore.swift */,
 				11EDE0A18FEE5671CAE1B78F /* KeyHandoffServer.swift */,
 				5F6F8D325C67E7A6D506D338 /* LibraryStore.swift */,
@@ -700,7 +697,6 @@
 				42A53CE91F5E0075581CE031 /* FusionPlayerControlsOverlay.swift in Sources */,
 				387F35D894BB7A293511CEAC /* FusionTokens.swift in Sources */,
 				2BEF8A289B89B0330D99CF40 /* GlassSidebar.swift in Sources */,
-				F1DB2C5437EA80E4BFE9F631 /* HoldProbe.swift in Sources */,
 				0B8D9F2F2FCB929E40CFD67A /* HomeCatalogSettingsStore.swift in Sources */,
 				B80AD9FB13D7C29A9D5D8652 /* HomeSpotlightRow.swift in Sources */,
 				F2A8F790785D5A0080D23E1E /* HomeView.swift in Sources */,

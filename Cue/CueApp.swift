@@ -307,23 +307,9 @@ struct RootView: View {
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
-            // Install the hold trace when the setting is switched ON, not only
-            // in onAppear: turning "Hold menu probe" on mid-session used to
-            // bring up the HUD with nothing to report until the next relaunch.
-            // `install()` is idempotent, so a second call is free.
-            .onChange(of: perf.settings.showHoldProbe) { _, on in
-                // Off matters as much as on: the trace installs a focus-change
-                // observer that walks ten superviews and logs on EVERY focus
-                // move, plus a window-wide long-press recogniser. Left behind,
-                // they cost that on the A8/A10X boxes for the rest of the
-                // session after the user switched the probe back off.
-                if on { HoldInteractionTrace.install() }
-                else { HoldInteractionTrace.uninstall() }
-            }
             .onAppear {
                 NSLog("[CuePlayer] RootView content onAppear")
                 FocusTrace.installIfRequested()
-                if perf.settings.showHoldProbe { HoldInteractionTrace.install() }
                 startPlayerDemoIfRequested()
                 startDetailDemoIfRequested()
                 ScrubThumbnailer.runSelfTestIfRequested()
@@ -837,7 +823,6 @@ struct RootView: View {
         // Developer FPS read-out over the whole UI (Settings → Performance).
         .overlay {
             if perf.settings.showFPSOverlay { FPSOverlay() }
-            if perf.settings.showHoldProbe { HoldProbeHUD() }
         }
         // App-wide toast (Fusion): Added to Library / Marked Watched / etc.
         .overlay { FusionToastHost() }

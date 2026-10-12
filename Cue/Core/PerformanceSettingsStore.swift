@@ -2,55 +2,8 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// How much motion collection folder tiles may use on focus.
-///
-/// Collection packs ship focus artwork per folder — often 3–4 MB GIFs of
-/// 120–240 frames. Decoding those is the single most expensive thing a tile can
-/// do, so this is a real performance dial, not a cosmetic one. It defaults to
-/// ON everywhere — the artwork is the point of these packs — and the dial in
-/// Settings → Performance turns it down to stills or off when a box struggles.
-enum CollectionGifQuality: String, Codable, CaseIterable, Identifiable {
-    /// Animated, highest frame rate and resolution this device allows.
-    case full
-    /// Static focus artwork only — the hover image swaps in, nothing animates.
-    /// Costs one still image per tile instead of dozens of frames.
-    case partial
-    /// Nothing on focus; the cover art stays put. Cheapest.
-    case off
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .full:    return "Full — animated"
-        case .partial: return "Partial — still images"
-        case .off:     return "Off"
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .full:
-            return "Play the collection's focus GIFs. The richest look, and by far the heaviest — a single GIF can be 240 frames."
-        case .partial:
-            return "Swap in the focus artwork as a still image. Keeps the art change on focus at a fraction of the cost."
-        case .off:
-            return "Leave the cover art alone on focus. Recommended on older Apple TVs."
-        }
-    }
-
-    /// ON for every tier. This USED to be off on the A8/A10X boxes (a 4K gen 1
-    /// froze with GIFs enabled, pre-optimization), but the silent downgrade
-    /// read as "the GIFs don't work" — the artwork plays by default now and
-    /// the Settings dial stays for turning it down.
-    static var deviceDefault: CollectionGifQuality { .full }
-}
-
-
-/// User-tunable performance switches (Settings → Performance). On 4K gen-2+
-/// hardware everything defaults ON — the app's full look. Older boxes start
-/// with the costly effects OFF (see `tierDefaults()`); every switch remains
-/// user-tunable either way, so the tier default is a starting point, not a cap.
+/// Developer switches (Settings → Performance): diagnostics, all off by
+/// default.
 ///
 /// Persisted per-device in UserDefaults and deliberately NOT synced to the
 /// account: a setting tuned for the living-room 4K gen 1 shouldn't downgrade
@@ -60,26 +13,18 @@ final class PerformanceSettingsStore: ObservableObject {
     static let shared = PerformanceSettingsStore()
 
     struct Settings: Codable, Equatable {
-        /// Fade posters in as they finish loading.
-        var artworkFadeIn = true
         /// Developer: live FPS counter overlaid on the app. Off by default,
         /// never set by the tier defaults — a diagnostic, not an effect.
         var showFPSOverlay = false
-        /// On-screen tracing for the hold-Select menus (see HoldProbe).
-        var showHoldProbe = false
         /// In-player diagnostics HUD: engine, fps, dropped frames, A/V drift,
         /// bitrate, buffer depth. Answers "why is this stuttering" on the
         /// couch, without a Mac attached.
         var showPlayerDiagnostics = false
-        /// Motion allowed on collection folder tiles when focused. On by
-        /// default on every tier; the Settings dial turns it down or off.
-        var collectionGifQuality: CollectionGifQuality = .deviceDefault
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showHoldProbe, artworkFadeIn, showFPSOverlay, showPlayerDiagnostics
-            case collectionGifQuality
+            case showFPSOverlay, showPlayerDiagnostics
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -87,12 +32,8 @@ final class PerformanceSettingsStore: ObservableObject {
         /// switch each time a new one ships).
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            artworkFadeIn = (try? c.decode(Bool.self, forKey: .artworkFadeIn)) ?? true
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
-            showHoldProbe = (try? c.decode(Bool.self, forKey: .showHoldProbe)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
-            collectionGifQuality = (try? c.decode(CollectionGifQuality.self, forKey: .collectionGifQuality))
-                ?? .deviceDefault
         }
     }
 
@@ -106,7 +47,6 @@ final class PerformanceSettingsStore: ObservableObject {
 
     /// Motion effects allowed: Reduce Motion is off.
     var motionOn: Bool { !reduceMotion }
-    var artworkFadeInEffective: Bool { settings.artworkFadeIn && !reduceMotion }
 
     // MARK: Motion helpers — so every theme gates focus motion the same way
     // instead of each porting its own hardcoded scale/animation.
@@ -131,54 +71,15 @@ final class PerformanceSettingsStore: ObservableObject {
 
     private static let key = "cue.performance.v1"
 
-    /// First-run defaults tuned to the hardware tier. Users who never open
-    /// Settings → Performance shouldn't pay full-eye-candy jank on an A8/A10X:
-    /// the costly effects start OFF there and can be re-enabled per switch.
-    /// Anything the user has ever saved wins over these (see init).
-    static func tierDefaults() -> Settings {
-        var s = Settings()
-        if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
-            // Apple TV HD (A8 / 2 GB) and 4K gen 1 (A10X / 3 GB): per-cell
-            // fades are what visibly cost during row scrolls.
-            s.artworkFadeIn = false
-        }
-        return s
-    }
-
     private init() {
-        if ProcessInfo.processInfo.arguments.contains("-lowPower") {
-            // Dev tier force (see PerformanceProfile.isLowPower): show the A8's
-            // real first-run defaults, not whatever this sim previously saved —
-            // otherwise the forced tier runs with high-tier eye candy on and
-            // measures nothing.
-            settings = Self.tierDefaults()
-        } else if let data = UserDefaults.standard.data(forKey: Self.key),
+        if let data = UserDefaults.standard.data(forKey: Self.key),
            let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
             settings = decoded
-            // One-shot: focus artwork used to default OFF on the A8/A10X
-            // tiers, and any save since then persisted that off. Now that the
-            // default is ON everywhere, flip a persisted off to full ONCE —
-            // after this, an off in the store is the viewer's own choice and
-            // stays put. (A deliberate pre-existing off can't be told apart
-            // from the old tier default; the one-time flip is the price of
-            // the new default actually reaching existing installs.)
             // Property observers do NOT fire for assignments made inside a
             // type's own initializer, so `didSet { save() }` cannot persist
-            // anything the migrations below change — `migrated` tracks it and
-            // the explicit `save()` at the end of init writes it. Without that,
-            // a migration that ran once (its flag now set, so it never runs
-            // again) was silently reverted by the still-unchanged stored blob
-            // on the very next launch.
+            // anything the migration below changes — `migrated` tracks it and
+            // the explicit `save()` writes it.
             var migrated = false
-
-            let migrationKey = "cue.performance.gifDefaultOn.v1"
-            if !UserDefaults.standard.bool(forKey: migrationKey) {
-                UserDefaults.standard.set(true, forKey: migrationKey)
-                if settings.collectionGifQuality == .off {
-                    settings.collectionGifQuality = .full
-                    migrated = true
-                }
-            }
             // One-shot: clear the on-screen DIAGNOSTIC overlays.
             //
             // These are debugging tools that draw over the app, and they are
@@ -192,8 +93,7 @@ final class PerformanceSettingsStore: ObservableObject {
             let overlayKey = "cue.performance.clearStickyDiagnostics.v1"
             if !UserDefaults.standard.bool(forKey: overlayKey) {
                 UserDefaults.standard.set(true, forKey: overlayKey)
-                if settings.showHoldProbe || settings.showFPSOverlay || settings.showPlayerDiagnostics {
-                    settings.showHoldProbe = false
+                if settings.showFPSOverlay || settings.showPlayerDiagnostics {
                     settings.showFPSOverlay = false
                     settings.showPlayerDiagnostics = false
                     migrated = true
@@ -202,7 +102,7 @@ final class PerformanceSettingsStore: ObservableObject {
             }
             if migrated { save() }
         } else {
-            settings = Self.tierDefaults()
+            settings = Settings()
         }
         // Track the system Reduce Motion switch live so toggling it in
         // Accessibility takes effect without relaunching.

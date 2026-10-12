@@ -585,7 +585,7 @@ struct RemoteImage: View {
     /// (Settings → Performance) — each fade re-renders the cell for its
     /// duration, which adds up during a fast row scroll on older boxes.
     private func show(_ newImage: UIImage?, key: String?, duration: Double) {
-        if PerformanceSettingsStore.shared.artworkFadeInEffective {
+        if PerformanceSettingsStore.shared.motionOn {
             withAnimation(.easeOut(duration: duration)) { image = newImage; shownKey = key }
         } else {
             var t = Transaction()
