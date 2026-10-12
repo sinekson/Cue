@@ -1525,13 +1525,11 @@ struct HomeUIKitView: View {
                            active: active,
                            progress: progress,
                            panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
+                           // Collections, Continue Watching and Saved for
+                           // Later: moving focus.
                            destinationRowIDs: Set(rows.map(\.id).filter {
-                               HomeView.isCollectionRow($0)
-                                   // Render Lab: moving focus for these too.
-                                   || (probe.flags.rowsMovingFocus
-                                       && ($0 == HomeView.libraryRowID || $0 == continueRowID))
+                               HomeView.isCollectionRow($0) || $0 == HomeView.libraryRowID || $0 == continueRowID
                            }),
-                           posterBoxRowIDs: [HomeView.libraryRowID],
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,
@@ -2666,7 +2664,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var panelRowIDs: Set<String> = []
     /// Destination rows (see `FixedFocusMetrics.destinationPosterHeight`).
     var destinationRowIDs: Set<String> = []
-    var posterBoxRowIDs: Set<String> = []
     /// Rows of ONE wide banner (Search's Top Result: see
     /// `FixedFocusBannerCell`), and its height.
     var bannerRowIDs: Set<String> = []
@@ -2828,7 +2825,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.continueRowID = continueRowID
         controller.landscapeRowIDs = landscapeRowIDs
         controller.panelRowIDs = panelRowIDs
-        controller.posterBoxRowIDs = posterBoxRowIDs
         controller.destinationRowIDs = destinationRowIDs
         controller.bannerRowIDs = bannerRowIDs
         controller.bannerHeight = bannerHeight
@@ -2925,8 +2921,10 @@ enum FixedFocusMetrics {
     /// Between a row's cards: what the fixed rows keep beside their box
     /// (`gap`), around the LIFTED card — the gap at rest grows by as much
     /// as a card of that width grows on each side.
+    /// How much a moving-focus card grows when focused (with a shadow).
+    static let movingFocusLift: CGFloat = 0.05
     @MainActor static func destinationGap(cardWidth: CGFloat) -> CGFloat {
-        (gap + cardWidth * CGFloat(RenderProbe.shared.flags.movingFocusLift) / 100 / 2).rounded()
+        (gap + cardWidth * movingFocusLift / 2).rounded()
     }
     /// The captions under moving-focus cards: a little smaller than the
     /// fixed box's text, so more of them fits; the second line this far
@@ -3030,14 +3028,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         isContinue(rowIndex) || isPanel(rowIndex)
             || (rows.indices.contains(rowIndex) && landscapeRowIDs.contains(rows[rowIndex].id))
     }
-    /// Poster rows whose box is a poster: focus doesn't widen the card
-    /// (Saved for Later) — the box at the posters' size.
-    var posterBoxRowIDs: Set<String> = []
-
-    func isPosterBox(_ rowIndex: Int) -> Bool {
-        rows.indices.contains(rowIndex) && posterBoxRowIDs.contains(rows[rowIndex].id)
-            && !isDestination(rowIndex) && !isLandscape(rowIndex)
-    }
     /// Collection rows: their tiles in a panel.
     var panelRowIDs: Set<String> = []
 
@@ -3101,7 +3091,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if let custom = custom(rowIndex) { return custom.height }
         return isBanner(rowIndex) ? bannerHeight
             : isDestination(rowIndex) ? destinationCard(rowIndex).height + FixedFocusMetrics.captionRoom
-            : isContinue(rowIndex) ? FixedFocusMetrics.continueHeight
             : FixedFocusMetrics.height
     }
 
@@ -3110,8 +3099,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var boxFrame: CGRect {
         let height = cardHeight(focusedRow)
         let anchorOffset = isPanel(focusedRow) ? FixedFocusMetrics.panelReach.above : 0
-        let width = isPosterBox(focusedRow) ? FixedFocusMetrics.posterWidth
-            : FixedFocusMetrics.landscapeWidth(height: height)
+        let width = FixedFocusMetrics.landscapeWidth(height: height)
         return CGRect(x: FixedFocusMetrics.inset, y: rowTop + rowDrop + anchorOffset + FixedFocusMetrics.titleHeight,
                       width: width, height: height)
     }
@@ -3190,7 +3178,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let index = selected[row.id] ?? 0
             if row.items.indices.contains(index) {
                 let item = row.items[index]
-                box.show(item, progress: isContinue(focusedRow) ? progress[item.id] : nil, animated: false)
+                box.show(item, animated: false)
             }
         }
     }
@@ -3295,7 +3283,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         outer.delegate = self
         root.addSubview(outer)
         place(box, FixedFocusMetrics.boxFrame)
-        box.portrait = { [weak self] in self.map { $0.isPosterBox($0.focusedRow) } ?? false }
         box.alpha = 0
         box.isUserInteractionEnabled = false
         root.addSubview(box)
@@ -3353,9 +3340,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         cell.contentView.alpha = rowAlpha(indexPath.item)
         cell.concealed = rowConcealed(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
-        cell.titleLift = titleLift(indexPath.item)
-        cell.titleScale = titleScale(indexPath.item)
-        cell.showsNextHint = showsNextHint(indexPath.item)
+        cell.titleLift = 0
+        cell.titleScale = 1
         return cell
     }
 
@@ -3432,7 +3418,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let rowChanged = rowIndex != focusedRow || !hasFocus
         // An opening into a fixed-box row: Left/Right waits for it to land.
         if rowChanged, !featured, !isDestination(rowIndex) { openingRow = rowIndex }
-        let entry = isContinue(rowIndex) ? progress[item.id] : nil
         // Up/Down is the "opening": the box steps aside, the new row's title
         // grows into it, the old one shrinks back to a poster.
         let verticalDrift = false
@@ -3505,7 +3490,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // or down on Up/Down) while the row(s) move underneath.
             rowCell.contentHidden = true
             oldRowCell?.contentHidden = true
-            box.show(item, progress: entry, animated: true, direction: direction,
+            box.show(item, animated: true, direction: direction,
                      vertical: rowChanged)
         }
         // Up/Down moves much more than a step: its own, longer spring.
@@ -3658,7 +3643,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard movesInFlight == 0 else { return }
         if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
             let now = row.items[current]
-            box.show(now, progress: isContinue(rowIndex) ? progress[now.id] : nil, animated: false)
+            box.show(now, animated: false)
             box.alpha = 1
             rowCell.contentHidden = true
         }
@@ -4275,10 +4260,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             }
             cell.concealed = rowConcealed(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
-            cell.showsNextHint = showsNextHint(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
-            let lift = titleLift(cell.rowIndex), scale = titleScale(cell.rowIndex)
-            UIView.performWithoutAnimation { cell.titleLift = lift; cell.titleScale = scale }
+            UIView.performWithoutAnimation { cell.titleLift = 0; cell.titleScale = 1 }
             cell.applyAccessory()
             cell.applyHeader()
         }
@@ -4328,11 +4311,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return belowAway ? 1 : 0
     }
 
-    /// On the billboard the next row's name is smaller; it grows to its
-    /// size as the row comes up (see `liftNextTitle`).
-    private func titleScale(_ rowIndex: Int) -> CGFloat {
-        isFeatured(focusedRow) && isNext(rowIndex) && rigidPeek == nil ? Self.nextNameScale : 1
-    }
+    /// A header row's name, going up with the billboard (`liftNextTitle`):
+    /// smaller.
     static let nextNameScale: CGFloat = 0.75
     /// The peeking row's brightness under the billboard (see `rigidPeek`).
     static let peekAlpha: CGFloat = 0.45
@@ -4351,24 +4331,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// below the billboard's buttons while they're on the screen.
     static let nameButtonsMargin: CGFloat = 32
 
-    /// The chevron after the next row's name, on the billboard only.
-    private func showsNextHint(_ rowIndex: Int) -> Bool {
-        rigidRest == nil && isFeatured(focusedRow) && isNext(rowIndex)
-    }
-
-    private func titleLift(_ rowIndex: Int) -> CGFloat {
-        guard isFeatured(focusedRow), isNext(rowIndex), rigidPeek == nil else { return 0 }
-        if let rest = rigidRest { return rest - (rigidNameY ?? rest) }
-        return !belowAway ? Self.restingLift : 0
-    }
-
-    /// The waiting next row's name: from its place above the cards at the
-    /// bottom edge up to its spot on the billboard.
-    private static var restingLift: CGFloat {
-        1080 - FixedFocusRowsLayout.restingCardsOnScreen - FixedFocusMetrics.titleHeight
-            - FixedFocusRowsLayout.nextNameY
-    }
-
     private func isNext(_ rowIndex: Int) -> Bool {
         featuredIndex.map { rowIndex == $0 + 1 } ?? false
     }
@@ -4378,11 +4340,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     /// Down / Up between the billboard and the rows — right after the rows'
-    /// move was set off. HOLD, THEN JOIN: on Down the name holds its spot on
-    /// the billboard while the cards rise (its lift shrinking exactly as
-    /// they rise), and from the moment they reach it moves up with them; Up
-    /// the reverse. The lift runs on the row's own move — its curve, its
-    /// time — so the name can't drift from the cards.
+    /// move was set off: a header row's name and header (Details' seasons)
+    /// on the row's own move. (Other rows' names come with their row.)
     private func liftNextTitle(down: Bool) {
         guard let cell = nextRowCell else { return }
         let end = cell.convert(CGPoint.zero, to: view).y
@@ -4395,9 +4354,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let timing = rowMove?.timingFunction ?? CAMediaTimingFunction(name: .easeInEaseOut)
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
-        // Peeking: the name was never on the billboard — it just comes with
-        // the row (a header row's header still fades in / out, below).
-        if rigidPeek != nil, header(cell.rowIndex) == nil { return }
+        guard header(cell.rowIndex) != nil else { return }
         // A row with a header (Details' seasons): its name goes up from its
         // spot on the billboard and out past the screen's top (Down) / comes
         // back down from there (Up) — no fade, its brightness kept against
@@ -4406,73 +4363,28 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // to them closes only as they leave the screen. The header (with
         // the line under it) comes up with the row, fading in / goes down
         // with it, fading out.
-        if header(cell.rowIndex) != nil {
-            let away = -FixedFocusMetrics.titleLine - 20
-            let dim = FixedFocusMetrics.dimmedAlpha
-            let travel = billboardUp(depth: 1)
-            // The buttons' lower edge (focused, a little grown) at rest.
-            let buttons = FixedFocusBillboardText.buttonsY + TitleBlock.buttonHeight + Self.nameButtonsMargin
-            let gap = spot - buttons
-            // Past the buttons' own end, if that isn't out of the screen yet.
-            let extra = max(buttons - travel - away, 0)
-            // Along the move's progress p: the name's place on screen, the
-            // row's brightness; lift = the row's place minus the name's.
-            func name(_ p: CGFloat) -> CGFloat {
-                let up = down ? p : 1 - p   // how far the billboard is up
-                return buttons - travel * up + gap * (1 - up) * (1 - up) - extra * up * up
-            }
-            func rowBrightness(_ p: CGFloat) -> CGFloat { down ? dim + (1 - dim) * p : 1 - (1 - dim) * p }
-            let spring = rowMove as? CASpringAnimation
-            let progress = spring.map { Self.springProgress($0) }
-            let samples = progress?.values ?? (0...40).map { CGFloat($0) / 40 }
-            cell.moveHeader(fade: samples.map { down ? $0 : 1 - $0 },
-                            lift: samples.map { start + (end - start) * $0 - name($0) },
-                            titleOpacity: samples.map { rigidPeek != nil ? 0 : dim / rowBrightness($0) },
-                            scale: Self.nextNameScale,
-                            timing: spring == nil ? timing : nil,
-                            duration: progress?.duration ?? duration, entering: down)
-            return
+        let away = -FixedFocusMetrics.titleLine - 20
+        let travel = billboardUp(depth: 1)
+        // The buttons' lower edge (focused, a little grown) at rest.
+        let buttons = FixedFocusBillboardText.buttonsY + TitleBlock.buttonHeight + Self.nameButtonsMargin
+        let gap = spot - buttons
+        // Past the buttons' own end, if that isn't out of the screen yet.
+        let extra = max(buttons - travel - away, 0)
+        // Along the move's progress p: the name's place on screen, the
+        // row's brightness; lift = the row's place minus the name's.
+        func name(_ p: CGFloat) -> CGFloat {
+            let up = down ? p : 1 - p   // how far the billboard is up
+            return buttons - travel * up + gap * (1 - up) * (1 - up) - extra * up * up
         }
-        // A spring (Render Lab's spring curves) has no timing curve to share:
-        // the lift and size follow the row's own spring, sampled.
-        if let spring = rowMove as? CASpringAnimation {
-            let progress = Self.springProgress(spring)
-            let fromScale = down ? Self.nextNameScale : 1, toScale = down ? 1 : Self.nextNameScale
-            let lift: (CGFloat) -> CGFloat
-            if RenderProbe.shared.flags.nextNameSamePace {
-                lift = down ? { (start - spot) * (1 - $0) } : { (end - spot) * $0 }
-            } else if down {
-                let join = min(max((spot - start) / distance, 0), 1)
-                lift = { p in p >= join || join == 0 ? 0 : (start - spot) * (1 - p / join) }
-            } else {
-                let hold = min(max((spot - start) / distance, 0), 1)
-                lift = { p in p <= hold ? 0 : (end - spot) * (p - hold) / max(1 - hold, 0.0001) }
-            }
-            cell.moveTitleSampled(lift: progress.map(lift),
-                                  scale: progress.map { fromScale + (toScale - fromScale) * $0 },
-                                  duration: progress.duration)
-            return
-        }
-        // Its size: to full on the way down to the rows, back on the way up.
-        cell.moveTitleScale(from: down ? Self.nextNameScale : 1, to: down ? 1 : Self.nextNameScale,
-                            timing: timing, duration: duration)
-        if RenderProbe.shared.flags.nextNameSamePace {
-            // SAME PACE (Render Lab): the lift shrinks (Down) or grows (Up)
-            // evenly along the row's move — the name moves the whole way,
-            // slower than the cards, and meets them at the row's place.
-            let values: [CGFloat] = down ? [start - spot, 0] : [0, end - spot]
-            cell.moveTitleLift(values, at: [0, 1], timing: timing, duration: duration)
-            return
-        }
-        if down {
-            // Rising from `start`: lifted to the spot, until the cards get there.
-            let join = min(max((spot - start) / distance, 0), 1)
-            cell.moveTitleLift([start - spot, 0, 0], at: [0, join, 1], timing: timing, duration: duration)
-        } else {
-            // Sinking to `end`: with the cards, until the name is at the spot.
-            let hold = min(max((spot - start) / distance, 0), 1)
-            cell.moveTitleLift([0, 0, end - spot], at: [0, hold, 1], timing: timing, duration: duration)
-        }
+        let spring = rowMove as? CASpringAnimation
+        let progress = spring.map { Self.springProgress($0) }
+        let samples = progress?.values ?? (0...40).map { CGFloat($0) / 40 }
+        cell.moveHeader(fade: samples.map { down ? $0 : 1 - $0 },
+                        lift: samples.map { start + (end - start) * $0 - name($0) },
+                        titleOpacity: samples.map { _ in 0 },
+                        scale: Self.nextNameScale,
+                        timing: spring == nil ? timing : nil,
+                        duration: progress?.duration ?? duration, entering: down)
     }
 
     /// A spring's progress (0…1, overshoot included) at even steps across
@@ -4738,8 +4650,6 @@ final class FixedFocusBoxView: UIView {
         let backdrop = UIImageView()
         let shade = CAGradientLayer()
         let logo = UIImageView()
-        /// Continue Watching: the state line (no logo).
-        let state = FixedFocusProgressView()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -4753,8 +4663,6 @@ final class FixedFocusBoxView: UIView {
             layer.addSublayer(shade)
             logo.contentMode = .scaleAspectFit
             addSubview(logo)
-            state.alpha = 0
-            addSubview(state)
         }
 
         required init?(coder: NSCoder) { fatalError() }
@@ -4767,32 +4675,9 @@ final class FixedFocusBoxView: UIView {
             logo.frame = CGRect(x: Spotlight.logoInset,
                                 y: bounds.height - Spotlight.logoInset - bounds.height * 0.28,
                                 width: bounds.width * 0.55, height: bounds.height * 0.28)
-            state.frame = CGRect(x: 24, y: bounds.height - 22 - 34, width: bounds.width - 48, height: 34)
         }
 
-        func show(_ item: MetaItem, progress: WatchProgress?, portrait: Bool = false) {
-            if portrait {
-                // A poster box: the poster itself, its own title on it.
-                state.alpha = 0
-                shade.isHidden = true
-                FixedFocusImages.load(item.poster ?? item.background, into: backdrop,
-                                      maxDimension: FixedFocusMetrics.height)
-                FixedFocusImages.load(nil, into: logo, maxDimension: 0)
-                return
-            }
-            if let progress {
-                // Continue Watching: its card's look — the still (or the
-                // backdrop: Settings → Episode thumbnails, already applied
-                // to the item's art), the state line, no logo.
-                FixedFocusImages.load(item.background ?? item.poster,
-                                      into: backdrop, maxDimension: FixedFocusMetrics.boxWidth)
-                FixedFocusImages.load(nil, into: logo, maxDimension: 0)
-                state.show(progress)
-                state.alpha = 1
-                shade.isHidden = false
-                return
-            }
-            state.alpha = 0
+        func show(_ item: MetaItem) {
             // A folder's cover is its own picture, name and all: no shade.
             shade.isHidden = item.type == "collection"
             // (At the box's size — larger for a side-info row.)
@@ -4830,11 +4715,10 @@ final class FixedFocusBoxView: UIView {
                                  height: FixedFocusMetrics.factsHeight)
         }
 
-        func show(_ item: MetaItem, progress: WatchProgress?) {
+        func show(_ item: MetaItem) {
             chips.show(item)
             name.text = item.name
-            facts.text = progress?.episodeTitle
-                ?? FixedFocusShowInfo.factsLine(item)
+            facts.text = FixedFocusShowInfo.factsLine(item)
         }
     }
 
@@ -4846,7 +4730,6 @@ final class FixedFocusBoxView: UIView {
     /// Holds the info pages.
     private let infoHost = UIView()
     private var shownID: String?
-    private var shownProgress: WatchProgress?
     /// The cards' rim (see `FixedFocusCardEdge`), and the focus outline in
     /// the top bar's light.
     private let edge = UIImageView()
@@ -4858,7 +4741,7 @@ final class FixedFocusBoxView: UIView {
         guard shownID == item.id else { return }
         UIView.transition(with: infoPage, duration: Motion.fadeDuration,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
-                          animations: { self.infoPage.show(item, progress: self.shownProgress) })
+                          animations: { self.infoPage.show(item) })
     }
 
     override init(frame: CGRect) {
@@ -4904,11 +4787,7 @@ final class FixedFocusBoxView: UIView {
 
     /// Where the info sits: as under the cells (18 pt below, optically
     /// indented).
-    /// Whether the box is a poster (see the controller's `isPosterBox`).
-    var portrait: () -> Bool = { false }
-
     private var infoFrame: CGRect {
-        // (A poster box's text runs on, under the posters beside it.)
         CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + 18,
                width: max(bounds.width, FixedFocusMetrics.boxWidth),
                height: FixedFocusMetrics.infoHeight)
@@ -4938,16 +4817,14 @@ final class FixedFocusBoxView: UIView {
 
     /// `direction`: +1 moving right (new content comes from the right),
     /// −1 moving left. Render Lab → Box change: slide or crossfade.
-    func show(_ item: MetaItem, progress: WatchProgress? = nil, animated: Bool,
+    func show(_ item: MetaItem, animated: Bool,
               direction: CGFloat = 1, vertical: Bool = false) {
         guard item.id != shownID else { return }
         shownID = item.id
-        shownProgress = progress
         applyOutlineStyle()
-        let portrait = self.portrait()
         guard animated else {
-            page.show(item, progress: progress, portrait: portrait)
-            infoPage.show(item, progress: progress)
+            page.show(item)
+            infoPage.show(item)
             return
         }
         // DRIFT: a crossfade with a hint of direction — the new image
@@ -4958,14 +4835,14 @@ final class FixedFocusBoxView: UIView {
         let dx = vertical ? 0 : direction * shift
         let dy = vertical ? direction * shift : 0
         let incoming = Page(frame: bounds.offsetBy(dx: dx, dy: dy))
-        incoming.show(item, progress: progress, portrait: portrait)
+        incoming.show(item)
         incoming.alpha = 0
         clip.addSubview(incoming)
         let outgoing = page
         page = incoming
         // The info drifts the same way, in sync.
         let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: dx, dy: dy))
-        infoIn.show(item, progress: progress)
+        infoIn.show(item)
         infoIn.alpha = 0
         infoHost.addSubview(infoIn)
         let infoOut = infoPage
@@ -5061,7 +4938,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// A collection: its name and tiles in a panel.
     var isPanel: Bool { controller?.isPanel(rowIndex) == true }
     /// Its box at the posters' size (no wide card).
-    var isPosterBox: Bool { controller?.isPosterBox(rowIndex) == true }
     /// A destination row: its own strip (native scrolling, system lift).
     var isDestination: Bool { controller?.isDestination(rowIndex) == true }
     private var destinationStrip: UICollectionView?
@@ -5341,27 +5217,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 
 
-    /// The next row's name on the billboard: a chevron right after it — press
-    /// Down. Part of the name (it holds, joins and grows with it); it fades
-    /// out as the row comes up.
-    private let nextHint: UIImageView = {
-        let config = UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold)
-        let view = UIImageView(image: UIImage(systemName: "chevron.down", withConfiguration: config))
-        view.tintColor = .white
-        view.alpha = 0
-        return view
-    }()
-    var showsNextHint = false {
-        didSet { nextHint.alpha = showsNextHint ? 1 : 0 }
-    }
-
-    private func placeNextHint() {
-        if nextHint.superview == nil { title.addSubview(nextHint) }
-        nextHint.sizeToFit()
-        let textWidth = title.sizeThatFits(CGSize(width: 1200, height: FixedFocusMetrics.titleLine)).width
-        nextHint.center = CGPoint(x: textWidth + 14 + nextHint.bounds.width / 2, y: FixedFocusMetrics.titleLine / 2 + 2)
-    }
-
     /// The name's size (the next row's, on the billboard: smaller).
     var titleScale: CGFloat = 1 {
         didSet {
@@ -5369,52 +5224,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             title.layer.removeAnimation(forKey: "scale")
             title.transform = CGAffineTransform(scaleX: titleScale, y: titleScale)
         }
-    }
-    /// The size from `from` to `to`, on a move's curve and time.
-    func moveTitleScale(from: CGFloat, to: CGFloat, timing: CAMediaTimingFunction, duration: Double) {
-        UIView.performWithoutAnimation { titleScale = to }
-        let grow = CABasicAnimation(keyPath: "transform.scale")
-        grow.fromValue = from
-        grow.toValue = to
-        grow.timingFunction = timing
-        grow.duration = duration
-        title.layer.add(grow, forKey: "scale")
-    }
-
-    /// The lift and the size along sampled values (even steps, in order) —
-    /// a spring's (see the controller's `springProgress`); ends at the last.
-    func moveTitleSampled(lift: [CGFloat], scale: [CGFloat], duration: Double) {
-        UIView.performWithoutAnimation {
-            titleLift = lift.last ?? 0
-            titleScale = scale.last ?? 1
-        }
-        let times = lift.indices.map { NSNumber(value: Double($0) / Double(max(lift.count - 1, 1))) }
-        let move = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        move.values = lift.map { NSNumber(value: Double(-$0)) }
-        move.keyTimes = times
-        move.calculationMode = .linear
-        move.duration = duration
-        titleHolder.layer.add(move, forKey: "lift")
-        let grow = CAKeyframeAnimation(keyPath: "transform.scale")
-        grow.values = scale.map { NSNumber(value: Double($0)) }
-        grow.keyTimes = times
-        grow.calculationMode = .linear
-        grow.duration = duration
-        title.layer.add(grow, forKey: "scale")
-    }
-
-    /// The lift along `values` at `keyTimes`, on a move's curve and time;
-    /// ends at the last value.
-    func moveTitleLift(_ values: [CGFloat], at keyTimes: [CGFloat], timing: CAMediaTimingFunction,
-                       duration: Double) {
-        UIView.performWithoutAnimation { titleLift = values.last ?? 0 }
-        let move = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        move.values = values.map { NSNumber(value: Double(-$0)) }
-        move.keyTimes = keyTimes.map { NSNumber(value: Double($0)) }
-        move.timingFunction = timing
-        move.calculationMode = .linear
-        move.duration = duration
-        titleHolder.layer.add(move, forKey: "lift")
     }
     /// The grown cell's own content hidden (the fixed box shows it).
     var contentHidden = true {
@@ -5430,7 +5239,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // (Details' buttons) — neither they nor the list in their place.
         (strip as? FixedFocusStripView)?.selfFocus = { [weak self] in !(self?.billboardCardsOff ?? false) }
         layout.wideIndex = { [weak self] in
-            guard let self, self.isFocusRow, !self.isLandscape, !self.isFeatured, !self.isPosterBox else { return nil }
+            guard let self, self.isFocusRow, !self.isLandscape, !self.isFeatured else { return nil }
             return self.selectedIndex
         }
         layout.cardWidth = { [weak self] in self?.cardWidth ?? FixedFocusMetrics.posterWidth }
@@ -5487,7 +5296,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         titleHolder.center = CGPoint(x: FixedFocusMetrics.titleInset + 850, y: FixedFocusMetrics.titleLine / 2)
         title.bounds = CGRect(x: 0, y: 0, width: 1200, height: FixedFocusMetrics.titleLine)
         title.center = CGPoint(x: 0, y: FixedFocusMetrics.titleLine / 2)
-        placeNextHint()
         placeAccessory()
         customHost?.view.frame = CGRect(x: 0, y: cardsTop, width: bounds.width, height: cardHeight)
         let headerSize = headerStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
@@ -5819,7 +5627,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         if cv === destinationStrip, let controller {
             return CGSize(width: controller.destinationCard(rowIndex).width, height: cardHeight)
         }
-        return CGSize(width: isFocusRow && !isLandscape && !isPosterBox && indexPath.item == selectedIndex
+        return CGSize(width: isFocusRow && !isLandscape && indexPath.item == selectedIndex
                         ? FixedFocusMetrics.boxWidth : cardWidth,
                       height: cardHeight)
     }
@@ -6526,7 +6334,7 @@ extension FixedFocusRowsController: HoldMenuProviding {
             // The card, without its caption.
             let card = CGRect(origin: .zero, size: CGSize(width: focused.bounds.width,
                                                           height: destinationCard(rowIndex).height))
-            let lift = CGFloat(RenderProbe.shared.flags.movingFocusLift) / 100
+            let lift = FixedFocusMetrics.movingFocusLift
             let cell = focused as? FixedFocusDestinationCell
             let rest = focused.convert(card, to: nil)
             return HoldMenuRequest(entries: entries,
@@ -7064,7 +6872,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         guard !Self.lift else { return }
         // Grown, outlined, a shadow under it — the captions step down with it.
         // (Render Lab → Moving focus: lift; off: only outlined, as the box.)
-        let lift = CGFloat(RenderProbe.shared.flags.movingFocusLift) / 100
+        let lift = FixedFocusMetrics.movingFocusLift
         let grows = lift > 0
         // Pressed: a little less lifted (as the fixed box sinks, `pressScale`).
         let scale = focused && grows
@@ -7902,17 +7710,9 @@ enum FixedFocusMotion {
                        animations: animations, completion: completion)
     }
 
-    /// Between the billboard and the rows: a whole screen, about twice a row
-    /// step. In a row step's time it moved twice as fast and strobed; at
-    /// the same speed it dragged. Scaled by the square root of the distance
-    /// (as distance-based motion usually is): ~0.7 s for a 0.5 s step.
-    static var billboardScroll: Double {
-        // Render Lab → Billboard scroll (0: auto).
-        let chosen = RenderProbe.shared.flags.billboardScrollDuration
-        if chosen > 0 { return chosen }
-        let distance = FixedFocusRowsLayout.scrollDistance(focusY: FixedFocusMetrics.rowTop)
-        return Motion.verticalDuration * (distance / FixedFocusMetrics.rowPitch).squareRoot()
-    }
+    /// Between the billboard and the rows: a little longer than a row step
+    /// (it moves further).
+    static let billboardScroll: Double = 0.6
 
     /// `run`'s move for SwiftUI views moving with it (the billboard's text
     /// and dots): SwiftUI's spring is UIKit's system spring.

@@ -750,9 +750,9 @@ struct DetailView: View {
                            billboardOverlay: rowsBillboardOverlay,
                            billboardOverlayHeight: Self.overlayHeight,
                            rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel,
-                           // Render Lab → focus stays in place: the episode in
-                           // focus always at the first card's spot.
-                           anchoredRowIDs: RenderProbe.shared.flags.movingFocusAnchored ? seasonIDs : [],
+                           // The episode in focus always at the first card's
+                           // spot.
+                           anchoredRowIDs: seasonIDs,
                            // About: the summary, facts and ratings, genres and tags.
                            customRows: [Self.aboutRowID: FixedFocusCustomRow(
                                height: Self.aboutHeight,

@@ -87,7 +87,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 - **Home rows are UIKit**: native focus, scrolling off; we move rows with Core
   Animation in `didUpdateFocus`. Fixed box at the focus spot for most rows;
-  Continue Watching / Saved for Later use the box at their card size.
+  collections, Continue Watching and Saved for Later have moving focus (the
+  row stays, focus moves across the cards — grown 5 %, a shadow under — a
+  caption under each).
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
   The focused row stays at its fixed spot near the top (not centred). The
   row below always starts the same gap (`peekGap`) below what the focused

@@ -347,29 +347,8 @@ final class RenderProbe: ObservableObject {
         /// Every animation on Home: steps snap. Tells animation cost from
         /// static drawing cost.
         var noAnimations = false
-        /// New Home, Down from the billboard: the next row's name holds its
-        /// spot until the cards reach it, then moves with them (off); or it
-        /// moves the whole time, slower than the cards, and they meet at the
-        /// row's place (on).
-        var nextNameSamePace = false
-        /// New Home: Continue Watching and Saved for Later with MOVING focus
-        /// (the row stays, focus moves across its cards, a caption under
-        /// each); off: the fixed box, at their own card size.
-        var rowsMovingFocus = false
-        /// New Home, moving-focus rows: how much the focused card grows, in
-        /// percent (with a shadow under it); 0: it keeps its size, only
-        /// outlined — as the fixed box.
-        var movingFocusLift = 5
-        /// Details' episodes: every step also scrolls the row, so the focused
-        /// card is always at the first card's spot (the outline and the lift
-        /// pass to the next card as it slides in); off: the row scrolls only
-        /// at the edge of the cards in view, as the other moving-focus rows.
-        var movingFocusAnchored = true
         /// …and the shadow under the grown card.
         var movingFocusShadow = true
-        /// New Home: the scroll between the billboard and the rows, in
-        /// seconds; 0: derived from Up / Down (√ of the longer distance).
-        var billboardScrollDuration: Double = 0
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
         /// The motion tokens' durations (see `Motion`).
@@ -391,12 +370,7 @@ final class RenderProbe: ObservableObject {
             capBackdrop = (try? c.decode(Bool.self, forKey: .capBackdrop)) ?? d.capBackdrop
             noAnimations = (try? c.decode(Bool.self, forKey: .noAnimations)) ?? d.noAnimations
             motion = (try? c.decode(MotionDurations.self, forKey: .motion)) ?? d.motion
-            nextNameSamePace = (try? c.decode(Bool.self, forKey: .nextNameSamePace)) ?? d.nextNameSamePace
-            rowsMovingFocus = (try? c.decode(Bool.self, forKey: .rowsMovingFocus)) ?? d.rowsMovingFocus
-            movingFocusLift = (try? c.decode(Int.self, forKey: .movingFocusLift)) ?? d.movingFocusLift
-            movingFocusAnchored = (try? c.decode(Bool.self, forKey: .movingFocusAnchored)) ?? d.movingFocusAnchored
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
-            billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
         }
     }

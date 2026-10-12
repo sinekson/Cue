@@ -321,44 +321,6 @@ struct RenderLabSettings: View {
             }
 
             SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {
-                CueDropdown(
-                    title: "Billboard scroll",
-                    subtitle: "Home: the scroll between the billboard and the rows (both ways). Auto: from Up / Down, a little longer for the longer distance.",
-                    icon: "rectangle.portrait.and.arrow.forward",
-                    selection: String(probe.flags.billboardScrollDuration),
-                    options: [(0.0, "Auto (≈ 0.7 s at 0.5 s Up / Down)"), (0.4, "0.4 s"), (0.45, "0.45 s"), (0.5, "0.5 s"),
-                              (0.55, "0.55 s"), (0.6, "0.6 s"), (0.65, "0.65 s"), (0.7, "0.7 s"), (0.8, "0.8 s")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.billboardScrollDuration = v }
-                }
-                PerfToggleRow(
-                    icon: "text.line.first.and.arrowtriangle.forward",
-                    title: "Next row's name: same pace",
-                    subtitle: "Home, between the billboard and the rows: the name moves the whole way, slower than the cards, and they meet at the row's place. Off: it holds on the billboard until the cards reach it, then moves with them.",
-                    isOn: Binding(get: { probe.flags.nextNameSamePace }, set: { probe.flags.nextNameSamePace = $0 })
-                )
-                PerfToggleRow(
-                    icon: "rectangle.portrait.and.arrow.forward",
-                    title: "Continue Watching, Saved for Later: moving focus",
-                    subtitle: "Home: the rows stay and focus moves across their cards, a caption under each (as collections). Off: the fixed box, at the cards' own size.",
-                    isOn: Binding(get: { probe.flags.rowsMovingFocus }, set: { probe.flags.rowsMovingFocus = $0 })
-                )
-                CueDropdown(
-                    title: "Moving focus: lift",
-                    subtitle: "Home, rows with moving focus (collections; Continue Watching and Saved for Later when switched): how much the focused card grows, with a shadow under it. Off: it keeps its size, only outlined — as the fixed box.",
-                    icon: "arrow.up.left.and.arrow.down.right",
-                    selection: String(probe.flags.movingFocusLift),
-                    options: (0...8).map { CueDropdownOption(String($0), $0 == 0 ? "Off (outline only)" : "\($0) %") }
-                ) { raw in
-                    if let v = Int(raw) { probe.flags.movingFocusLift = v }
-                }
-                PerfToggleRow(
-                    icon: "scope",
-                    title: "Details' episodes: focus stays in place",
-                    subtitle: "Each step also scrolls the row — the focus passes to the next episode as it slides into the first card's spot. Off: the row scrolls only at the edge, as the other moving-focus rows.",
-                    isOn: Binding(get: { probe.flags.movingFocusAnchored }, set: { probe.flags.movingFocusAnchored = $0 })
-                )
                 PerfToggleRow(
                     icon: "shadow",
                     title: "Moving focus: shadow",
