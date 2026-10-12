@@ -12,62 +12,15 @@ struct PerformanceSettings: View {
         Binding(get: { store.settings }, set: { store.settings = $0 })
     }
 
-    /// Master switch: ON = every effect off (lightest), OFF = full look.
-    private var maxPerformance: Binding<Bool> {
-        Binding(get: { store.isMaxPerformance }, set: { store.setMaxPerformance($0) })
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
 
             if store.reduceMotion { reduceMotionBanner }
 
             SettingsGroupCard(
-                title: "Quick setup",
-                subtitle: "One-tap tuning for this Apple TV"
-            ) {
-                PerfToggleRow(
-                    icon: "bolt.fill",
-                    title: "Performance mode",
-                    subtitle: "Turns every visual effect below OFF at once for the smoothest, lightest experience — best on older Apple TVs. Turn it off to restore the full look. You can still fine-tune individual effects afterward.",
-                    isOn: maxPerformance
-                )
-                PerfActionRow(
-                    icon: "arrow.counterclockwise",
-                    title: "Reset to recommended",
-                    subtitle: "Restore the tuned defaults for \(PerformanceProfile.tierLabel).",
-                    action: { store.resetToRecommended() }
-                )
-            }
-
-            SettingsGroupCard(
-                title: "Home billboard",
-                subtitle: "The hero area at the top of the Home screen"
-            ) {
-                PerfToggleRow(
-                    icon: "photo.tv",
-                    title: "Hero backdrop artwork",
-                    subtitle: "Full-screen art behind Home that changes with every card you focus — the single heaviest effect on older Apple TVs. Off: flat background; the title, info and rows are unchanged.",
-                    isOn: s.heroBackdrop
-                )
-                PerfToggleRow(
-                    icon: "square.stack.3d.forward.dottedline",
-                    title: "Hero crossfade",
-                    subtitle: "Dissolve when the hero art and info change: blends two full-screen images and rebuilds the title/synopsis panel on every card you focus. The main reason browsing rows feels heavier on Modern than on the other layouts. Off: art and text switch instantly — much lighter, recommended on older Apple TVs.",
-                    isOn: s.heroCrossfade
-                )
-            }
-
-            SettingsGroupCard(
                 title: "Cards & rows",
                 subtitle: "Posters and the rows they live in"
             ) {
-                PerfToggleRow(
-                    icon: "rectangle.fill.on.rectangle.fill",
-                    title: "Card shadows",
-                    subtitle: "Soft drop shadows under posters and behind a focused card. Each is an offscreen blur that re-renders on every focus move — the biggest scroll cost on older boxes. Off: flat cards with just the focus border, same layout.",
-                    isOn: s.cardShadows
-                )
                 PerfToggleRow(
                     icon: "arrow.up.left.and.arrow.down.right",
                     title: "Focus zoom",
@@ -207,7 +160,7 @@ struct PerformanceSettings: View {
                 Text("Reduce Motion is on")
                     .font(.system(size: 23, weight: .semibold))
                     .foregroundStyle(theme.palette.textPrimary)
-                Text("Your system Accessibility setting is disabling the motion effects (card wiggle & lift, hero crossfade, focus zoom, sidebar and button animations, artwork fade-in) regardless of the switches below.")
+                Text("Your system Accessibility setting is disabling the motion effects (card wiggle & lift, focus zoom, sidebar and button animations, artwork fade-in) regardless of the switches below.")
                     .font(.system(size: 19))
                     .foregroundStyle(theme.palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -238,23 +191,6 @@ private struct PerfToggleRow: View {
         Button { isOn.toggle() } label: {
             PerfRowLabel(icon: icon, title: title, subtitle: subtitle) {
                 CueSwitch(isOn: isOn)
-            }
-        }
-        .buttonStyle(PlainCardButtonStyle())
-    }
-}
-
-/// A tappable action row (no switch) — used for "Reset to recommended".
-private struct PerfActionRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            PerfRowLabel(icon: icon, title: title, subtitle: subtitle) {
-                EmptyView()
             }
         }
         .buttonStyle(PlainCardButtonStyle())

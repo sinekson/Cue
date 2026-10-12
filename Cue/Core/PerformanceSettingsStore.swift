@@ -60,12 +60,6 @@ final class PerformanceSettingsStore: ObservableObject {
     static let shared = PerformanceSettingsStore()
 
     struct Settings: Codable, Equatable {
-        /// Full-screen artwork behind Home that changes as you browse.
-        var heroBackdrop = true
-        /// Dissolve animation when the hero artwork/info changes.
-        var heroCrossfade = true
-        /// Soft drop shadows under posters and cards.
-        var cardShadows = true
         /// Cards spring slightly larger when focused.
         var focusZoom = true
         /// Apple TV theme only: the native tvOS card platter — the focused
@@ -98,7 +92,7 @@ final class PerformanceSettingsStore: ObservableObject {
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case heroBackdrop, heroCrossfade, cardShadows, focusZoom, cardParallax, showHoldProbe
+            case focusZoom, cardParallax, showHoldProbe
             case artworkPrefetch, artworkFadeIn
             case sidebarAnimation, buttonAnimations, showFPSOverlay, showPlayerDiagnostics
             case collectionGifQuality
@@ -109,9 +103,6 @@ final class PerformanceSettingsStore: ObservableObject {
         /// switch each time a new one ships).
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            heroBackdrop = (try? c.decode(Bool.self, forKey: .heroBackdrop)) ?? true
-            heroCrossfade = (try? c.decode(Bool.self, forKey: .heroCrossfade)) ?? true
-            cardShadows = (try? c.decode(Bool.self, forKey: .cardShadows)) ?? true
             focusZoom = (try? c.decode(Bool.self, forKey: .focusZoom)) ?? true
             cardParallax = (try? c.decode(Bool.self, forKey: .cardParallax)) ?? true
             artworkPrefetch = (try? c.decode(Bool.self, forKey: .artworkPrefetch)) ?? true
@@ -137,7 +128,6 @@ final class PerformanceSettingsStore: ObservableObject {
     // MARK: Effective (motion) values — user switch AND not overridden by
     // Reduce Motion. Call sites that gate an animation read these instead of
     // `settings.x` so the system setting is honored in one place.
-    var heroCrossfadeEffective: Bool { settings.heroCrossfade && !reduceMotion }
     var focusZoomEffective: Bool { settings.focusZoom && !reduceMotion }
     var sidebarAnimationEffective: Bool { settings.sidebarAnimation && !reduceMotion }
     var buttonAnimationsEffective: Bool { settings.buttonAnimations && !reduceMotion }
@@ -169,46 +159,6 @@ final class PerformanceSettingsStore: ObservableObject {
         buttonAnimationsEffective ? animation : nil
     }
 
-    // MARK: Master "Performance mode"
-    /// True when every optional visual effect is off — the lightest look.
-    /// `artworkPrefetch` is excluded: it HELPS perceived scrolling (art is
-    /// ready before you reach it), so max-performance leaves it on.
-    var isMaxPerformance: Bool {
-        let s = settings
-        return !s.heroBackdrop && !s.heroCrossfade && !s.cardShadows
-            && !s.focusZoom && !s.cardParallax && !s.artworkFadeIn
-            && !s.sidebarAnimation && !s.buttonAnimations
-    }
-
-    /// One switch for all the eye-candy: ON strips every effect for max speed,
-    /// OFF restores the full look. (Individual switches still work afterward.)
-    func setMaxPerformance(_ on: Bool) {
-        let v = !on
-        var s = settings
-        s.heroBackdrop = v; s.heroCrossfade = v; s.cardShadows = v
-        s.focusZoom = v; s.cardParallax = v; s.artworkFadeIn = v
-        s.sidebarAnimation = v; s.buttonAnimations = v
-        // The label claims this turns off EVERY effect below it, and this one
-        // sits in the same pane — the heaviest per-focus effect in the app (up
-        // to tens of megabytes of decoded frames) and it was the one thing the
-        // switch could not reach.
-        if on { s.collectionGifQuality = .off }
-        settings = s
-    }
-
-    /// Restore the hardware-tuned baseline for this box (the first-run defaults).
-    func resetToRecommended() {
-        // Diagnostics are cleared by the reset now, rather than preserved.
-        //
-        // Two of the three used to survive it, on the reasoning that a reset
-        // shouldn't disable something you are mid-investigation on. In practice
-        // the opposite is true: a reset is what someone reaches for when the
-        // screen looks wrong, and an overlay drawing over the UI is one of the
-        // likelier reasons it looks wrong. `showHoldProbe` was never in the
-        // preserved set either, so the three behaved differently for no reason.
-        settings = Self.tierDefaults()
-    }
-
     private static let key = "cue.performance.v1"
 
     /// First-run defaults tuned to the hardware tier. Users who never open
@@ -220,8 +170,6 @@ final class PerformanceSettingsStore: ObservableObject {
         if PerformanceProfile.isLowPower {
             // Apple TV HD (A8 / 2 GB): keep the core artwork, but drop recurring
             // animation/composite cost. Focus is still clear via rings/borders.
-            s.cardShadows = false
-            s.heroCrossfade = false
             s.focusZoom = false
             s.artworkFadeIn = false
             s.sidebarAnimation = false
@@ -231,12 +179,9 @@ final class PerformanceSettingsStore: ObservableObject {
             // A8. Default to the lightweight scale-only focus instead.
             s.cardParallax = false
         } else if PerformanceProfile.isMidPower {
-            // 4K gen 1 (A10X / 3 GB): shadows, per-cell fades and the hero
-            // crossfade (now also the info-panel rebuild) are what visibly
-            // cost during row scrolls; the rest it handles fine.
-            s.cardShadows = false
+            // 4K gen 1 (A10X / 3 GB): per-cell fades are what visibly cost
+            // during row scrolls; the rest it handles fine.
             s.artworkFadeIn = false
-            s.heroCrossfade = false
         }
         return s
     }

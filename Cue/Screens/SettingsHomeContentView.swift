@@ -901,3 +901,59 @@ private struct ShapeChip: View {
 
     var body: some View { FlatChip(label: label, selected: selected) }
 }
+
+// MARK: - Collection settings
+
+/// Inline three-option layout picker (Folders / Rows / Combined), used only by
+/// the collection editor in Settings. Layout is a per-collection setting (Nuvio's
+/// `viewMode`). `onChange` fires on each selection.
+struct CollectionLayoutPicker: View {
+    @EnvironmentObject private var theme: ThemeManager
+    @Binding var viewMode: String
+    var onChange: (String) -> Void = { _ in }
+
+    private static let options: [(id: String, label: String)] = [
+        ("TABBED_GRID", "Folders"),
+        ("ROWS", "Rows"),
+        ("COMBINED", "Combined"),
+    ]
+
+    private var subtitle: String {
+        switch viewMode {
+        case "ROWS": return "Each folder becomes its own row, stacked top to bottom."
+        case "COMBINED": return "Every folder's titles spread out together in one row."
+        default: return "Browse one folder at a time, with tabs across the top."
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CueSpacing.md) {
+            Text("Layout")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(theme.palette.textPrimary)
+            HStack(spacing: CueSpacing.md) {
+                ForEach(Self.options, id: \.id) { opt in
+                    Button {
+                        viewMode = opt.id
+                        onChange(opt.id)
+                    } label: {
+                        FolderTabPill(label: opt.label, selected: viewMode == opt.id)
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                }
+            }
+            Text(subtitle)
+                .font(.system(size: 20))
+                .foregroundStyle(theme.palette.textSecondary)
+                .frame(maxWidth: 900, alignment: .leading)
+        }
+    }
+}
+
+/// Folder tab pill: the app's flat pill (`FlatChip`).
+struct FolderTabPill: View {
+    let label: String
+    let selected: Bool
+
+    var body: some View { FlatChip(label: label, selected: selected) }
+}

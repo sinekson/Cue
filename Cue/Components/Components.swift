@@ -434,66 +434,6 @@ final class ImageCache: @unchecked Sendable {
         return await diskImage(for: value, budget: budget, memoryKey: key) != nil
     }
 
-    // MARK: Pre-blurred renditions (hero "progressive blur")
-
-    /// Shared CIContext for the pre-blur path. Creating one per blur would
-    /// re-initialize a Metal pipeline each hero change.
-    private static let ciContext = CIContext(options: [.cacheIntermediates: false])
-
-    /// A small pre-blurred rendition of the image at `key`, built ONCE off-main
-    /// and memory-cached. Replaces live `.blur(radius:)` layers: Core Animation
-    /// re-applies a live gaussian on EVERY composited frame, so a full-screen
-    /// blurred backdrop was one of the heaviest recurring GPU costs on the
-    /// A10X/A8 while Home scrolls. A 60pt blur destroys all detail anyway, so
-    /// blurring a ~480px copy once and stretching it is visually identical —
-    /// and the per-frame cost drops to an ordinary image composite.
-    ///
-    /// `screenBlurRadius` is the SwiftUI blur the rendition stands in for, at
-    /// the 1920pt reference width — the CI sigma is scaled to the downsampled
-    /// copy so the softness matches what `.blur(radius:)` showed.
-    func blurredImage(for key: String, screenBlurRadius: CGFloat = 60) async -> UIImage? {
-        let baseWidth: CGFloat = 480
-        let blurKey = "\(key)#blur\(Int(screenBlurRadius))"
-        if let hit = image(for: blurKey) { return hit }
-
-        // Base bytes: disk first (the sharp hero rendering beneath this layer
-        // has nearly always persisted them already), then network.
-        let fileURL = fileURL(for: key)
-        var data: Data? = await withCheckedContinuation { continuation in
-            ioQueue.async { continuation.resume(returning: try? Data(contentsOf: fileURL)) }
-        }
-        // Through the coalescer: at first paint the sharp RemoteImage layer is
-        // usually fetching this same backdrop — a direct session hit here
-        // downloaded it twice in parallel.
-        if data == nil, let url = URL(string: key),
-           let fetched = try? await download(url) {
-            data = fetched
-            ioQueue.async { try? fetched.write(to: fileURL, options: .atomic) }
-        }
-        guard let data else { return nil }
-
-        let blurred = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-            guard let base = Self.decodeDownsampled(data, budget: baseWidth),
-                  let cg = base.cgImage else { return nil }
-            let input = CIImage(cgImage: cg)
-            // Match the live blur's softness at this scale (blur radius is
-            // proportional to layer size).
-            let sigma = screenBlurRadius * (input.extent.width / 1920)
-            guard let filter = CIFilter(name: "CIGaussianBlur") else { return nil }
-            // Clamp first so the gaussian doesn't pull in transparent edges
-            // (the dark-vignette artifact), then crop back to the frame.
-            filter.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
-            filter.setValue(sigma, forKey: kCIInputRadiusKey)
-            guard let output = filter.outputImage?.cropped(to: input.extent),
-                  let rendered = Self.ciContext.createCGImage(output, from: input.extent) else {
-                return nil
-            }
-            return UIImage(cgImage: rendered)
-        }.value
-        if let blurred { insertMemory(blurred, for: blurKey) }
-        return blurred
-    }
-
     /// Evict oldest files (by mtime) until the directory is under budget.
     ///
     /// The SCAN runs on its own queue, not on `ioQueue`: `contentsOfDirectory`
@@ -705,55 +645,6 @@ struct RemoteImage: View {
     }
 }
 
-/// A pre-blurred rendition of a remote image, for the hero's "progressive
-/// blur" dissolve. Displays `ImageCache.blurredImage` — blurred ONCE off-main
-/// at ~1/4 scale — as a plain stretched image, so the per-frame compositor
-/// cost is an ordinary alpha blend instead of a live full-screen gaussian
-/// (see `blurredImage` for why that mattered on the A10X/A8 tiers).
-/// Mirrors RemoteImage's keep-last-image crossfade so hero changes dissolve.
-struct BlurredRemoteImage: View {
-    let url: String?
-    var screenBlurRadius: CGFloat = 60
-
-    @State private var image: UIImage?
-    @State private var shownKey: String?
-
-    var body: some View {
-        Color.clear.overlay {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .id(shownKey)
-                    .transition(.opacity)
-            }
-        }
-        .clipped()
-        .task(id: url) { await load(url) }
-    }
-
-    private func load(_ value: String?) async {
-        guard let value else {
-            shownKey = nil
-            image = nil
-            return
-        }
-        if value == shownKey { return }
-        guard let blurred = await ImageCache.shared.blurredImage(
-            for: value, screenBlurRadius: screenBlurRadius
-        ), !Task.isCancelled else { return }
-        // Ride the hero-crossfade setting like the sharp layer beneath, so the
-        // two renditions always dissolve (or snap) together.
-        if PerformanceSettingsStore.shared.heroCrossfadeEffective {
-            withAnimation(.easeOut(duration: 0.3)) { image = blurred; shownKey = value }
-        } else {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { image = blurred; shownKey = value }
-        }
-    }
-}
-
 /// Dimmed placeholder shown while an image downloads. Deliberately STATIC:
 /// the earlier breathing animation started a repeat-forever animation in
 /// every freshly created cell — during a fast row scroll that's dozens of
@@ -913,7 +804,7 @@ struct PosterCard: View {
         // disabled on this style too — so "shadows are on" can no longer stand
         // in for a focus cue. Ring unless something else actually moves the
         // card: the platter's raise/wiggle, or the zoom. With Reduce Motion on,
-        // BOTH of those are suppressed while `cardShadows` stays on, which left
+        // BOTH of those are suppressed while the shadow stays, which left
         // a focused poster with no indicator at all.
         return !(perf.cardParallaxEffective || perf.focusZoomEffective)
     }
@@ -961,8 +852,8 @@ struct PosterCard: View {
             // card; with the old always-on ambient shadow every visible poster
             // paid one, which is a large share of the scroll cost on the
             // A8/A10X boxes. One shadow (the focused pop) keeps the depth cue.
-            .shadow(color: .black.opacity(perf.settings.cardShadows && isFocused ? 0.65 : 0),
-                    radius: perf.settings.cardShadows && isFocused ? 22 : 0, y: 10)
+            .shadow(color: .black.opacity(isFocused ? 0.65 : 0),
+                    radius: isFocused ? 22 : 0, y: 10)
 
             // No caption here. Every screen that wants one wraps this card in
             // `GridPosterCell`, which draws `ATVCardCaption` as a SIBLING below

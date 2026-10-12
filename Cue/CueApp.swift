@@ -97,13 +97,11 @@ extension Route {
     var probeName: String {
         switch self {
         case .detail: return "Detail"
-        case .collection: return "Collection"
         case .folder: return "Folder"
         case .person: return "Cast"
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
         case .keyword: return "Tag"
-        case .catalogSeeAll: return "See All"
         case .streams: return "Sources"
         case .streamsFromStart: return "Sources (from start)"
         case .streamsResume: return "Sources (resume)"
@@ -113,13 +111,11 @@ extension Route {
     var probeDetail: String {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
-        case .collection(let c): return c.title
         case .folder(let c, let f, _): return "\(c.title) → \(f.title)"
         case .person(_, let name): return name
         case .tmdbCompany(_, let name, _): return name
         case .genre(_, let name, _): return name
         case .keyword(_, let name, _): return name
-        case .catalogSeeAll(_, _, let title): return title
         case .streams(let meta, let video),
              .streamsFromStart(let meta, let video),
              .streamsResume(let meta, let video, _):
@@ -138,7 +134,6 @@ enum Route: Hashable {
     /// matching what was last watched. `fromStart` plays it from 0:00 (Start
     /// Over) instead of the saved position.
     case streamsResume(MetaItem, MetaVideo?, fromStart: Bool)
-    case collection(CueCollection)
     /// A folder of a collection, opened from its Home row — on Movies /
     /// Series, only that type (`type`).
     case folder(CueCollection, CueCollectionFolder, type: String? = nil)
@@ -149,7 +144,6 @@ enum Route: Hashable {
     case genre(id: Int, name: String, isMovie: Bool)
     /// A tag's (TMDB keyword's) titles.
     case keyword(id: Int, name: String, isMovie: Bool)
-    case catalogSeeAll(addon: InstalledAddon, catalog: ManifestCatalog, title: String)
 }
 
 struct RootView: View {
@@ -1513,8 +1507,6 @@ struct RootView: View {
                         }
                     }
             )
-        case .collection(let collection):
-            CollectionView(collection: collection) { openDetail($0) { path.wrappedValue.append($0) } }
         case .folder(let collection, let folder, let type):
             folderView(collection, folder, type: type, path: path)
         case .person(let id, let name):
@@ -1533,8 +1525,6 @@ struct RootView: View {
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                           onOpenInPlace: openInPlace(path))
-        case .catalogSeeAll(let addon, let catalog, let title):
-            CatalogSeeAllView(addon: addon, catalog: catalog, title: title) { openDetail($0) { path.wrappedValue.append($0) } }
         case .streams(let meta, let video):
             StreamsView(
                 meta: meta, video: video,

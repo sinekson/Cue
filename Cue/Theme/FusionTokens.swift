@@ -59,7 +59,6 @@ enum FusionMotion {
     static let pressRelease = exit(0.13)
     static let pageEnter = enter(0.32)
     static let pageExit = exit(0.22)
-    static let heroCrossfade = enter(0.40)
     static let heroSlide = enter(0.48)
     static let dialogEnter = enter(0.24)
     static let dialogExit = exit(0.18)
@@ -75,9 +74,8 @@ enum FusionMotion {
     /// bounce — the previous 0.82-damped spring overshot, so the whole row
     /// visibly wobbled back into place — and runs slightly longer than a focus
     /// move so the growth reads as deliberate rather than snapped.
-    /// Ambient auto-rotation of the hero. Deliberately slower than
-    /// `heroCrossfade`: nobody asked for this change, so it should drift rather
-    /// than cut.
+    /// Ambient auto-rotation of the hero. Deliberately slow: nobody asked
+    /// for this change, so it should drift rather than cut.
     static let heroAutoRotate = enter(0.7)
 
     static let toastVisibleSeconds: Double = 2.6
