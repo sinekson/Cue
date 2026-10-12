@@ -347,9 +347,6 @@ final class RenderProbe: ObservableObject {
         /// Every animation on Home: steps snap. Tells animation cost from
         /// static drawing cost.
         var noAnimations = false
-        /// New Home: the fixed box's content drifts in (a crossfade with a
-        /// hint of direction); off: plain crossfade.
-        var boxDrift = true
         /// New Home, Down from the billboard: the next row's name holds its
         /// spot until the cards reach it, then moves with them (off); or it
         /// moves the whole time, slower than the cards, and they meet at the
@@ -375,12 +372,6 @@ final class RenderProbe: ObservableObject {
         var billboardScrollDuration: Double = 0
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// New Home: the Left/Right curve (`FixedFocusMotion.Curve`).
-        var horizontalCurve = "easeInOut"
-        /// New Home: the Up/Down curve.
-        /// System spring (decided 2026-10-06): fast to react, smooth to land,
-        /// and a press during a move carries its speed on.
-        var verticalCurve = "systemSpring"
         /// The motion tokens' durations (see `Motion`).
         var motion = MotionDurations()
 
@@ -400,7 +391,6 @@ final class RenderProbe: ObservableObject {
             capBackdrop = (try? c.decode(Bool.self, forKey: .capBackdrop)) ?? d.capBackdrop
             noAnimations = (try? c.decode(Bool.self, forKey: .noAnimations)) ?? d.noAnimations
             motion = (try? c.decode(MotionDurations.self, forKey: .motion)) ?? d.motion
-            boxDrift = (try? c.decode(Bool.self, forKey: .boxDrift)) ?? d.boxDrift
             nextNameSamePace = (try? c.decode(Bool.self, forKey: .nextNameSamePace)) ?? d.nextNameSamePace
             rowsMovingFocus = (try? c.decode(Bool.self, forKey: .rowsMovingFocus)) ?? d.rowsMovingFocus
             movingFocusLift = (try? c.decode(Int.self, forKey: .movingFocusLift)) ?? d.movingFocusLift
@@ -408,8 +398,6 @@ final class RenderProbe: ObservableObject {
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
-            horizontalCurve = (try? c.decode(String.self, forKey: .horizontalCurve)) ?? d.horizontalCurve
-            verticalCurve = (try? c.decode(String.self, forKey: .verticalCurve)) ?? d.verticalCurve
         }
     }
 

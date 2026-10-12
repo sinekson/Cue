@@ -850,7 +850,7 @@ struct DetailView: View {
             blurredBackdrop = await BlurredBackdrop.image(for: url)
         }
         // On the rows' own curve and time (Render Lab → vertical curve).
-        .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll), value: below)
+        .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll), value: below)
         .allowsHitTesting(false)
         .ignoresSafeArea()
     }

@@ -90,14 +90,8 @@ final class StagePictureView: UIView {
         shownURL = url
         if blursBelow { loadBlurred(url) }
         setNeedsLayout()
-        guard animated, RenderProbe.shared.flags.boxDrift else {
-            if animated {
-                UIView.transition(with: page, duration: Motion.durations.fade,
-                                  options: [.transitionCrossDissolve, .allowUserInteraction],
-                                  animations: { self.load(url, into: self.page) })
-            } else {
-                load(url, into: page)
-            }
+        guard animated else {
+            load(url, into: page)
             return
         }
         // DRIFT: the new picture fades in shifting a little the way you
@@ -111,7 +105,7 @@ final class StagePictureView: UIView {
         let outgoing = page
         page = incoming
         let target = pageFrame
-        FixedFocusMotion.run(vertical: false, duration: Motion.moveDuration, damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             incoming.frame = target
             incoming.alpha = 1
             outgoing.frame = target.offsetBy(dx: -dx, dy: 0)

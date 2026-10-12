@@ -216,7 +216,7 @@ final class EpisodeRowController: UIViewController, UICollectionViewDataSource, 
         let direction: CGFloat = i > current ? 1 : -1
         current = i
         box.show(episodes[i], animated: true, direction: direction)
-        FixedFocusMotion.run(vertical: false, duration: Motion.durations.continueMove, damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             self.strip.contentOffset = self.offset(for: i)
             self.applyDimming()
         } completion: { _ in }
@@ -661,16 +661,9 @@ final class EpisodeBoxView: UIView {
     func show(_ episode: EpisodeRowItem, animated: Bool, direction: CGFloat = 1) {
         guard episode.id != shownID else { return }
         shownID = episode.id
-        guard animated, RenderProbe.shared.flags.boxDrift else {
-            if animated {
-                UIView.transition(with: self, duration: Motion.durations.fade,
-                                  options: [.transitionCrossDissolve, .beginFromCurrentState,
-                                            .allowUserInteraction],
-                                  animations: { self.page.show(episode); self.info.show(episode) })
-            } else {
-                page.show(episode)
-                info.show(episode)
-            }
+        guard animated else {
+            page.show(episode)
+            info.show(episode)
             return
         }
         // DRIFT (Home's box): the new picture and text fade in shifting a
@@ -689,7 +682,7 @@ final class EpisodeBoxView: UIView {
         let infoOut = info
         info = infoIn
         let infoTarget = infoFrame
-        FixedFocusMotion.run(vertical: false, duration: Motion.durations.continueMove, damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             incoming.frame = self.bounds
             incoming.alpha = 1
             outgoing.frame = self.bounds.offsetBy(dx: -dx, dy: 0)

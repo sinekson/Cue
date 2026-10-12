@@ -322,48 +322,6 @@ struct RenderLabSettings: View {
 
             SettingsGroupCard(title: "Motion", subtitle: "Durations of the four motion curves (springs, no bounce). Applies on the next press.") {
                 CueDropdown(
-                    title: "Fade",
-                    subtitle: "Crossfades: box art, text, chrome.",
-                    icon: "circle.lefthalf.filled",
-                    selection: String(probe.flags.motion.fade),
-                    options: [0.15, 0.2, 0.25, 0.3, 0.4].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.fade = v }
-                }
-                CueDropdown(
-                    title: "Up / Down",
-                    subtitle: "Home: a row change (the row moves up, the box opens).",
-                    icon: "arrow.up.arrow.down",
-                    selection: String(probe.flags.motion.vertical),
-                    options: [0.45, 0.5, 0.55, 0.6, 0.65, 0.75, 0.85].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.vertical = v }
-                }
-                CueDropdown(
-                    title: "Continue Watching step",
-                    subtitle: "Home: one step in Continue Watching (a whole box-wide card).",
-                    icon: "rectangle.on.rectangle",
-                    selection: String(probe.flags.motion.continueMove),
-                    options: [0.35, 0.45, 0.55, 0.65].map { CueDropdownOption(String($0), String(format: "%.2f s", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.continueMove = v }
-                }
-                CueDropdown(
-                    title: "Left / Right curve",
-                    subtitle: "Home: the curve of a step (its duration is Move). Up/Down keeps its spring.",
-                    icon: "point.topleft.down.curvedto.point.bottomright.up",
-                    selection: probe.flags.horizontalCurve,
-                    options: FixedFocusMotion.Curve.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.horizontalCurve = raw
-                }
-                PerfToggleRow(
-                    icon: "arrow.left.and.right.square",
-                    title: "Box change: drift",
-                    subtitle: "Home: the box's new title fades in while shifting a little in the direction you move. Off: plain crossfade.",
-                    isOn: Binding(get: { probe.flags.boxDrift }, set: { probe.flags.boxDrift = $0 })
-                )
-                CueDropdown(
                     title: "Billboard scroll",
                     subtitle: "Home: the scroll between the billboard and the rows (both ways). Auto: from Up / Down, a little longer for the longer distance.",
                     icon: "rectangle.portrait.and.arrow.forward",
@@ -407,24 +365,6 @@ struct RenderLabSettings: View {
                     subtitle: "Home, rows with moving focus: a soft shadow under the lifted card.",
                     isOn: Binding(get: { probe.flags.movingFocusShadow }, set: { probe.flags.movingFocusShadow = $0 })
                 )
-                CueDropdown(
-                    title: "Up / Down curve",
-                    subtitle: "Home: the curve of a row change (its duration is Up / Down; damping only applies to Spring).",
-                    icon: "point.bottomleft.forward.to.point.topright.scurvepath",
-                    selection: probe.flags.verticalCurve,
-                    options: FixedFocusMotion.Curve.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.verticalCurve = raw
-                }
-                CueDropdown(
-                    title: "Up / Down damping",
-                    subtitle: "1.0: no give at all. Lower: a slight settle at the end (no visible bounce down to about 0.85).",
-                    icon: "waveform.path.ecg",
-                    selection: String(probe.flags.motion.verticalDamping),
-                    options: [1.0, 0.95, 0.9, 0.85].map { CueDropdownOption(String($0), String(format: "%.2f", $0)) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.motion.verticalDamping = v }
-                }
                 CueDropdown(
                     title: "Present",
                     subtitle: "Screen changes: billboard ⇄ Details, box → Details.",

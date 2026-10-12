@@ -125,27 +125,14 @@ enum FusionMaterials {
 /// Durations of the four motion tokens, in seconds. Tunable live in
 /// Settings → Render Lab → Motion until they're locked.
 struct MotionDurations: Codable, Equatable {
-    var fade: Double = 0.25
     var present: Double = 0.45
-    /// Home Up/Down (a whole row plus the box opening): longer than `move`.
-    /// Damping 1 = no overshoot (0.95 already showed as a visible settle-back
-    /// on a movement this large).
-    var vertical: Double = 0.55
-    var verticalDamping: Double = 1
-    /// Home, Continue Watching: a step moves a whole box-wide card.
-    var continueMove: Double = 0.45
-
     init() {}
 
     /// Lenient: a value missing from an older save keeps its default.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MotionDurations()
-        fade = (try? c.decode(Double.self, forKey: .fade)) ?? d.fade
         present = (try? c.decode(Double.self, forKey: .present)) ?? d.present
-        vertical = (try? c.decode(Double.self, forKey: .vertical)) ?? d.vertical
-        verticalDamping = (try? c.decode(Double.self, forKey: .verticalDamping)) ?? d.verticalDamping
-        continueMove = (try? c.decode(Double.self, forKey: .continueMove)) ?? d.continueMove
     }
 }
 
@@ -158,13 +145,16 @@ enum Motion {
     nonisolated(unsafe) static var durations = MotionDurations()
     static let focusDuration: Double = 0.3
     static let moveDuration: Double = 0.35
+    static let fadeDuration: Double = 0.25
+    /// Home Up/Down (a whole row plus the box opening): longer than `move`.
+    static let verticalDuration: Double = 0.5
 
     /// Focus outline, highlights, button focus, presses.
     static let focus: Animation = .spring(duration: focusDuration, bounce: 0)
     /// Rows sliding, wrapping, changing row.
     static let move: Animation = .spring(duration: moveDuration, bounce: 0)
     /// Crossfades: box art, text, chrome in and out.
-    static var fade: Animation { .easeInOut(duration: durations.fade) }
+    static let fade: Animation = .easeInOut(duration: fadeDuration)
     /// Screen changes: billboard ⇄ Details, box → Details.
     static var present: Animation { .spring(duration: durations.present, bounce: 0) }
 }

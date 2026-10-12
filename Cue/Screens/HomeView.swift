@@ -1586,7 +1586,7 @@ struct HomeUIKitView: View {
                                 group.cancelAll()
                             }
                         }
-                        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) { billboardItem = item }
+                        withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) { billboardItem = item }
                         warmNeighbourLogos(around: position.index)
                     }
                 }
@@ -1784,27 +1784,15 @@ enum FixedFocusTint {
                 deep(hue: first.hue, saturation: first.saturation))
     }
 
-    /// "Tint: move with focus": the focus move's own curve and time (Motion
-    /// → Left / Right) — SwiftUI's spring is UIKit's system spring.
+    /// "Tint: move with focus": the focus move's own curve and time.
     @MainActor static var focusAnimation: Animation {
-        let duration = Motion.moveDuration
-        switch FixedFocusMotion.curve {
-        case .systemSpring, .spring: return .spring(duration: duration, bounce: 0)
-        case .easeOut: return .easeOut(duration: duration)
-        case .easeInOut: return .easeInOut(duration: duration)
-        }
+        FixedFocusMotion.animation(duration: Motion.moveDuration)
     }
 
     /// The same for the colour layout's Core Animation fade (a fade takes a
     /// curve, not a spring: the no-bounce spring's shape, fast then a long
     /// settle).
-    @MainActor static var focusTiming: CAMediaTimingFunction {
-        switch FixedFocusMotion.curve {
-        case .systemSpring, .spring: return CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
-        case .easeOut: return CAMediaTimingFunction(name: .easeOut)
-        case .easeInOut: return CAMediaTimingFunction(name: .easeInEaseOut)
-        }
-    }
+    @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
 
     /// The tint moves with focus: the colours (and layout) of the cards you
     /// may go to next, found beforehand — on the press there is nothing left
@@ -2392,7 +2380,7 @@ extension HomeUIKitView {
     /// into the rows' host).
     var billboardOverlay: AnyView {
         AnyView(billboardContent
-            .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration),
+            .animation(FixedFocusMotion.animation(duration: Motion.moveDuration),
                        value: billboardItem?.id)
             .environmentObject(mdblist))
     }
@@ -2468,7 +2456,7 @@ extension HomeUIKitView {
                     .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .center)
                     .offset(x: Spotlight.screenInset,
                             y: dotsMid - SectionHint.size * 1.3 / 2)
-                    .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll),
+                    .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll),
                                value: depth == 0)
             }
         }
@@ -2502,7 +2490,7 @@ extension HomeUIKitView {
         guard item.id != billboardItem?.id else { return }
         billboard = FixedFocusBillboardPosition(index: index, count: row.items.count)
         focused = item
-        withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) { billboardItem = item }
+        withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) { billboardItem = item }
     }
 
     /// The logos either side of the billboard's title, decoded ahead so the
@@ -2571,7 +2559,7 @@ struct BillboardCrossfade<Page: View>: View {
         }
         .onAppear { if shown == nil { shown = item } }
         .onChange(of: item.id) { _, _ in
-            withAnimation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration)) {
+            withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) {
                 shown = item
             }
         }
@@ -2956,11 +2944,6 @@ enum FixedFocusMetrics {
     /// Their focus: tvOS's lift (tilt, sheen) — off: Cue's own outline, as
     /// on the other rows.
     static let destinationSystemLift = false
-    /// A step along them, on Home's own curve: as long as a step along the
-    /// other rows (landscape: Continue Watching's, its steps are as wide).
-    @MainActor static func destinationStep(landscape: Bool) -> Double {
-        landscape ? Motion.durations.continueMove : Motion.moveDuration
-    }
     /// The least of the cards before / after that shows once a row moves.
     static let destinationSliver: CGFloat = 24
     /// A banner row's card: the content's width, this tall (at most).
@@ -3449,7 +3432,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let rowChanged = rowIndex != focusedRow || !hasFocus
         // An opening into a fixed-box row: Left/Right waits for it to land.
         if rowChanged, !featured, !isDestination(rowIndex) { openingRow = rowIndex }
-        let continueRow = isLandscape(rowIndex)
         let entry = isContinue(rowIndex) ? progress[item.id] : nil
         // Up/Down is the "opening": the box steps aside, the new row's title
         // grows into it, the old one shrinks back to a poster.
@@ -3527,12 +3509,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                      vertical: rowChanged)
         }
         // Up/Down moves much more than a step: its own, longer spring.
-        // Continue Watching's cards are box-wide: a step travels 2.5× as far
-        // as a poster step — its own, slightly longer duration.
         let duration = billboardScroll ? FixedFocusMotion.billboardScroll
-            : rowChanged ? Motion.durations.vertical
-            : continueRow ? Motion.durations.continueMove : Motion.moveDuration
-        let damping = rowChanged ? Motion.durations.verticalDamping : 1
+            : rowChanged ? Motion.verticalDuration : Motion.moveDuration
         // For the cells' Up/Down details: the image drift's direction and
         // the outlines' own, gradual crossfade (see `setGrown`).
         // Down from the billboard: the rows show at once (the move is the
@@ -3543,7 +3521,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             FixedFocusPosterCell.vertical = rowChanged && hadFocus
                 ? (direction: direction, duration: duration) : nil
             defer { FixedFocusPosterCell.vertical = nil }
-            FixedFocusMotion.run(vertical: rowChanged, duration: duration, damping: damping) {
+            FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 rowCell.focus(index: cell.itemIndex)
@@ -3741,10 +3719,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         box.alpha = 0
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
         focusedRow = rowIndex
-        let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.durations.vertical
+        let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
         let move = {
-            FixedFocusMotion.run(vertical: true, duration: duration,
-                                 damping: Motion.durations.verticalDamping) {
+            FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 self.outer.collectionViewLayout.invalidateLayout()
@@ -4879,7 +4856,7 @@ final class FixedFocusBoxView: UIView {
     /// with a short fade.
     func refreshInfo(for item: MetaItem) {
         guard shownID == item.id else { return }
-        UIView.transition(with: infoPage, duration: Motion.durations.fade,
+        UIView.transition(with: infoPage, duration: Motion.fadeDuration,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
                           animations: { self.infoPage.show(item, progress: self.shownProgress) })
     }
@@ -4973,52 +4950,39 @@ final class FixedFocusBoxView: UIView {
             infoPage.show(item, progress: progress)
             return
         }
-        if RenderProbe.shared.flags.boxDrift {
-            // DRIFT: a crossfade with a hint of direction — the new image
-            // fades in while shifting a little in the direction of travel,
-            // the old one fades out shifting on. No seam, little movement.
-            // (Up/Down: the same, vertically — from below on Down.)
-            let shift: CGFloat = 30
-            let dx = vertical ? 0 : direction * shift
-            let dy = vertical ? direction * shift : 0
-            let incoming = Page(frame: bounds.offsetBy(dx: dx, dy: dy))
-            incoming.show(item, progress: progress, portrait: portrait)
-            incoming.alpha = 0
-            clip.addSubview(incoming)
-            let outgoing = page
-            page = incoming
-            // The info drifts the same way, in sync.
-            let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: dx, dy: dy))
-            infoIn.show(item, progress: progress)
-            infoIn.alpha = 0
-            infoHost.addSubview(infoIn)
-            let infoOut = infoPage
-            infoPage = infoIn
-            let infoTarget = infoFrame
-            FixedFocusMotion.run(vertical: vertical,
-                                 duration: vertical ? Motion.durations.vertical : Motion.moveDuration,
-                                 damping: 1) {
-                incoming.frame = self.bounds
-                incoming.alpha = 1
-                outgoing.frame = self.bounds.offsetBy(dx: -dx, dy: -dy)
-                outgoing.alpha = 0
-                infoIn.frame = infoTarget
-                infoIn.alpha = 1
-                infoOut.frame = infoTarget.offsetBy(dx: -dx, dy: -dy)
-                infoOut.alpha = 0
-            } completion: { _ in
-                if outgoing !== self.page { outgoing.removeFromSuperview() }
-                if infoOut !== self.infoPage { infoOut.removeFromSuperview() }
-            }
-        } else {
-            UIView.transition(with: page, duration: Motion.durations.fade,
-                              options: [.transitionCrossDissolve, .beginFromCurrentState,
-                                        .allowUserInteraction],
-                              animations: { self.page.show(item, progress: progress, portrait: portrait) })
-            UIView.transition(with: infoPage, duration: Motion.durations.fade,
-                              options: [.transitionCrossDissolve, .beginFromCurrentState,
-                                        .allowUserInteraction],
-                              animations: { self.infoPage.show(item, progress: progress) })
+        // DRIFT: a crossfade with a hint of direction — the new image
+        // fades in while shifting a little in the direction of travel,
+        // the old one fades out shifting on. No seam, little movement.
+        // (Up/Down: the same, vertically — from below on Down.)
+        let shift: CGFloat = 30
+        let dx = vertical ? 0 : direction * shift
+        let dy = vertical ? direction * shift : 0
+        let incoming = Page(frame: bounds.offsetBy(dx: dx, dy: dy))
+        incoming.show(item, progress: progress, portrait: portrait)
+        incoming.alpha = 0
+        clip.addSubview(incoming)
+        let outgoing = page
+        page = incoming
+        // The info drifts the same way, in sync.
+        let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: dx, dy: dy))
+        infoIn.show(item, progress: progress)
+        infoIn.alpha = 0
+        infoHost.addSubview(infoIn)
+        let infoOut = infoPage
+        infoPage = infoIn
+        let infoTarget = infoFrame
+        FixedFocusMotion.run(duration: vertical ? Motion.verticalDuration : Motion.moveDuration) {
+            incoming.frame = self.bounds
+            incoming.alpha = 1
+            outgoing.frame = self.bounds.offsetBy(dx: -dx, dy: -dy)
+            outgoing.alpha = 0
+            infoIn.frame = infoTarget
+            infoIn.alpha = 1
+            infoOut.frame = infoTarget.offsetBy(dx: -dx, dy: -dy)
+            infoOut.alpha = 0
+        } completion: { _ in
+            if outgoing !== self.page { outgoing.removeFromSuperview() }
+            if infoOut !== self.infoPage { infoOut.removeFromSuperview() }
         }
     }
 }
@@ -5311,7 +5275,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             UIView.performWithoutAnimation { self.title.alpha = shown ? 0 : self.titleAlpha }
         }
         if animated, headerStack.alpha != (shown ? 1 : 0) {
-            UIView.animate(withDuration: Motion.durations.fade, delay: 0,
+            UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
                            options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
         } else {
             apply()
@@ -5629,7 +5593,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// A new name, crossfaded (the row itself unchanged).
     func showTitle(_ text: String) {
         guard title.text != text else { return }
-        UIView.transition(with: title, duration: Motion.durations.fade,
+        UIView.transition(with: title, duration: Motion.fadeDuration,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
                           animations: { self.title.text = text })
         setNeedsLayout()
@@ -5880,9 +5844,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let card = controller.destinationCard(rowIndex)
         let offset = windowOffset(focusing: index, card: card.width, count: row.items.count)
         guard offset != cv.contentOffset.x else { return }
-        FixedFocusMotion.run(vertical: false,
-                             duration: FixedFocusMetrics.destinationStep(landscape: card.width > card.height),
-                             damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             cv.contentOffset = CGPoint(x: offset, y: 0)
         } completion: { _ in }
     }
@@ -6750,7 +6712,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         let focused = isFocused
-        FixedFocusMotion.run(vertical: false, duration: Motion.moveDuration, damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             self.applyFocus(focused)
         } completion: { _ in }
     }
@@ -7056,9 +7018,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             return
         }
         // On Home's curve and timing, with the row's scroll.
-        FixedFocusMotion.run(vertical: false,
-                             duration: FixedFocusMetrics.destinationStep(landscape: bounds.width > cardHeight),
-                             damping: 1) {
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
             self.applyFocus(focused)
             self.layoutIfNeeded()
         } completion: { _ in }
@@ -7929,51 +7889,16 @@ final class FixedFocusProgressView: UIView {
 /// cells' size changes.
 @MainActor
 enum FixedFocusMotion {
-    enum Curve: String, CaseIterable {
-        case spring, easeOut, easeInOut, systemSpring
-        var displayName: String {
-            switch self {
-            case .spring: return "Spring (no bounce)"
-            case .easeOut: return "Ease-out"
-            case .easeInOut: return "Ease-in-out"
-            case .systemSpring: return "System spring"
-            }
-        }
-    }
-
-
-    static var curve: Curve { Curve(rawValue: RenderProbe.shared.flags.horizontalCurve) ?? .easeInOut }
-    static var verticalCurve: Curve { Curve(rawValue: RenderProbe.shared.flags.verticalCurve) ?? .systemSpring }
-
-    /// A focus movement on its curve (Left/Right or Up/Down, each chosen in
-    /// Render Lab). Ease-in-out gives the movement weight: it has to get
-    /// going and it brakes — snappier curves made the UI feel light.
-    static func run(vertical: Bool, duration: Double, damping: Double,
+    /// A focus movement (Left/Right and Up/Down alike) on UIKit's own
+    /// spring (duration + bounce 0): a new press during the move carries
+    /// its speed on instead of starting from rest. (Always UIView.animate:
+    /// collection views only animate their cells' size changes inside it —
+    /// under a property animator they jumped.)
+    static func run(duration: Double,
                     animations: @escaping () -> Void,
                     completion: @escaping (Bool) -> Void) {
-        let chosen = vertical ? verticalCurve : curve
-        // Always UIView.animate: collection views only animate their cells'
-        // size changes inside it (under a property animator they jumped).
-        switch chosen {
-        case .systemSpring:
-            // UIKit's own spring (duration + bounce 0): a new press during
-            // the move carries its speed on instead of starting from rest.
-            UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
-                           options: [.beginFromCurrentState, .allowUserInteraction],
-                           animations: animations, completion: completion)
-            return
-        default: break
-        }
-        if chosen == .spring {
-            UIView.animate(withDuration: duration, delay: 0,
-                           usingSpringWithDamping: vertical ? damping : 1, initialSpringVelocity: 0,
-                           options: [.beginFromCurrentState, .allowUserInteraction],
-                           animations: animations, completion: completion)
-            return
-        }
-        let curveOption: UIView.AnimationOptions = chosen == .easeOut ? .curveEaseOut : .curveEaseInOut
-        UIView.animate(withDuration: duration, delay: 0,
-                       options: [curveOption, .beginFromCurrentState, .allowUserInteraction],
+        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction],
                        animations: animations, completion: completion)
     }
 
@@ -7986,37 +7911,18 @@ enum FixedFocusMotion {
         let chosen = RenderProbe.shared.flags.billboardScrollDuration
         if chosen > 0 { return chosen }
         let distance = FixedFocusRowsLayout.scrollDistance(focusY: FixedFocusMetrics.rowTop)
-        return Motion.durations.vertical * (distance / FixedFocusMetrics.rowPitch).squareRoot()
+        return Motion.verticalDuration * (distance / FixedFocusMetrics.rowPitch).squareRoot()
     }
 
-    /// `run(vertical: true, …)`'s move for SwiftUI views moving with the
-    /// rows (the billboard's text and dots): the same curve and time.
-    static func verticalAnimation(duration: Double) -> Animation {
-        switch verticalCurve {
-        case .easeInOut: return .easeInOut(duration: duration)
-        case .easeOut: return .easeOut(duration: duration)
-        case .spring:
-            return .spring(duration: duration, bounce: 1 - Motion.durations.verticalDamping)
-        case .systemSpring:
-            return .spring(duration: duration, bounce: 0)
-        }
-    }
-
-    /// `run(vertical: false, …)`'s move for SwiftUI views moving with it
-    /// (the billboard's text drifting with its picture): the same curve.
-    static func horizontalAnimation(duration: Double) -> Animation {
-        switch curve {
-        case .easeInOut: return .easeInOut(duration: duration)
-        case .easeOut: return .easeOut(duration: duration)
-        case .spring: return .spring(duration: duration, bounce: 0)
-        case .systemSpring: return .spring(duration: duration, bounce: 0)
-        }
+    /// `run`'s move for SwiftUI views moving with it (the billboard's text
+    /// and dots): SwiftUI's spring is UIKit's system spring.
+    static func animation(duration: Double) -> Animation {
+        .spring(duration: duration, bounce: 0)
     }
 
     /// Left/Right, for things moving with the row (the box's drift).
     static func horizontal(_ animations: @escaping () -> Void, completion: @escaping () -> Void) {
-        run(vertical: false, duration: Motion.moveDuration, damping: 1,
-            animations: animations, completion: { _ in completion() })
+        run(duration: Motion.moveDuration, animations: animations, completion: { _ in completion() })
     }
 }
 

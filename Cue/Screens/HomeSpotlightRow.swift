@@ -374,8 +374,8 @@ struct BillboardDots: View {
                     }
             }
         }
-        .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration), value: current)
-        .animation(FixedFocusMotion.horizontalAnimation(duration: Motion.moveDuration), value: focused)
+        .animation(FixedFocusMotion.animation(duration: Motion.moveDuration), value: current)
+        .animation(FixedFocusMotion.animation(duration: Motion.moveDuration), value: focused)
         .padding(.horizontal, Self.capsulePadding)
         .padding(.vertical, Self.capsulePadding * 0.75)
         .background { Color.clear.liquidGlass(in: Capsule()) }
