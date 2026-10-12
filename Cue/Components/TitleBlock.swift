@@ -261,9 +261,6 @@ struct SectionHint: View {
 final class ModeSwap: ObservableObject {
     static let shared = ModeSwap()
 
-    /// What Details' Play says, as the billboard knew it ("Play S2:E3"):
-    /// until its own episode list is in, Play doesn't change its label.
-    var billboardPlayTitle: String?
     /// Home's top bar is out for the billboard's trailer (see `TrailerMode`).
     /// It can't take focus then either: Up brings the page back instead.
     @Published var trailerChromeOut = false

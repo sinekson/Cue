@@ -523,10 +523,6 @@ struct DetailView: View {
     @State private var billboardSeriesSize: String?
     /// The backdrop's depth, 0…1 (1 = a step into the title).
     @State private var depth: CGFloat
-    /// Play's label as the billboard knew it (see `ModeSwap`).
-    @State private var handedPlayTitle: String? = MainActor.assumeIsolated {
-        ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardPlayTitle : nil
-    }
     /// The season row opens on the Play target's season, once.
     @State private var seasonAutoPicked = false
 
@@ -734,26 +730,17 @@ struct DetailView: View {
                            // peek.
                            rigidRest: HomeUIKitView.rigidRowRest,
                            rigidNameY: FixedFocusRowsLayout.nextNameY,
-                           // Render Lab → peek the episodes: their cards' top
-                           // up the bottom edge instead of "Episodes ⌄".
+                           // The first row's cards peek up the bottom edge.
                            // (No name: the page is one title's — what peeks is
                            // more of it, whatever the row. Home names its rows.)
-                           rigidPeek: RenderProbe.shared.flags.detailsPeekEpisodes ? Self.episodesPeek : nil,
+                           rigidPeek: Self.episodesPeek,
                            hidesBillboardPicture: true,
-                           // Render Lab → season buttons off: the row's name
-                           // is the season control (Up from the episodes,
-                           // Left / Right step the seasons), the season's
-                           // progress on its own line under it.
-                           titleControlRowIDs: !seasonButtons && hasSeasonControl ? seasonIDs : [],
-                           titleArrows: seasonButtons ? [:] : seasonArrows,
-                           onTitleMove: { _, step in stepSeason(by: step) },
-                           onTitleFocus: { _, focused in seasonNameFocused = focused },
-                           // (Season buttons: the same line, between them and
-                           // the episodes.)
+                           // The season's progress: between the season
+                           // buttons and the episodes.
                            rowTitleAccessories: rowProgressAccessory,
                            // The seasons: glass buttons over the episodes (Up
                            // from them); focus on one jumps the row there.
-                           rowHeaders: seasonButtons ? seasonHeader : [:],
+                           rowHeaders: seasonHeader,
                            onHeaderFocus: { _, index in
                                guard rowSeasons.indices.contains(index), rowSeasons[index] != rowSeason else { return }
                                stepSeason(to: rowSeasons[index])
@@ -802,11 +789,6 @@ struct DetailView: View {
     /// The episode the row is aimed at (Play's; a season's from the pill).
     @State private var aimedRowEpisode: String?
     @State private var rowCommand: FixedFocusRowsCommand?
-    /// The episode row's name (the season control) has focus.
-    @State private var seasonNameFocused = false
-    /// Render Lab → Details: season buttons (off: the row's name is the
-    /// season control).
-    private var seasonButtons: Bool { RenderProbe.shared.flags.detailsSeasonButtons }
 
     /// THE PICTURE stays: sharp under the overview (the billboard's shade
     /// on it); below it, its blurred copy fades in over it and it steps
@@ -873,8 +855,8 @@ struct DetailView: View {
         .ignoresSafeArea()
     }
 
-    /// Where you are in the season, under the row's name (or the season
-    /// buttons): its ticks, then "3 of 7".
+    /// Where you are in the season, under the season buttons: its ticks,
+    /// then "3 of 7".
     private var rowProgressAccessory: [String: AnyView] {
         guard viewModel.meta.isSeries, let episode = rowProgressEpisode else { return [:] }
         let season = episode.season ?? 0
@@ -885,24 +867,6 @@ struct DetailView: View {
             .fixedSize()
         return [Self.episodesRowID: AnyView(map)]
     }
-
-    /// Which of the season control's arrows show.
-    private var seasonArrows: [String: FixedFocusTitleArrows] {
-        let seasons = rowSeasons
-        guard let index = rowSeason.flatMap({ seasons.firstIndex(of: $0) }) else { return [:] }
-        return [Self.episodesRowID: FixedFocusTitleArrows(previous: index > 0, next: index < seasons.count - 1)]
-    }
-
-    /// Left / Right on the season control: the season before / after.
-    private func stepSeason(by step: Int) {
-        let seasons = rowSeasons
-        guard let index = rowSeason.flatMap({ seasons.firstIndex(of: $0) }),
-              seasons.indices.contains(index + step) else { return }
-        stepSeason(to: seasons[index + step])
-    }
-
-    /// More than one season: the row's name is the season control.
-    private var hasSeasonControl: Bool { rowSeasons.count > 1 }
 
     /// The seasons over the episode row (more than one), the row's own marked.
     private var seasonHeader: [String: FixedFocusRowHeader] {
@@ -951,17 +915,6 @@ struct DetailView: View {
         // first would flash.)
         return id.flatMap { data.orderedIndex[$0] }.map { data.ordered[$0].season }
             ?? data.playTarget?.season ?? data.seasons.first
-    }
-
-    /// Season buttons off — before the episode list is in (held until the
-    /// swap from Home has played): the season Play starts, as the billboard
-    /// knew it ("Play S4:E19") — the row's name is there from the first frame.
-    private var provisionalSeasonTitle: String {
-        if let title = handedPlayTitle,
-           let match = title.firstMatch(of: /S(\d+):E\d+/), let season = Int(match.1) {
-            return seasonName(season)
-        }
-        return "Episodes"
     }
 
     /// Changes when the row (or Play's episode) does: re-aim.
@@ -1037,21 +990,10 @@ struct DetailView: View {
     private var detailRows: [HomeRow] {
         var rows = [HomeRow(id: Self.billboardRowID, title: "", items: [viewModel.meta])]
         if viewModel.meta.isSeries {
-            // ONE row: every episode. Season buttons: its name "Episodes"
-            // shows only on the billboard; in the row, the seasons. Off: its
-            // name is the season it's in.
+            // ONE row: every episode; in the row, the season buttons.
             let data = rowData
-            if seasonButtons {
-                rows.append(HomeRow(id: Self.episodesRowID, title: "Episodes",
-                                    items: data.rowItems, subtitles: data.subtitles))
-            } else if data.ordered.isEmpty {
-                // Its name at once; its cards when the list is in.
-                rows.append(HomeRow(id: Self.episodesRowID, title: provisionalSeasonTitle, items: []))
-            } else {
-                rows.append(HomeRow(
-                    id: Self.episodesRowID, title: rowSeason.map(seasonName) ?? "Episodes",
-                    items: data.rowItems, subtitles: data.subtitles))
-            }
+            rows.append(HomeRow(id: Self.episodesRowID, title: "Episodes",
+                                items: data.rowItems, subtitles: data.subtitles))
         }
         // A film's series first — its next part is the likeliest next watch.
         if let collection = viewModel.collection, !viewModel.collectionParts.isEmpty {

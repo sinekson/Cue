@@ -376,22 +376,6 @@ final class RenderProbe: ObservableObject {
         /// New Home: the billboard's / Details' summary justified (word gaps
         /// stretched to fill each line, with hyphenation); off: ragged right.
         var summaryJustified = false
-        /// Details' episode row: glass season buttons over the episodes, the
-        /// billboard's hint "Episodes", the season's map between them;
-        /// off: the row's name "‹ Season X ›" as the season control, the map
-        /// on a line under it.
-        var detailsSeasonButtons = true
-        /// Details: under the billboard the episodes' cards peek (their top
-        /// at the bottom edge, dimmed) instead of the "Episodes ⌄" hint.
-        var detailsPeekEpisodes = true
-        /// Home (billboard like Details): under the billboard the first row
-        /// peeks — its name above its cards' top, darkened — instead of its
-        /// name on the billboard.
-        var homePeekFirstRow = false
-        /// Home: billboard ⇄ rows as Details' — one rigid move (≈ 800 pt, the
-        /// dots end on the first row's name line), the picture stays, blurs
-        /// and gives way to the colours. Off: the picture scrolls away whole.
-        var homeBillboardRigid = true
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
         /// New Home: how far up the billboard's picture fades into the
@@ -433,10 +417,6 @@ final class RenderProbe: ObservableObject {
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             summaryJustified = (try? c.decode(Bool.self, forKey: .summaryJustified)) ?? d.summaryJustified
-            detailsSeasonButtons = (try? c.decode(Bool.self, forKey: .detailsSeasonButtons)) ?? d.detailsSeasonButtons
-            detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
-            homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
-            homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha

@@ -101,8 +101,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Billboard**: Featured row with invisible cells; picture in UIKit, text in
   SwiftUI above. Content = `BillboardPicks` (new episodes → "Because you
   watched" → trending) with a reason label above the logo. Compact text: logo,
-  chips (status + 3 ratings), facts, tagline — no summary. Down scrolls one
-  whole screen. Pages by itself every 5 s, stops at the last title.
+  chips (status + 3 ratings), facts, tagline — no summary. Down as on
+  Details: one move, the picture stays (blurring into the colours), the
+  first row peeking 60 pt up the bottom edge under the billboard (its name
+  above its darkened cards, the page dots on that line). Pages by itself every 5 s, stops at the last title.
   Left/Right: the picture crossfades drifting 16 pt the way you went
   (`StagePictureView.drift`); the text only crossfades, in place, as one
   block (`BillboardCrossfade` — run from inside the rows' host, else it
@@ -114,36 +116,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Play's pill says only "Play"; its caption (like the circles', only while
   focused) says which episode and the time left ("S2:E13  ·  46m left"),
   or "Finding a source…" while it searches.
-- **Details' episode row**: the billboard hint reads "Episodes ⌄" (not
-  "Season X"). In the row, glass season buttons replace the row's name
-  (moving focus; focusing one jumps the row there; Up from any card lands
-  on the row's season); the season progress ("Season 2 • 3 of 13
-  watched", ticks) between the buttons and the cards. Down from the billboard:
-  "Episodes ⌄" never fades or brightens — it trails the billboard's
-  buttons up and out (≥ 32 pt below them while they're on screen); the
-  season buttons and the map come up with the row, fading in (the Apple
-  TV app's way). Up reverses it. (A shorter Details-only move, 0.48 s, was
-  tried and dropped: same time as Home's.)
-  Under trial against the old variant (Render Lab → "Details: season
-  buttons" off): the row's name "‹ Season X ›" is the season control,
-  "ticks · 3 of 13" on a line under it.
-  Also under trial: Render Lab → "Details: peek the episodes" (on): the
-  episodes' cards peek 60 pt up the bottom edge under the billboard,
-  darkened to 50 % (a black cover on the cards, not
-  transparency), instead of "Episodes ⌄" (`FixedFocusRows.rigidPeek`).
-  Home has the same as a trial, off by default: Render Lab → "Home: peek
-  the first row" (its name stays above the darkened cards; the page dots
-  sit on that name's line).
-  Also under trial (Render Lab, top: "Details: season progress on the
-  billboard", off): the full progress ("Season 2 • 3 of 13 watched", ticks
-  under it), centred, on the billboard at the peek's name line, riding up
-  with the episodes to above the season buttons
-  (`FixedFocusRows.rowTopAccessories`); the line between buttons and cards
-  goes. Tried and dropped there: Home's page-dots look (glass capsule, a
-  dot per episode).
-  Tried and dropped: the show's logo over the season buttons (Apple TV
-  app's way); progress inside each season button; the map above
-  the buttons; the map under the episodes' captions.
+- **Details' episode row**: under the billboard the episodes' cards peek
+  60 pt up the bottom edge, darkened to 50 % (a black cover on the cards,
+  not transparency — `FixedFocusRows.rigidPeek`). In the row, glass season
+  buttons replace the row's name (moving focus; focusing one jumps the row
+  there; Up from any card lands on the row's season); the season progress
+  ("Season 2 • 3 of 13 watched", ticks) between the buttons and the cards.
+  The season buttons and the map come up with the row, fading in (the
+  Apple TV app's way). Up reverses it. (A shorter Details-only move,
+  0.48 s, was tried and dropped: same time as Home's.)
+  Tried and dropped: "Episodes ⌄" on the billboard instead of the peek;
+  the row's name "‹ Season X ›" as the season control; the full progress
+  on the billboard (also with Home's page-dots look); the show's logo over
+  the season buttons (Apple TV app's way); progress inside each season
+  button; the map above the buttons; the map under the episodes' captions.
 - **Details' collection** (films; TMDB's collection — not Cue's Collections):
   the first row below the billboard, above More Like This, named "More from
   the … Collection". Fixed focus; the other parts in release order (the film

@@ -1549,24 +1549,20 @@ struct HomeUIKitView: View {
                            // The billboard paging by itself (Settings →
                            // Appearance → Billboard pages by itself).
                            command: billboardCommand,
-                           // Render Lab → Home: billboard like Details.
-                           // The first row waits just below the screen's edge
-                           // (the sliver tvOS needs), its name on the billboard;
-                           // the billboard goes up until its hard edge is at the
+                           // The billboard as Details': the first row peeks up
+                           // the bottom edge (its name above its cards); the
+                           // billboard goes up until its hard edge is at the
                            // top bar's middle — the usual peek, the dots in it.
-                           rigidRest: rigidBillboard ? Self.rigidRowRest : nil,
-                           rigidNameY: rigidBillboard ? FixedFocusRowsLayout.nextNameY : nil,
-                           // Render Lab → Home: peek the first row (its name
-                           // above its cards) instead of its name on the
-                           // billboard.
-                           rigidPeek: rigidBillboard && RenderProbe.shared.flags.homePeekFirstRow ? Self.firstRowPeek : nil,
+                           rigidRest: Self.rigidRowRest,
+                           rigidNameY: FixedFocusRowsLayout.nextNameY,
+                           rigidPeek: Self.firstRowPeek,
                            rigidPeekShowsName: true,
-                           billboardOverlay: rigidBillboard ? billboardOverlay : nil,
+                           billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
                            // The picture under the text: the controller's own,
                            // moved with the billboard's distance.
-                           pinnedBillboardPicture: rigidBillboard,
-                           rigidBillboardTravel: rigidBillboard ? Self.rigidBillboardTravel : nil) { item, position in
+                           pinnedBillboardPicture: true,
+                           rigidBillboardTravel: Self.rigidBillboardTravel) { item, position in
                 // Between the billboard and the rows: the colours shift
                 // gradually THROUGH the scroll (see `tintKey`'s task).
                 if (position == nil) != (billboard == nil) { tintScroll = true }
@@ -2468,16 +2464,6 @@ struct FixedFocusBillboardPosition: Equatable {
 }
 
 extension HomeUIKitView {
-    /// How far the billboard has gone up (as its picture in the rows).
-    private var billboardScrolled: CGFloat {
-        billboard != nil ? 0 : FixedFocusRowsLayout.billboardScroll(depth: max(depth, 1))
-    }
-
-    /// The billboard moves as Details' (Render Lab → Home: billboard like
-    /// Details): its text and dots hosted by the rows, in the rows' move;
-    /// the rest at the first row's name spot — the dots end on its line.
-    var rigidBillboard: Bool { probe.flags.homeBillboardRigid }
-
     /// The billboard is paging by itself right now: the setting on, focus
     /// on it (not Details, a menu, or the app in the background).
     var autoPageRunning: Bool {
@@ -2490,22 +2476,20 @@ extension HomeUIKitView {
         1080 - FixedFocusRowsLayout.restingCardsOnScreen - FixedFocusMetrics.titleHeight
     }
     static var rigidBillboardTravel: CGFloat { 1080 - FixedFocusMetrics.aboveVisible }
-    /// Render Lab → Home: peek the first row — how much of its cards shows.
+    /// The first row's peek: how much of its cards shows.
     static let firstRowPeek: CGFloat = 60
     /// The dots' centre on the billboard: in the middle of its peek once
     /// it's up.
     static var rigidDotsMid: CGFloat { 1080 - FixedFocusMetrics.aboveVisible / 2 }
-    /// Peeking (Render Lab → Home: peek the first row): about the line of
-    /// the first row's name, a little above it — clear of its cards.
+    /// Peeking: about the line of the first row's name, a little above it
+    /// — clear of its cards.
     static var peekDotsMid: CGFloat {
         1080 - firstRowPeek - FixedFocusMetrics.titleHeight + FixedFocusMetrics.titleLine / 2 - peekDotsLift
     }
     static let peekDotsLift: CGFloat = 16
     /// (Peeking, only on the billboard: once it's up, where they always
     /// end — in the middle of its strip at the top.)
-    private var dotsMid: CGFloat {
-        RenderProbe.shared.flags.homePeekFirstRow && depth == 0 ? Self.peekDotsMid : Self.rigidDotsMid
-    }
+    private var dotsMid: CGFloat { depth == 0 ? Self.peekDotsMid : Self.rigidDotsMid }
 
     /// The billboard's text and dots for the rows to host — their own
     /// animations (a change made in a `withAnimation` here doesn't carry
@@ -2523,21 +2507,9 @@ extension HomeUIKitView {
     /// it lifts away and the rows take the screen. (Focus itself is on the
     /// Featured row's invisible cells — see `FixedFocusRowsController`.)
     var billboardLayer: some View {
-        Group {
-            if rigidBillboard {
-                // (Drawn by the rows — see `billboardOverlay`; only its
-                // upkeep stays here.)
-                Color.clear.frame(width: 0, height: 0)
-            } else {
-                billboardContent
-                    // Scrolling away with the picture and the rows: the
-                    // picture's own offset at every depth, on the rows' curve
-                    // and time — no fade.
-                    .offset(y: -billboardScrolled)
-                    .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll),
-                               value: billboardScrolled)
-            }
-        }
+        // (Drawn by the rows — see `billboardOverlay`; only its upkeep
+        // stays here.)
+        Color.clear.frame(width: 0, height: 0)
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .onChange(of: billboard) { _, now in
@@ -2599,8 +2571,7 @@ extension HomeUIKitView {
                     .frame(height: SectionHint.size * 1.3)
                     .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .center)
                     .offset(x: Spotlight.screenInset,
-                            y: rigidBillboard ? dotsMid - SectionHint.size * 1.3 / 2
-                                : TitleBlock.hintY(screenHeight: 1080))
+                            y: dotsMid - SectionHint.size * 1.3 / 2)
                     .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll),
                                value: depth == 0)
             }
@@ -2883,13 +2854,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// The billboard's picture isn't drawn by the rows (Details draws its
     /// own, fixed, behind them).
     var hidesBillboardPicture = false
-    /// Rows whose NAME takes focus (Up from the row): ‹ › beside it,
-    /// Left / Right reported to `onTitleMove` (-1 / +1), Up to the
-    /// billboard, Down into the row. `titleArrows`: which arrows show.
-    var titleControlRowIDs: Set<String> = []
-    var titleArrows: [String: FixedFocusTitleArrows] = [:]
-    var onTitleMove: (String, Int) -> Void = { _, _ in }
-    var onTitleFocus: (String, Bool) -> Void = { _, _ in }
     /// SwiftUI on its own line under a row's name (or its header) — the
     /// row's cards lower by as much (`titleAccessoryHeight`, under a header
     /// `headerAccessoryHeight`); shown while the row has focus (Details'
@@ -2972,10 +2936,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rigidPeekShowsName = rigidPeekShowsName
         controller.rigidNameY = rigidNameY
         controller.hidesBillboardPicture = hidesBillboardPicture
-        controller.titleControlRowIDs = titleControlRowIDs
-        controller.titleArrows = titleArrows
-        controller.onTitleMove = onTitleMove
-        controller.onTitleFocus = onTitleFocus
         controller.rowTitleAccessories = rowTitleAccessories
         controller.anchoredRowIDs = anchoredRowIDs
         controller.customRows = customRows
@@ -3550,17 +3510,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         box.ringHidden = false
-        if let control = context.previouslyFocusedView as? FixedFocusTitleControlView, let rowCell = control.rowCell,
-           rows.indices.contains(rowCell.rowIndex) {
-            onTitleFocus(rows[rowCell.rowIndex].id, false)
-            rowCell.applyTitleControl()
-        }
-        if let control = context.nextFocusedView as? FixedFocusTitleControlView, let rowCell = control.rowCell,
-           rows.indices.contains(rowCell.rowIndex) {
-            onTitleFocus(rows[rowCell.rowIndex].id, true)
-            rowCell.applyTitleControl()
-            return
-        }
         if let button = context.nextFocusedView as? FixedFocusHeaderButton, let rowCell = button.rowCell,
            rows.indices.contains(rowCell.rowIndex) {
             onHeaderFocus(rows[rowCell.rowIndex].id, button.index)
@@ -4044,17 +3993,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var rigidPeekShowsName = false
     var rigidNameY: CGFloat?
     var hidesBillboardPicture = false
-    var titleControlRowIDs: Set<String> = [] {
-        didSet { if !titleControlRowIDs.isEmpty { observeTitleMoves() } }
-    }
-    var titleArrows: [String: FixedFocusTitleArrows] = [:] {
-        didSet {
-            guard titleArrows != oldValue, isViewLoaded else { return }
-            for case let cell as FixedFocusRowCell in outer.visibleCells { cell.applyTitleControl() }
-        }
-    }
-    var onTitleMove: (String, Int) -> Void = { _, _ in }
-    var onTitleFocus: (String, Bool) -> Void = { _, _ in }
     /// The line under the name (gap, map) — the cards that much lower.
     static let titleAccessoryHeight: CGFloat = 40
     /// Under a header: the accessory's line, with the same gap above it
@@ -4299,44 +4237,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         nextRowCell?.revealTitle()
     }
 
-    /// RIGID, under the billboard: the next row's resting look — Home's
-    /// name on the billboard (smaller, ⌄ after it), right over its cards.
-    func restingUnderBillboard(_ rowIndex: Int) -> Bool {
-        rigidRest != nil && rigidPeek == nil && isFeatured(focusedRow) && isNext(rowIndex)
-    }
-
-    /// Left / Right on a row-name control: nothing beside it to move to, so
-    /// the move fails — that's the press (a swipe too).
-    private var titleMoveToken: NSObjectProtocol?
-    private func observeTitleMoves() {
-        guard titleMoveToken == nil else { return }
-        titleMoveToken = NotificationCenter.default.addObserver(
-            forName: UIFocusSystem.movementDidFailNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
-            else { return }
-            MainActor.assumeIsolated {
-                guard let self, let control = ctx.previouslyFocusedItem as? FixedFocusTitleControlView,
-                      let rowCell = control.rowCell, self.rows.indices.contains(rowCell.rowIndex),
-                      control.isDescendant(of: self.view) else { return }
-                let id = self.rows[rowCell.rowIndex].id
-                if ctx.focusHeading.contains(.left) { self.onTitleMove(id, -1) }
-                if ctx.focusHeading.contains(.right) { self.onTitleMove(id, 1) }
-            }
-        }
-    }
-
-    func isTitleControl(_ rowIndex: Int) -> Bool {
-        rows.indices.contains(rowIndex) && titleControlRowIDs.contains(rows[rowIndex].id)
-    }
-
-    /// A row's name may take focus: its row has focus (Up from the cards
-    /// finds it) or it has it. Never from the billboard: Down lands on the
-    /// cards.
-    func titleFocusable(_ rowIndex: Int) -> Bool {
-        isTitleControl(rowIndex) && rowIndex == focusedRow && hasFocus
-    }
-
     func header(_ rowIndex: Int) -> FixedFocusRowHeader? {
         rows.indices.contains(rowIndex) ? rowHeaders[rows[rowIndex].id] : nil
     }
@@ -4406,34 +4306,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
            let featured = featuredIndex, rows.indices.contains(featured + 1) {
             DispatchQueue.main.async { self.requestFocus(row: featured + 1) }
             return false
-        }
-        // Up from a row with its name as a control: the name (the engine
-        // preferred the billboard's card list above — focus groups).
-        if context.focusHeading.contains(.up), previousInside,
-           let from = context.previouslyFocusedView, !(from is FixedFocusTitleControlView),
-           !(context.nextFocusedView is FixedFocusTitleControlView),
-           let rowCell = (from as? FixedFocusDestinationItem)?.rowCell ?? (from as? FixedFocusPosterCell)?.rowCell,
-           rowCell.titleFocusable {
-            DispatchQueue.main.async { self.requestFocus(view: rowCell.titleControl) }
-            return false
-        }
-        // A row's name as a control (Details' seasons): Left / Right step it
-        // (focus stays), Up goes to the billboard; Down finds the cards.
-        if let control = context.previouslyFocusedView as? FixedFocusTitleControlView,
-           let rowCell = control.rowCell, rows.indices.contains(rowCell.rowIndex),
-           !(context.nextFocusedView is FixedFocusTitleControlView) {
-            let id = rows[rowCell.rowIndex].id
-            if context.focusHeading.contains(.left) || context.focusHeading.contains(.right) {
-                let step = context.focusHeading.contains(.left) ? -1 : 1
-                DispatchQueue.main.async { self.onTitleMove(id, step) }
-                return false
-            }
-            if context.focusHeading.contains(.up) {
-                if let featured = featuredIndex, rowCell.rowIndex == featured + 1 {
-                    DispatchQueue.main.async { self.requestFocus(row: featured) }
-                    return false
-                }
-            }
         }
         // Up from a row with a header: its selected button (the engine kept
         // the move in the row's focus group — another of its cards).
@@ -4533,8 +4405,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // (Never animated here: Down/Up give it its own move.)
             let lift = titleLift(cell.rowIndex), scale = titleScale(cell.rowIndex)
             UIView.performWithoutAnimation { cell.titleLift = lift; cell.titleScale = scale }
-            // Rigid: the arrow turns with the move itself.
-            cell.applyTitleControl(animated: rigidRest == nil)
             cell.applyAccessory()
             cell.applyHeader()
         }
@@ -4793,18 +4663,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return [rowCell.posterCell(at: selected[rows[row].id] ?? 0) ?? rowCell]
     }
 
-}
-
-/// Which of a row-name control's arrows show (see `FixedFocusRows.titleArrows`).
-struct FixedFocusTitleArrows: Equatable {
-    var previous: Bool
-    var next: Bool
-}
-
-/// A row's name as a focusable control (see `FixedFocusRows.titleControlRowIDs`).
-final class FixedFocusTitleControlView: UIView {
-    weak var rowCell: FixedFocusRowCell?
-    override var canBecomeFocused: Bool { rowCell?.titleFocusable == true }
 }
 
 /// A row that is a SwiftUI view (see `FixedFocusRows.customRows`): its
@@ -5363,8 +5221,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         return (focused as? FixedFocusHeaderButton)?.rowCell === self
     }
 
-    var titleFocusable: Bool { controller?.titleFocusable(rowIndex) == true }
-    var titleControl: UIView { titleHolder }
     /// The header's selected button (nil: no header showing).
     var headerFocusTarget: UIView? {
         guard controller?.headerShown(rowIndex) == true, let header = controller?.header(rowIndex),
@@ -5427,49 +5283,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             titleHolder.transform = CGAffineTransform(translationX: 0, y: -titleLift)
         }
     }
-    private let titleHolder = FixedFocusTitleControlView()
-
-    /// The name as a control (see `FixedFocusRows.titleControlRowIDs`):
-    /// ‹ in the margin, › after the name — faint, white while it has focus
-    /// (the name a touch larger then).
-    private let prevArrow = FixedFocusRowCell.arrow("chevron.left")
-    private let nextArrow = FixedFocusRowCell.arrow("chevron.right")
-    private static func arrow(_ name: String) -> UIImageView {
-        let config = UIImage.SymbolConfiguration(pointSize: 26, weight: .bold)
-        let view = UIImageView(image: UIImage(systemName: name, withConfiguration: config))
-        view.tintColor = .white
-        view.alpha = 0
-        return view
-    }
-    static let titleFocusScale: CGFloat = 1.08
-
-    /// The control's look for its state now (focus, which arrows) —
-    /// animated on its own, or (`animated: false`) as part of a move under
-    /// way. Resting under a rigid billboard: the › points down (⌄), full.
-    /// (A row with a header: always ⌄ — it never becomes a control.)
-    func applyTitleControl(animated: Bool = true) {
-        guard let controller, let row else { return }
-        let control = controller.isTitleControl(rowIndex)
-        let resting = controller.restingUnderBillboard(rowIndex)
-        let down = resting || controller.header(rowIndex) != nil
-        let focused = titleHolder.isFocused
-        let arrows = controller.titleArrows[row.id] ?? FixedFocusTitleArrows(previous: false, next: false)
-        let shown: CGFloat = focused ? 1 : 0.35
-        let apply = {
-            self.prevArrow.alpha = control && arrows.previous && !resting ? shown : 0
-            self.nextArrow.alpha = resting ? 1 : control && arrows.next ? shown : 0
-            self.nextArrow.transform = down ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
-            let scale = self.titleScale * (control && focused ? Self.titleFocusScale : 1)
-            let transform = CGAffineTransform(scaleX: scale, y: scale)
-            if self.title.transform != transform { self.title.transform = transform }
-        }
-        if animated {
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction],
-                           animations: apply)
-        } else {
-            apply()
-        }
-    }
+    private let titleHolder = UIView()
 
     /// The row's name accessory (see `FixedFocusRows.rowTitleAccessories`):
     /// on its own line under the name, shown while the row has focus.
@@ -5497,21 +5311,14 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             if host.superview !== parent { parent.addSubview(host) }
         }
         setNeedsLayout()
-        placeArrows()
+        placeAccessory()
         applyAccessory()
     }
 
     func applyAccessory() { accessory?.view.alpha = isFocusRow ? 1 : 0 }
 
 
-    private func placeArrows() {
-        for arrow in [prevArrow, nextArrow] where arrow.superview == nil { title.addSubview(arrow) }
-        prevArrow.sizeToFit()
-        nextArrow.sizeToFit()
-        let textWidth = title.sizeThatFits(CGSize(width: 1200, height: FixedFocusMetrics.titleLine)).width
-        let mid = FixedFocusMetrics.titleLine / 2 + 2
-        nextArrow.center = CGPoint(x: textWidth + 16 + nextArrow.bounds.width / 2, y: mid)
-        prevArrow.center = CGPoint(x: -20 - prevArrow.bounds.width / 2, y: mid)
+    private func placeAccessory() {
         if let host = accessory?.view {
             // Its own line: under the name, centred in the extra room (above
             // the usual gap to the cards) — or under the header, in its room.
@@ -5635,7 +5442,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             accessory?.view.alpha = entering ? 1 : 0
             headerStack.alpha = entering ? 1 : 0
             title.alpha = entering ? 0 : titleAlpha
-            nextArrow.alpha = entering ? 0 : 1
             titleLift = lift.last ?? 0
             titleScale = scale
         }
@@ -5646,7 +5452,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         headerStack.layer.add(keyframes("opacity", ones), forKey: "opacity")
         titleHolder.layer.add(keyframes("transform.translation.y", lift.map { -$0 }), forKey: "lift")
         title.layer.add(keyframes("opacity", titleOpacity), forKey: "opacity")
-        nextArrow.layer.add(keyframes("opacity", ones), forKey: "opacity")
     }
 
     /// The row's season in view (a step across a season seam, opening on
@@ -5776,7 +5581,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
-        titleHolder.rowCell = self
         titleHolder.addSubview(title)
         contentView.addSubview(titleHolder)
         headerStack.axis = .horizontal
@@ -5823,7 +5627,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         title.bounds = CGRect(x: 0, y: 0, width: 1200, height: FixedFocusMetrics.titleLine)
         title.center = CGPoint(x: 0, y: FixedFocusMetrics.titleLine / 2)
         placeNextHint()
-        placeArrows()
+        placeAccessory()
         customHost?.view.frame = CGRect(x: 0, y: cardsTop, width: bounds.width, height: cardHeight)
         let headerSize = headerStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
         headerBlock.frame = CGRect(x: 0, y: 0, width: bounds.width, height: cardsTop)
@@ -5932,7 +5736,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
                           animations: { self.title.text = text })
         setNeedsLayout()
-        applyTitleControl()
     }
 
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {
@@ -5941,7 +5744,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         title.text = row?.title
         title.isHidden = isFeatured
         setNeedsLayout()
-        applyTitleControl()
         showAccessory()
         showHeader()
         showCustom()
@@ -6447,7 +6249,6 @@ final class DetailTransition {
             ModeSwap.shared.billboardFacts = nil
             ModeSwap.shared.billboardSeriesSize = nil
             ModeSwap.shared.billboardTint = (nil, nil)
-            ModeSwap.shared.billboardPlayTitle = nil
             appeared = nil
             hidesNextText = true
             DetailOpenProbe.note("push")
