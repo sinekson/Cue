@@ -395,13 +395,6 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        /// New Home, background: a soft shadow and a halo (the title's
-        /// colour) behind the fixed box, darker corners, and fine grain
-        /// (its opacity; 0: none).
-        var boxShadow = false
-        var boxGlow = false
-        var vignette = false
-        var grain: Double = 0
         /// The title block's badges (ENDED / ONGOING): `TitleBadge.Style`.
         var badgeStyle = "outline"
         /// New Home: the billboard's ratings (`MDBListRatingsRow.ChipStyle`).
@@ -482,10 +475,6 @@ final class RenderProbe: ObservableObject {
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
-            boxShadow = (try? c.decode(Bool.self, forKey: .boxShadow)) ?? d.boxShadow
-            boxGlow = (try? c.decode(Bool.self, forKey: .boxGlow)) ?? d.boxGlow
-            vignette = (try? c.decode(Bool.self, forKey: .vignette)) ?? d.vignette
-            grain = (try? c.decode(Double.self, forKey: .grain)) ?? d.grain
             badgeStyle = (try? c.decode(String.self, forKey: .badgeStyle)) ?? d.badgeStyle
             billboardRatings = (try? c.decode(String.self, forKey: .billboardRatings)) ?? d.billboardRatings
             detailsPictureEdge = (try? c.decode(String.self, forKey: .detailsPictureEdge)) ?? d.detailsPictureEdge

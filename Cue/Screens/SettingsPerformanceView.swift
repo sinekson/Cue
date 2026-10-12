@@ -319,34 +319,6 @@ struct RenderLabSettings: View {
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
                 PerfToggleRow(
-                    icon: "shadow",
-                    title: "Box shadow",
-                    subtitle: "A soft shadow behind and below the fixed box.",
-                    isOn: Binding(get: { probe.flags.boxShadow }, set: { probe.flags.boxShadow = $0 })
-                )
-                PerfToggleRow(
-                    icon: "sparkle",
-                    title: "Box glow",
-                    subtitle: "A halo around the fixed box in the title's colour.",
-                    isOn: Binding(get: { probe.flags.boxGlow }, set: { probe.flags.boxGlow = $0 })
-                )
-                PerfToggleRow(
-                    icon: "circle.dashed",
-                    title: "Vignette",
-                    subtitle: "The background's corners and edges a little darker.",
-                    isOn: Binding(get: { probe.flags.vignette }, set: { probe.flags.vignette = $0 })
-                )
-                CueDropdown(
-                    title: "Grain",
-                    subtitle: "Fine static grain over the background (behind the posters).",
-                    icon: "aqi.medium",
-                    selection: String(probe.flags.grain),
-                    options: [(0.0, "Off"), (0.05, "Light"), (0.1, "Medium"), (0.16, "Strong"), (0.25, "Very strong")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.grain = v }
-                }
-                PerfToggleRow(
                     icon: "circle.dashed.inset.filled",
                     title: "Billboard vignette",
                     subtitle: "The billboard's edges and corners darker (stronger than the rows' vignette), so the dots read on any picture.",

@@ -1971,12 +1971,9 @@ final class LaunchPreloader: ObservableObject {
         // actor — under the curtain.
         t = CACurrentMediaTime()
         _ = StageArt.shade
-        _ = FixedFocusBackdropArt.grain
-        _ = FixedFocusBackdropArt.shadow
-        _ = FixedFocusBackdropArt.glow
         _ = FixedFocusCardEdge.shadowImage
         _ = BillboardShade.twoFadesImage
-        line(String(format: "Setup     artwork 7 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
+        line(String(format: "Setup     artwork 3 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
         progress = 0.25
 
         // ② Decodes, from disk only, a few at a time: the billboard's first

@@ -1442,8 +1442,6 @@ struct HomeUIKitView: View {
     @State private var tint: Color?
     /// Two colours mode: the title's second colour.
     @State private var tintSecond: Color?
-    /// The glow behind the box: the title's colour, brighter.
-    @State private var tintGlow: Color?
     /// The billboard's scrim: the title's colour, very dark.
     @State private var tintDeep: Color?
     /// The "Artwork, blurred" background: the focused title's backdrop.
@@ -1648,7 +1646,6 @@ struct HomeUIKitView: View {
             withAnimation(animation) {
                 tint = colors.first
                 tintSecond = colors.second
-                tintGlow = colors.glow
                 tintDeep = colors.deep
             }
             if let layout {
@@ -1674,19 +1671,6 @@ struct HomeUIKitView: View {
     private var background: some View {
         ZStack {
             TitleTintBackground(tint: tint, second: tintSecond, picture: picture)
-            // Behind the fixed box (it never moves: still pictures): a soft
-            // shadow, and a halo in the title's colour.
-            if probe.flags.boxShadow {
-                Image(uiImage: FixedFocusBackdropArt.shadow)
-                    .position(x: FixedFocusMetrics.boxFrame.midX, y: FixedFocusMetrics.boxFrame.midY)
-            }
-            if probe.flags.boxGlow, let tintGlow {
-                Image(uiImage: FixedFocusBackdropArt.glow)
-                    .renderingMode(.template)
-                    .foregroundStyle(tintGlow)
-                    .opacity(0.7)
-                    .position(x: FixedFocusMetrics.boxFrame.midX, y: FixedFocusMetrics.boxFrame.midY)
-            }
         }
         .frame(width: 1920, height: 1080)
         .ignoresSafeArea()
@@ -1696,8 +1680,7 @@ struct HomeUIKitView: View {
 
 /// THE CALM GROUND under rows of cards and text — Home's rows and the
 /// Detail page's Episodes and More alike: the title's colour(s) (Render Lab
-/// → Background, Tint …) over a near-black base, the subtle vignette and
-/// the grain.
+/// → Background, Tint …) over a near-black base and the subtle vignette.
 /// A blurred backdrop shown as a background (see `BlurredBackdrop`).
 /// The tint's pace (a reference: changing it redraws nothing).
 final class TintPace {
@@ -1792,15 +1775,8 @@ struct TitleTintBackground: View {
                 LinearGradient(stops: BillboardShade.billboardLeftStops, startPoint: .leading, endPoint: .trailing)
                     .opacity(probe.flags.homeLeftFade)
             }
-            // Corners and edges a little darker (Render Lab → Vignette).
-            if probe.flags.vignette { Self.vignette }
-            // Fine static grain (Render Lab → Grain): texture, and it hides
-            // the bands a smooth colour blend shows on TVs.
-            if probe.flags.grain > 0 {
-                Image(uiImage: FixedFocusBackdropArt.grain)
-                    .resizable(resizingMode: .tile)
-                    .opacity(probe.flags.grain)
-            }
+            // Corners and edges a little darker.
+            Self.vignette
         }
         .allowsHitTesting(false)
     }
@@ -1812,12 +1788,11 @@ struct TitleTintBackground: View {
 @MainActor
 enum FixedFocusTint {
     static func colors(for url: String) async
-        -> (first: Color, second: Color?, glow: Color, deep: Color)? {
+        -> (first: Color, second: Color?, deep: Color)? {
         guard let palette = await SpotlightTint.areaPalette(for: url), let first = palette.first else { return nil }
         let second = palette.count > 1 ? palette[1] : nil
         return (shown(hue: first.hue, saturation: first.saturation),
                 second.map { shown(hue: $0.hue, saturation: $0.saturation) },
-                glow(hue: first.hue, saturation: first.saturation),
                 deep(hue: first.hue, saturation: first.saturation))
     }
 
@@ -1929,11 +1904,6 @@ enum FixedFocusTint {
         Color(hue: Double(hue), saturation: min(Double(saturation) * 1.2, 0.75), brightness: 0.1)
     }
 
-    /// The halo behind the box: the title's main colour, bright.
-    private static func glow(hue: CGFloat, saturation: CGFloat) -> Color {
-        Color(hue: Double(hue), saturation: Double(saturation), brightness: 0.95)
-    }
-
     /// How bright the colour is before it is laid over the dark base.
     static let brightness: Double = 0.45
 
@@ -1941,59 +1911,6 @@ enum FixedFocusTint {
     private static func shown(hue: CGFloat, saturation: CGFloat) -> Color {
         Color(hue: Double(hue), saturation: Double(saturation), brightness: brightness)
     }
-}
-
-/// Still pictures for the background, drawn once: the fixed box's shadow
-/// and halo (only what falls OUTSIDE the box — nothing shows through while
-/// the box is handed over on Up/Down) and the grain.
-@MainActor
-enum FixedFocusBackdropArt {
-    /// (The shadow falls a little below the box.)
-    static let shadow = halo(blur: 70, drop: 22, color: UIColor(white: 0, alpha: 0.75), passes: 2, template: false)
-    static let glow = halo(blur: 90, drop: 0, color: .white, passes: 1, template: true)
-
-    /// A soft halo around the box's shape, the inside left empty.
-    private static func halo(blur: CGFloat, drop: CGFloat, color: UIColor, passes: Int, template: Bool) -> UIImage {
-        let box = CGSize(width: FixedFocusMetrics.boxWidth, height: FixedFocusMetrics.height)
-        let margin = blur * 2
-        let size = CGSize(width: box.width + margin * 2, height: box.height + margin * 2)
-        let shape = UIBezierPath(roundedRect: CGRect(origin: CGPoint(x: margin, y: margin), size: box),
-                                 cornerRadius: Spotlight.cornerRadius)
-        let image = UIGraphicsImageRenderer(size: size).image { ctx in
-            let cg = ctx.cgContext
-            // Only outside the shape.
-            let outside = UIBezierPath(rect: CGRect(origin: .zero, size: size))
-            outside.append(shape)
-            outside.usesEvenOddFillRule = true
-            outside.addClip()
-            cg.setShadow(offset: CGSize(width: 0, height: drop), blur: blur, color: color.cgColor)
-            color.setFill()
-            for _ in 0..<passes { shape.fill() }
-        }
-        return template ? image.withRenderingMode(.alwaysTemplate) : image
-    }
-
-    /// Fine noise: light and dark specks of varying strength, tiled.
-    static let grain: UIImage = {
-        let side = 512
-        var bytes = [UInt8](repeating: 0, count: side * side * 4)
-        var generator = SystemRandomNumberGenerator()
-        for i in stride(from: 0, to: bytes.count, by: 4) {
-            // Two throws summed: mostly faint specks, few strong ones.
-            let value = (Double.random(in: -1...1, using: &generator)
-                         + Double.random(in: -1...1, using: &generator)) / 2
-            let alpha = UInt8(abs(value) * 255)
-            let level: UInt8 = value > 0 ? alpha : 0   // premultiplied white, or black
-            bytes[i] = level; bytes[i + 1] = level; bytes[i + 2] = level; bytes[i + 3] = alpha
-        }
-        let provider = CGDataProvider(data: Data(bytes) as CFData)!
-        let image = CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 32,
-                            bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
-                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                            provider: provider, decode: nil, shouldInterpolate: false,
-                            intent: .defaultIntent)!
-        return UIImage(cgImage: image)
-    }()
 }
 
 /// The billboard's text, laid out ON THE ROWS' GRID: where a row has its
