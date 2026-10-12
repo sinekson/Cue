@@ -2001,8 +2001,7 @@ struct FixedFocusBillboardText: View {
     static func ratingsChips(_ ratings: MDBListRatings?, settings: MDBListSettings, item: MetaItem) -> AnyView? {
         let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating)
         return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(
-            entries: Array(entries.prefix(ratingsShown)), inline: true,
-            chips: MDBListRatingsRow.ChipStyle(rawValue: RenderProbe.shared.flags.billboardRatings) ?? .chips))
+            entries: Array(entries.prefix(ratingsShown))))
     }
     /// The block's top, so the logo's room ends `logoToSummary` above where
     /// the box does (no summary: the name, facts and chips are as before).
@@ -2458,11 +2457,8 @@ enum FixedFocusText {
 /// The focus outline (Render Lab → Focus outline).
 @MainActor
 enum FixedFocusRing {
-    /// "strong" 4 pt 85 %, or "soft" 3 pt 75 % (the default — any older
-    /// stored value means it too).
-    static var strong: Bool { RenderProbe.shared.flags.focusOutline == "strong" }
-    static var width: CGFloat { strong ? 4 : 3 }
-    static var color: UIColor { UIColor.white.withAlphaComponent(strong ? 0.85 : 0.75) }
+    static let width: CGFloat = 4
+    static let color = UIColor.white.withAlphaComponent(0.85)
 }
 
 /// Where focus is on the billboard: title `index` of `count`.

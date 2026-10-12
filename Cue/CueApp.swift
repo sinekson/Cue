@@ -2259,10 +2259,9 @@ final class TitlePreloader {
             await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
         }
         if let logo { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
-        let flags = RenderProbe.shared.flags
         if let url = backdrops.first { _ = await FixedFocusTint.colors(for: url) }
         guard depth == .full else { return net }
-        _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster, strength: flags.detailsPictureBlur)
+        _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster)
         // A show: the season extras (Details asks for every season — the
         // first 10 here) and the stills around Play's episode.
         guard meta.isSeries else { return net }

@@ -1,21 +1,4 @@
 import SwiftUI
-import AVKit
-
-let detailButtonSize: CGFloat = 64
-let episodeSlideDuration: Double = 0.15      // row slide
-let episodeLiftDelay: Duration = .milliseconds(110)  // lift starts just before slide ends
-let episodeLiftAnimation: Animation = .easeOut(duration: 0.12)  // the grow itself
-
-// MARK: - Detail pages
-//
-// The Detail page is three "pages", each a full screen: Overview (logo,
-// text, buttons), Episodes (series only) and More (cast, collection, …).
-// Moving focus into another page scrolls it to the top of the screen.
-
-/// The page-to-page scroll: quick start, long gentle finish.
-let detailPageScroll: Animation = .timingCurve(0.15, 0.85, 0.25, 1, duration: 0.65)
-
-enum DetailPage: Hashable { case overview, episodes, more }
 
 /// Details' depth below the billboard (see `DetailView.rowsDepth`).
 @Observable @MainActor
@@ -63,14 +46,6 @@ private struct RowsDepthReader<Content: View>: View {
     let model: DetailRowsDepth
     @ViewBuilder let content: (Int) -> Content
     var body: some View { content(model.depth) }
-}
-
-/// The season selector's name widths, by season.
-private struct SeasonWidthKey: PreferenceKey {
-    static let defaultValue: [Int: CGFloat] = [:]
-    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-        value.merge(nextValue()) { _, new in new }
-    }
 }
 
 @MainActor
@@ -453,7 +428,6 @@ final class DetailViewModel: ObservableObject {
     }
 }
 
-
 struct DetailView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
@@ -465,7 +439,6 @@ struct DetailView: View {
     @EnvironmentObject private var layout: HomeCatalogSettingsStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var profiles: ProfileStore
-    @ObservedObject private var perf = PerformanceSettingsStore.shared
     @StateObject private var viewModel: DetailViewModel
 
     /// Play: finds the first source IN PLACE (the button says so — see
@@ -515,12 +488,6 @@ struct DetailView: View {
         get { actionBridge.current }
         nonmutating set { actionBridge.request(newValue) }
     }
-    /// The button row as DRAWN: the one that is a pill (the focused one —
-    /// or, focus elsewhere, the last focused), and whether it's focused
-    /// (white). Both follow focus after `DetailActionButton.paintDelay`, so
-    /// a one-frame visit (a vertical move lands on a circle before the
-    /// row's redirect puts focus on Play) never paints.
-    @State private var pillAction: ActionControl = .play
     /// (From the billboard: Play lit from the first frame — the swap brought
     /// it in lit; focus lands on it a moment later without a visible change.)
     /// About's content height, as laid out (see `FixedFocusCustomRow.contentHeight`).
@@ -532,16 +499,6 @@ struct DetailView: View {
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
-    /// The episode that currently holds focus, reported by `EpisodeCell`'s
-    /// `onFocus` callback. Drives the "focused episode stays in the first
-    /// column, the row slides" scroll in `episodesSection`.
-    @State private var focusedEpisode: String?
-    /// Programmatic focus INTO the episode row (Down from the buttons lands
-    /// on an episode, not on the season chips).
-    @FocusState private var episodeFocus: String?
-    /// Which page holds focus — drives the page scroll, the backdrop
-    /// darkening and the trailer (Overview only).
-    @State private var page: DetailPage = .overview
     /// The title's colours: Episodes / More sit on them (as Home's rows).
     @State private var tint: Color? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardTint.first : nil
@@ -570,97 +527,13 @@ struct DetailView: View {
     @State private var handedPlayTitle: String? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardPlayTitle : nil
     }
-    /// The More-page row that has focus; each one scrolls to the same spot.
-    @State private var moreRow: MoreRow?
     /// The season row opens on the Play target's season, once.
     @State private var seasonAutoPicked = false
 
-    // Episode row (Home-spotlight style): ONE focusable box at a fixed spot,
-    // the row slides underneath. Continuous across the regular seasons;
-    // the Specials chip switches the row to the specials.
-    @State private var episodeIndex = 0
-    /// The episode row moves like Home's rows: the cards' resistance nudge,
-    /// a heavy step across a season seam, the pressed ‹ ›, the pressed
-    /// seam card.
-    /// The season selector above the box has focus.
-    @FocusState private var seasonFocused: Bool
-    /// The season names' widths (at full size), for the selector's layout.
-    @State private var seasonWidths: [Int: CGFloat] = [:]
-    /// Which way the season names last moved (for their slide).
-    @State private var seasonStep = 1
-    /// Focus is in the episode row.
-    @State private var episodeRowFocused = false
-    /// A new value moves focus into the episode row (see `EpisodeRow`).
-    @State private var episodeFocusRequest = 0
     /// How Play was pressed while a series' episode list was still loading —
     /// replayed against the real episode the moment it resolves.
     private enum PendingPlay { case auto, manual }
     @State private var pendingSeriesPlay: PendingPlay?
-    /// Down pressed on the buttons before a show's episodes were in: into the
-    /// row the moment they are (not dropped, and not on to the rows below).
-    @State private var pendingEpisodesDown = false
-
-    /// A show still loading its episodes: nothing below the buttons yet.
-    private var episodesPending: Bool {
-        viewModel.meta.isSeries && rowEpisodes.isEmpty && viewModel.isLoading
-    }
-    /// The rows below the episodes (More Like This, Cast, About) are built a
-    /// moment after the page's content is in — not in the swap's last frames,
-    /// where building all their cards at once made it stutter.
-    @State private var moreReady = false
-    /// …a film's Down before then: into the first of them once they are.
-    @State private var pendingMoreDown = false
-    /// Programmatic focus into a More row (its count goes up).
-    @State private var moreFocusRequests: [MoreRow: Int] = [:]
-    private var morePending: Bool { !viewModel.meta.isSeries && !moreReady }
-    /// The ⋯ button's choices (rate, watched, start over, play manually).
-    /// Trailer playing silently in the backdrop after the idle delay.
-    @State private var backdropPlayer: AVPlayer?
-    @State private var showBackdropTrailer = false
-    /// Loop observer for the backdrop trailer, removed on teardown — otherwise
-    /// every Detail visit leaves a dead block registered with the notification
-    /// center forever.
-    /// Fires when the backdrop trailer reaches its end — see
-    /// `restoreBackdropArtwork()`.
-    @State private var backdropEndToken: NSObjectProtocol?
-    /// Holds the teardown until the fade has finished. Cancellable, because a
-    /// page leaving (or a new trailer arming) must win over a fade in flight.
-    @State private var backdropFadeTask: Task<Void, Never>?
-    /// Netflix-style: once the muted backdrop trailer has been playing and the
-    /// user stays idle a beat longer, the page chrome fades away and the
-    /// trailer takes the full screen (with sound). Any press/move restores.
-    @State private var trailerFullscreen = false
-    @State private var teaserFocused = false
-    /// The synopsis teaser becomes focusable only once Play has held focus
-    /// (or a moment has passed). It is the topmost focusable on the page, so
-    /// whenever the engine re-resolved — the page's data landing a beat after
-    /// the first frame — it went there, and the correction back to Play was
-    /// the visible "starts on the plot, then jumps" hop. Unfocusable, it can't
-    /// be the engine's pick; Up from Play reaches it as soon as it is armed.
-    @State private var teaserArmed = false
-    /// Bumped on any tracked focus change; re-arms (or cancels) the idle timer.
-    @State private var interactionCount = 0
-    /// Set when the user backs OUT of full-screen: the idle timer stays
-    /// disarmed until they actually move again, so exiting doesn't bounce
-    /// straight back into full-screen after the next 2 idle seconds.
-    @State private var fullscreenCooldown = false
-    /// When full-screen was last exited; focus changes inside a short window
-    /// after it are the programmatic restore, not the user moving.
-    @State private var fullscreenExitedAt = Date.distantPast
-    /// True only while the muted backdrop trailer is actually rendering
-    /// frames. `showBackdropTrailer` flips as soon as the player is created,
-    /// long before the first frame — full-screen used to fade the chrome out
-    /// over the static backdrop, then eat the next press to come back.
-    @State private var backdropTrailerPlaying = false
-    /// Up / Back in trailer mode: the page is back, the trailer runs on
-    /// muted (see `TrailerMode`).
-    @State private var trailerRevealed = false
-    /// The trailer's sound took the audio session (given back on teardown).
-    @State private var trailerAudioActive = false
-    @State private var backdropStatusObserver: NSKeyValueObservation?
-    /// Watches the ITEM, not the player — see `startBackdropTrailerIfEnabled`.
-    @State private var backdropItemObserver: NSKeyValueObservation?
-    @FocusState private var fullscreenTrailerFocus: Bool
 
     init(
         item: MetaItem,
@@ -708,87 +581,7 @@ struct DetailView: View {
         let _ = DetailOpenProbe.note("body")
         ZStack {
             ATVBackground()
-            if RenderProbe.shared.flags.detailsOnRows {
-                rowsLayer
-            } else {
-            backdrop
-            // Full screen, like Home's spotlight: the pages place everything
-            // themselves with the SAME margins and label heights as Home.
-            GeometryReader { geo in
-                ScrollViewReader { pageProxy in
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            overviewPage(size: geo.size)
-                                .id(DetailPage.overview)
-                            if viewModel.meta.isSeries {
-                                episodesPage(size: geo.size)
-                                    .id(DetailPage.episodes)
-                                    // Scrolled above the More row in view: out
-                                    // of sight (it peeked over the row's title).
-                                    .opacity(page == .more ? 0 : 1)
-                                    .animation(detailPageScroll, value: page == .more)
-                            }
-                            if morePageTitle != nil, moreReady {
-                                morePage(height: geo.size.height)
-                                    .id(DetailPage.more)
-                                    // (Not before the episodes above them: a
-                                    // Down then waits for those instead.)
-                                    .disabled(episodesPending)
-                            }
-                        }
-                    }
-                    .scrollClipDisabled()
-                    // Only OUR scrolls move the page (pages, More rows). Left
-                    // to it, the focus engine scrolls too — just enough to
-                    // show the focused view — and the two fought.
-                    .scrollDisabled(true)
-                    // Between the More page's rows: the same fast-then-slow
-                    // scroll, bringing each row to the spot the first one has.
-                    .onChange(of: moreRow) { _, row in
-                        guard let row else { return }
-                        withAnimation(detailPageScroll) { pageProxy.scrollTo(row, anchor: .top) }
-                        // As for pages: win over the focus engine's own scroll.
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(60))
-                            guard moreRow == row else { return }
-                            withAnimation(detailPageScroll) { pageProxy.scrollTo(row, anchor: .top) }
-                        }
-                    }
-                    // Focus entered another page: bring that page's top to
-                    // the top of the screen.
-                    .onChange(of: page) { _, newPage in
-                        if newPage != .more { moreRow = nil }
-                        // More scrolls by its rows (`moreRow`), each to one spot.
-                        guard newPage != .more else { return }
-                        withAnimation(detailPageScroll) {
-                            pageProxy.scrollTo(newPage, anchor: .top)
-                        }
-                        // The focus engine scrolls too — just enough to show
-                        // the newly focused view — and that can stop our
-                        // scroll short (coming back up from deep in More).
-                        // Scroll again once it's done, so the page wins.
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(60))
-                            guard page == newPage else { return }
-                            withAnimation(detailPageScroll) {
-                                pageProxy.scrollTo(newPage, anchor: .top)
-                            }
-                        }
-                    }
-                }
-            }
-            .ignoresSafeArea()
-            // Play owns the page from the first frame. Without this the focus
-            // engine picks the topmost focusable — the synopsis teaser — and
-            // the action row's entry redirect then hops focus down to Play in
-            // a later frame, which reads as the page snatching focus away from
-            // whatever you were looking at.
-            .opacity(trailerFullscreen ? 0 : 1)
-            // Hidden is NOT unfocusable: without this, focus could stay on the
-            // invisible synopsis during full-screen — whose move-handler then
-            // swallowed every press, locking full-screen mode in.
-            .disabled(trailerFullscreen)
-            }
+            rowsLayer
 
             // Info: the summary in a glass panel over the page; Back (or
             // Select) closes it, focus back on Info.
@@ -801,76 +594,9 @@ struct DetailView: View {
                 .transition(.opacity)
             }
 
-            // Full-screen trailer mode: an invisible focusable overlay holds
-            // focus; ANY input — move, Select, Menu, ⏯ — restores the page.
-            // NOT a Button: one with a fully transparent label never becomes
-            // focusable, so nothing held focus and full-screen locked in.
-            if trailerFullscreen {
-                Color.black.opacity(0.001)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
-                    .focusable()
-                    .focused($fullscreenTrailerFocus)
-                    .onMoveCommand { _ in exitTrailerFullscreen() }
-                    .onExitCommand { exitTrailerFullscreen() }
-                    .onPlayPauseCommand { exitTrailerFullscreen() }
-                    .onTapGesture { exitTrailerFullscreen() }
-            }
         }
         .animation(Motion.fade, value: summaryShown)
-        // Arm the idle → full-screen countdown only while the viewer is resting
-        // on the SYNOPSIS — never while focus is on the action row.
-        //
-        // Resting on Play is not idling: Play is this page's DEFAULT focus, so
-        // the countdown fired on every visit and dissolved the page a few
-        // seconds after it opened (device trailer delay 3s + 6s idle). The
-        // chrome goes to `.opacity(0)` and `.disabled`, which DELETES the Play
-        // button mid-visit: a hold-Select that overlaps the takeover is
-        // cancelled, and one attempted after it only restores the chrome. That
-        // is the second, independent half of "the hold menu on Play doesn't
-        // work" — measured on the sim: without this gate the page reached
-        // `fs=1` 17s after opening and focus was stranded off the row; with it,
-        // Play held focus for 14m45s across 205 samples and it never fired.
-        // Full screen is still reachable on demand from the trailer button.
-        .task(id: "\(backdropTrailerPlaying)#\(interactionCount)#\(trailerFullscreen)") {
-            guard backdropTrailerPlaying, !trailerFullscreen, !fullscreenCooldown,
-                  activeTrailer == nil,
-                  teaserFocused, actionFocus == nil else { return }
-            // A real rest, not a reading pause: the first press after the
-            // chrome fades only brings it back, so this must never fire while
-            // someone is still deciding.
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled, backdropTrailerPlaying, !trailerFullscreen,
-                  !fullscreenCooldown, activeTrailer == nil,
-                  teaserFocused, actionFocus == nil,
-                  !PiPHandoff.shared.isActive else { return }
-            // Un-muting needs a live audio session — the muted backdrop
-            // deliberately runs without one (a raw AVPlayer can stall on tvOS
-            // otherwise), so without this the full-screen trailer was SILENT.
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try? AVAudioSession.sharedInstance().setActive(true)
-            backdropPlayer?.isMuted = false
-            // A bare AVPlayerLayer doesn't suppress the tvOS screensaver the
-            // way AVPlayerViewController does — without this the Aerial saver
-            // rolled in over a full-screen trailer.
-            UIApplication.shared.isIdleTimerDisabled = true
-            withAnimation(.easeInOut(duration: 0.6)) { trailerFullscreen = true }
-            // Deferred: set in the same transaction as the button's insertion
-            // it can be ignored.
-            try? await Task.sleep(for: .milliseconds(120))
-            fullscreenTrailerFocus = true
-        }
         .task {
-            // Dev: -detailRows scrolls to the rows below the overview (the
-            // simulator can't press Down).
-            if ProcessInfo.processInfo.arguments.contains("-detailRows") {
-                try? await Task.sleep(for: .seconds(4))
-                if viewModel.meta.isSeries { page = .episodes } else { focusMoreRow(moreRows.first ?? .about) }
-                if ProcessInfo.processInfo.arguments.contains("-detailAbout") {
-                    try? await Task.sleep(for: .seconds(1))
-                    focusMoreRow(.about)
-                }
-            }
             // Dev: -sourcesDemo opens the source panel (the simulator can't hold Play).
             guard ProcessInfo.processInfo.arguments.contains("-sourcesDemo"), !viewModel.meta.isSeries else { return }
             try? await Task.sleep(for: .seconds(2))
@@ -883,51 +609,17 @@ struct DetailView: View {
                 while !Task.isCancelled {
                     let env = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow
                     let item = env.flatMap { UIFocusSystem.focusSystem(for: $0)?.focusedItem }
-                    NSLog("[CueFocus] focused=%@ fs=%d captureFocus=%d teaser=%d action=%@",
+                    NSLog("[CueFocus] focused=%@ action=%@",
                           item.map { String(describing: $0).prefix(200) }.map(String.init) ?? "NONE",
-                          trailerFullscreen ? 1 : 0,
-                          fullscreenTrailerFocus ? 1 : 0,
-                          teaserFocused ? 1 : 0,
                           actionFocus.map { String(describing: $0) } ?? "nil")
                     try? await Task.sleep(for: .seconds(2))
                 }
             }
         }
-        // Trailer only on the Overview page: leaving it stops the trailer
-        // at once (fully torn down, no decoder left running).
-        .onChange(of: page) { _, newPage in
-            if newPage != .overview { teardownBackdropTrailer() }
-        }
-        // Play pressed before the episode list arrived: run it now, against
-        // the episode the loaded data actually points at.
-        // The More rows: shortly after the content is in (or at once when the
-        // viewer heads down there).
-        .task(id: viewModel.isLoading) {
-            guard !viewModel.isLoading, !moreReady else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            moreReady = true
-        }
-        .onChange(of: page) { _, newPage in
-            if newPage != .overview { moreReady = true }
-        }
-        .onChange(of: moreReady) { _, ready in
-            guard ready, pendingMoreDown, let first = moreRows.first else { return }
-            pendingMoreDown = false
-            DispatchQueue.main.async { moreFocusRequests[first, default: 0] += 1 }
-        }
-        .onChange(of: rowEpisodes.isEmpty) { _, empty in
-            guard !empty, pendingEpisodesDown else { return }
-            pendingEpisodesDown = false
-            if actionFocus != nil { enterEpisodeRow() }
-        }
         .onChange(of: seriesPlayTarget?.id) { _, _ in
             // The episode row opens on the season Play would start.
-            // The episode row opens ON the episode Play would start.
             if !seasonAutoPicked, let target = seriesPlayTarget {
                 seasonAutoPicked = true
-                if let index = rowEpisodes.firstIndex(where: { $0.id == target.id }) {
-                    episodeIndex = index
-                }
                 if let season = target.season { viewModel.selectedSeason = season }
             }
             guard let pending = pendingSeriesPlay, let target = seriesPlayTarget else { return }
@@ -936,34 +628,6 @@ struct DetailView: View {
             case .auto: play(target, onButton: true)
             case .manual: openSources(target)
             }
-        }
-        // `.defaultFocus($actionFocus, .play)` opens the page on Play, but it
-        // LOSES A RACE on a cold start: the page's data lands a beat after the
-        // first frame, the focus engine re-resolves, and the topmost focusable
-        // — the synopsis teaser — takes focus instead. A show hides this (its
-        // Play title changes to "Play S1:E1" when episodes arrive, which
-        // re-settles the row); a movie's title never changes, so the page just
-        // sits there with the synopsis lit. Reproduced against a freshly
-        // installed app in `FocusTour.testDetailPlayHold`.
-        //
-        // So: for a short window after the page opens, move focus back to Play
-        // whenever it is resting on the teaser. ONE writer, deferred, and it
-        // stops the moment the action row holds focus — the rules the rest of
-        // this page's focus code follows. It never touches a move to anywhere
-        // else, so pressing Down into the cast row still works immediately.
-        .task {
-            for _ in 0..<12 {
-                try? await Task.sleep(for: .milliseconds(150))
-                if actionFocus != nil || trailerFullscreen { return }
-                guard teaserFocused else { continue }
-                actionFocus = .play
-            }
-        }
-        // Arm the teaser even if Play somehow never took focus, so the
-        // synopsis is always reachable.
-        .task {
-            try? await Task.sleep(for: .seconds(2))
-            teaserArmed = true
         }
         .task {
             // Opened from the billboard: let the swap play first — the load
@@ -974,13 +638,6 @@ struct DetailView: View {
                                  settleUntil: fromBillboard && !prepared
                                     ? Date().addingTimeInterval(ModeSwap.swapSettle + 0.15) : nil)
         }
-        // Auto-play the trailer in the backdrop after the configured idle
-        // delay. Re-runs once trailers finish loading. Resolves silently — no
-        // loading UI — and only swaps in when the video is actually ready.
-        .task(id: autoTrailerKey) {
-            await startBackdropTrailerIfEnabled()
-        }
-        .onDisappear { teardownBackdropTrailer() }
         .onReceive(viewModel.objectWillChange) { DetailOpenProbe.note("change") }
         .onAppear {
             DetailOpenProbe.note("appear")
@@ -994,37 +651,10 @@ struct DetailView: View {
                 DispatchQueue.main.async { act(held) }
             }
         }
-        // Back, when opened from the billboard: from a lower page first up
-        // to the overview; from the overview, this page's half of the swap
+        // Back, when opened from the billboard: this page's half of the swap
         // out, then Home plays the rest.
-        // (In trailer mode Back first only brings the page back.)
         .onExitCommand(perform: launcher.searching != nil ? { launcher.cancel() }
-                       : trailerMode ? { revealTrailerPage() }
                        : fromBillboard && onReturnToBillboard != nil ? { backToBillboard() } : nil)
-        // Trailer mode starts only while Play HOLDS focus: moving off it
-        // (right to the other buttons, down to Episodes) stops the trailer;
-        // back on Play the countdown starts over.
-        .onChange(of: actionFocus) { old, new in
-            // Moved on (between buttons) after an early Down: that Down is
-            // void. (Focus first landing on Play isn't a move.)
-            if old != nil { pendingEpisodesDown = false; pendingMoreDown = false }
-            if new != .play, backdropPlayer != nil { teardownBackdropTrailer() }
-        }
-        .onChange(of: trailerMode) { _, on in
-            // A bare AVPlayerLayer doesn't hold off the screensaver.
-            UIApplication.shared.isIdleTimerDisabled = on
-        }
-        // The player just handed its picture to the PiP window and dismissed
-        // onto this page: a trailer already rolling underneath must go, for
-        // the same reasons the auto-start above declines to begin one.
-        .onReceive(NotificationCenter.default.publisher(for: PiPHandoff.didBeginNotification)) { _ in
-            teardownBackdropTrailer()
-        }
-        // Opening the full-screen trailer or navigating to play: stop the
-        // muted backdrop so two players don't fight over audio.
-        .onChange(of: activeTrailer?.id) { _, newValue in
-            if newValue != nil { backdropPlayer?.pause() }
-        }
         .fullScreenCover(item: $activeTrailer) { trailer in
             // The alternates come along so a first pick that this connection
             // can't reach falls through to the next one instead of landing on
@@ -1035,372 +665,7 @@ struct DetailView: View {
         }
     }
 
-    /// Behind the whole page, pinned: the calm ground of Home's rows (the
-    /// title's colours). The picture scrolls away over it with the overview
-    /// (`stagePicture`), and Episodes / More sit on it.
-    private var backdrop: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .top) {
-                TitleTintBackground(tint: tint, second: tintSecond)
-                    .task(id: viewModel.meta.id) {
-                        guard let url = viewModel.backdropURL,
-                              let colors = await FixedFocusTint.colors(for: url)
-                        else { return }
-                        tint = colors.first
-                        tintSecond = colors.second
-                    }
-                // For now the picture stays behind every page (Episodes and
-                // More too, with the same left fade); how it hands over to
-                // the colours below the overview is still open (its edge,
-                // below the screen here, is for that).
-                stagePicture(size: geo.size)
-                // Episodes / More: the picture steps back, so the cards on the right —
-                // outside the left fade — sit on calm ground.
-                Color.black
-                    .opacity(page == .overview ? 0 : StagePictureView.dimBelow)
-                    .animation(detailPageScroll, value: page == .overview)
-                    .allowsHitTesting(false)
-            }
-        }
-        .ignoresSafeArea()
-    }
-
-    /// THE PICTURE — part of the overview page, so it scrolls away with it
-    /// (one long page, no fades): the backdrop (or its trailer) under the
-    /// billboard's shade, exactly as on Home's billboard, and below the
-    /// screen its EDGE (Render Lab → Details: picture edge) — the picture's
-    /// own bottom, mirrored, blurred and faded into the colours (it seems to
-    /// melt as it scrolls up), or a plain edge with a soft shadow.
-    private func stagePicture(size: CGSize) -> some View {
-        let url = viewModel.backdropURL
-        let drift = StagePictureView.drift
-        return ZStack {
-            // Decorative backdrop — kept out of hit testing so it cannot
-            // swallow the action row's context-menu hit test (the same bug
-            // the home Featured bar caused for Continue Watching).
-            // EXACTLY Home's billboard picture (`StagePictureView`): the same
-            // image (so it's in memory already: no blink on the swap), the
-            // same size — a little wider than the screen — and place.
-            RemoteImage(url: url, maxDimension: StagePictureView.pictureSize.width)
-                .allowsHitTesting(false)
-                .frame(width: size.width + 2 * drift, height: size.height)
-                .frame(width: size.width, height: size.height)
-                // The picture a step closer than Home's.
-                .scaleEffect(ModeSwap.depthScale(depth))
-            // MOUNTED ALWAYS, revealed by opacity — never inserted into
-            // the tree while the page is on screen. Inserting a
-            // UIViewRepresentable makes the focus engine re-resolve (the
-            // reason this view is `isUserInteractionEnabled = false` in
-            // the first place), and the insertion lands ~3s after the page
-            // opens: exactly when a viewer is reaching for hold-Select on
-            // Play, whose long-press the re-resolve then cancels — the
-            // "hold panel doesn't work any more" report. It used to be
-            // hidden by how OFTEN extraction failed or ran long; caching
-            // resolved URLs made it punctual and the collision routine.
-            BackdropVideoView(player: backdropPlayer)
-                .frame(width: size.width, height: size.height)
-                .allowsHitTesting(false)
-                .opacity(showBackdropTrailer ? 1 : 0)
-            // Episodes / More: the same picture, blurred (made once, a
-            // still — Render Lab → Details: picture blur below), fading
-            // in over the sharp one as you leave the overview.
-            ZStack {
-                if let blurredBackdrop {
-                    Image(uiImage: blurredBackdrop)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: size.width + 2 * drift, height: size.height)
-                        .frame(width: size.width, height: size.height)
-                        // As close as the sharp picture (the step-in zoom).
-                        .scaleEffect(ModeSwap.depthScale(depth))
-                }
-            }
-            .opacity(page == .overview ? 0 : 1)
-            .animation(detailPageScroll, value: page == .overview)
-            .task(id: "\(viewModel.meta.id)|\(RenderProbe.shared.flags.detailsPictureBlur)") {
-                blurredBackdrop = await BlurredBackdrop.image(
-                    for: url, strength: RenderProbe.shared.flags.detailsPictureBlur)
-            }
-            // The stage's shade — the billboard's, exactly (left fade,
-            // vignette).
-            BillboardShade()
-                .opacity(trailerFullscreen ? 0 : trailerMode ? TrailerMode.scrimOpacity : scrim)
-                .animation(TrailerMode.fade, value: trailerMode)
-                // Episodes / More: lighter — the blur and the dim already
-                // darken.
-                .opacity(page != .overview ? StagePictureView.shadeBelow : 1)
-                .animation(detailPageScroll, value: page == .overview)
-        }
-        .frame(width: size.width, height: size.height)
-        .clipped()
-        // The overview: faded out at the bottom into the colours, as the
-        // billboard (Render Lab → Billboard bottom fade); below it, full.
-        .mask {
-            let fade = page == .overview ? RenderProbe.shared.flags.billboardBottomFade : 0
-            let start = max(size.height - fade, 0) / size.height
-            LinearGradient(stops: [.init(color: .black, location: 0),
-                                   .init(color: .black, location: start),
-                                   .init(color: .black.opacity(fade > 0 ? 0 : 1), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
-                .animation(detailPageScroll, value: page == .overview)
-        }
-        .allowsHitTesting(false)
-    }
-
-
-    /// Changes when the delay setting or the first trailer changes, so the
-    /// timed `.task` restarts appropriately.
-    private var autoTrailerKey: String {
-        "\(viewModel.trailers.first?.youtubeKey ?? "")#\(page == .overview)#\(actionFocus == .play)"
-    }
-
-    private func startBackdropTrailerIfEnabled() async {
-        // Off for now (see `TrailerMode.enabled`).
-        guard TrailerMode.enabled else { return }
-        let delay = TrailerMode.delay
-        // Reduce Motion keeps the still backdrop. An auto-starting, looping
-        // trailer is unrequested motion by definition, and it escalates itself
-        // to full screen a few seconds later — a large positional transition
-        // the viewer never asked for and the setting's copy never mentions.
-        guard !perf.reduceMotion else { return }
-        // Overview page only; returning to it starts the trailer again.
-        guard page == .overview, actionFocus == .play else { return }
-        guard !viewModel.trailers.isEmpty else { return }
-        // EVERY trailer the title has, best first — not just the top one. A
-        // geo-restricted first pick (routine when the connection leaves the
-        // house through a VPN exit in another country) used to be the end of
-        // it; `backdropItem` now falls through to the next candidate.
-        let candidates = viewModel.trailers.map(\.youtubeKey)
-        // Resolve WHILE the idle delay runs, not after it — extraction (and
-        // the remote fallback especially) can take several seconds, and
-        // serializing it behind the delay made the trailer feel like forever.
-        async let resolved = TrailerResolver.backdropItem(candidates: candidates)
-        try? await Task.sleep(for: .seconds(delay))
-        guard !Task.isCancelled, actionFocus == .play else { return }
-        // The title is playing in the Picture in Picture window (the player
-        // dismissed onto this page): a second decoder and a full-screen
-        // trailer that grabs and then drops the audio session would stall it.
-        guard !PiPHandoff.shared.isActive else { return }
-        guard let resolvedTrailer = await resolved else {
-            NSLog("[CueTrailer] backdrop resolve failed for %@", candidates.joined(separator: ","))
-            return
-        }
-        let item = resolvedTrailer.item
-        guard !Task.isCancelled else { return }
-        // This task re-runs whenever `autoTrailerKey` changes (the delay setting
-        // or the trailer list). Tear the previous player down first, or the old
-        // AVPlayer kept decoding/playing with its reference simply dropped —
-        // two players fighting, and a leaked decoder. Full teardown also clears
-        // its observers, item, audio session and fullscreen state.
-        teardownBackdropTrailer()
-        let player = AVPlayer(playerItem: item)
-        // With sound (trailer mode) — which needs a live audio session, or a
-        // raw AVPlayer on tvOS stays silent (or stalls).
-        setTrailerSound(true, on: player)
-        // Play ONCE and give the backdrop art back, rather than restarting
-        // forever. `.none` rather than `.pause` so the player holds its last
-        // frame at the end instead of resetting — that held frame is what
-        // dissolves back into the artwork.
-        player.actionAtItemEnd = .none
-        // The task can re-run within one visit (autoTrailerKey change) —
-        // release the previous observer before installing a new one.
-        if let token = backdropEndToken { NotificationCenter.default.removeObserver(token) }
-        backdropEndToken = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: item, queue: .main
-        ) { _ in
-            Task { @MainActor in restoreBackdropArtwork() }
-        }
-        backdropPlayer = player
-        // A URL minted for a network path the box has since left (a VPN going
-        // up or down mid-session) answers 403 rather than video, and the item
-        // fails instead of ever playing. Forget it, so the next visit to this
-        // title extracts again rather than replaying the same dead link for
-        // the rest of the cache window.
-        backdropItemObserver?.invalidate()
-        // Capture the KEY, not the resolved pair — the observation outlives
-        // this scope and shouldn't be the reason the item stays alive.
-        let resolvedKey = resolvedTrailer.youtubeKey
-        backdropItemObserver = item.observe(\.status, options: [.new]) { observed, _ in
-            guard observed.status == .failed else { return }
-            NSLog("[CueTrailer] backdrop %@ failed to load: %@", resolvedKey,
-                  String(describing: observed.error))
-            TrailerResolver.invalidate(youtubeKey: resolvedKey)
-        }
-        backdropStatusObserver?.invalidate()
-        backdropStatusObserver = player.observe(\.timeControlStatus, options: [.initial, .new]) { player, _ in
-            let playing = player.timeControlStatus == .playing
-            Task { @MainActor in backdropTrailerPlaying = playing }
-        }
-        player.play()
-        withAnimation(.easeInOut(duration: 0.6)) { showBackdropTrailer = true }
-    }
-
-    /// How long the backdrop trailer takes to dissolve back into the still
-    /// art. Matches the Home hero's, so the two read as one behaviour.
-    private static let backdropFadeSeconds: TimeInterval = 0.7
-
-    /// The backdrop trailer finished. Dissolve it back into the still artwork,
-    /// and only then take the player down.
-    ///
-    /// The order matters: `teardownBackdropTrailer` clears the layer's player,
-    /// which empties it to black at once — doing that first and animating
-    /// afterwards would fade out a black rectangle over the artwork instead of
-    /// the trailer's last frame.
-    ///
-    /// A trailer that ends while the viewer has escalated it to FULL SCREEN is
-    /// put back on the page first, through the same `exitTrailerFullscreen`
-    /// that a Menu press uses — so the audio session, the idle timer, the
-    /// cooldown and the focus hand-back to Play all happen exactly as they
-    /// already do, rather than being re-implemented here. The dissolve follows
-    /// once the page is back.
-    @MainActor
-    private func restoreBackdropArtwork() {
-        guard backdropPlayer != nil else { return }
-        guard showBackdropTrailer else { teardownBackdropTrailer(); return }
-        let wasFullscreen = trailerFullscreen
-        if wasFullscreen { exitTrailerFullscreen() }
-        backdropFadeTask?.cancel()
-        backdropFadeTask = Task { @MainActor in
-            if wasFullscreen {
-                // Let the page settle back before dissolving, so the two
-                // animations read as one move rather than fighting.
-                try? await Task.sleep(for: .milliseconds(350))
-                guard !Task.isCancelled, backdropPlayer != nil else { return }
-            }
-            withAnimation(.easeInOut(duration: Self.backdropFadeSeconds)) {
-                showBackdropTrailer = false
-            }
-            try? await Task.sleep(for: .seconds(Self.backdropFadeSeconds))
-            guard !Task.isCancelled else { return }
-            teardownBackdropTrailer()
-        }
-    }
-
-    /// Restore the detail page from full-screen trailer mode and put focus
-    /// back on Play.
-    private func exitTrailerFullscreen() {
-        fullscreenCooldown = true
-        fullscreenExitedAt = Date()
-        UIApplication.shared.isIdleTimerDisabled = false
-        backdropPlayer?.isMuted = true
-        // Give interrupted audio (another app's music) its shouldResume back —
-        // full-screen mode activated the session to un-mute. Never while a
-        // PiP session owns the session: deactivating it stops that audio.
-        if !PiPHandoff.shared.isActive {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        }
-        withAnimation(.easeInOut(duration: 0.35)) { trailerFullscreen = false }
-        // AFTER the capture button leaves the tree and the focus engine's own
-        // re-resolve has settled — set too early it gets overridden by the
-        // geometrically nearest item (the synopsis). One request is not always
-        // honored either (the engine can re-resolve onto the synopsis a beat
-        // later), so keep asking for a few ticks until Play actually holds it.
-        Task { @MainActor in
-            for _ in 0..<4 {
-                try? await Task.sleep(for: .milliseconds(150))
-                guard !trailerFullscreen else { return }
-                if actionFocus == .play && !teaserFocused { return }
-                if actionFocus == .play {
-                    // Stale binding (focus moved on without SwiftUI noticing):
-                    // clear it on one tick so the next set is a real request.
-                    actionFocus = nil
-                    try? await Task.sleep(for: .milliseconds(30))
-                }
-                actionFocus = .play
-            }
-        }
-    }
-
-    /// The trailer has the screen: playing, and not brought back by Up /
-    /// Back (see `TrailerMode`). Only then does anything vanish.
-    private var trailerMode: Bool { backdropTrailerPlaying && !trailerRevealed && page == .overview }
-
-    /// Up / Back in trailer mode: the page comes back, the trailer runs on
-    /// muted.
-    private func revealTrailerPage() {
-        withAnimation(TrailerMode.fade) { trailerRevealed = true }
-        if let backdropPlayer { setTrailerSound(false, on: backdropPlayer) }
-    }
-
-    private func setTrailerSound(_ sound: Bool, on player: AVPlayer) {
-        if sound, !PiPHandoff.shared.isActive {
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-            try? AVAudioSession.sharedInstance().setActive(true)
-            trailerAudioActive = true
-            player.isMuted = false
-        } else {
-            player.isMuted = true
-        }
-    }
-
-    private func teardownBackdropTrailer() {
-        // A fade still in flight is answered by whatever called this — the page
-        // leaving, a new trailer arming, PiP taking over — so drop it rather
-        // than letting it tear down a preview that has already been replaced.
-        backdropFadeTask?.cancel()
-        backdropFadeTask = nil
-        if trailerFullscreen {
-            UIApplication.shared.isIdleTimerDisabled = false
-            if !PiPHandoff.shared.isActive {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        }
-        trailerFullscreen = false
-        trailerRevealed = false
-        if trailerAudioActive {
-            trailerAudioActive = false
-            if !PiPHandoff.shared.isActive {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        }
-        UIApplication.shared.isIdleTimerDisabled = false
-        backdropStatusObserver?.invalidate()
-        backdropStatusObserver = nil
-        backdropItemObserver?.invalidate()
-        backdropItemObserver = nil
-        backdropTrailerPlaying = false
-        // Clear the item too, not just pause — otherwise the muted backdrop
-        // player stays the system "Now Playing" item and the tvOS transport
-        // overlay can pop up over Home when Play/Pause is pressed.
-        backdropPlayer?.pause()
-        backdropPlayer?.replaceCurrentItem(with: nil)
-        backdropPlayer = nil
-        if let token = backdropEndToken {
-            NotificationCenter.default.removeObserver(token)
-            backdropEndToken = nil
-        }
-        showBackdropTrailer = false
-    }
-
-    // MARK: - Pages
-
-    /// A page's hint, placed at a fixed height and shown ONLY while its own
-    /// page is the current one — otherwise the next page's "▴ …" peeked in
-    /// at the edge of this one (and this one's "▾ …" at the edge of that).
-    private func hint(_ title: String?, up: Bool, on owner: DetailPage, y: CGFloat,
-                      swapOut: Bool = false) -> some View {
-        Group {
-            if let title {
-                // The shared signpost (same as Home's billboard); steps
-                // aside on the overview while the trailer plays.
-                SectionHint.place(
-                    SectionHint(title: title, up: up,
-                                hidden: false)
-                        // (In place: it crossfades with the billboard's.)
-                        .opacity(swapOut ? 0 : 1)
-                        .animation(swapOut ? ModeSwap.fadeOut : ModeSwap.fadeIn, value: swapOut))
-            }
-        }
-        .padding(.top, y)
-        .opacity(page == owner ? 1 : 0)
-        .animation(.easeInOut(duration: 0.25), value: page)
-    }
-
-    /// Overview: the title block (logo, meta, description) exactly where
-    /// Home's billboard shows it — see `TitleBlock` — and below it the
-    /// buttons and the rest, in the space kept free for them.
-    // MARK: - Details on Home's rows (Render Lab → Details: rows)
+    // MARK: - Details on Home's rows
 
     private static let billboardRowID = "detail.billboard"
     private static let seasonRowPrefix = "detail.season."
@@ -1556,7 +821,6 @@ struct DetailView: View {
     private func rowsBackdrop(below: Bool) -> some View {
         let url = viewModel.backdropURL
         let drift = StagePictureView.drift
-        let flags = RenderProbe.shared.flags
         return ZStack {
             TitleTintBackground(tint: tint, second: tintSecond)
                 .task(id: viewModel.meta.id) {
@@ -1600,8 +864,8 @@ struct DetailView: View {
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the
         // picture's address: it arrives after the page opens.)
-        .task(id: "\(url ?? "")|\(flags.detailsPictureBlur)") {
-            blurredBackdrop = await BlurredBackdrop.image(for: url, strength: flags.detailsPictureBlur)
+        .task(id: url ?? "") {
+            blurredBackdrop = await BlurredBackdrop.image(for: url)
         }
         // On the rows' own curve and time (Render Lab → vertical curve).
         .animation(FixedFocusMotion.verticalAnimation(duration: FixedFocusMotion.billboardScroll), value: below)
@@ -1857,132 +1121,7 @@ struct DetailView: View {
     /// Each episode's state line on its card (Continue Watching's).
     private var episodeCardStates: [String: FixedFocusCardState] { rowData.cardStates }
 
-    private func overviewPage(size: CGSize) -> some View {
-        let height = size.height
-        // The title block (`TitleBlock`): every part at a fixed spot, the
-        // buttons in its button row. (The billboard is laid out the same.)
-        return ZStack(alignment: .topLeading) {
-            // THE BILLBOARD'S TEXT, exactly (same view, same place): logo,
-            // summary, name, facts, the status badge and ratings chips.
-            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
-                                    compact: true, tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline)
-                // The season count and the status chip (AIRING / RETURNING /
-                // ENDED), as on Home — re-drawn once they're known.
-                .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
-                .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
-                // Steps aside while a trailer has the screen.
-                .opacity(trailerMode ? 0 : 1)
-                .animation(TrailerMode.fade, value: trailerMode)
-                .frame(height: FixedFocusBillboardText.compactBottom, alignment: .bottomLeading)
-                .padding(.leading, FixedFocusMetrics.titleInset)
-            headerExtras
-                .frame(height: TitleBlock.buttonHeight)
-                .padding(.top, FixedFocusBillboardText.buttonsY)
-        }
-        .frame(height: height, alignment: .topLeading)
-        .overlay(alignment: .topLeading) {
-            hint(viewModel.meta.isSeries ? "Episodes" : morePageTitle,
-                 up: false, on: .overview, y: TitleBlock.hintY(screenHeight: height),
-                 swapOut: false)
-        }
-    }
-
-    /// Episodes: seasons + the episode row — the first of the rows below
-    /// the overview (More's follow right under it, no page break).
-    private func episodesPage(size: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // No big "Episodes" title — the "▴ Overview" hint above and the
-            // season selector say where you are.
-            episodesSection(width: size.width)
-        }
-        // The box exactly where Home's box is (the season selector above it).
-        .padding(.top, FixedFocusMetrics.boxFrame.minY
-                 - (hasSeasonSelector ? Self.selectorHeight + Self.selectorGap : 0))
-        .overlay(alignment: .topLeading) {
-            hint("Overview", up: true, on: .episodes, y: TitleBlock.topHintY)
-        }
-    }
-
-    /// More: every remaining section; each row, when focused, scrolls to
-    /// the spot below the hint (`moreRowTop`).
-    private func morePage(height: CGFloat) -> some View {
-        // What you most likely want next first: something similar, the
-        // rest of the collection, then who made it, then the footers.
-        VStack(alignment: .leading, spacing: CueSpacing.xxl) {
-            // By position: identified by the row itself, each section would
-            // share its id with its scroll anchor (`MoreRowAnchor`), and
-            // `scrollTo` took the section — its title at the screen's top.
-            ForEach(Array(moreRows.enumerated()), id: \.offset) { _, row in
-                switch row {
-                case .collection: collectionSection
-                case .moreLikeThis: moreLikeThisSection
-                case .cast: castSection
-                case .about: aboutSection
-                }
-            }
-        }
-        // Under the episode row (a show) — or, a film, a screen down.
-        .padding(.top, viewModel.meta.isSeries ? CueSpacing.xxl : Self.moreRowTop)
-        // Room below the last row, so every row — the last one too — can
-        // scroll up to the same spot. (A short More page couldn't scroll at
-        // all, and the rows' scrolls fought the page's end.)
-        .padding(.bottom, height - Self.moreRowTop)
-        .frame(minHeight: height, alignment: .topLeading)
-        .overlay(alignment: .topLeading) {
-            // Only on the first row: Up goes there (deeper, to the row above).
-            hint(viewModel.meta.isSeries ? "Episodes" : "Overview",
-                 up: true, on: .more, y: TitleBlock.topHintY)
-                .opacity(moreRow == moreRows.first ? 1 : 0)
-                .animation(.easeInOut(duration: 0.25), value: moreRow)
-        }
-    }
-
-    /// Where a focused More row's title sits: the first row's place, below
-    /// the hint.
-    private static let moreRowTop = Spotlight.topPadding + Spotlight.labelHeight + 24
-
-    /// Focus reached a More row: the page is More, and that row scrolls in.
-    private func focusMoreRow(_ row: MoreRow) {
-        page = .more
-        moreRow = row
-    }
-
-    /// The rows below the overview (after a show's episodes), those with
-    /// something in them: what you most likely want next first — the rest
-    /// of the collection, something similar — then who made it, then About.
-    private var moreRows: [MoreRow] {
-        var rows: [MoreRow] = []
-        if viewModel.collection != nil, !viewModel.collectionParts.isEmpty { rows.append(.collection) }
-        if !viewModel.moreLikeThis.isEmpty { rows.append(.moreLikeThis) }
-        if !(viewModel.crew + viewModel.cast).isEmpty { rows.append(.cast) }
-        rows.append(.about)
-        return rows
-    }
-
-    /// The first More row's name — what the hint above it points at, so a
-    /// hint never names something that isn't there. Nil: no More rows.
-    private var morePageTitle: String? {
-        switch moreRows.first {
-        case .collection: return viewModel.collection?.name
-        case .moreLikeThis: return "More Like This"
-        case .cast: return "Cast & Crew"
-        case .about: return "About"
-        case nil: return nil
-        }
-    }
-
-    /// Down from the buttons: land on an episode — the one last focused in
-    /// the row, else the Play target (if it's in the shown season), else
-    /// the season's first. Scroll it into place first so its cell exists.
-    private func enterEpisodeRow() {
-        guard !rowEpisodes.isEmpty else { return }
-        // Deferred one turn: the engine's own move onto the chip must finish
-        // before a programmatic focus change can win.
-        episodeFocusRequest += 1
-    }
-
-    /// Everything on the overview below the shared title block: just the
-    /// buttons (the rest is in `aboutSection`, on the More page).
+    /// The billboard's buttons.
     private var headerExtras: some View {
         // The row with its own focus state (see `actionFocus`); Play is the
         // default.
@@ -1990,14 +1129,7 @@ struct DetailView: View {
                         onChange: { old, new in actionFocusChanged(from: old, to: new) }) { focus in actionRow(focus) }
             // (The text's left edge — the billboard's column.)
             .padding(.leading, FixedFocusMetrics.titleInset)
-            // Down before the episodes are in: held, not lost.
-            .onMoveCommand { direction in
-                guard direction == .down else { return }
-                if episodesPending { pendingEpisodesDown = true }
-                else if morePending { pendingMoreDown = true }
-            }
     }
-
 
     /// A Select, Back or Down made during the swap (`ModeSwap.heldPress`).
     private func act(_ held: ModeSwap.HeldPress) {
@@ -2009,16 +1141,12 @@ struct DetailView: View {
         case .back:
             backToBillboard()
         case .down:
-            if episodesPending { pendingEpisodesDown = true }
-            else if !rowEpisodes.isEmpty { enterEpisodeRow() }
+            // (The rows take Down themselves.)
+            break
         }
     }
 
     private func backToBillboard() {
-        guard page == .overview else {
-            actionFocus = .play
-            return
-        }
         onReturnToBillboard?()
     }
 
@@ -2058,10 +1186,6 @@ struct DetailView: View {
                     }
                 )
                 .focused(focus, equals: .play)
-                // Trailer mode: Up (nothing above) brings the page back.
-                .onMoveCommand { direction in
-                    if direction == .up, trailerMode { revealTrailerPage() }
-                }
                 // The other two are one focus section, so a vertical move
                 // into the row resolves against the section as a unit
                 // instead of picking whichever circle's centre is nearest
@@ -2101,9 +1225,6 @@ struct DetailView: View {
                     )
                     .focused(focus, equals: .info)
                 }
-                // Trailer mode: only Play stays (press it to play).
-                .opacity(trailerMode ? 0 : 1)
-                .animation(TrailerMode.fade, value: trailerMode)
                 .focusSection()
                 Spacer(minLength: 0)
             }
@@ -2134,26 +1255,6 @@ struct DetailView: View {
     ///   while the row previously held NOTHING gets moved to Play. Moves
     ///   WITHIN the row (old != nil) are left alone.
     private func actionFocusChanged(from old: ActionControl?, to new: ActionControl?) {
-        // (The full-screen trailer's rest timer: only matters with focus OFF
-        // the row — restart it on leaving, not on every move in it.)
-        if new == nil { interactionCount += 1 }
-        if new != nil, page != .overview { page = .overview }
-        // Deferred one turn: arming flips the teaser from unfocusable
-        // to focusable, and doing that INSIDE the focus change that
-        // put Play in focus is the "focusable set depends on focus"
-        // trap this row's own comment bans — the engine can invalidate
-        // the in-flight move and bounce it.
-        if new == .play, !teaserArmed {
-            Task { @MainActor in teaserArmed = true }
-        }
-        // Only a USER move re-arms full-screen. Leaving full-screen
-        // restores focus to Play programmatically; treating that as
-        // interaction cleared the cooldown, so the page went back to
-        // full-screen two seconds later and swallowed every other
-        // press — the details page felt dead.
-        if fullscreenCooldown, Date().timeIntervalSince(fullscreenExitedAt) > 1.0 {
-            fullscreenCooldown = false
-        }
         // (Back from Info's panel: on Info, as asked — once.)
         if new == .info, returningToInfo { returningToInfo = false; return }
         if old == nil, let new, new != .play {
@@ -2166,20 +1267,6 @@ struct DetailView: View {
                 actionFocus = .play
             }
         }
-    }
-
-    private var playButtonTitle: String {
-        let key = ProgressStore.key(metaID: viewModel.meta.id, video: nil)
-        if let progress = progressStore.progress(for: key), progress.fraction > 0.02 {
-            return "Resume"
-        }
-        return "Play"
-    }
-
-    /// Whether this episode has saved progress worth restarting from 0.
-    private func episodeInProgress(_ episode: MetaVideo) -> Bool {
-        guard let progress = progressStore.progress(for: episode.id) else { return false }
-        return progress.fraction > 0.02 && progress.fraction < 0.95
     }
 
     /// For a series, the episode the Play button should start: an in-progress
@@ -2202,8 +1289,6 @@ struct DetailView: View {
         let parts = [code, left].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
-
-
 
     // MARK: - Episode row
 
@@ -2245,82 +1330,6 @@ struct DetailView: View {
         return data
     }
 
-    private var currentIndex: Int {
-        min(episodeIndex, max(rowEpisodes.count - 1, 0))
-    }
-
-    private var currentEpisode: MetaVideo? {
-        let list = rowEpisodes
-        return list.indices.contains(currentIndex) ? list[currentIndex] : nil
-    }
-
-    private func episodesSection(width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: Self.selectorGap) {
-            // The season selector over the box: the current season with a
-            // faded preview of the ones around it. Up from the row focuses
-            // it; Left/Right there jumps the row to another season.
-            if hasSeasonSelector {
-                seasonSelector
-                    .padding(.leading, FixedFocusMetrics.titleInset)
-            }
-
-            if !rowEpisodes.isEmpty {
-                // Home's Continue Watching row, exactly (`EpisodeRow`): one
-                // continuous row across all seasons, the fixed box, the
-                // episode's title and synopsis under it.
-                EpisodeRow(episodes: episodeRowItems, index: currentIndex,
-                           focusRequest: episodeFocusRequest,
-                           onFocus: { i in
-                               episodeIndex = i
-                               syncSeasonToCurrent()
-                               preloadSeasons(around: i)
-                           },
-                           onFocusChange: { focused in
-                               episodeRowFocused = focused
-                               if focused { page = .episodes }
-                           },
-                           onSelect: { i in
-                               let list = rowEpisodes
-                               if list.indices.contains(i) { play(list[i]) }
-                           },
-                           menu: { i in episodeMenu(i) })
-                    .frame(width: width, height: EpisodeRow.height)
-            } else if viewModel.isLoading {
-                CueLoadingView(label: "Loading episodes")
-                    .frame(height: Spotlight.rowHeight)
-            }
-        }
-        // Where you are in the season, one tick per episode: at the top of
-        // the episodes, above the seasons (it takes no room — the box stays
-        // at Home's box spot).
-        .overlay(alignment: .topLeading) {
-            if let episode = currentEpisode {
-                SeasonProgressMap(ticks: seasonTicks(for: episode),
-                                  label: seasonProgressLabel(for: episode))
-                    .padding(.leading, FixedFocusMetrics.titleInset)
-                    // Its height (ticks, gap, label) and a gap above the seasons.
-                    .offset(y: -Self.progressLift)
-            }
-        }
-        .onChange(of: viewModel.selectedSeason) { _, newSeason in
-            if let newSeason { Task { await viewModel.loadSeason(newSeason) } }
-        }
-    }
-
-    /// The season progress above the seasons: its height and a gap.
-    private static let progressLift: CGFloat = 12 + 12 + 26 + 22
-
-    /// Between the season selector and the row.
-    /// The season selector sits like a catalog row's name on Home: its line,
-    /// then the small gap to the box.
-    private static let selectorGap: CGFloat = FixedFocusMetrics.titleHeight - FixedFocusMetrics.titleLine
-    private static let selectorHeight: CGFloat = FixedFocusMetrics.titleLine
-
-    private var hasSeasonSelector: Bool { viewModel.meta.seasons.count > 1 }
-
-    /// The row's episodes as it draws them.
-    private var episodeRowItems: [EpisodeRowItem] { rowData.items }
-
     private func buildEpisodeRowItems(_ episodes: [MetaVideo]) -> [EpisodeRowItem] {
         episodes.map { episode in
             let season = episode.season ?? 0
@@ -2353,15 +1362,6 @@ struct DetailView: View {
         }
     }
 
-    /// Crossing into a season whose stills / runtimes / air dates aren't
-    /// loaded yet: fetch them a few episodes ahead of the boundary.
-    private func preloadSeasons(around index: Int) {
-        let list = rowEpisodes
-        for offset in [1, 3, -1] where list.indices.contains(index + offset) {
-            if let season = list[index + offset].season { Task { await viewModel.loadSeason(season) } }
-        }
-    }
-
     /// The progress map's ticks: the focused episode's season.
     private func seasonTicks(for episode: MetaVideo) -> [SeasonProgressMap.Tick] {
         let season = episode.season ?? 0
@@ -2369,136 +1369,6 @@ struct DetailView: View {
             SeasonProgressMap.Tick(id: item.id, watched: isWatched(item, season: season),
                                    current: item.id == episode.id)
         }
-    }
-
-    private func seasonProgressLabel(for episode: MetaVideo, named: Bool = true) -> String {
-        let season = episode.season ?? 0
-        let all = viewModel.episodes(season: season)
-        let done = all.filter { isWatched($0, season: season) }.count
-        let count = "\(done) of \(all.count) watched"
-        return named ? "\(seasonName(season))  •  \(count)" : count
-    }
-
-    /// The season selector's dots for the seasons after the next one.
-    private static let seasonDot: CGFloat = 10
-    private static let seasonMaxDots = 6
-
-    /// The seasons in order, Specials first.
-    private var orderedSeasons: [Int] {
-        viewModel.meta.seasons.sorted { ($0 == 0 ? -1 : $0) < ($1 == 0 ? -1 : $1) }
-    }
-
-    /// The seasons as a small row, like the catalog rows: the current one at
-    /// the box's left edge (large, white); before it the previous ones,
-    /// smaller and dimmed, running off into the margin (only a sliver of
-    /// the nearest shows); after it just the next one. Focused: the current
-    /// season grows a little. On a change the row slides.
-    private var seasonSelector: some View {
-        let seasons = orderedSeasons
-        let current = viewModel.selectedSeason ?? seasons.first ?? 1
-        let i = seasons.firstIndex(of: current) ?? 0
-        let prev = i > 0 ? seasons[i - 1] : nil
-        let next = i + 1 < seasons.count ? seasons[i + 1] : nil
-        // Laid out by the names' real widths: the current one at the box's
-        // left edge, the next one a gap after it, the previous ones a gap
-        // before it (and before each other), running off into the margin.
-        // Each name slides to its spot on a change, and grows / shrinks (a
-        // scale — font sizes don't animate). Focused: the current one grows
-        // a little.
-        let gap: CGFloat = 26
-        let small: CGFloat = Spotlight.headerLabelSize / Spotlight.headerTitleSize
-        func w(_ k: Int) -> CGFloat { seasonWidths[seasons[k]] ?? 140 }
-        func x(_ k: Int) -> CGFloat {
-            if k == i { return 0 }
-            if k > i {
-                // (After the current one's width as drawn — grown when focused.)
-                return w(i) * (seasonFocused ? 1.1 : 1) + gap
-                    + (i + 1 ..< k).reduce(0) { $0 + w($1) * small + gap }
-            }
-            // Right edge a gap before the next one's (scaled) left edge;
-            // the frame is the unscaled width, the scale keeps the right edge.
-            let right = -gap - (k + 1 ..< i).reduce(0) { $0 + w($1) * small + gap }
-            return right - w(k)
-        }
-        return ZStack(alignment: .leading) {
-            ForEach(Array(seasons.enumerated()), id: \.element) { k, season in
-                let isCurrent = k == i
-                // A catalog row's name on Home: its size and weight.
-                Text(seasonName(season))
-                    .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .foregroundStyle(isCurrent ? AppGlass.text : AppGlass.text.opacity(0.4))
-                    .background {
-                        GeometryReader { geo in
-                            Color.clear.preference(key: SeasonWidthKey.self,
-                                                   value: [season: geo.size.width])
-                        }
-                    }
-                    .scaleEffect(isCurrent ? (seasonFocused ? 1.1 : 1) : small,
-                                 anchor: k < i ? .trailing : .leading)
-                    .offset(x: x(k))
-                    // Before: all (cut off by the screen edge). After: only
-                    // the next one — the rest are dots (below).
-                    .opacity(k <= i + 1 ? 1 : 0)
-            }
-            // More seasons than shown: a small glass dot for each after the
-            // next one (at most `maxDots`, the last ones tapering — "and
-            // more"). A season's dot becomes its name as it comes next.
-            let dotsStart = i + 1 < seasons.count
-                ? x(i + 1) + w(i + 1) * small + gap : 0
-            ForEach(Array(seasons.enumerated()), id: \.element) { k, _ in
-                let n = k - (i + 2)            // 0 = the first dot
-                let shown = n >= 0 && n < Self.seasonMaxDots
-                let taper: CGFloat = n >= Self.seasonMaxDots - 2
-                    && seasons.count - (i + 2) > Self.seasonMaxDots ? (n == Self.seasonMaxDots - 1 ? 0.5 : 0.75) : 1
-                let size = Self.seasonDot * taper
-                Circle()
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: size, height: size)
-                    .frame(width: Self.seasonDot, height: Self.seasonDot)
-                    .offset(x: dotsStart + CGFloat(max(n, 0)) * (Self.seasonDot + 12))
-                    .opacity(shown ? 1 : 0)
-            }
-        }
-        .onPreferenceChange(SeasonWidthKey.self) { widths in
-            seasonWidths.merge(widths) { _, new in new }
-        }
-        .frame(height: Self.selectorHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.smooth(duration: 0.3), value: current)
-        .animation(.easeOut(duration: 0.2), value: seasonFocused)
-        .contentShape(Rectangle())
-        .focusable()
-        .focused($seasonFocused)
-        .onChange(of: seasonFocused) { _, focused in
-            guard focused else { return }
-            // Down from the overview's buttons lands here first (it's in the
-            // way): pass it on to the episode. Otherwise it's a real visit.
-            // (The episodes scroll in at once — focus never rests on
-            // something off screen — and if the hand-off loses to the
-            // engine, once more after the scroll.)
-            guard page == .overview else { page = .episodes; return }
-            page = .episodes
-            enterEpisodeRow()
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(300))
-                if seasonFocused, !episodeRowFocused { enterEpisodeRow() }
-            }
-        }
-        // Left/Right: the season before / after (the row jumps with it).
-        .onMoveCommand { direction in
-            switch direction {
-            case .left:  if let prev { switchSeason(to: prev, step: -1) }
-            case .right: if let next { switchSeason(to: next, step: 1) }
-            default: break
-            }
-        }
-    }
-
-    private func switchSeason(to season: Int, step: Int) {
-        seasonStep = step
-        jumpToSeason(season)
     }
 
     /// Holding Select on an episode: its menu.
@@ -2550,21 +1420,6 @@ struct DetailView: View {
         season == 0 ? "Specials" : "Season \(season)"
     }
 
-    /// The season selector follows the episode in the box.
-    private func syncSeasonToCurrent() {
-        guard let season = currentEpisode?.season,
-              viewModel.selectedSeason != season else { return }
-        viewModel.selectedSeason = season
-    }
-
-    /// The selector: jump the row to that season's first episode.
-    private func jumpToSeason(_ season: Int) {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            episodeIndex = rowEpisodes.firstIndex { $0.season == season } ?? 0
-        }
-        viewModel.selectedSeason = season
-    }
-
     /// Mark every AIRED episode of a season watched (unaired ones would be
     /// pushed to Trakt/SIMKL as real plays and wreck the new-episode badge).
     private func markSeasonWatched(_ season: Int) {
@@ -2597,378 +1452,7 @@ struct DetailView: View {
         }
     }
 
-    /// Episode caption: the overview if present, otherwise the localized air
-    /// date. An episode that has not aired yet leads with when it WILL — the
-    /// overview is written for the episode, not for the wait.
-    private func episodeSubtitle(_ episode: MetaVideo, extra: TMDBService.EpisodeExtra?) -> String? {
-        let air = episode.airCountdownText
-        if let overview = episode.overview, !overview.isEmpty {
-            return air.map { "\($0) · \(overview)" } ?? overview
-        }
-        return air ?? DateFormat.releaseDate(extra?.airDate ?? episode.released)
-    }
-
-    /// Aired episodes in this season the viewer has not watched.
-    private func episodesLeft(season: Int) -> Int {
-        viewModel.episodes(season: season).filter {
-            $0.hasAired && !watched.isWatched(contentID: viewModel.meta.id,
-                                              season: $0.season ?? season,
-                                              episode: $0.episode)
-        }.count
-    }
-
-    private func episodeTitle(_ episode: MetaVideo) -> String {
-        var label = ""
-        if let number = episode.episode { label = "\(number). " }
-        return label + (episode.title ?? "Episode")
-    }
-
-    private func episodeCastLine(_ cast: [TMDBService.CastMember]?) -> String? {
-        guard let names = cast?.prefix(3).map(\.name), !names.isEmpty else { return nil }
-        return "Cast: \(names.joined(separator: ", "))"
-    }
-
-    // MARK: - Cast
-
-    @ViewBuilder
-    private var castSection: some View {
-        let people = viewModel.crew + viewModel.cast
-        if !people.isEmpty {
-            moreSection("Cast & Crew", row: .cast) {
-                MoreScrollRow(items: people, pictureSize: CGSize(width: 160, height: 160), corner: 80,
-                              spacing: 36, focusRequest: moreFocusRequests[.cast, default: 0],
-                              onSelect: { onSelectPerson($0.id, $0.name) },
-                              onFocus: { if $0 { focusMoreRow(.cast) } }) { member, focused in
-                    PersonCard(member: member, focused: focused)
-                }
-            }
-        }
-    }
-
-    // MARK: - Collection ("belongs to")
-
-    @ViewBuilder
-    private var collectionSection: some View {
-        if let collection = viewModel.collection,
-           !viewModel.collectionParts.isEmpty {
-            moreSection(collection.name, row: .collection) {
-                posterRow(viewModel.collectionParts, row: .collection)
-            }
-        }
-    }
-
-    // MARK: - More Like This
-
-    @ViewBuilder
-    private var moreLikeThisSection: some View {
-        if !viewModel.moreLikeThis.isEmpty {
-            moreSection("More Like This", row: .moreLikeThis) {
-                posterRow(viewModel.moreLikeThis, row: .moreLikeThis)
-            }
-        }
-    }
-
-    // MARK: - About
-
-
-    @ViewBuilder
-    private var aboutSection: some View {
-        moreSection("About", row: .about) {
-            DetailAbout(meta: viewModel.meta, about: viewModel.about, facts: viewModel.facts,
-                        releaseDate: viewModel.releaseDate, contentRating: viewModel.contentRating,
-                        language: viewModel.language, ratings: viewModel.mdbRatings,
-                        settings: mdblist.settings,
-                        onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries) },
-                        onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries) },
-                        onFocus: { if $0 { focusMoreRow(.about) } },
-                        focusRequest: moreFocusRequests[.about, default: 0])
-        }
-    }
-
-    /// A More-page section: its title, then its row.
-    private func moreSection<Content: View>(_ title: String, row: MoreRow,
-                                            @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: CueSpacing.lg) {
-            DetailRowHeader(title: title)
-            content()
-                .padding(.leading, Spotlight.screenInset)
-        }
-        // Scrolled above the row in view: out of sight (its foot peeked over
-        // that row's title).
-        .opacity(isAboveCurrent(row) ? 0 : 1)
-        .animation(detailPageScroll, value: isAboveCurrent(row))
-        .modifier(MoreRowAnchor(row: row, top: Self.moreRowTop))
-    }
-
-    private func isAboveCurrent(_ row: MoreRow) -> Bool {
-        guard let current = moreRow, let at = moreRows.firstIndex(of: current),
-              let index = moreRows.firstIndex(of: row) else { return false }
-        return index < at
-    }
-
-    /// Titles as portrait posters, name and year below (Search's and
-    /// Library's look).
-    private func posterRow(_ items: [MetaItem], row: MoreRow) -> some View {
-        MoreScrollRow(items: items, pictureSize: CGSize(width: 200, height: 300), corner: Spotlight.cornerRadius,
-                      focusRequest: moreFocusRequests[row, default: 0],
-                      onSelect: { onSelectItem($0) },
-                      onFocus: { if $0 { focusMoreRow(row) } },
-                      menu: { ($0.name, TitleMenu.shared.entries(for: $0)) }) { item, focused in
-            MorePoster(item: item, focused: focused)
-        }
-    }
 }
-
-/// A button style with NO chrome at all — used by the full-screen trailer's
-/// invisible input-capture button.
-private struct InertButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { configuration.label }
-}
-
-/// One episode in the season row. The still is the only thing inside the
-/// button, so the native platter raises and sheens JUST the artwork; the
-/// caption is a sibling below it and stays put, easing down only far enough to
-/// hold its gap as the platter grows the still downward. Putting the caption
-/// inside the button instead bridged art and text into one lifting slab.
-private struct EpisodeCell: View {
-    let imageURL: String?
-    let title: String
-    var subtitle: String?
-    var progress: Double?
-    var isWatched: Bool
-    var rating: String?
-    var detailLine: String?
-    /// "Airs in 3 days" / "Airs tomorrow" for an episode that has not aired yet.
-    var unreleasedText: String?
-    var blurImage: Bool
-    let onPlay: () -> Void
-    let onToggleWatched: () -> Void
-    /// Present only while an auto-select feature is armed: the hold menu's
-    /// "Play Manually" escape hatch to the full source list for THIS episode.
-    var onPlayManually: (() -> Void)?
-    /// Called when this episode's button GAINS focus. `.focused(...)` on the
-    /// whole cell never fires (the cell is a VStack, only the Button inside
-    /// is focusable), so the row learns about focus through this instead.
-    var onFocus: () -> Void = {}
-    /// Lets the page put focus on THIS episode programmatically.
-    let episodeID: String
-    let focusBinding: FocusState<String?>.Binding
-
-    /// Focus mirrored out of the button: a sibling caption cannot read
-    /// `\.isFocused`, which only resolves inside the focusable view.
-    @State private var focused = false
-    @State private var rawFocused = false
-
-    private static let cardWidth: CGFloat = 400
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CueSpacing.sm) {
-            Button(action: onPlay) {
-                LandscapeCard(
-                    imageURL: imageURL,
-                    title: title,
-                    subtitle: subtitle,
-                    progress: progress,
-                    watched: isWatched,
-                    rating: rating,
-                    width: Self.cardWidth,
-                    subtitleBehavior: .readableOnFocus,
-                    detailLine: detailLine,
-                    remainingText: unreleasedText,
-                    blurImage: blurImage,
-                    showsCaption: false
-                )
-                .onFocusChange { rawFocused = $0; if $0 { onFocus() } }
-            }
-            // The same focus treatment every other card in the app gets — the
-            // native platter, or a scale lift when "Card wiggle & lift" is off.
-            // It was PlainCardButtonStyle, which is neither, and LandscapeCard
-            // suppresses its own focus ring whenever the GLOBAL parallax/zoom
-            // settings are on (assuming a platter is carrying the highlight).
-            // With the defaults that left a focused episode with no ring, no
-            // platter and no lift — only the caption brightening — so you could
-            // not tell which episode you were on.
-            .buttonStyle(DelayedLiftCardButtonStyle())
-            .focused(focusBinding, equals: episodeID)
-            // Hold Select on an episode to flip its watched state without
-            // opening it — and, when auto-select is armed, to reach the manual
-            // source list (a plain press auto-picks a link).
-            .holdMenu(focused: rawFocused) {
-                var entries: [MenuEntry] = []
-                if let onPlayManually {
-                    entries.append(MenuEntry(title: "Play Manually", icon: "list.and.film", run: onPlayManually))
-                }
-                entries.append(MenuEntry(title: isWatched ? "Mark as Unwatched" : "Mark as Watched",
-                                         icon: isWatched ? "eye.slash" : "checkmark.circle", run: onToggleWatched))
-                return entries
-            }
-
-            LandscapeCardCaption(
-                title: title,
-                subtitle: subtitle,
-                detailLine: detailLine,
-                width: Self.cardWidth,
-                subtitleBehavior: .readableOnFocus,
-                isFocused: focused,
-                lowered: focused
-            ).task(id: rawFocused) {
-                guard rawFocused else { focused = false; return }
-                try? await Task.sleep(for: episodeLiftDelay)
-                if !Task.isCancelled { focused = true }
-            }
-        }
-    }
-}
-
-// MARK: - The More page's rows
-
-/// The More page's rows, as scroll targets.
-enum MoreRow: Hashable { case collection, moreLikeThis, cast, about }
-
-/// The scroll target of a More row: an invisible strip standing `top`
-/// ABOVE the row, so scrolling it to the top puts the row's title where
-/// the first row's is (below the hint) — every row lands in one place.
-private struct MoreRowAnchor: ViewModifier {
-    let row: MoreRow
-    let top: CGFloat
-
-    func body(content: Content) -> some View {
-        // A real strip in the layout, `top` tall, ending where the row
-        // starts; the pair taking no more room than the row (the negative
-        // padding outside). (A background strip moved by an alignment guide
-        // is laid out — and scrolled to — where the row is.)
-        VStack(alignment: .leading, spacing: 0) {
-            Color.clear
-                .frame(height: top)
-                .id(row)
-            content
-        }
-        .padding(.top, -top)
-    }
-}
-
-/// A More row: the system's horizontal scrolling — focus moves along the
-/// cards, the row follows near its edge (Search's and Library's rows, not
-/// Home's fixed spot: here you scan). The focused card's picture gets the
-/// glass focus rim and grows a little, as the destination cards do.
-struct MoreScrollRow<Item: Identifiable, Card: View>: View {
-    let items: [Item]
-    /// The card's picture (the rim goes round it; captions sit below).
-    let pictureSize: CGSize
-    var corner: CGFloat
-    var spacing: CGFloat = 32
-    /// Goes up: focus onto the first card.
-    var focusRequest = 0
-    let onSelect: (Item) -> Void
-    var onFocus: (Bool) -> Void = { _ in }
-    /// The hold-Select menu for an item: its name and items (nil: none).
-    var menu: ((Item) -> (title: String, entries: [MenuEntry]))? = nil
-    @ViewBuilder let card: (Item, _ focused: Bool) -> Card
-
-    @FocusState private var focused: Item.ID?
-
-    var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: spacing) {
-                ForEach(items) { item in
-                    let isFocused = focused == item.id
-                    Button { onSelect(item) } label: {
-                        card(item, isFocused)
-                            .overlay(alignment: .top) {
-                                GlassFocusRim(cornerRadius: corner, lineWidth: Spotlight.outlineWidth)
-                                    .frame(width: pictureSize.width, height: pictureSize.height)
-                                    .opacity(isFocused ? 1 : 0)
-                            }
-                            .scaleEffect(isFocused ? 1.06 : 1, anchor: .top)
-                            .shadow(color: .black.opacity(isFocused ? 0.4 : 0), radius: 18, y: 10)
-                            .animation(.easeOut(duration: 0.2), value: isFocused)
-                    }
-                    .buttonStyle(InertButtonStyle())
-                    .focused($focused, equals: item.id)
-                    .holdMenu(focused: focused == item.id) { menu?(item).entries ?? [] }
-                }
-            }
-            // Room for the grown card and its shadow.
-            .padding(.vertical, 24)
-        }
-        .scrollClipDisabled()
-        .padding(.vertical, -24)
-        .onChange(of: focused) { _, now in onFocus(now != nil) }
-        .onChange(of: focusRequest) { _, _ in focused = items.first?.id }
-    }
-}
-
-/// A title on the More page: a portrait poster with the glass rim (the
-/// focus rim and a lift when focused).
-private struct MorePoster: View {
-    let item: MetaItem
-    let focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            RemoteImage(url: item.poster ?? item.background, maxDimension: 300)
-                .frame(width: 200, height: 300)
-                .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-                .overlay { GlassRim(cornerRadius: Spotlight.cornerRadius) }
-                .padding(.bottom, 10)
-            Text(item.name)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(focused ? AppGlass.text : AppGlass.textMuted)
-                .lineLimit(1)
-            if let year = item.year {
-                Text(year)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(AppGlass.textMuted.opacity(0.8))
-            }
-        }
-        .frame(width: 200, alignment: .leading)
-    }
-}
-
-/// A person: a round portrait with the glass rim, name and role below.
-private struct PersonCard: View {
-    let member: TMDBService.CastMember
-    let focused: Bool
-
-    var body: some View {
-        VStack(spacing: 12) {
-            RemoteImage(url: member.profileURL, maxDimension: 160)
-                .frame(width: 160, height: 160)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Circle())
-                .overlay { GlassRim(cornerRadius: 80) }
-            Text(member.name)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(focused ? AppGlass.text : AppGlass.textMuted)
-                .lineLimit(1)
-            if let role = member.character, !role.isEmpty {
-                Text(role)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(AppGlass.textMuted.opacity(0.8))
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 180)
-        .animation(.easeOut(duration: 0.2), value: focused)
-    }
-}
-
-/// A production company: its logo on a light plate (logos are mostly dark)
-/// with the glass rim.
-private struct CompanyPlate: View {
-    let company: TMDBService.Company
-    let focused: Bool
-
-    var body: some View {
-        RemoteImage(url: company.logoURL, contentMode: .fit, maxDimension: 180)
-            .frame(width: 180, height: 80)
-            .frame(width: 220, height: 110)
-            .background(Color.white.opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay { GlassRim(cornerRadius: 14) }
-    }
-}
-
 
 /// A Detail button. The primary one (Play / Resume) always shows its icon
 /// and title; the others are circles with an icon — and, focused, a small
@@ -3134,179 +1618,6 @@ private struct DetailPressStyle: ButtonStyle {
     }
 }
 
-
-// MARK: - Full description overlay
-
-/// The truncated synopsis on the hero, clickable: opens a full-screen
-/// overlay with the complete text (the Android app's scrollable
-/// hero-description). Brightens on focus so it reads as selectable.
-private struct DescriptionTeaser: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let text: String
-    let title: String
-    var onFocusChanged: (Bool) -> Void = { _ in }
-    @State private var showFull = false
-
-    var body: some View {
-        Button { showFull = true } label: {
-            TeaserLabel(text: text, onFocusChanged: onFocusChanged)
-        }
-        .buttonStyle(PlainCardButtonStyle())
-        // No .onMoveCommand redirect here. It set `actionFocus = .play` while
-        // the engine's own Down was still in flight, and the engine won: focus
-        // went to a circle icon anyway, then the action row's entry redirect
-        // moved it to Play, then the whole update reverted to the teaser — so
-        // pressing Down on the synopsis LOOKED like it did nothing. The row's
-        // redirect (deferred by one turn) is the single owner of that move now.
-        .fullScreenCover(isPresented: $showFull) {
-            DescriptionOverlay(title: title, text: text) { showFull = false }
-                .environmentObject(theme)
-        }
-    }
-}
-
-private struct TeaserLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let text: String
-    var onFocusChanged: (Bool) -> Void = { _ in }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 25))
-            .foregroundStyle(isFocused ? theme.palette.textPrimary : theme.palette.textSecondary)
-            .lineLimit(4)
-            .frame(maxWidth: 1000, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            // A soft plate on focus — reads as selectable without a solid
-            // slab shouting over the art (in the page: flat, not glass).
-            .background(RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .fill(FlatControl.rest.opacity(isFocused ? 1 : 0)))
-            .overlay(
-                RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? Color.white.opacity(0.35) : .clear, lineWidth: 2)
-            )
-            .padding(.horizontal, -14)   // keep the resting text aligned as before
-            .onChange(of: isFocused) { _, focused in onFocusChanged(focused) }
-    }
-}
-
-/// Full synopsis, arrow-scrollable. A full-screen invisible button holds
-/// focus (the player's remote-catcher pattern): up/down scroll by a step,
-/// Select or Back closes.
-private struct DescriptionOverlay: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let title: String
-    let text: String
-    let onClose: () -> Void
-
-    @State private var offset: CGFloat = 0
-    @State private var contentHeight: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-
-    private var maxOffset: CGFloat { max(contentHeight - viewportHeight, 0) }
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-
-            VStack(alignment: .leading, spacing: CueSpacing.xl) {
-                Text(title)
-                    .font(.system(size: 46, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
-
-                GeometryReader { viewport in
-                    Text(text)
-                        .font(.system(size: 28))
-                        .foregroundStyle(theme.palette.textSecondary)
-                        .lineSpacing(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear.onAppear { contentHeight = geo.size.height }
-                            }
-                        )
-                        .offset(y: -offset)
-                        .onAppear { viewportHeight = viewport.size.height }
-                }
-                .clipped()
-
-                Text(maxOffset > 0 ? "Swipe up/down to scroll · press Back to close"
-                                   : "Press Back to close")
-                    .font(.system(size: 18))
-                    .foregroundStyle(theme.palette.textTertiary)
-            }
-            .padding(.horizontal, 220)
-            .padding(.vertical, 90)
-
-            // Invisible focus holder: Select closes, moves scroll.
-            Button(action: onClose) { Color.clear }
-                .buttonStyle(PlainCardButtonStyle())
-        }
-        .onMoveCommand { direction in
-            let step: CGFloat = 340
-            withAnimation(.easeOut(duration: 0.25)) {
-                switch direction {
-                case .down: offset = min(offset + step, maxOffset)
-                case .up: offset = max(offset - step, 0)
-                default: break
-                }
-            }
-        }
-        .onExitCommand { onClose() }
-        .onPlayPauseCommand { onClose() }
-    }
-}
-
-/// Like the app's FlatCardButtonStyle, but the focus lift waits until the
-/// row has slid the card into the first column.
-struct DelayedLiftCardButtonStyle: ButtonStyle {
-    var delay: Duration = episodeLiftDelay   // match the scroll animation
-
-    func makeBody(configuration: Configuration) -> some View {
-        Chrome(configuration: configuration, delay: delay)
-    }
-
-    private struct Chrome: View {
-        @Environment(\.isFocused) private var isFocused
-        let configuration: ButtonStyle.Configuration
-        let delay: Duration
-        @State private var lifted = false
-
-        var body: some View {
-            configuration.label
-                .focusLift(CueFocus.card, lifted, animation: episodeLiftAnimation)
-                .cardPressDip(configuration.isPressed)
-                // Restarts on every focus change; a newer change cancels
-                // the pending lift, so fast presses never lift mid-slide.
-                .task(id: isFocused) {
-                    guard isFocused else { lifted = false; return }
-                    try? await Task.sleep(for: delay)
-                    if !Task.isCancelled { lifted = true }
-                }
-        }
-    }
-}
-
-/// Section title with the page's shared left margin (Home's spotlight
-/// inset) — the app-wide RowHeader uses its own, wider one.
-private struct DetailRowHeader: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(FusionType.moduleHeading(theme.font))
-            .foregroundStyle(theme.palette.textPrimary)
-            .padding(.leading, Spotlight.screenInset)
-    }
-}
-
-
-
-
-
 /// The episode row as `DetailView` built it, kept on its view model until
 /// one of the inputs in `key` changes.
 struct DetailRowData {
@@ -3327,7 +1638,6 @@ struct DetailRowData {
     let subtitles: [String: String]
 }
 
-
 /// What happens after a press opens Details (LAN log, "details"): each body
 /// pass and view-model change, in ms since the press — for the Home →
 /// Details transition work (docs/LOADING-PLAN.md §5).
@@ -3347,7 +1657,6 @@ enum DetailOpenProbe {
         PlayerProbe.event("details", String(format: "%@ #%d at %.0f ms", what, counts[what]!, ms))
     }
 }
-
 
 /// From the press until Details is built (the swap's ~0.45 s): what the page
 /// needs, from memory / disk (the background queue put it there —
@@ -3492,12 +1801,11 @@ final class DetailPreparer {
         guard let meta = prepared.meta else { return }
         let logo = prepared.logo ?? meta.logo
         let picture = prepared.picture
-        let flags = RenderProbe.shared.flags
         await withTaskGroup(of: Void.self) { group in
             if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) } }
             if let picture {
                 group.addTask { await ImageCache.shared.preload(picture, maxDimension: StagePictureView.pictureSize.width) }
-                group.addTask { _ = await BlurredBackdrop.image(for: picture, strength: flags.detailsPictureBlur) }
+                group.addTask { _ = await BlurredBackdrop.image(for: picture) }
                 group.addTask { _ = await FixedFocusTint.colors(for: picture) }
             }
             group.addTask {

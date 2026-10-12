@@ -245,26 +245,6 @@ struct SectionHint: View {
     }
 }
 
-/// Trailer mode, the same on the billboard and Details: after `delay` of
-/// rest (on the billboard; on Details, on Play) the trailer plays WITH
-/// SOUND and everything vanishes but what you can act on — the navigation
-/// ("▾ Continue Watching" and the dots / "▾ Episodes") and, on Details,
-/// Play. A move that navigates stops it (Left/Right/Down; on Details moving
-/// off Play); Up or Back only brings the page back, the trailer running on
-/// muted. Nothing vanishes before the video actually plays — a failed load
-/// changes nothing.
-enum TrailerMode {
-    /// Automatic trailers (billboard, the rows' boxes, Details) — OFF until
-    /// the feature is finished (it misbehaved). The Watch Trailer button
-    /// (the full-screen player) is separate and still works.
-    static let enabled = false
-    static let delay: TimeInterval = 3
-    /// The page going / coming back.
-    static let fade: Animation = .easeInOut(duration: 0.4)
-    /// The scrim while the trailer has the screen (enough for the hints).
-    static let scrimOpacity: Double = 0.4
-}
-
 /// The billboard ⇄ Details swap. The title block, backdrop and scrim are
 /// identical on both screens and never move; only what differs does. Each
 /// screen animates ITS OWN parts: the leaving screen's go out (`out`), the
@@ -429,51 +409,20 @@ struct TitleBlockView: View {
 
 /// One badge in the badges row: a small outlined chip.
 struct TitleBadge: View {
-    @ObservedObject private var probe = RenderProbe.shared
     let text: String
 
-    /// Render Lab → Badge: outlined (the original), the app's glass, or a
-    /// flat faint fill.
-    enum Style: String, CaseIterable {
-        case outline, glass, fill
-        var displayName: String {
-            switch self {
-            case .outline: return "Outlined"
-            case .glass: return "Liquid Glass"
-            case .fill: return "Flat fill"
-            }
-        }
-    }
-
     var body: some View {
-        let style = Style(rawValue: probe.flags.badgeStyle) ?? .outline
         // No taller than a line of the text beside it: capitals as high
         // as that text's lowercase letters, in a box of about 28 pt.
-        let label = Text(text)
+        Text(text)
             .font(.system(size: 17, weight: .semibold))
             .tracking(0.5)
             .foregroundStyle(Color.white.opacity(0.85))
             // (The rating chips' height — see `MDBListRatingsRow`.)
             .frame(height: 21)
-        switch style {
-        case .outline:
-            label
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1.25))
-        case .glass:
-            // (Was the top bar's glass; in the page everything is flat.)
-            label
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(FlatControl.rest, in: Capsule())
-        case .fill:
-            label
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.white.opacity(0.4), lineWidth: 1.25))
     }
 }
-

@@ -153,9 +153,8 @@ final class StagePictureView: UIView {
     private func loadBlurred(_ url: String?) {
         guard url != blurredFor else { return }
         blurredFor = url
-        let strength = RenderProbe.shared.flags.detailsPictureBlur
         Task { @MainActor [weak self] in
-            let image = await BlurredBackdrop.image(for: url, strength: strength)
+            let image = await BlurredBackdrop.image(for: url)
             guard let self, self.blurredFor == url else { return }
             self.blurred.image = image
         }

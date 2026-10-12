@@ -318,49 +318,6 @@ struct RenderLabSettings: View {
                     subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
                     isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
                 )
-                CueDropdown(
-                    title: "Details: picture blur below",
-                    subtitle: "How much the picture blurs on Episodes and More — and Home's \"Artwork, blurred\" background (a still, made once).",
-                    icon: "drop.halffull",
-                    selection: String(probe.flags.detailsPictureBlur),
-                    options: [(0.0, "Off"), (6.0, "Light"), (9.0, "Light–medium"), (12.0, "Medium"), (20.0, "Strong"), (32.0, "Very strong")]
-                        .map { CueDropdownOption(String($0.0), $0.1) }
-                ) { raw in
-                    if let v = Double(raw) { probe.flags.detailsPictureBlur = v }
-                }
-                CueDropdown(
-                    title: "Focus outline",
-                    subtitle: "Every focused card's outline, fixed box and moving focus alike.",
-                    icon: "square.dashed",
-                    selection: probe.flags.focusOutline == "strong" ? "strong" : "soft",
-                    options: [CueDropdownOption("strong", "4 pt, 85 %"), CueDropdownOption("soft", "3 pt, 75 %")]
-                ) { raw in
-                    probe.flags.focusOutline = raw
-                }
-                CueDropdown(
-                    title: "Billboard ratings",
-                    subtitle: "The ratings next to the badge: the sources' logos, or chips in the badge's shape with the source's name in its colour.",
-                    icon: "star.leadinghalf.filled",
-                    selection: probe.flags.billboardRatings,
-                    options: MDBListRatingsRow.ChipStyle.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.billboardRatings = raw
-                }
-                CueDropdown(
-                    title: "Badge",
-                    subtitle: "The ENDED / ONGOING badge on the billboard and on Details.",
-                    icon: "capsule",
-                    selection: probe.flags.badgeStyle,
-                    options: TitleBadge.Style.allCases.map { CueDropdownOption($0.rawValue, $0.displayName) }
-                ) { raw in
-                    probe.flags.badgeStyle = raw
-                }
-                PerfToggleRow(
-                    icon: "rectangle.grid.1x2",
-                    title: "Details: rows",
-                    subtitle: "Details built like Home: the billboard, then the seasons' episodes and More Like This as Home's rows, with Home's scroll. Off: the old pages.",
-                    isOn: Binding(get: { probe.flags.detailsOnRows }, set: { probe.flags.detailsOnRows = $0 })
-                )
                 PerfToggleRow(
                     icon: "square.stack",
                     title: "Details: season buttons",

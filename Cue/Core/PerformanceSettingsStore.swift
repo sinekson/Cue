@@ -376,9 +376,6 @@ final class RenderProbe: ObservableObject {
         /// New Home: the billboard's / Details' summary justified (word gaps
         /// stretched to fill each line, with hyphenation); off: ragged right.
         var summaryJustified = false
-        /// Details on Home's rows (the billboard, then a row per season, More
-        /// Like This…); off: the old pages.
-        var detailsOnRows = true
         /// Details' episode row: glass season buttons over the episodes, the
         /// billboard's hint "Episodes", the season's map between them;
         /// off: the row's name "‹ Season X ›" as the season control, the map
@@ -395,16 +392,6 @@ final class RenderProbe: ObservableObject {
         /// dots end on the first row's name line), the picture stays, blurs
         /// and gives way to the colours. Off: the picture scrolls away whole.
         var homeBillboardRigid = true
-        /// The title block's badges (ENDED / ONGOING): `TitleBadge.Style`.
-        var badgeStyle = "outline"
-        /// New Home: the billboard's ratings (`MDBListRatingsRow.ChipStyle`).
-        var billboardRatings = "chips"
-        /// Every focused card's outline: "strong" (4 pt, 85 %) or "soft"
-        /// (3 pt, 75 %).
-        var focusOutline = "soft"
-        /// Details: how strongly the picture blurs on Episodes / More (the
-        /// blur's radius on a 640 px copy; 0: none).
-        var detailsPictureBlur: Double = 12
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
         /// New Home: how far up the billboard's picture fades into the
@@ -446,15 +433,10 @@ final class RenderProbe: ObservableObject {
             movingFocusShadow = (try? c.decode(Bool.self, forKey: .movingFocusShadow)) ?? d.movingFocusShadow
             billboardScrollDuration = (try? c.decode(Double.self, forKey: .billboardScrollDuration)) ?? d.billboardScrollDuration
             summaryJustified = (try? c.decode(Bool.self, forKey: .summaryJustified)) ?? d.summaryJustified
-            detailsOnRows = (try? c.decode(Bool.self, forKey: .detailsOnRows)) ?? d.detailsOnRows
             detailsSeasonButtons = (try? c.decode(Bool.self, forKey: .detailsSeasonButtons)) ?? d.detailsSeasonButtons
             detailsPeekEpisodes = (try? c.decode(Bool.self, forKey: .detailsPeekEpisodes)) ?? d.detailsPeekEpisodes
             homePeekFirstRow = (try? c.decode(Bool.self, forKey: .homePeekFirstRow)) ?? d.homePeekFirstRow
             homeBillboardRigid = (try? c.decode(Bool.self, forKey: .homeBillboardRigid)) ?? d.homeBillboardRigid
-            badgeStyle = (try? c.decode(String.self, forKey: .badgeStyle)) ?? d.badgeStyle
-            billboardRatings = (try? c.decode(String.self, forKey: .billboardRatings)) ?? d.billboardRatings
-            focusOutline = (try? c.decode(String.self, forKey: .focusOutline)) ?? d.focusOutline
-            detailsPictureBlur = (try? c.decode(Double.self, forKey: .detailsPictureBlur)) ?? d.detailsPictureBlur
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
             billboardBottomFade = (try? c.decode(Double.self, forKey: .billboardBottomFade)) ?? d.billboardBottomFade
             previousPosterAlpha = (try? c.decode(Double.self, forKey: .previousPosterAlpha)) ?? d.previousPosterAlpha

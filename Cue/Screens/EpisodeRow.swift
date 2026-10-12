@@ -714,11 +714,13 @@ final class EpisodeBoxView: UIView {
 @MainActor
 enum BlurredBackdrop {
     private static let cache = NSCache<NSString, UIImage>()
-    /// The working width (`strength` is the blur's radius in its pixels).
+    /// The working width.
     private static let width: CGFloat = 640
+    /// The blur's radius, in the working width's pixels.
+    private static let strength: Double = 20
 
-    static func image(for url: String?, strength: Double) async -> UIImage? {
-        guard let url, strength > 0 else { return nil }
+    static func image(for url: String?) async -> UIImage? {
+        guard let url else { return nil }
         let key = "\(url)|\(strength)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
         var source = await ImageCache.shared.diskImage(for: url, budget: width)

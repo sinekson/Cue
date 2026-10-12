@@ -1954,37 +1954,16 @@ struct RatingBadge: View {
     }
 }
 
-/// A row of MDBList source ratings (IMDb, TMDB, RT, Metacritic, …), each
-/// the source's own icon and its score — colour here is information (which
-/// source), the one place the app uses brand colour. A source without an
-/// icon (MyAnimeList) gets a small chip in its colours instead.
-/// Icons: from NuvioTVOS (GPL-3.0, like this app).
+/// A row of MDBList source ratings (IMDb, TMDB, RT, Metacritic, …) as
+/// chips in the title badge's shape (`TitleBadge`), so they sit with it as
+/// one row of equals: the source's short name in its brand colour, then the
+/// score, the outline in the brand colour too — colour here is information
+/// (which source), the one place the app uses brand colour.
 struct MDBListRatingsRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let entries: [MDBListRatingEntry]
-    /// In a line of text (Home's billboard): the text's size and
-    /// brightness, icons a text line tall and a little less saturated.
-    var inline = false
-    /// As chips in the title badge's shape (`TitleBadge`), so they sit with
-    /// it as one row of equals: the source's short name in its brand colour,
-    /// then the score — the outline in the brand colour too, or neutral.
-    var chips: ChipStyle? = nil
     /// Chips onto further lines when they don't fit (About), not cut.
     var wraps = false
-
-    /// Render Lab → Billboard ratings.
-    enum ChipStyle: String, CaseIterable {
-        case logos, chips, chipsNeutral
-        var displayName: String {
-            switch self {
-            case .logos: return "Logos"
-            case .chips: return "Chips, brand-coloured outline"
-            case .chipsNeutral: return "Chips, neutral outline"
-            }
-        }
-    }
-
-    static let iconHeight: CGFloat = 34
 
     /// The row's entries: MDBList's, or — when it has none (off, no key,
     /// nothing yet) — the catalog's own IMDb score, so a rating still shows.
@@ -1997,7 +1976,7 @@ struct MDBListRatingsRow: View {
         return entries
     }
 
-    private func chip(_ entry: MDBListRatingEntry, brandOutline: Bool) -> some View {
+    private func chip(_ entry: MDBListRatingEntry) -> some View {
         let brand = entry.provider.badgeStyle(score: Double(entry.text)).fill
         let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         return HStack(spacing: 6) {
@@ -2024,60 +2003,19 @@ struct MDBListRatingsRow: View {
         .frame(height: 21)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .overlay {
-            if brandOutline {
-                shape.stroke(brand, lineWidth: 1.25).opacity(0.7)
-            } else {
-                shape.stroke(Color.white.opacity(0.4), lineWidth: 1.25)
-            }
-        }
+        .overlay { shape.stroke(brand, lineWidth: 1.25).opacity(0.7) }
     }
 
     var body: some View {
-        if let chips, chips != .logos {
-            if wraps {
-                InfuseWrapRow(spacing: 10, lineSpacing: 10) {
-                    ForEach(entries) { chip($0, brandOutline: chips == .chips) }
-                }
-            } else {
-                HStack(spacing: 10) {
-                    ForEach(entries) { chip($0, brandOutline: chips == .chips) }
-                }
+        if wraps {
+            InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                ForEach(entries) { chip($0) }
             }
         } else {
-            logos
-        }
-    }
-
-    private var logos: some View {
-        HStack(spacing: inline ? 18 : 26) {
-            ForEach(entries) { entry in
-                HStack(spacing: inline ? 7 : 9) {
-                    if let icon = entry.provider.iconAsset {
-                        Image(icon)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: inline ? 24 : Self.iconHeight)
-                            .saturation(inline ? 0.8 : 1)
-                    } else {
-                        label(entry)
-                    }
-                    Text(entry.text)
-                        .font(.system(size: inline ? 24 : 26))
-                        .foregroundStyle(Color.white.opacity(0.62))
-                }
+            HStack(spacing: 10) {
+                ForEach(entries) { chip($0) }
             }
         }
-    }
-
-    private func label(_ entry: MDBListRatingEntry) -> some View {
-        let style = entry.provider.badgeStyle(score: Double(entry.text))
-        return Text(entry.provider.label)
-            .font(.system(size: 15, weight: .heavy))
-            .foregroundStyle(style.text)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(style.fill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
 
@@ -2114,20 +2052,6 @@ extension MDBListProvider {
             return ("POPCORN", "METER", AnyShapeStyle(LinearGradient(
                 stops: stops, startPoint: .leading, endPoint: .trailing)))
         default: return nil
-        }
-    }
-
-    /// The source's icon in the asset catalog (nil: none — a text chip).
-    var iconAsset: String? {
-        switch self {
-        case .imdb: return "rating_imdb"
-        case .tmdb: return "rating_tmdb"
-        case .trakt: return "rating_trakt"
-        case .letterboxd: return "rating_letterboxd"
-        case .tomatoes: return "rating_rotten_tomatoes"
-        case .audience: return "rating_audience_score"
-        case .metacritic: return "rating_metacritic"
-        case .myanimelist: return nil
         }
     }
 

@@ -121,7 +121,7 @@ struct DetailAbout: View {
             }
             if !entries.isEmpty {
                 labelled("Ratings") {
-                    MDBListRatingsRow(entries: entries, inline: true, chips: .chips, wraps: true)
+                    MDBListRatingsRow(entries: entries, wraps: true)
                 }
             }
         }

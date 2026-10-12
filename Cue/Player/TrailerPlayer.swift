@@ -474,40 +474,6 @@ enum TrailerResolver {
     }
 }
 
-/// A bare `AVPlayerLayer` with no transport chrome — used to play a trailer
-/// silently behind the Detail hero. `.resizeAspectFill` so it fills the header
-/// like the still backdrop it replaces.
-struct BackdropVideoView: UIViewRepresentable {
-    /// Optional so a host can keep the layer MOUNTED across previews and just
-    /// swap what plays in it. Adding and removing this view mid-browse is a
-    /// view-tree structural change, and the focus engine re-resolves on those
-    /// — on Home that landed while the viewer was stepping through a row and
-    /// left the focus lift stranded on the card they had already left.
-    let player: AVPlayer?
-
-    func makeUIView(context: Context) -> PlayerLayerUIView {
-        let view = PlayerLayerUIView()
-        view.playerLayer.player = player
-        view.playerLayer.videoGravity = .resizeAspectFill
-        // Decoration only. Inserting an interactive UIView into the hierarchy
-        // makes the focus engine re-resolve, and on the detail page that threw
-        // focus off Play and onto the synopsis the moment the backdrop trailer
-        // started — the page appeared to grab the highlight on its own a
-        // second after it opened. Same rule as the hero artwork.
-        view.isUserInteractionEnabled = false
-        return view
-    }
-
-    func updateUIView(_ uiView: PlayerLayerUIView, context: Context) {
-        uiView.playerLayer.player = player
-    }
-
-    final class PlayerLayerUIView: UIView {
-        override class var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-    }
-}
-
 /// Full-screen trailer playback. Resolves the YouTube key, then plays through
 /// the native tvOS `VideoPlayer` transport. Menu (back) dismisses.
 struct TrailerPlayerView: View {
