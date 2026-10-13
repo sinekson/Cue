@@ -1407,6 +1407,26 @@ private struct FocusChangeModifier: ViewModifier {
 /// the row — and the rows — to the fixed spot with a UIKit animation, which
 /// runs in Core Animation (off the main thread, cleanly re-aimable), and
 /// the focused cell grows to box width in the same animation.
+/// Back on Home, Movies or Series (the page's own `onExitCommand` asks):
+/// the page in front first (`HomeUIKitView.backToBillboard`), else the top
+/// bar. (One handler: a nested `onExitCommand` took every press, even
+/// without an action.)
+@MainActor
+final class HomeBack {
+    static let shared = HomeBack()
+    /// The page in front: how far below its billboard focus is (kept here:
+    /// a closure reading the page's state saw an old value).
+    var depth = 0
+    var toBillboard: (() -> Void)?
+
+    /// True: handled (focus goes up to the billboard).
+    func handle() -> Bool {
+        guard depth > 0, let toBillboard else { return false }
+        toBillboard()
+        return true
+    }
+}
+
 struct HomeUIKitView: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @EnvironmentObject private var library: LibraryStore
@@ -1435,17 +1455,6 @@ struct HomeUIKitView: View {
     /// …and the picture its card shows: the colour comes from that (a
     /// portrait card's poster, not the backdrop it doesn't show).
     @State private var focusedArt: String?
-    /// Its colour (the "Title colour" background only).
-    @State private var tint: Color?
-    /// Two colours mode: the title's second colour.
-    @State private var tintSecond: Color?
-    /// The billboard's scrim: the title's colour, very dark.
-    @State private var tintDeep: Color?
-    /// The "Artwork, blurred" background: the focused title's backdrop.
-    @State private var picture: FixedFocusPicture?
-    /// When the focus last moved and the colours last began to change
-    /// (Render Lab → Tint: calm while scrolling fast).
-    @State private var tintPace = TintPace()
     /// Focus is on the billboard: which of its titles (nil: in the rows).
     @State private var billboard: FixedFocusBillboardPosition?
     /// The billboard paging by itself: the next title, as a press would.
@@ -1461,6 +1470,10 @@ struct HomeUIKitView: View {
     /// How far below the billboard focus is (1: the first row below, whose
     /// strip of the billboard stays at the top).
     @State private var depth = 0
+    /// The depth for the dots, read where they're drawn (the rows' host —
+    /// another SwiftUI host: a move that changed only the depth, Back up to
+    /// the billboard, never handed them the new one; they stayed down).
+    @State var dotsDepth = DetailRowsDepth()
     /// The billboard's title (kept while it fades out on Down).
     @State private var billboardItem: MetaItem?
     /// Its MDBList ratings, per title (as on Details).
@@ -1478,7 +1491,7 @@ struct HomeUIKitView: View {
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
-    @AppStorage(AppBackground.homeFollowsTitleKey) private var followsTitle = true
+    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
 
     /// The billboard's titles' taglines (TMDB), as they come.
     @State var billboardTaglines: [String: String] = [:]
@@ -1489,6 +1502,17 @@ struct HomeUIKitView: View {
         ZStack(alignment: .topLeading) {
             homeLayers
         }
+        // Back: this page's first say while it's in front (`HomeBack`).
+        .onAppear { if active { takeBack() } }
+        .onChange(of: active) { _, now in if now { takeBack() } }
+    }
+
+    /// Back below the billboard: all the way up to it, in one move (its
+    /// title as it is, the rows keeping their places). On it: not ours —
+    /// the top bar's.
+    private func takeBack() {
+        HomeBack.shared.depth = depth
+        HomeBack.shared.toBillboard = { billboardCommand = FixedFocusRowsCommand(action: .focusBillboard) }
     }
 
     /// A choice in Continue Watching's hold menu.
@@ -1510,14 +1534,9 @@ struct HomeUIKitView: View {
 
     private var homeLayers: some View {
         ZStack(alignment: .topLeading) {
-            if followsTitle {
-                LinearGradient(colors: [Color(white: 0.10), Color(white: 0.03)],
-                               startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
-                background
-            } else {
-                ATVBackground()
-            }
+            // Following the title: the app's one title background, which
+            // this page sets while it's in front (see `TitleBackground`).
+            ATVBackground(titles: true)
             FixedFocusRows(rows: rows, featuredRowID: featuredRowID, continueRowID: continueRowID,
                            active: active,
                            progress: progress,
@@ -1539,7 +1558,11 @@ struct HomeUIKitView: View {
                                TitleMenu.shared.entries(for: item,
                                                         in: rowID == HomeView.libraryRowID ? .library : .standard)
                            },
-                           onDepth: { depth = $0 },
+                           onDepth: {
+                               depth = $0
+                               dotsDepth.depth = $0
+                               if active { HomeBack.shared.depth = $0 }
+                           },
                            onFocusArt: { focusedArt = $0 },
                            // The billboard paging by itself (Settings →
                            // Appearance → Billboard pages by itself).
@@ -1593,90 +1616,145 @@ struct HomeUIKitView: View {
             billboardLayer
         }
         .ignoresSafeArea()
-        // Follows the focused title once you've paused on it.
+        // A still background: the panels neutral.
+        .onChange(of: followsTitle) { _, _ in TitleBackground.shared.refreshPanels() }
+        // Follows the focused title — only while this tab is in front (the
+        // billboard pages by itself behind other tabs; coming back puts
+        // this tab's title back).
         .task(id: tintKey) {
-            guard followsTitle, let item = focused, let url = focusedArt ?? item.background ?? item.poster else { return }
+            guard followsTitle, active, let item = focused,
+                  let url = focusedArt ?? item.background ?? item.poster else { return }
             // Scrolling to or from the billboard: over the whole scroll.
-            // Otherwise it moves with focus — no rest, the focus move's curve
-            // and time.
             let scrolling = tintScroll
             tintScroll = false
-            var follows = !scrolling
-            var fade = scrolling ? FixedFocusMotion.billboardScroll : Motion.moveDuration
-            // FAST SCROLLING: a press soon after the last is part of a burst. Then the colours
-            // change at most every `tintBurstEvery` (the cards in between are
-            // skipped — a new press cancels this wait), over a calm blend; once
-            // no press has come for a moment, it has landed: the spring again.
-            if follows {
-                let now = Date()
-                let gap = now.timeIntervalSince(tintPace.lastPress)
-                tintPace.lastPress = now
-                if gap < Self.tintBurstGap {
-                    let quiet = 0.15
-                    let due = min(tintPace.lastChange.addingTimeInterval(Self.tintBurstEvery),
-                                  now.addingTimeInterval(quiet))
-                    let wait = due.timeIntervalSinceNow
-                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-                    guard !Task.isCancelled else { return }
-                    let landed = Date().timeIntervalSince(now) >= quiet - 0.01
-                    if !landed {
-                        follows = false
-                        fade = Self.tintBurstBlend
-                    }
-                }
-            }
-            let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
-            // Picture's colour layout: the background is the picture's own
-            // colours where they sit (`FixedFocusTint.layout`) — made while
-            // the colours are found, not after.
-            async let layoutImage = FixedFocusTint.layout(for: url)
-            async let found = FixedFocusTint.colors(for: url)
-            let (layout, colorsFound) = await (layoutImage, found)
-            guard !Task.isCancelled, let colors = colorsFound else { return }
-            tintPace.lastChange = Date()
-            withAnimation(animation) {
-                tint = colors.first
-                tintSecond = colors.second
-                tintDeep = colors.deep
-            }
-            if let layout {
-                // Crossfaded by its own view (`LayoutPictureView`), from what
-                // is on screen at that moment.
-                picture = FixedFocusPicture(key: item.id, image: layout, fade: fade, follows: follows)
-            }
+            TitleBackground.shared.follow(url, key: item.id,
+                                          over: scrolling ? FixedFocusMotion.billboardScroll : nil)
         }
     }
 
-    /// Presses closer together than this are fast scrolling: the tint
-    /// calms down (changes now and then, over a blend).
-    static let tintBurstGap: Double = 0.3
-    /// …then the colours change at most this often, over this blend.
-    static let tintBurstEvery: Double = 0.3
-    static let tintBurstBlend: Double = 0.5
-
     /// What the tint follows: the focused title.
-    private var tintKey: String { "\(focused?.id ?? "")|\(followsTitle)" }
+    private var tintKey: String { "\(focused?.id ?? "")|\(followsTitle)|\(active)" }
+}
 
-    /// The background: the focused title's colour.
-    @ViewBuilder
-    private var background: some View {
-        ZStack {
-            TitleTintBackground(tint: tint, second: tintSecond, picture: picture)
+/// THE TITLE BACKGROUND ("Background follows the title"): Home, Movies and
+/// Series (while in front) set it as focus moves, a folder to its cover,
+/// and they show it (`ATVBackground(titles:)`); every other page shows
+/// the Projector picture. Home's collection panels take its colour
+/// (`addPanel`).
+@MainActor
+final class TitleBackground: ObservableObject {
+    static let shared = TitleBackground()
+
+    @Published private(set) var tint: Color?
+    @Published private(set) var second: Color?
+    @Published private(set) var picture: FixedFocusPicture?
+
+    /// Presses closer together than this are fast scrolling: the colours
+    /// calm down (change now and then, over a blend).
+    static let burstGap: Double = 0.3
+    /// …then they change at most this often, over this blend.
+    static let burstEvery: Double = 0.3
+    static let burstBlend: Double = 0.5
+
+    private var url: String?
+    private var task: Task<Void, Never>?
+    private var lastPress = Date.distantPast
+    private var lastChange = Date.distantPast
+    private var panelColor: UIColor?
+    private var panelFollows = true
+    private let panels = NSHashTable<FixedFocusPanelView>.weakObjects()
+
+    private init() {}
+
+    /// Follows a picture. `over`: a fixed blend (the billboard's scroll);
+    /// nil: with focus — the focus move's curve and time, calmed
+    /// while scrolling fast. The same picture again: nothing.
+    func follow(_ url: String, key: String, over: Double? = nil) {
+        guard AppBackground.followsTitle, url != self.url else { return }
+        self.url = url
+        task?.cancel()
+        task = Task { [weak self] in await self?.run(url, key: key, over: over) }
+    }
+
+    private func run(_ url: String, key: String, over: Double?) async {
+        var follows = over == nil
+        var fade = over ?? Motion.moveDuration
+        // FAST SCROLLING: a press soon after the last is part of a burst.
+        // Then the colours change at most every `burstEvery` (the cards in
+        // between are skipped — a new press cancels this wait), over a calm
+        // blend; once no press has come for a moment, it has landed: the
+        // spring again.
+        if follows {
+            let now = Date()
+            let gap = now.timeIntervalSince(lastPress)
+            lastPress = now
+            if gap < Self.burstGap {
+                let quiet = 0.15
+                let due = min(lastChange.addingTimeInterval(Self.burstEvery), now.addingTimeInterval(quiet))
+                let wait = due.timeIntervalSinceNow
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                guard !Task.isCancelled else { return }
+                if Date().timeIntervalSince(now) < quiet - 0.01 {
+                    follows = false
+                    fade = Self.burstBlend
+                }
+            }
         }
-        .frame(width: 1920, height: 1080)
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
+        // Picture's colour layout: the background is the picture's own
+        // colours where they sit (`FixedFocusTint.layout`) — made while the
+        // colours are found, not after.
+        async let layoutImage = FixedFocusTint.layout(for: url)
+        async let found = FixedFocusTint.colors(for: url)
+        let (layout, colorsFound) = await (layoutImage, found)
+        guard !Task.isCancelled, let colors = colorsFound else { return }
+        lastChange = Date()
+        let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
+        withAnimation(animation) {
+            tint = colors.first
+            second = colors.second
+        }
+        panelColor = UIColor(colors.first)
+        panelFollows = follows
+        refreshPanels(fade: fade)
+        if let layout {
+            // Crossfaded by its own view (`LayoutPictureView`), from what is
+            // on screen at that moment.
+            picture = FixedFocusPicture(key: key, image: layout, fade: fade, follows: follows)
+        }
+    }
+
+    // MARK: Collection panels
+
+    /// A new panel: the current colour, at once.
+    func addPanel(_ panel: FixedFocusPanelView) {
+        panels.add(panel)
+        panel.show(shownPanelColor, fade: 0, follows: panelFollows)
+    }
+
+    /// The panels again (the colour changed, or the setting): neutral on a
+    /// still picture.
+    func refreshPanels(fade: Double = Motion.fadeDuration) {
+        for panel in panels.allObjects { panel.show(shownPanelColor, fade: fade, follows: panelFollows) }
+    }
+
+    private var shownPanelColor: UIColor? {
+        AppBackground.followsTitle ? panelColor : nil
     }
 }
 
-/// THE CALM GROUND under rows of cards and text — Home's rows and the
-/// Detail page's Episodes and More alike: the title's colour(s) (Render Lab
-/// → Background, Tint …) over a near-black base and the subtle vignette.
-/// A blurred backdrop shown as a background (see `BlurredBackdrop`).
-/// The tint's pace (a reference: changing it redraws nothing).
-final class TintPace {
-    var lastPress = Date.distantPast
-    var lastChange = Date.distantPast
+/// The title background as drawn (`TitleBackground`): Home's ground.
+struct TitleBackgroundView: View {
+    @ObservedObject private var background = TitleBackground.shared
+
+    var body: some View {
+        ZStack {
+            TitleTintBackground.base
+            TitleTintBackground(tint: background.tint, second: background.second, picture: background.picture)
+                .frame(width: 1920, height: 1080)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
 }
 
 struct FixedFocusPicture: Equatable {
@@ -1718,19 +1796,19 @@ struct LayoutPictureView: UIViewRepresentable {
     }
 }
 
+/// THE CALM GROUND under rows of cards and text: the title's colour(s)
+/// over a near-black base — flat, no vignette.
 struct TitleTintBackground: View {
-    /// The rows' vignette: corners and edges a little darker (also over
-    /// Details' blurred picture — Render Lab → Details: vignette below).
-    static var vignette: some View {
-        EllipticalGradient(stops: [.init(color: .clear, location: 0.55),
-                                   .init(color: .black.opacity(0.18), location: 0.8),
-                                   .init(color: .black.opacity(0.45), location: 1)],
-                           center: .center, startRadiusFraction: 0, endRadiusFraction: 0.72)
-    }
     let tint: Color?
     var second: Color? = nil
     /// The picture's colour layout (Home); without it, the title's colour.
     var picture: FixedFocusPicture? = nil
+
+    /// Under it (Home, a folder): dark, a little lighter at the top.
+    static var base: some View {
+        LinearGradient(colors: [Color(white: 0.10), Color(white: 0.03)], startPoint: .top, endPoint: .bottom)
+            .ignoresSafeArea()
+    }
 
     /// How strongly the colour covers the dark base.
     static let tintStrength: Double = 0.5
@@ -1758,8 +1836,6 @@ struct TitleTintBackground: View {
                                              endPoint: UnitPoint(x: 0.5, y: 1)))
                 }
             }
-            // Corners and edges a little darker.
-            Self.vignette
         }
         .allowsHitTesting(false)
     }
@@ -1772,7 +1848,13 @@ struct TitleTintBackground: View {
 enum FixedFocusTint {
     static func colors(for url: String) async
         -> (first: Color, second: Color?, deep: Color)? {
-        guard let palette = await SpotlightTint.areaPalette(for: url), let first = palette.first else { return nil }
+        guard let palette = await SpotlightTint.areaPalette(for: url) else { return nil }
+        return colors(from: palette)
+    }
+
+    private static func colors(from palette: [SpotlightTint.Swatch])
+        -> (first: Color, second: Color?, deep: Color)? {
+        guard let first = palette.first else { return nil }
         let second = palette.count > 1 ? palette[1] : nil
         return (shown(hue: first.hue, saturation: first.saturation),
                 second.map { shown(hue: $0.hue, saturation: $0.saturation) },
@@ -2359,7 +2441,8 @@ extension HomeUIKitView {
     static let peekDotsLift: CGFloat = 16
     /// (Peeking, only on the billboard: once it's up, where they always
     /// end — in the middle of its strip at the top.)
-    private var dotsMid: CGFloat { depth == 0 ? Self.peekDotsMid : Self.rigidDotsMid }
+    private static func dotsMid(depth: Int) -> CGFloat { depth == 0 ? peekDotsMid : rigidDotsMid }
+
 
     /// The billboard's text and dots for the rows to host — their own
     /// animations (a change made in a `withAnimation` here doesn't carry
@@ -2435,15 +2518,20 @@ extension HomeUIKitView {
             // The position, bottom centre (Left/Right): it stays in the strip
             // with the text.
             if let shown = billboard ?? lastBillboard {
+                RowsDepthReader(model: dotsDepth) { depth in
                 BillboardDots(count: shown.count, current: shown.index, focused: true,
                               timer: autoPageRunning ? BillboardAutoPage.interval : nil,
                               cycle: autoPageVisit)
                     .frame(height: SectionHint.size * 1.3)
                     .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .center)
+                    // The glass and its dots as ONE piece: an interrupted move
+                    // (Down, then Up at once) took them on separate paths.
+                    .geometryGroup()
                     .offset(x: Spotlight.screenInset,
-                            y: dotsMid - SectionHint.size * 1.3 / 2)
+                            y: Self.dotsMid(depth: depth) - SectionHint.size * 1.3 / 2)
                     .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll),
                                value: depth == 0)
+                }
             }
         }
         // (Top-left: without the picture the layer is only as large as its
@@ -2639,6 +2727,14 @@ enum FixedFocusCardEdge {
 }
 
 struct FixedFocusRows: UIViewControllerRepresentable {
+    /// A page's rows while its content loads: two unnamed rows of empty
+    /// cards (flat, the card edge) — exactly where the content will be.
+    static let placeholderRows: [HomeRow] = (0..<2).map { row in
+        HomeRow(id: "placeholder-\(row)", title: "", items: (0..<8).map {
+            MetaItem(id: "placeholder-\(row)-\($0)", type: "collection", name: "", poster: nil, background: nil)
+        })
+    }
+
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @EnvironmentObject private var theme: ThemeManager
     let rows: [HomeRow]
@@ -2646,6 +2742,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     let continueRowID: String
     let active: Bool
     let progress: [String: WatchProgress]
+    /// Placeholders while the page's content loads (`placeholderRows`):
+    /// drawn, but out of focus's way; focus goes in once the content's in.
+    var placeholder = false
     /// Rows of landscape cards besides Continue Watching (Search's).
     var landscapeRowIDs: Set<String> = []
     /// Collection rows: landscape tiles in a panel (see `FixedFocusPanelView`).
@@ -2827,7 +2926,16 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         // way (a transparent SwiftUI layer alone doesn't guarantee that).
         if controller.isViewLoaded { controller.view.isHidden = !active }
         controller.progress = progress
-        controller.update(rows)
+        if controller.isPlaceholder, !placeholder, controller.isViewLoaded {
+            // The content takes over the placeholders: one fade, the page.
+            UIView.transition(with: controller.view, duration: Motion.fadeDuration,
+                              options: [.transitionCrossDissolve, .allowAnimatedContent]) {
+                controller.update(rows)
+            }
+        } else {
+            controller.update(rows)
+        }
+        controller.setPlaceholder(placeholder)
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
         controller.billboardOverlayBelowRows = billboardOverlayBelowRows
@@ -2991,7 +3099,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     private func depth(of rowIndex: Int) -> Int {
-        rows.firstIndex(where: { $0.id == featuredRowID }).map { max(rowIndex - $0, 0) } ?? 0
+        // (No billboard: below the first row.)
+        rows.firstIndex(where: { $0.id == featuredRowID }).map { max(rowIndex - $0, 0) } ?? rowIndex
     }
     /// The Featured row: THE BILLBOARD. Its cells are invisible focus
     /// targets (native Left/Right between its titles, Down to the rows);
@@ -3114,6 +3223,26 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
     /// The billboard has the focus outside (its buttons): its cards don't
     /// take focus.
+    /// Placeholders (see `FixedFocusRows.placeholder`): no focus in them;
+    /// when the content takes over, focus goes in.
+    private(set) var isPlaceholder = false
+
+    func setPlaceholder(_ on: Bool) {
+        guard isViewLoaded else { isPlaceholder = on; return }
+        view.isUserInteractionEnabled = !on
+        guard on != isPlaceholder else { return }
+        isPlaceholder = on
+        guard !on else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.view.window,
+                  let system = UIFocusSystem.focusSystem(for: window) else { return }
+            system.requestFocusUpdate(to: self)
+            system.updateFocusIfNeeded()
+        }
+    }
+
+    /// The fixed box shows over this row's grown card.
+    func boxCovers(_ rowIndex: Int) -> Bool { box.alpha == 1 && rowIndex == focusedRow }
     var billboardFocusOutside: Bool { externalBillboard && isFeatured(focusedRow) }
     var cardStates: [String: FixedFocusCardState] = [:]
     var onSelectInRow: ((MetaItem, String) -> Bool)?
@@ -3437,8 +3566,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if billboardScroll, !featured, rigidRest == nil { sendRowsBelowAway() }
         // Up: the rows sink a whole scroll, with the picture.
         if billboardScroll, featured, rigidRest == nil { belowAway = true }
-        // A collection's panel takes the focused folder's colour.
-        rowCell.tintPanel(item, animated: true)
         selected[row.id] = cell.itemIndex
         focusedRow = rowIndex
         // The row's card size (a change of row hands the box over to the
@@ -3662,7 +3789,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             .compactMap { card.width > card.height ? row.items[$0].background ?? row.items[$0].poster
                 : row.items[$0].poster ?? row.items[$0].background })
         onDepth(depth(of: rowIndex))
-        rowCell.tintPanel(item, animated: true)
         selected[row.id] = index
         enterRow(rowIndex)
     }
@@ -4107,10 +4233,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             (outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell)?.aim(index)
         case let .focusRow(rowID):
             guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }) else { return }
-            requestFocus(row: rowIndex)
+            requestFocusFar(row: rowIndex)
         case .focusBillboard:
-            guard let featured = featuredIndex else { return }
-            requestFocus(row: featured)
+            // (No billboard — a folder's rows: the first row.)
+            requestFocusFar(row: featuredIndex ?? 0)
         case let .select(rowID, index):
             guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }),
                   rows[rowIndex].items.indices.contains(index), focusedRow == rowIndex,
@@ -4132,6 +4258,36 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         pendingFocusCell = target
         system.requestFocusUpdate(to: self)
         system.updateFocusIfNeeded()
+    }
+
+    /// Focus to a row's current card in ONE move, however far (Back up to
+    /// the billboard or the first row). Next to it: Up's own move. Far off
+    /// screen it has no cell to focus: the rows' view reaches up to it
+    /// (frame and bounds together — nothing on screen moves) until the move
+    /// has landed, the rows in between keeping their cells all the way.
+    private func requestFocusFar(row: Int) {
+        let path = IndexPath(item: row, section: 0)
+        guard outer.cellForItem(at: path) == nil,
+              let top = outer.collectionViewLayout.layoutAttributesForItem(at: path)?.frame.minY,
+              top < outer.bounds.minY else {
+            requestFocus(row: row)
+            return
+        }
+        let frame = outer.frame, bounds = outer.bounds
+        let reach = bounds.minY - top
+        UIView.performWithoutAnimation {
+            outer.frame = CGRect(x: frame.minX, y: frame.minY - reach, width: frame.width, height: frame.height + reach)
+            outer.bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.height + reach)
+            outer.layoutIfNeeded()
+        }
+        requestFocus(row: row)
+        DispatchQueue.main.asyncAfter(deadline: .now() + FixedFocusMotion.billboardScroll + 0.05) { [weak self] in
+            guard let self else { return }
+            UIView.performWithoutAnimation {
+                self.outer.frame = frame
+                self.outer.bounds = bounds
+            }
+        }
     }
 
     /// Focus to a row's current card, from wherever focus is now.
@@ -4857,8 +5013,115 @@ final class FixedFocusBoxView: UIView {
 /// Image loading for the UIKit cells: memory cache, then disk, then network
 /// (decoded off the main thread); stale results are dropped.
 @MainActor
+/// Loading's breathing: every placeholder (`FixedFocusPlaceholder`, its
+/// bars) between full and `low` opacity, slowly, all in step — the page
+/// breathes as one. Still under Reduce Motion.
+class FixedFocusPulsing: UIView {
+    private static let half: CFTimeInterval = 1.2
+    private static let low: Float = 0.55
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        layer.removeAnimation(forKey: "pulse")
+        guard window != nil, !UIAccessibility.isReduceMotionEnabled else { return }
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1
+        pulse.toValue = Self.low
+        pulse.duration = Self.half
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // In step with every other: from the last whole cycle on the clock.
+        let now = CACurrentMediaTime()
+        pulse.beginTime = layer.convertTime(now - fmod(now, 2 * Self.half), from: nil)
+        pulse.fillMode = .backwards
+        layer.add(pulse, forKey: "pulse")
+    }
+}
+
+/// A card whose content is still loading (`FixedFocusRows.placeholderRows`,
+/// `FolderPosterGrid.placeholderItems`): a soft fill over the page, lighter
+/// at the top, at the card's corners — no edge (that belongs to a picture);
+/// a faint ellipsis in the middle; faint bars (`bar()`) where its text
+/// will be. It breathes (`FixedFocusPulsing`).
+final class FixedFocusPlaceholder: FixedFocusPulsing {
+    private let fill = CAGradientLayer()
+    private let glyph = UIImageView(image: UIImage(systemName: "ellipsis"))
+
+    static func isPlaceholder(_ item: MetaItem?) -> Bool { item?.id.hasPrefix("placeholder-") == true }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        layer.cornerRadius = Spotlight.cornerRadius
+        layer.cornerCurve = .continuous
+        // Over the page itself (no dark base: it hid the card on the page).
+        fill.colors = [UIColor(white: 1, alpha: 0.09).cgColor, UIColor(white: 1, alpha: 0.07).cgColor]
+        layer.addSublayer(fill)
+        glyph.tintColor = UIColor(white: 1, alpha: 0.18)
+        glyph.contentMode = .scaleAspectFit
+        addSubview(glyph)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
+        let size = min(64, (min(bounds.width, bounds.height) * 0.3).rounded())
+        glyph.frame = CGRect(x: (bounds.width - size) / 2, y: (bounds.height - size) / 2, width: size, height: size)
+    }
+
+    /// A line of text to come.
+    static func bar() -> UIView {
+        let bar = FixedFocusPulsing()
+        bar.isUserInteractionEnabled = false
+        bar.backgroundColor = UIColor(white: 1, alpha: 0.07)
+        bar.layer.cornerRadius = 10
+        bar.isHidden = true
+        return bar
+    }
+}
+
 enum FixedFocusImages {
     private static var requested: [ObjectIdentifier: String] = [:]
+
+    /// Decodes pictures into memory ahead — a page's first screen, so it
+    /// swaps in whole: a card asking for one has it at once. Returns once
+    /// they're in, or after `limit` (the rest go on loading).
+    @MainActor
+    static func prefetch(_ pictures: [(url: String?, maxDimension: CGFloat)], within limit: Duration) async {
+        let wanted = pictures.compactMap { picture in picture.url.map { ($0, picture.maxDimension) } }
+        guard !wanted.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { try? await Task.sleep(for: limit) }
+            group.addTask { @MainActor in
+                await withTaskGroup(of: Void.self) { all in
+                    for (url, size) in wanted { all.addTask { @MainActor in await warm(url, maxDimension: size) } }
+                }
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    @MainActor
+    private static func warm(_ url: String, maxDimension: CGFloat) async {
+        let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
+        if ImageCache.shared.image(for: memoryKey) != nil { return }
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        if await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey) != nil { return }
+        guard let remote = URL(string: url), let data = try? await ImageCache.shared.download(remote) else { return }
+        if let image = ImageCache.decodeDownsampled(data, budget: budget) {
+            ImageCache.shared.insert(image, for: url, data: data, memoryKey: memoryKey)
+        } else {
+            ImageCache.shared.insertData(data, for: url)
+        }
+    }
 
     static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat) {
         let slot = ObjectIdentifier(view)
@@ -5334,11 +5597,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// A collection row's panel (see `FixedFocusPanelView`).
     private var panel: FixedFocusPanelView?
 
-    func tintPanel(_ item: MetaItem, animated: Bool) {
-        guard let panel, isPanel else { return }
-        panel.tint(for: item.background ?? item.poster, animated: animated)
-    }
-
 
 
     func showStage(_ item: MetaItem, direction: CGFloat, animated: Bool) {
@@ -5413,9 +5671,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 panel = view
                 setNeedsLayout()
             }
-            if let row, row.items.indices.contains(selectedIndex) {
-                tintPanel(row.items[selectedIndex], animated: false)
-            }
+            // The page's colour (or neutral), as it is now.
+            if let panel { TitleBackground.shared.addPanel(panel) }
         }
         panel?.isHidden = !isPanel
         if isFeatured, let row, row.items.indices.contains(selectedIndex) {
@@ -5450,7 +5707,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             }
             return
         }
-        contentHidden = true
+        // Under the box only while it shows: before focus first arrives
+        // (a page just opened) the cell draws the grown card itself — else
+        // the wide place showed the plain poster until the box popped in.
+        contentHidden = controller.boxCovers(rowIndex)
         strip.reloadData()
         strip.layoutIfNeeded()
         strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0)
@@ -6661,6 +6921,10 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private var cardHeight: CGFloat = 0
     private var shown: String?
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
+    /// Still loading: the placeholder card, and its caption to come.
+    private let placeholderCard = FixedFocusPlaceholder()
+    private let placeholderBars = [FixedFocusPlaceholder.bar(), FixedFocusPlaceholder.bar()]
+    private var isPlaceholder = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -6672,6 +6936,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             picture.layer.cornerCurve = .continuous
         }
         contentView.addSubview(picture)
+        placeholderCard.isHidden = true
+        contentView.addSubview(placeholderCard)
+        for bar in placeholderBars { contentView.addSubview(bar) }
         edge.isUserInteractionEnabled = false
         picture.addSubview(edge)
         stateShade.colors = [UIColor.clear.cgColor,
@@ -6737,6 +7004,15 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                                                             height: card.height * outlineScale))
         edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
+        placeholderCard.frame = card
+        placeholderCard.isHidden = !isPlaceholder
+        picture.isHidden = isPlaceholder
+        let captionY = card.maxY + FixedFocusMetrics.infoGap + 4
+        for (i, bar) in placeholderBars.enumerated() {
+            bar.isHidden = !isPlaceholder
+            bar.frame = CGRect(x: FixedFocusMetrics.textIndent, y: captionY + CGFloat(i) * FixedFocusMetrics.captionLineOffset,
+                               width: (card.width * (i == 0 ? 0.7 : 0.35)).rounded(), height: 20)
+        }
         dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
         // (As on Continue Watching's fixed-focus cards.)
@@ -6761,6 +7037,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         itemIndex = index
         self.rowCell = rowCell
         cardHeight = card.height
+        isPlaceholder = FixedFocusPlaceholder.isPlaceholder(item)
+        setNeedsLayout()
         // (A reused cell: its last focus look gone.)
         applyFocus(isFocused)
         name.text = item.name
@@ -6925,6 +7203,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         didSet { if dim != oldValue { dimCover.alpha = dim } }
     }
     private let dimCover = UIView()
+    /// Still loading: the placeholder card, and under a grown one its text.
+    private let placeholderCard = FixedFocusPlaceholder()
+    private let placeholderBars = [FixedFocusPlaceholder.bar(), FixedFocusPlaceholder.bar()]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -6937,6 +7218,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             view.clipsToBounds = true
             contentView.addSubview(view)
         }
+        placeholderCard.isHidden = true
+        contentView.addSubview(placeholderCard)
+        for bar in placeholderBars { addSubview(bar) }
         shade.colors = [UIColor.clear.cgColor,
                         UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
         shade.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -7000,6 +7284,19 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         let card = landscape || showsBox ? contentView.bounds : poster.frame
         edge.frame = card
         contentView.bringSubviewToFront(edge)
+        placeholderCard.frame = card
+        let placeholder = FixedFocusPlaceholder.isPlaceholder(item)
+        edge.isHidden = placeholder
+        placeholderCard.isHidden = !placeholder
+        poster.isHidden = placeholder
+        backdrop.isHidden = placeholder
+        // Under a grown placeholder: its name and facts to come.
+        let textY = cardHeight + FixedFocusMetrics.infoGap + 4
+        for (i, bar) in placeholderBars.enumerated() {
+            bar.isHidden = !(placeholder && showsBox)
+            bar.frame = CGRect(x: FixedFocusMetrics.textIndent, y: textY + CGFloat(i) * FixedFocusMetrics.factsOffset,
+                               width: i == 0 ? 340 : 220, height: 22)
+        }
         state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
@@ -7160,6 +7457,14 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         if shows != showsBox { showsBox = shows; setNeedsLayout() }
         poster.alpha = shows ? 0 : 1
         backdrop.alpha = shows ? 1 : 0
+        // A placeholder (`FixedFocusRows.placeholderRows`): the empty card
+        // only — no shade, no outline (nothing has focus yet).
+        if item?.id.hasPrefix("placeholder-") == true {
+            shade.isHidden = true
+            info.alpha = 0
+            setOutline(false)
+            return
+        }
         // The info too only while the cell shows itself (Up/Down); under the
         // box, the box's own info drifts in place.
         info.alpha = shows ? 1 : 0
@@ -7337,9 +7642,17 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     /// coordinates shifted by it.
     static let overscan: CGFloat = 1100
     private var frames: [CGRect] = []
+    /// The rows' places before the last change: a row coming on screen in
+    /// a move starts from there (and one leaving goes on to its new place)
+    /// — the rows scroll, as one. (By default they faded in at the new
+    /// place and out at the old: on a move of several rows, rows ran
+    /// through each other.)
+    private var previousFrames: [CGRect] = []
 
     override func prepare() {
         super.prepare()
+        let old = frames
+        defer { if frames != old { previousFrames = old } }
         let count = collectionView?.numberOfItems(inSection: 0) ?? 0
         let f = focusedRow()
         let heights = (0..<count).map { FixedFocusMetrics.titleHeight + titleExtra($0) + cardHeight($0) }
@@ -7454,6 +7767,24 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
         frames.indices.contains(indexPath.item) ? attributes(indexPath.item) : nil
     }
 
+    override func initialLayoutAttributesForAppearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        let r = itemIndexPath.item
+        guard previousFrames.count == frames.count, frames.indices.contains(r) else {
+            return super.initialLayoutAttributesForAppearingItem(at: itemIndexPath)
+        }
+        let a = attributes(r)
+        a.frame = previousFrames[r]
+        return a
+    }
+
+    override func finalLayoutAttributesForDisappearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        let r = itemIndexPath.item
+        guard previousFrames.count == frames.count, frames.indices.contains(r) else {
+            return super.finalLayoutAttributesForDisappearingItem(at: itemIndexPath)
+        }
+        return attributes(r)
+    }
+
     private func attributes(_ r: Int) -> UICollectionViewLayoutAttributes {
         let a = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: r, section: 0))
         a.frame = frames[r]
@@ -7466,10 +7797,6 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
 
 
 
-/// A collection row's panel: one wide rounded plate behind its name and
-/// tiles, in the focused folder's colour (deep, with a lighter edge) — the
-/// row reads as a place to go into, not a feed. The tiles slide under its
-/// edges (the row cell clips them to it).
 final class FixedFocusPanelView: UIView {
     /// In the row cell: around the name, the tiles and the info under the
     /// box, from a little left of the box almost to the right edge.
@@ -7479,8 +7806,6 @@ final class FixedFocusPanelView: UIView {
         return CGRect(x: x, y: -reach.above, width: 1920 - 2 * x,
                       height: reach.above + FixedFocusMetrics.titleHeight + cardHeight + reach.below)
     }
-
-    private var tintedFor: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -7493,19 +7818,23 @@ final class FixedFocusPanelView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The colour of the folder in front (its art's); neutral until known.
-    func tint(for url: String?, animated: Bool) {
-        guard let url, url != tintedFor else { return }
-        tintedFor = url
-        FixedFocusColors.color(for: url) { [weak self] color in
-            guard let self, self.tintedFor == url else { return }
-            if animated {
-                UIView.animate(withDuration: 0.45, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-                    self.apply(color)
-                }
-            } else {
-                self.apply(color)
-            }
+    /// The title background's colour (`TitleBackground`): the fill and edge
+    /// change over `fade`, on the background's own curve; nil: neutral.
+    func show(_ color: UIColor?, fade: Double, follows: Bool) {
+        let shown = layer.presentation() ?? layer
+        let from = [("backgroundColor", shown.backgroundColor), ("borderColor", shown.borderColor)]
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        apply(color)
+        CATransaction.commit()
+        guard fade > 0, window != nil else { return }
+        for (key, old) in from {
+            let change = CABasicAnimation(keyPath: key)
+            change.fromValue = old
+            change.duration = fade
+            change.timingFunction = follows ? FixedFocusTint.focusTiming
+                : CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(change, forKey: key)
         }
     }
 
@@ -7709,22 +8038,3 @@ enum FixedFocusMotion {
 }
 
 
-/// Each title's colour (from `SpotlightTint`, cached), lifted so it reads as
-/// light on the dark background rather than muddy.
-@MainActor
-enum FixedFocusColors {
-    private static var cache: [String: UIColor] = [:]
-
-    static func color(for url: String, _ done: @escaping (UIColor) -> Void) {
-        if let hit = cache[url] { done(hit); return }
-        Task { @MainActor in
-            guard let base = await SpotlightTint.color(for: url) else { return }
-            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            UIColor(base).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-            let lifted = UIColor(hue: h, saturation: min(max(s * 1.15, 0.35), 0.9),
-                                 brightness: max(b, 0.9), alpha: 1)
-            cache[url] = lifted
-            done(lifted)
-        }
-    }
-}

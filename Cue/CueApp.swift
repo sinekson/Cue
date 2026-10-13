@@ -112,10 +112,10 @@ extension Route {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
         case .folder(let c, let f, _): return "\(c.title) → \(f.title)"
-        case .person(_, let name): return name
-        case .tmdbCompany(_, let name, _): return name
-        case .genre(_, let name, _): return name
-        case .keyword(_, let name, _): return name
+        case .person(_, let name, _): return name
+        case .tmdbCompany(_, let name, _, _): return name
+        case .genre(_, let name, _, _): return name
+        case .keyword(_, let name, _, _): return name
         case .streams(let meta, let video),
              .streamsFromStart(let meta, let video),
              .streamsResume(let meta, let video, _):
@@ -137,13 +137,15 @@ enum Route: Hashable {
     /// A folder of a collection, opened from its Home row — on Movies /
     /// Series, only that type (`type`).
     case folder(CueCollection, CueCollectionFolder, type: String? = nil)
-    case person(id: Int, name: String)
+    /// From Details: `backdrop`, that title's picture (behind the page,
+    /// blurred, with "Background follows the title").
+    case person(id: Int, name: String, backdrop: String? = nil)
     /// A studio's titles — or a network's (`network`), its shows.
-    case tmdbCompany(id: Int, name: String, network: Bool = false)
+    case tmdbCompany(id: Int, name: String, network: Bool = false, backdrop: String? = nil)
     /// A genre's titles (films or shows).
-    case genre(id: Int, name: String, isMovie: Bool)
+    case genre(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
     /// A tag's (TMDB keyword's) titles.
-    case keyword(id: Int, name: String, isMovie: Bool)
+    case keyword(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
 }
 
 struct RootView: View {
@@ -1153,12 +1155,16 @@ struct RootView: View {
         case .search:
             NavigationStack(path: $searchPath) {
                 searchRoot(active: active)
-                    .onExitCommand { focusSidebar(1) }
+                    .onExitCommand {
+                        // In the results: back up to the keyboard first.
+                        if SearchBack.shared.anchor?.backToKeyboard() == true { return }
+                        focusSidebar(1)
+                    }
                     .navigationDestination(for: Route.self) { destination(for: $0, path: $searchPath) }
             }
             // Apple's search field and keyboard (UISearchController) ignore
             // the safe-area inset, and sat under the bar — a plain one here.
-            // (The results scroll under the keyboard, never under the bar.)
+            // (The results' grid reaches up under the bar all the same.)
             .padding(.top, searchPath.isEmpty ? GlassSidebar.topBarClearance : 0)
         case .library:
             NavigationStack(path: $libraryPath) {
@@ -1193,6 +1199,8 @@ struct RootView: View {
                     // a pushed screen — tvOS sometimes delivers a lingering
                     // second Menu, which would spuriously open the rail.
                     if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
+                    // Below the billboard: up to it first.
+                    if HomeBack.shared.handle() { return }
                     focusSidebar(tab.rawValue)
                 }
                 .onChange(of: path.wrappedValue.count) { oldCount, newCount in
@@ -1386,7 +1394,15 @@ struct RootView: View {
             onResume: { resume($0) },
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
-            onOpenFolder: { path.wrappedValue.append(Route.folder($0, $1, type: filter)) },
+            onOpenFolder: { collection, folder in
+                PagePreparer.shared.open(FolderView.loadKey(collection, folder, type: filter),
+                                         fetch: { [addonManager, tmdbSettings] in
+                                             await FolderView.catalogs(of: folder, type: filter,
+                                                                       addonManager: addonManager, tmdb: tmdbSettings)
+                                         }) {
+                    path.wrappedValue.append(Route.folder(collection, folder, type: filter))
+                }
+            },
             onContentReady: {
                 // Give the freshly-loaded rows a beat to render and take
                 // initial focus before the rail becomes focusable. This must
@@ -1469,16 +1485,30 @@ struct RootView: View {
             DetailView(
                     item: item,
                     onSelectItem: { openDetail($0) { path.wrappedValue.append($0) } },
-                    onSelectPerson: { id, name in path.wrappedValue.append(Route.person(id: id, name: name)) },
-                    onSelectCompany: { company in
-                        path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
-                                                                   network: company.isNetwork))
+                    onSelectPerson: { id, name, backdrop in
+                        TMDBBrowseViewModel.open(.person(id), title: name) {
+                            path.wrappedValue.append(Route.person(id: id, name: name, backdrop: backdrop))
+                        }
                     },
-                    onSelectGenre: { genre, isMovie in
-                        path.wrappedValue.append(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie))
+                    onSelectCompany: { company, backdrop in
+                        TMDBBrowseViewModel.open(company.isNetwork ? .network(company.id) : .company(company.id),
+                                                 title: company.name) {
+                            path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
+                                                                       network: company.isNetwork, backdrop: backdrop))
+                        }
                     },
-                    onSelectKeyword: { keyword, isMovie in
-                        path.wrappedValue.append(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie))
+                    onSelectGenre: { genre, isMovie, backdrop in
+                        TMDBBrowseViewModel.open(.genre(id: genre.id, name: genre.name, isMovie: isMovie),
+                                                 title: genre.name) {
+                            path.wrappedValue.append(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie,
+                                                                 backdrop: backdrop))
+                        }
+                    },
+                    onSelectKeyword: { keyword, isMovie, backdrop in
+                        TMDBBrowseViewModel.open(.keyword(id: keyword.id, isMovie: isMovie), title: keyword.name) {
+                            path.wrappedValue.append(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie,
+                                                                   backdrop: backdrop))
+                        }
                     },
                     // Back: `DetailTransition` (the billboard's way backwards,
                     // else the simple exit) — no system slide.
@@ -1494,22 +1524,22 @@ struct RootView: View {
             )
         case .folder(let collection, let folder, let type):
             folderView(collection, folder, type: type, path: path)
-        case .person(let id, let name):
+        case .person(let id, let name, let backdrop):
             TMDBBrowseView(personID: id, title: name,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path))
-        case .genre(let id, let name, let isMovie):
+                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+        case .genre(let id, let name, let isMovie, let backdrop):
             TMDBBrowseView(genreID: id, title: name, isMovie: isMovie,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path))
-        case .keyword(let id, let name, let isMovie):
+                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+        case .keyword(let id, let name, let isMovie, let backdrop):
             TMDBBrowseView(keywordID: id, title: name, isMovie: isMovie,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path))
-        case .tmdbCompany(let id, let name, let network):
+                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+        case .tmdbCompany(let id, let name, let network, let backdrop):
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path))
+                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
         case .streams(let meta, let video):
             StreamsView(
                 meta: meta, video: video,
@@ -2079,6 +2109,71 @@ struct LaunchCurtain: View {
 /// - pictures: + the backdrop decoded at the stage's size, the logo, colours;
 /// - full (after a rest of `restTime` on it): + the season extras, the
 ///   blurred backdrop, the first episode stills to disk.
+/// What a page loads before it can show its content (`PagePreparer`).
+@MainActor
+protocol PreparedPage: AnyObject {
+    /// Its content is in (the page can open complete).
+    var isReady: Bool { get }
+}
+
+/// A page's data, loading: started at the press (`PagePreparer`) or by
+/// the page itself. `value` nil: the page shows its placeholders.
+@MainActor
+final class PageLoad<Value>: ObservableObject, PreparedPage {
+    @Published private(set) var value: Value?
+    private var started = false
+    var isReady: Bool { value != nil }
+
+    /// Starts `fetch` (once).
+    func start(_ fetch: @escaping @MainActor () async -> Value) {
+        guard !started else { return }
+        started = true
+        Task { @MainActor in value = await fetch() }
+    }
+}
+
+/// Opening a page whose content loads: its data starts at the press, and
+/// the page opens once it's in — or after `wait` at the latest, then with
+/// placeholders the content takes over as it arrives. One press, one page:
+/// a second press while one waits does nothing.
+@MainActor
+final class PagePreparer {
+    static let shared = PagePreparer()
+    /// About the transition's own length: cached data is in well before.
+    static let wait: Duration = .milliseconds(350)
+    private var pages: [String: PreparedPage] = [:]
+    private var waiting = false
+
+    /// `page`, already loading, is kept for the page under `key`.
+    func open(_ key: String, _ page: PreparedPage, push: @escaping () -> Void) {
+        guard !waiting else { return }
+        waiting = true
+        pages[key] = page
+        Task { @MainActor in
+            let deadline = ContinuousClock.now + Self.wait
+            while !page.isReady, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            waiting = false
+            push()
+        }
+    }
+
+    /// A page's data, loading: started now, kept for the page.
+    func open<Value>(_ key: String, fetch: @escaping @MainActor () async -> Value, push: @escaping () -> Void) {
+        guard !waiting else { return }
+        let load = PageLoad<Value>()
+        load.start(fetch)
+        open(key, load, push: push)
+    }
+
+    /// What the page's press prepared (nil: opened otherwise — the page
+    /// loads by itself).
+    func take<Page: PreparedPage>(_ key: String) -> Page? {
+        pages.removeValue(forKey: key) as? Page
+    }
+}
+
 @MainActor
 final class TitlePreloader {
     static let shared = TitlePreloader()

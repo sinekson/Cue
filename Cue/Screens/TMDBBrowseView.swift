@@ -1,7 +1,7 @@
 import SwiftUI
 
 @MainActor
-final class TMDBBrowseViewModel: ObservableObject {
+final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     enum Source {
         case genre(id: Int, name: String, isMovie: Bool)
         case keyword(id: Int, isMovie: Bool)
@@ -18,6 +18,9 @@ final class TMDBBrowseViewModel: ObservableObject {
     /// How many titles TMDB knows of for the current type.
     @Published private(set) var total = 0
     @Published private(set) var isLoading = true
+    /// The first titles are in (until then the grid shows placeholders).
+    @Published private(set) var loadedOnce = false
+    var isReady: Bool { loadedOnce }
     /// Movies (true) and series (false) this page has something for.
     @Published private(set) var types: [Bool] = []
     @Published private(set) var isMovie: Bool
@@ -80,6 +83,11 @@ final class TMDBBrowseViewModel: ObservableObject {
             isMovie = other
             await reload()
         }
+        // The first two lines' posters too: the page swaps in whole.
+        await FixedFocusImages.prefetch(items.prefix(12).map {
+            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
+        }, within: .milliseconds(700))
+        loadedOnce = true
     }
 
     func choose(isMovie newValue: Bool) {
@@ -106,6 +114,22 @@ final class TMDBBrowseViewModel: ObservableObject {
         total = result.total
         hasMore = result.hasMore
         isLoading = false
+    }
+
+    /// The page's model under `source`, kept for the page.
+    static func key(_ source: Source) -> String { "browse|\(source)" }
+
+    /// A press: the page's titles start loading; the page opens once
+    /// they're in, or after `PagePreparer.wait`.
+    static func open(_ source: Source, title: String, push: @escaping () -> Void) {
+        let model = TMDBBrowseViewModel(source: source, title: title)
+        Task { await model.start() }
+        PagePreparer.shared.open(key(source), model, push: push)
+    }
+
+    /// The model the press prepared, else a new one.
+    static func prepared(_ source: Source, title: String) -> TMDBBrowseViewModel {
+        PagePreparer.shared.take(key(source)) ?? TMDBBrowseViewModel(source: source, title: title)
     }
 
     /// More as focus nears the end of what's there.
@@ -165,43 +189,53 @@ final class TMDBBrowseViewModel: ObservableObject {
 /// and its controls scrolling with it.
 struct TMDBBrowseView: View {
     @StateObject private var viewModel: TMDBBrowseViewModel
+    @Environment(\.dismiss) private var dismiss
+    /// Back: below the grid's first line, up to the top first.
+    @State private var gridBack = GridBack()
 
     let onSelect: (MetaItem) -> Void
     /// Details pushed without the system's slide (the zoom brings it in).
     var onOpenInPlace: ((MetaItem) -> Void)? = nil
+    /// The picture of the title whose page opened this one: blurred behind
+    /// it, as on that page (with "Background follows the title").
+    var backdrop: String? = nil
 
     init(companyID: Int, title: String, network: Bool = false, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(
-            source: network ? .network(companyID) : .company(companyID), title: title))
+         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
+             network ? .network(companyID) : .company(companyID), title: title))
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
+        self.backdrop = backdrop
     }
 
     /// A tag's titles (Details' tags).
     init(keywordID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(
-            source: .keyword(id: keywordID, isMovie: isMovie), title: title))
+         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
+             .keyword(id: keywordID, isMovie: isMovie), title: title))
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
+        self.backdrop = backdrop
     }
 
     /// A genre's titles (Details' genres).
     init(genreID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(
-            source: .genre(id: genreID, name: title, isMovie: isMovie), title: title))
+         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
+             .genre(id: genreID, name: title, isMovie: isMovie), title: title))
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
+        self.backdrop = backdrop
     }
 
     /// A person's titles (Details' cast).
     init(personID: Int, title: String, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel(source: .person(personID), title: title))
+         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
+        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(.person(personID), title: title))
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
+        self.backdrop = backdrop
     }
 
     private var showsControls: Bool { !viewModel.types.isEmpty }
@@ -215,19 +249,25 @@ struct TMDBBrowseView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ATVBackground()
+            DetailsBackdropBackground(url: backdrop)
+            // Until the first titles are in: two lines of empty posters,
+            // out of focus's way (`FolderPosterGrid.placeholder`).
             FolderPosterGrid(
                 header: AnyView(BrowseHeader(viewModel: viewModel)),
                 headerHeight: BrowseHeader.height(source: viewModel.source),
-                items: viewModel.items, subtitles: years,
+                items: viewModel.loadedOnce ? viewModel.items : FolderPosterGrid.placeholderItems,
+                subtitles: years,
                 onSelect: onSelect, onOpenDetails: openDetails,
-                onDisplay: { item in Task { await viewModel.loadMore(after: item) } })
+                onDisplay: { item in Task { await viewModel.loadMore(after: item) } },
+                placeholder: !viewModel.loadedOnce,
+                back: gridBack)
                 .ignoresSafeArea()
-            if viewModel.isLoading || viewModel.items.isEmpty {
+            if viewModel.loadedOnce, viewModel.isLoading || viewModel.items.isEmpty {
                 status.padding(.top, BrowseHeader.height(source: viewModel.source) + 60)
             }
         }
         .task { await viewModel.start() }
+        .onExitCommand { if !gridBack.handle() { dismiss() } }
     }
 
     /// The year under each title.

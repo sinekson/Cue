@@ -129,8 +129,8 @@ final class SearchViewModel: ObservableObject {
 /// the remote's mic); below it — recent searches while it's empty — in a fixed
 /// area (nothing scrolls — the keyboard stays where it is), the results on
 /// Home's rows:
-/// - TOP RESULT first: a small billboard (logo, facts, chips, summary over
-///   its backdrop — see `FixedFocusBannerCell`);
+/// - TOP RESULT first: the best match as one big card, the
+///   billboard's text in it (`SearchTopResultCell`);
 /// - then Movies and Series (the top result's kind first): posters at a
 ///   glance, name and year under each (Home's destination rows).
 /// One row view: Up and Down between them are the rows' own moves.
@@ -165,8 +165,14 @@ struct SearchView: View {
             if hasRows {
                 // The whole page, under the keyboard too: it scrolls with
                 // the grid.
-                GeometryReader { geo in grid(height: geo.size.height, keyboardHeight: keyboardHeight) }
-                    .ignoresSafeArea()
+                // Up to the screen's top, under the bar (the page starts
+                // below it).
+                GeometryReader { geo in
+                    let above = geo.frame(in: .global).minY
+                    grid(height: geo.size.height + above, keyboardHeight: keyboardHeight + above)
+                        .padding(.top, -above)
+                }
+                .ignoresSafeArea()
                 // The scope bar on the page, not in the grid's scroll view
                 // (from the keyboard, Down never found it there); it scrolls
                 // with the grid all the same (`SearchKeyboardScroll`).
@@ -254,15 +260,15 @@ struct SearchView: View {
             .prefix(8).map { $0 }
     }
 
-    /// The results as the browse pages' grid: the best match as the small
-    /// billboard (Top Result), or one type's posters, best match first.
+    /// The results as the browse pages' grid: the best match as one big
+    /// card (Top Result), or one type's posters, best match first.
     private func grid(height: CGFloat, keyboardHeight: CGFloat) -> some View {
         // Under the scope bar (on the line under the keyboard).
         let topSpace = max(0, keyboardHeight + SearchScopeBar.top + SearchScopeBar.height
                               - FolderGridController.headerTopMargin)
-        // The Top Result fills the room under it, the grid's margin to the
-        // screen's edge below.
-        let bannerTop = topSpace + FolderGridController.headerTopMargin + FolderGridController.firstLineGap
+        // The Top Result reaches down to the screen's bottom, the side
+        // margin from it.
+        let resultsTop = topSpace + FolderGridController.headerTopMargin + FolderGridController.firstLineGap
         let ranked = Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
         let scope = viewModel.scope
         let items = scope == .top ? [] : ranked.filter { ($0.type == "movie") == (scope == .movies) }
@@ -273,8 +279,8 @@ struct SearchView: View {
             onSelect: select, onOpenDetails: openDetails,
             topSpace: topSpace,
             focusesFirstTitle: false,
-            banner: scope == .top ? ranked.first.map(Self.withArt) : nil,
-            bannerHeight: max(FixedFocusMetrics.bannerHeight, height - bannerTop - FolderGridController.edgeMargin))
+            topResults: scope == .top ? ranked.prefix(1).map(Self.withArt) : [],
+            topResultHeight: max(300, height - resultsTop - FixedFocusMetrics.inset))
     }
 
     /// Under each poster: its year.
@@ -547,6 +553,14 @@ struct SearchScopeBar: View {
 /// scroll view is a hidden one we move — the system scrolls its keyboard
 /// with it. Placed at the top of the results area (where the keyboard
 /// ends).
+/// Back on Search (the page's `onExitCommand` asks): in the results, up to
+/// the keyboard (`SearchKeyboardScroll.Anchor.backToKeyboard`).
+@MainActor
+final class SearchBack {
+    static let shared = SearchBack()
+    weak var anchor: SearchKeyboardScroll.Anchor?
+}
+
 struct SearchKeyboardScroll: UIViewRepresentable {
     /// Results showing: only then does the keyboard make way.
     var enabled: Bool
@@ -609,8 +623,17 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             while let current = view, current.superview !== results.view { view = current.superview }
             self.search = search
             page = view
+            SearchBack.shared.anchor = self
             results.view.insertSubview(tracker, at: 0)
             results.setContentScrollView(tracker, for: .top)
+            // The grid reaches up under the top bar, past the page's top
+            // (the page sits under the bar — the system's field ignores the
+            // safe area): the system's containers mustn't cut it off there.
+            var ancestor = page?.superview
+            while let view = ancestor, !(view is UIWindow) {
+                view.clipsToBounds = false
+                ancestor = view.superview
+            }
             measure()
         }
 
@@ -650,6 +673,32 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             for line in lines(root) { line.isHidden = hidesLine }
         }
 
+        /// Back with focus in the results (the scope bar, the grid): the
+        /// page back to its top — the keyboard with it — and focus onto the
+        /// keyboard. False: focus isn't in the results.
+        func backToKeyboard() -> Bool {
+            guard let page, let search, let window,
+                  let focused = UIFocusSystem.focusSystem(for: window)?.focusedItem as? UIView,
+                  focused.isDescendant(of: page) else { return false }
+            // (A request straight into the keyboard is ignored: the results
+            // step out of focus's way for a moment, and the search screen's
+            // own choice — its keyboard — takes it.)
+            let toKeyboard = { [weak page] in
+                guard let page, let system = UIFocusSystem.focusSystem(for: window) else { return }
+                page.isUserInteractionEnabled = false
+                system.requestFocusUpdate(to: search)
+                system.updateFocusIfNeeded()
+                page.isUserInteractionEnabled = true
+            }
+            if let grid = followedGrid, grid.contentOffset.y > -grid.contentInset.top + 1 {
+                grid.setContentOffset(CGPoint(x: 0, y: -grid.contentInset.top), animated: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: toKeyboard)
+            } else {
+                toKeyboard()
+            }
+            return true
+        }
+
         /// The grid's page: the keyboard scrolls with it.
         func followGrid() {
             applyLine()
@@ -663,8 +712,9 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             gridObservation = grid?.observe(\.contentOffset, options: [.initial, .new]) { [weak self] grid, _ in
                 MainActor.assumeIsolated {
                     let offset = max(0, grid.contentOffset.y + grid.contentInset.top)
-                    self?.tracker.contentOffset.y = offset
-                    self?.mover?.view?.transform = CGAffineTransform(translationX: 0, y: -offset)
+                    guard let self else { return }
+                    self.tracker.contentOffset.y = offset
+                    self.mover?.view?.transform = CGAffineTransform(translationX: 0, y: -offset)
                 }
             }
             if grid == nil {

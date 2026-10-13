@@ -711,6 +711,11 @@ enum BlurredBackdrop {
     /// The blur's radius, in the working width's pixels.
     private static let strength: Double = 20
 
+    /// The blurred picture if it's already made (no wait).
+    static func cached(for url: String?) -> UIImage? {
+        url.flatMap { cache.object(forKey: "\($0)|\(strength)" as NSString) }
+    }
+
     static func image(for url: String?) async -> UIImage? {
         guard let url else { return nil }
         let key = "\(url)|\(strength)" as NSString

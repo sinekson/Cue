@@ -42,7 +42,7 @@ struct FocusBridgeHost<Value: Hashable, Content: View>: View {
 }
 
 /// Reads the depth for its content alone: only it updates on a change.
-private struct RowsDepthReader<Content: View>: View {
+struct RowsDepthReader<Content: View>: View {
     let model: DetailRowsDepth
     @ViewBuilder let content: (Int) -> Content
     var body: some View { content(model.depth) }
@@ -455,12 +455,14 @@ struct DetailView: View {
         SourcePicker.shared.open(viewModel.meta, video)
     }
     var onSelectItem: (MetaItem) -> Void = { _ in }
-    var onSelectPerson: (Int, String) -> Void = { _, _ in }
-    var onSelectCompany: (TMDBService.Company) -> Void = { _ in }
+    /// The pages opened from here (a person, a studio, a genre, a tag) get
+    /// this page's picture (`backdropURL`) as their last argument.
+    var onSelectPerson: (Int, String, String?) -> Void = { _, _, _ in }
+    var onSelectCompany: (TMDBService.Company, String?) -> Void = { _, _ in }
     /// A genre tag in About: that genre's titles (films or shows, as this one).
-    var onSelectGenre: (TMDBService.Genre, Bool) -> Void = { _, _ in }
+    var onSelectGenre: (TMDBService.Genre, Bool, String?) -> Void = { _, _, _ in }
     /// A tag in About: the titles with that keyword (films or shows, as this one).
-    var onSelectKeyword: (TMDBService.Keyword, Bool) -> Void = { _, _ in }
+    var onSelectKeyword: (TMDBService.Keyword, Bool, String?) -> Void = { _, _, _ in }
     @State private var activeTrailer: TMDBService.Trailer?
     /// The series' size and status, once loaded (see `FixedFocusShowInfo`).
     @State private var showInfo: TMDBService.ShowSize?
@@ -534,10 +536,10 @@ struct DetailView: View {
     init(
         item: MetaItem,
         onSelectItem: @escaping (MetaItem) -> Void = { _ in },
-        onSelectPerson: @escaping (Int, String) -> Void = { _, _ in },
-        onSelectCompany: @escaping (TMDBService.Company) -> Void = { _ in },
-        onSelectGenre: @escaping (TMDBService.Genre, Bool) -> Void = { _, _ in },
-        onSelectKeyword: @escaping (TMDBService.Keyword, Bool) -> Void = { _, _ in },
+        onSelectPerson: @escaping (Int, String, String?) -> Void = { _, _, _ in },
+        onSelectCompany: @escaping (TMDBService.Company, String?) -> Void = { _, _ in },
+        onSelectGenre: @escaping (TMDBService.Genre, Bool, String?) -> Void = { _, _, _ in },
+        onSelectKeyword: @escaping (TMDBService.Keyword, Bool, String?) -> Void = { _, _, _ in },
         onReturnToBillboard: (() -> Void)? = nil
     ) {
         let fromBillboard = MainActor.assumeIsolated { ModeSwap.shared.billboardItemID == item.id }
@@ -647,10 +649,18 @@ struct DetailView: View {
                 DispatchQueue.main.async { act(held) }
             }
         }
-        // Back, when opened from the billboard: this page's half of the swap
-        // out, then Home plays the rest.
-        .onExitCommand(perform: launcher.searching != nil ? { launcher.cancel() }
-                       : fromBillboard && onReturnToBillboard != nil ? { backToBillboard() } : nil)
+        // Back: a source search stops; below the billboard, up to it (one
+        // scroll, focus on Play — the rows keep their places); on it, out
+        // (`DetailTransition`). (Read here, not in the body: the depth
+        // re-rendering the page made the billboard text lag the rows.)
+        .onExitCommand {
+            if launcher.searching != nil { launcher.cancel(); return }
+            if rowsDepth.depth > 0 {
+                rowCommand = FixedFocusRowsCommand(action: .focusBillboard)
+                return
+            }
+            backToBillboard()
+        }
         .fullScreenCover(item: $activeTrailer) { trailer in
             // The alternates come along so a first pick that this connection
             // can't reach falls through to the next one instead of landing on
@@ -710,13 +720,13 @@ struct DetailView: View {
                                // A network or studio: its titles.
                                if rowID == Self.studiosRowID,
                                   let company = viewModel.companies.first(where: { Self.companyItemID($0) == item.id }) {
-                                   onSelectCompany(company)
+                                   onSelectCompany(company, viewModel.backdropURL)
                                    return true
                                }
                                // A person: their page (filmography).
                                if rowID == Self.castRowID, item.id.hasPrefix(Self.personPrefix),
                                   let id = Int(item.id.dropFirst(Self.personPrefix.count)) {
-                                   onSelectPerson(id, item.name)
+                                   onSelectPerson(id, item.name, viewModel.backdropURL)
                                    return true
                                }
                                guard rowID.hasPrefix(Self.seasonRowPrefix) else { return false }
@@ -792,8 +802,8 @@ struct DetailView: View {
 
     /// THE PICTURE stays: sharp under the overview (the billboard's shade
     /// on it); below it, its blurred copy fades in over it and it steps
-    /// back (Render Lab → Details: picture blur / dim below), the shade
-    /// lighter — the rows sit on calm ground of the same picture. (Tried
+    /// back, dimmed — the shade gone (no text there to keep readable): the
+    /// rows sit on calm ground of the same picture. (Tried
     /// 2026-10-07: Home's way — the picture going up, the rows on the
     /// title's colour layout; the blur looked better here.)
     private var rowsBackdrop: some View {
@@ -839,9 +849,7 @@ struct DetailView: View {
                 }
             }
             .frame(width: 1920, height: 1080)
-            .opacity(below ? StagePictureView.shadeBelow : scrim)
-            // Below: the rows' vignette over the blur.
-            TitleTintBackground.vignette.opacity(below ? 1 : 0)
+            .opacity(below ? 0 : scrim)
         }
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the
@@ -1047,8 +1055,8 @@ struct DetailView: View {
                             language: viewModel.language, ratings: viewModel.mdbRatings,
                             settings: mdblist.settings, studiosShown: !viewModel.companies.isEmpty,
                             crew: viewModel.crew,
-                            onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries) },
-                            onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries) },
+                            onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
+                            onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
                             onFocus: { _ in },
                             onContentHeight: { height in
                                 if abs(height - aboutContentHeight) > 1 { aboutContentHeight = height }
@@ -1779,5 +1787,48 @@ final class DetailPreparer {
         self.current = nil
         DetailOpenProbe.note("take: meta \(current.meta != nil) · extras \(current.extras.count) · details \(current.detail != nil) · ratings \(current.ratings != nil) · id \(id) · meta id \(current.meta?.id ?? "-") · seasons \(current.meta?.seasons ?? []) · more \(current.detail?.moreLikeThis.prefix(2).map(\.name) ?? [])")
         return current
+    }
+}
+
+/// Behind a page opened from Details (a person, a studio, a genre, a tag):
+/// with "Background follows the title", that title's page as it is below
+/// the billboard — its picture blurred and dimmed (`DetailView.rowsBackdrop`). Off, or without a picture: the
+/// app's background.
+struct DetailsBackdropBackground: View {
+    let url: String?
+    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
+    /// Details made it: there from the first frame.
+    @State private var blurred: UIImage?
+
+    init(url: String?) {
+        self.url = url
+        _blurred = State(initialValue: BlurredBackdrop.cached(for: url))
+    }
+
+    var body: some View {
+        ZStack {
+            ATVBackground()
+            if followsTitle, url != nil {
+                ZStack {
+                    Color.black
+                    if let blurred {
+                        Image(uiImage: blurred)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 1920, height: 1080)
+                            .clipped()
+                    }
+                    Color.black.opacity(StagePictureView.dimBelow)
+                }
+                .frame(width: 1920, height: 1080)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .task(id: url ?? "") {
+            guard blurred == nil else { return }
+            let image = await BlurredBackdrop.image(for: url)
+            withAnimation(Motion.fade) { blurred = image }
+        }
     }
 }

@@ -207,10 +207,51 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   - Lessons: two identical layers crossfading dip (flicker); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.
+- **Background**: one still picture, Projector (warm light top left, reaching
+  far, a fainter warm spot right of centre, low, a cool shadow bottom right; `ProjectorPicture.render`: Core Image
+  gradients, blur, grain added going 16 → 8 bit — no banding), on every
+  page. Settings → Appearance → "Background follows the title" (off by
+  default): Home, Movies, Series follow the focused title
+  (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
+  only the tab in front sets it), the collection panels take its colour;
+  a folder keeps the colour its tile set on Home (draws Home's
+  background, so opening it changes nothing); a page opened from
+  Details (person, studio/network, genre, tag — `Route…backdrop`) shows
+  that title's Details picture as below its billboard: blurred and
+  dimmed (`DetailsBackdropBackground`). Everything else:
+  Projector. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
+  Search / Library following the title, neutral pages keeping the last
+  title's background, the old solid colours. No vignette anywhere; below
+  Details' billboard only blur + one dim (`dimBelow`; the shade and the
+  vignette there were dropped).
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
   episodes, Saved for Later, cast, studios, Search's banner) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner
   (`FixedFocusCardEdge.rim`). Focus keeps its own outline outside the card.
+- **Back (Home, Movies, Series, Details)**: below the billboard, Back goes up to
+  it first (Details: focus on Play; a source search or the summary panel
+  first closes) (its title as it is, the rows keeping their places); on the
+  billboard, Back goes to the top bar (Details: out, `DetailTransition`);
+  there, the system's (out of the app). One scroll, the billboard's own (0.6 s), however deep. Rows coming
+  on screen in a move start from their old place, rows leaving go on to
+  their new one (`FixedFocusRowsLayout` appearing/disappearing — by
+  default they faded in/out in place and ran through each other). Tried
+  and dropped: a fade. `HomeBack` (one handler: a nested
+  `onExitCommand` took every press), `.focusBillboard`.
+- **Back (folders, browse pages)**: the same — first to the top, then
+  out. A folder's rows: below the first row, up to it (one move, the
+  header back in view; `.focusBillboard` without a billboard = the first
+  row). A grid (one-catalog folder, browse pages): below its first line,
+  up to the top (focus on the first title); on the first line, out. The
+  page's `onExitCommand` decides (`GridBack`): a press the grid took
+  itself still reached the navigation, which left.
+- **Back (Search)**: in the results (scope bar, grid), Back scrolls the
+  page to its top (the keyboard with it) and focus goes to the keyboard
+  (query, scope and results kept); on the keyboard, the top bar.
+  `SearchBack` → `SearchKeyboardScroll.Anchor.backToKeyboard`: a focus
+  request into the keyboard is ignored, so the results are briefly not
+  interactive and the search controller's own choice (its keyboard) takes
+  focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
   next press). Glass panel beside the card; pressed −3 %, open +2 %.
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
@@ -220,6 +261,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
   (no late updates).
+  Pages whose content loads (`PagePreparer`, `PageLoad`): the data starts
+  at the press, the page opens once it's in or after 0.35 s at the latest —
+  then with placeholders in the exact final layout (rows:
+  `FixedFocusRows.placeholderRows` + `placeholder:` — two unnamed rows of
+  empty cards, no focus, no outline), the content taking over in one
+  0.25 s fade, focus then going in. Placeholder look (`FixedFocusPlaceholder`):
+  a soft fill over the page (white 9 % → 7 %, no dark base), no card edge, a faint ellipsis glyph in the
+  middle, faint bars where the text goes; all breathing in step
+  (`FixedFocusPulsing`: opacity 1 ↔ 0.55, 1.2 s each way; still under
+  Reduce Motion). "Ready" includes the first screen's pictures
+  decoded into memory (`FixedFocusImages.prefetch`, 0.7 s cap after the
+  data) — the page swaps in whole, pictures included. Folders (`PageLoad`) and the browse
+  pages (their `TMDBBrowseViewModel`, a `PreparedPage`; the grid's
+  `placeholder:` — two lines of empty posters; only the first load, a
+  Movies | Series / sort change keeps its own loading).
 - **Search's results** are the browse pages' grid (`FolderPosterGrid`,
   six across), in the ranked order. The scope bar (`SearchScopeBar`, the
   Apple TV app's way): before results only the system's line under the
@@ -228,8 +284,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   focused) — Top Result | Movies | Series, all three always. Moving along
   it switches the scope; coming in (Down from the keyboard, Up from the
   grid) lands on the current one. Top Result (chosen with each new
-  search): only the #1 as the small billboard (`FixedFocusBannerCell`, the
-  grid's `banner`); Movies / Series: their posters. The bar is on the
+  search): only the #1, one card the content's width (`SearchTopResultCell`, the
+  grid's `topResults`) from the grid's top down to the side margin above
+  the screen's bottom; the backdrop; at the foot the billboard's text in
+  its styles: logo (or name), chips, facts, tagline (else the name).
+  Parked — to revisit (with Search's scrolling annoyances). Tried and
+  dropped: 3 or 2 cards (16:9 with the info under them, boxy, tall); tall
+  cards cut off by the screen's bottom edge; the poster as the picture. Movies / Series: their posters. The bar is on the
   page, not in the grid's header (from the keyboard, Down never found it
   in the scroll view), in its own hosting view that `SearchKeyboardScroll`
   moves with the grid. Focus stays on the keyboard as results arrive.
@@ -253,14 +314,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`topSpace`) and the keyboard follows its scroll point for point (KVO);
   at the grid's top (first line, pills) it shows, so Up reaches it — the
   engine never finds it once it's out, and programmatic focus into it is
-  ignored. Tried and dropped: moving the
+  ignored. The page sits under the top bar (padding: the field ignores
+  the safe area); the grid reaches up past it under the glass, the system
+  containers above it unclipped. Tried and dropped: moving the
   results' hosting view (the system places it) or a transform on the
   rows (SwiftUI's frame undoes it); `UISearchController` embedded by hand
   (field not on screen, crashes).
 - **Collections**: one panel row per collection on Home. A folder page is
   Home's rows (`FixedFocusRows`): a catalog per row, all its titles, the
-  focused row at Home's spot, the next peeking; the folder's name and
-  subtitle above the first row. A one-catalog folder opens the poster grid instead (the
+  focused row at Home's spot, the next peeking; the folder's cover
+  tile (its own shape, 100 pt tall — the header's height, so the rows keep
+  their place), name and subtitle above the first row — the same header
+  while loading and over the grid. A one-catalog folder opens the poster grid instead (the
   browse pages' grid, with the folder's cover). Every collection shows this
   way, whatever its Nuvio `viewMode` (the value isn't touched). The old
   two-lines-per-catalog blocks, tabs and "See All" pages are gone.
