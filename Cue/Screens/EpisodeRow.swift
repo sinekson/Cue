@@ -614,6 +614,7 @@ final class EpisodeBoxView: UIView {
         outline.layer.cornerCurve = .continuous
         outline.alpha = 0
         addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
         // (The top bar's light — as on Home's box: see `FixedFocusCardEdge`.)
         outline.addSubview(outlineLight)
     }

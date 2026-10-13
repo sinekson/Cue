@@ -2402,11 +2402,43 @@ enum FixedFocusText {
     static let tagline: CGFloat = 0.58
 }
 
-/// The focus outline (Render Lab → Focus outline).
+/// The focused card's look: the unfocused cards' edge, bright (no ring
+/// around the card), a soft shadow under it and, where cards grow, a 6 %
+/// lift (`FixedFocusMetrics.movingFocusLift`).
 @MainActor
 enum FixedFocusRing {
-    static let width: CGFloat = 4
-    static let color = UIColor.white.withAlphaComponent(0.85)
+    /// Settings → Appearance → Focus edge (on by default): off, focus is the
+    /// shadow and the grow alone.
+    static let edgeKey = "cue.appearance.focusEdge"
+    static var edgeOn: Bool { UserDefaults.standard.object(forKey: edgeKey) as? Bool ?? true }
+    /// The edge: the rim's own width, bright.
+    static var width: CGFloat { edgeOn ? 2 : 0 }
+    static let color = UIColor.white.withAlphaComponent(0.75)
+
+    /// The setting changed: every card lays itself out again (each applies
+    /// the edge there) — at once, in every tab and page, no restart.
+    static func refreshAll() {
+        func relayout(_ view: UIView) {
+            view.setNeedsLayout()
+            view.subviews.forEach(relayout)
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            (scene as? UIWindowScene)?.windows.forEach(relayout)
+        }
+    }
+
+    /// The shadow under a focus outline `view` (its card's rect): the
+    /// cards' shadow picture (`FixedFocusCardEdge.shadowImage`, only outside
+    /// the card), sized by autoresizing — so it follows the card's grow
+    /// animation (a layer's shadow path snapped to each new size: flicker).
+    static func attachShadow(to view: UIView) {
+        let pad = FixedFocusCardEdge.shadowPad
+        let shadow = UIImageView(image: FixedFocusCardEdge.shadowImage)
+        shadow.isUserInteractionEnabled = false
+        shadow.frame = view.bounds.insetBy(dx: -pad, dy: -pad)
+        shadow.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.insertSubview(shadow, at: 0)
+    }
 }
 
 /// Where focus is on the billboard: title `index` of `count`.
@@ -3018,7 +3050,7 @@ enum FixedFocusMetrics {
     /// (`gap`), around the LIFTED card — the gap at rest grows by as much
     /// as a card of that width grows on each side.
     /// How much a moving-focus card grows when focused.
-    static let movingFocusLift: CGFloat = 0.05
+    static let movingFocusLift: CGFloat = 0.06
     @MainActor static func destinationGap(cardWidth: CGFloat) -> CGFloat {
         (gap + cardWidth * movingFocusLift / 2).rounded()
     }
@@ -3034,7 +3066,7 @@ enum FixedFocusMetrics {
     static let heldGrowth: CGFloat = 0.02
     /// The fixed box's own size: the portrait posters' height, its left edge
     /// on the row name's.
-    static let boxScale: CGFloat = 1
+    static let boxScale: CGFloat = 1.04
     /// Their focus: tvOS's lift (tilt, sheen) — off: Cue's own outline, as
     /// on the other rows.
     static let destinationSystemLift = false
@@ -3055,6 +3087,9 @@ enum FixedFocusMetrics {
     static var panelReach: (above: CGFloat, below: CGFloat) { (panelPad, panelPad) }
     /// Under the box: the title's name, then its facts (meta) line.
     static let infoGap: CGFloat = 18
+    /// …under the fixed box (and a cell standing in for it): a little more —
+    /// it reads as far below as a focused moving-focus card's caption.
+    static let boxInfoGap: CGFloat = infoGap + 3
     static let factsOffset: CGFloat = 36
     static let factsHeight: CGFloat = 30
     /// Name, facts and the chips line.
@@ -4906,6 +4941,7 @@ final class FixedFocusBoxView: UIView {
         addSubview(edge)
         focusRing.isUserInteractionEnabled = false
         addSubview(focusRing)
+        FixedFocusRing.attachShadow(to: focusRing)
         // (A layer's border is drawn above its sublayers: above the pages.)
         layer.cornerRadius = Spotlight.cornerRadius
         layer.cornerCurve = .continuous
@@ -4925,6 +4961,7 @@ final class FixedFocusBoxView: UIView {
         let lit = FixedFocusCardEdge.focusLight
         let hidden = ringHidden
         focusRing.image = lit && !hidden ? FixedFocusCardEdge.focusImage : nil
+        focusRing.isHidden = hidden
         layer.borderWidth = lit || hidden ? 0 : FixedFocusRing.width
         layer.borderColor = FixedFocusRing.color.cgColor
     }
@@ -4934,13 +4971,14 @@ final class FixedFocusBoxView: UIView {
     /// Where the info sits: as under the cells (18 pt below, optically
     /// indented).
     private var infoFrame: CGRect {
-        CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + 18,
+        CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + FixedFocusMetrics.boxInfoGap,
                width: max(bounds.width, FixedFocusMetrics.boxWidth),
                height: FixedFocusMetrics.infoHeight)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        applyOutlineStyle()
         clip.frame = bounds
         // The cards' rim.
         edge.image = FixedFocusCardEdge.rim
@@ -6733,6 +6771,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
             view.bounds = CGRect(origin: .zero, size: bounds.size)
             view.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }
+        outline.layer.borderWidth = FixedFocusRing.width
         shadow.bounds = CGRect(origin: .zero, size: bounds.insetBy(dx: -FixedFocusCardEdge.shadowPad,
                                                                     dy: -FixedFocusCardEdge.shadowPad).size)
         shadow.center = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -6964,6 +7003,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         outline.addSubview(outlineLight)
         outline.alpha = 0
         contentView.addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
         // Like the fixed box's text (see its `InfoPage`), a little smaller: one size
         // for both lines, the second dimmer.
         name.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
@@ -7247,6 +7287,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outline.layer.cornerCurve = .continuous
         outline.alpha = 0
         addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
         name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
         name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
@@ -7300,7 +7341,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
-        let infoRect = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.infoGap,
+        let infoRect = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.boxInfoGap,
                               width: landscapeWidth, height: FixedFocusMetrics.infoHeight)
         info.bounds = CGRect(origin: .zero, size: infoRect.size)
         info.center = CGPoint(x: infoRect.midX, y: infoRect.midY)

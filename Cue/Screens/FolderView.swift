@@ -837,6 +837,7 @@ final class SearchTopResultCell: UICollectionViewCell, FixedFocusDestinationItem
         outline.layer.cornerCurve = .continuous
         outline.alpha = 0
         contentView.addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -871,6 +872,7 @@ final class SearchTopResultCell: UICollectionViewCell, FixedFocusDestinationItem
         super.layoutSubviews()
         card.frame = bounds
         outline.frame = bounds
+        outline.layer.borderWidth = FixedFocusRing.width
         picture.frame = card.bounds
         edge.image = FixedFocusCardEdge.rim
         edge.frame = card.bounds

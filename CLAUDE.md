@@ -227,7 +227,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
   episodes, Saved for Later, cast, studios, Search's banner) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner
-  (`FixedFocusCardEdge.rim`). Focus keeps its own outline outside the card.
+  (`FixedFocusCardEdge.rim`). Focus: no ring — the same edge, bright (2 pt, white 75 %;
+  `FixedFocusRing`), a soft shadow outside the card (`attachShadow`, the cards' shadow picture),
+  moving-focus cards grow 6 %, the fixed box 4 % (`boxScale`: it
+  overhangs its spot, its neighbours step aside, its info isn't scaled).
+  Settings → Appearance → Focus edge (on by default) turns the edge off
+  (`FixedFocusRing.edgeOn`; switching relayouts every view — live). The
+  fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
+  caption reads. (Tried and dropped: the 4 pt white ring.)
 - **Back (Home, Movies, Series, Details)**: below the billboard, Back goes up to
   it first (Details: focus on Play; a source search or the summary panel
   first closes) (its title as it is, the rows keeping their places); on the
