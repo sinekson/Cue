@@ -412,14 +412,14 @@ struct TitleBadge: View {
         // No taller than a line of the text beside it: capitals as high
         // as that text's lowercase letters, in a box of about 28 pt.
         Text(text)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 18, weight: .semibold))
             .tracking(0.5)
             .foregroundStyle(Color.white.opacity(0.85))
             // (The rating chips' height — see `MDBListRatingsRow`.)
-            .frame(height: 21)
+            .frame(height: 22)
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color.white.opacity(0.4), lineWidth: 1.25))
+                .stroke(Color(white: FixedFocusText.primary), lineWidth: 1.75))
     }
 }

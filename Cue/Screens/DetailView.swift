@@ -1077,7 +1077,7 @@ struct DetailView: View {
         // default.
         FocusBridgeHost(bridge: actionBridge, defaultValue: .play,
                         onChange: { old, new in actionFocusChanged(from: old, to: new) }) { focus in actionRow(focus) }
-            // (The text's left edge — the billboard's column.)
+            // (The billboard's column.)
             .padding(.leading, FixedFocusMetrics.titleInset)
     }
 
@@ -1119,12 +1119,12 @@ struct DetailView: View {
                 //
                 let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
                 let finding = launcher.searching == PlayLauncher.key(viewModel.meta, target)
-                // Short: "Play" — which episode (and how much is left) under
-                // it, while it has focus.
+                // "Play" — a show's episode under it while focused (a film:
+                // nothing).
                 DetailActionButton(
                     icon: "play.fill", title: "Play",
                     isPrimary: true, lit: litAction == .play, busy: finding,
-                    caption: finding ? "Finding a source…" : playCaption(target),
+                    caption: finding ? "Finding a source…" : target.map(seriesPlayTitle),
                     action: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
                         else { play(target, onButton: true) }
@@ -1146,8 +1146,8 @@ struct DetailView: View {
                     let saved = library.contains(viewModel.meta)
                     DetailActionButton(
                         icon: saved ? "checkmark" : "plus",
-                        title: saved ? "In Library" : "Add to Library",
-                        isPrimary: false, lit: litAction == .library,
+                        title: saved ? "In Library" : "Library",
+                        isPrimary: false, lit: litAction == .library, bare: true,
                         // No toast: the button itself says it ("In Library").
                         action: { library.toggle(viewModel.meta) }
                     )
@@ -1155,8 +1155,8 @@ struct DetailView: View {
                     // Always there (the row never changes shape): without a
                     // trailer it says so.
                     DetailActionButton(
-                        icon: "play.rectangle.fill", title: "Watch Trailer",
-                        isPrimary: false, lit: litAction == .trailer,
+                        icon: "play.rectangle.fill", title: "Trailer",
+                        isPrimary: false, lit: litAction == .trailer, bare: true,
                         action: {
                             if let trailer = viewModel.trailers.first { activeTrailer = trailer }
                             else { ToastCenter.shared.show("No trailer for this title", icon: "film") }
@@ -1167,7 +1167,7 @@ struct DetailView: View {
                     // shows only the tagline).
                     DetailActionButton(
                         icon: "text.alignleft", title: "Summary",
-                        isPrimary: false, lit: litAction == .info,
+                        isPrimary: false, lit: litAction == .info, bare: true,
                         action: {
                             if viewModel.meta.description?.isEmpty == false { summaryShown = true }
                             else { ToastCenter.shared.show("No summary for this title", icon: "text.alignleft") }
@@ -1227,17 +1227,6 @@ struct DetailView: View {
     /// ▶ says play; resume or not, it continues where you are.
     private func seriesPlayTitle(_ episode: MetaVideo) -> String {
         "S\(episode.season ?? 1):E\(episode.episode ?? 1)"
-    }
-
-    /// Under Play: on a show its episode ("S1:E1"); started, the time left
-    /// ("S2:E13 · 46m left", a film "38m left"). Nil: nothing to say.
-    private func playCaption(_ target: MetaVideo?) -> String? {
-        let code = target.map(seriesPlayTitle)
-        let progress = progressStore.progress(for: target?.id ?? viewModel.meta.id)
-        let fraction = progress?.fraction ?? 0
-        let left = fraction > 0.02 && fraction < 0.95 ? progress?.remainingTimeText.map { "\($0) left" } : nil
-        let parts = [code, left].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
 
     // MARK: - Episode row
@@ -1418,9 +1407,14 @@ struct DetailActionButton: View {
     let lit: Bool
     /// Working (Play finding a source): a spinner instead of the icon.
     var busy = false
-    /// The primary button's line under it while focused (Play: its
-    /// episode, the time left).
+    /// The primary button's line under it while focused (Play: "Finding a
+    /// source…").
     var caption: String? = nil
+    /// Only its icon (its name under it while focused) — all but Play.
+    var bare = false
+    /// Nothing behind it at rest (the billboard's Next).
+    var plain = false
+    var iconSize = DetailActionButton.iconSize
     let action: () -> Void
     var onHold: (() -> Void)? = nil
 
@@ -1443,15 +1437,32 @@ struct DetailActionButton: View {
     }
 
     static let paintDelay = Duration.milliseconds(50)
-    /// The top bar's look at Apple's button size: the app's glass at rest,
-    /// the bright glass highlight when focused (a little larger, dark
-    /// content) — the one exception to "glass only floats": the title's
-    /// controls, on the picture (docs/UI-DESIGN.md §1).
+    /// The look is `ActionFace`: a frosted pill at rest, a white capsule
+    /// when focused. (Tried and dropped: glass; a dark fill at rest —
+    /// grey, black, black with a light edge; nothing at rest.)
     static let height: CGFloat = 64
-    static let textPadding: CGFloat = 25
+    static let focusFill = Color.white
+    static let restContent = Color.white.opacity(FixedFocusText.primary)
+    /// Inside the capsule, either side.
+    static let textPadding: CGFloat = 22
+    /// The content: text and icons one size (the ⓘ larger — its circle
+    /// reads small).
+    static let textSize: CGFloat = 26
+    static let iconSize: CGFloat = 26
     static let iconBox: CGFloat = 30
     /// Lighting up / the caption coming in / the scale: a no-bounce spring.
     static let open: Animation = .spring(duration: 0.15, bounce: 0)
+    /// Focus leaving: the capsule shrinks into the button (to `leaveScale`
+    /// of it) as it fades — slower than it came, so it's seen going; the
+    /// fade goes evenly with the shrink, from the start (a delayed fade
+    /// overlapped the next button's capsule).
+    static let leave: Animation = .spring(duration: 0.35, bounce: 0)
+    static let leaveFade: Animation = .linear(duration: 0.35)
+    static let leaveContent: Animation = .linear(duration: 0.04).delay(0.14)
+    static let leaveScale: CGFloat = 0.88
+    private var litAnimation: Animation { shownLit ? Self.open : Self.leave }
+    /// Focused: this much larger.
+    static let focusScale: CGFloat = 1.05
     /// The caption: small, under the circle.
     static let captionSize: CGFloat = 20
     static let captionGap: CGFloat = 12
@@ -1464,42 +1475,31 @@ struct DetailActionButton: View {
                         ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
                     } else {
                         Image(systemName: icon)
-                            .font(.system(size: GlassPill.iconSize, weight: .semibold))
+                            .font(.system(size: iconSize, weight: .bold))
                     }
                 }
                 .frame(width: Self.iconBox, height: Self.iconBox)
-                if isPrimary {
+                if !bare {
                     Text(title)
-                        .font(.system(size: GlassPill.textSize, weight: .semibold))
+                        .font(.system(size: Self.textSize, weight: .semibold))
                         .lineLimit(1)
                         .fixedSize()
                 }
             }
-            .padding(.horizontal, isPrimary ? Self.textPadding : 0)
-            .frame(width: isPrimary ? nil : Self.height, height: Self.height)
-            .foregroundStyle(shownLit ? FlatControl.contentOnFocus : FlatControl.content)
-            // ONE glass layer that never changes; the focus highlight fades
-            // in over it. (Tried: a flat look-alike, `FlatGlass` — no faster,
-            // and it didn't fit the top bar's style.)
-            .background {
-                ZStack {
-                    Color.clear.liquidGlass(in: Capsule())
-                    Capsule().fill(AppGlass.focusTint).opacity(shownLit ? 1 : 0)
-                }
-            }
-            .animation(Self.open, value: shownLit)
-            // An icon button's name — the primary one's caption — centred
-            // under it while focused (outside its frame: the row never moves
-            // for it).
+            .padding(.horizontal, bare ? 0 : Self.textPadding)
+            .frame(width: bare ? Self.height : nil, height: Self.height)
+            .modifier(ActionFace(lit: shownLit, pill: !plain))
+            // Under it while focused (outside its frame: the row never moves
+            // for it): Play's search, the bare button's name.
             .overlay(alignment: .top) {
-                if let text = isPrimary ? caption : title {
+                if let text = isPrimary ? caption : bare ? title : nil {
                     Text(text)
                         .font(.system(size: Self.captionSize, weight: .medium))
                         .foregroundStyle(AppGlass.textMuted)
                         .lineLimit(1)
                         .fixedSize()
                         .opacity(shownLit ? 1 : 0)
-                        .animation(Self.open, value: shownLit)
+                        .animation(litAnimation, value: shownLit)
                         .offset(y: Self.height + Self.captionGap)
                 }
             }
@@ -1513,23 +1513,61 @@ struct DetailActionButton: View {
     }
 }
 
-/// The top bar's glass, drawn flat (no blur — cheap to show, fade and
-/// scale): a dark translucent fill, a light rim along the top and a fainter
-/// one along the bottom, as light catches real glass.
-struct FlatGlass<S: InsettableShape>: View {
-    let shape: S
-    var body: some View {
-        ZStack {
-            shape.fill(Color.black.opacity(0.32))
-            shape.fill(Color.white.opacity(0.07))
-            shape.strokeBorder(
-                LinearGradient(stops: [.init(color: .white.opacity(0.32), location: 0),
-                                       .init(color: .white.opacity(0.06), location: 0.4),
-                                       .init(color: .white.opacity(0.04), location: 0.65),
-                                       .init(color: .white.opacity(0.16), location: 1)],
-                               startPoint: .top, endPoint: .bottom),
-                lineWidth: 1.5)
-        }
+/// THE ACTION BUTTONS' FACE (Details' and the billboard's buttons,
+/// Details' season buttons): at rest a frosted pill (`pill`; without it,
+/// the content with the text's small shadow); focused, a white capsule, dark
+/// content; leaving, the capsule shrinks into the button as it fades
+/// (`DetailActionButton.leave`, `leaveFade`).
+struct ActionFace: ViewModifier {
+    let lit: Bool
+    var rest: Color = DetailActionButton.restContent
+    /// At rest on the frosted pill (the top bar's current tab, not glass);
+    /// false: nothing behind it (the billboard's Next, a season not shown).
+    var pill = true
+    /// The pill as the current one of a set (the row's season): the flat
+    /// light grey (`FlatControl.selected`), not the blur.
+    var current = false
+
+    /// The frosted pill: the picture behind it blurred and darkened (the
+    /// system's thin material, dark — not glass), a faint light edge
+    /// brighter along the top. (Tried: a flat white 16 % — too little
+    /// contrast for the content.)
+    static let pillEdge = LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.06)],
+                                         startPoint: .top, endPoint: .bottom)
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(lit ? FlatControl.contentOnFocus : rest)
+            .shadow(color: .black.opacity(lit || pill ? 0 : 0.35), radius: 4, y: 2)
+            // Leaving: dark → light quickly, once the capsule is about half
+            // gone (blended over the whole fade, the content passed through
+            // the capsule's grey and vanished for a moment — a flicker).
+            .animation(lit ? DetailActionButton.open : DetailActionButton.leaveContent, value: lit)
+            // The pill under, the focus capsule over it (shrinking into it).
+            .background {
+                ZStack {
+                    // (Faded, not added / removed: a pill popping in or out
+                    // flickered.)
+                    if current {
+                        Capsule().fill(FlatControl.selected).opacity(pill ? 1 : 0)
+                    } else {
+                        ZStack {
+                            Capsule().fill(.thinMaterial).environment(\.colorScheme, .dark)
+                            Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
+                        }
+                        .opacity(pill ? 1 : 0)
+                    }
+                    Capsule().fill(DetailActionButton.focusFill)
+                        .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+                        // Shrinking only into nothing: over a resting pill it
+                        // stays its size — one pill changing colour (shrunk,
+                        // two pills showed, one inside the other).
+                        .scaleEffect(lit || pill ? 1 : DetailActionButton.leaveScale)
+                        .opacity(lit ? 1 : 0)
+                        .animation(lit ? DetailActionButton.open : DetailActionButton.leaveFade, value: lit)
+                }
+            }
+            .animation(lit ? DetailActionButton.open : DetailActionButton.leave, value: lit)
     }
 }
 
@@ -1540,7 +1578,7 @@ private struct DetailPressStyle: ButtonStyle {
     let held: Bool
     /// The button's own focus, as it comes and goes.
     var onFocus: (Bool) -> Void = { _ in }
-    static let focusScale: CGFloat = 1.07
+    static let focusScale = DetailActionButton.focusScale
 
     func makeBody(configuration: Configuration) -> some View {
         PressBody(configuration: configuration, lit: lit, held: held, onFocus: onFocus)
@@ -1560,7 +1598,8 @@ private struct DetailPressStyle: ButtonStyle {
             return configuration.label
                 .scaleEffect(scale)
                 // Focus: with the highlight, on its curve; a press quicker.
-                .animation(configuration.isPressed ? .easeOut(duration: 0.12) : DetailActionButton.open,
+                .animation(configuration.isPressed ? .easeOut(duration: 0.12)
+                           : lit ? DetailActionButton.open : DetailActionButton.leave,
                            value: scale)
                 .onChange(of: isFocused) { _, now in onFocus(now) }
         }

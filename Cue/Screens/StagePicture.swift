@@ -14,7 +14,7 @@ final class StagePictureView: UIView {
     static let dimBelow: CGFloat = 0.55
     /// How far the billboard's picture drifts on a change (its text only
     /// crossfades — `BillboardCrossfade`).
-    static let drift: CGFloat = 24
+    static let drift: CGFloat = 16
 
     /// The picture and its shade.
     private let sheet = UIView()
@@ -139,7 +139,7 @@ final class StagePictureView: UIView {
     }
 }
 
-/// The billboard's shade (the SwiftUI `BillboardShade`: its two fades)
+/// The billboard's shade (the SwiftUI `BillboardShade`: its left fade)
 /// as a still image, made once. THE shade: the billboard's, Details' and
 /// the transition's alike.
 @MainActor

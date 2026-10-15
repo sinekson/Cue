@@ -1199,6 +1199,8 @@ struct RootView: View {
                     // a pushed screen — tvOS sometimes delivers a lingering
                     // second Menu, which would spuriously open the rail.
                     if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
+                    // The billboard's Play finding a source: it stops.
+                    if launcher.search != nil { launcher.cancel(); return }
                     // Below the billboard: up to it first.
                     if HomeBack.shared.handle() { return }
                     focusSidebar(tab.rawValue)
@@ -1977,7 +1979,7 @@ final class LaunchPreloader: ObservableObject {
         t = CACurrentMediaTime()
         _ = StageArt.shade
         _ = FixedFocusCardEdge.shadowImage
-        _ = BillboardShade.twoFadesImage
+        _ = BillboardShade.image
         line(String(format: "Setup     artwork 3 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
         progress = 0.25
 

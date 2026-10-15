@@ -52,9 +52,10 @@ final class PlayLauncher: ObservableObject {
     }
 
     /// A title from its card: a show plays the episode Details' Play would.
-    func play(title item: MetaItem, fromStart: Bool = false) {
+    /// (`overlay` false: the caller shows it — the billboard's Play.)
+    func play(title item: MetaItem, fromStart: Bool = false, overlay: Bool = true) {
         cancel()
-        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: true)
+        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: overlay)
         task = Task { [weak self] in
             guard let self, let (meta, video) = await self.target(item) else { return }
             self.search?.key = Self.key(meta, video)
@@ -64,10 +65,10 @@ final class PlayLauncher: ObservableObject {
     }
 
     /// The source picker for a title (a show: the episode Play would start).
-    func chooseSource(title item: MetaItem) {
+    func chooseSource(title item: MetaItem, overlay: Bool = true) {
         guard item.isSeries else { SourcePicker.shared.open(item, nil); return }
         cancel()
-        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: true)
+        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: overlay)
         task = Task { [weak self] in
             guard let self, let (meta, video) = await self.target(item) else { return }
             self.search = nil

@@ -480,6 +480,71 @@ final class ImageCache: @unchecked Sendable {
 /// Cached async image with a shimmer placeholder and a crossfade-in. Keeps the
 /// previously shown image on screen while a new URL loads, so changing the hero
 /// backdrop is a smooth crossfade rather than a flash.
+/// A LOGO'S SIZE BY AREA: every logo covers about the same area, so a
+/// wide one isn't huge and a square one tiny (fitting a box gave each the
+/// box's width or height, whatever its shape) — within `maxSize`.
+struct LogoFit {
+    let area: CGFloat
+    let maxSize: CGSize
+
+    func size(for image: CGSize) -> CGSize {
+        guard image.width > 0, image.height > 0 else { return .zero }
+        let ratio = image.width / image.height
+        let height = (area / ratio).squareRoot(), width = height * ratio
+        let scale = min(1, maxSize.width / width, maxSize.height / height)
+        return CGSize(width: width * scale, height: height * scale)
+    }
+
+    private static let cache = NSCache<NSString, UIImage>()
+
+    /// The logo without its empty (transparent) edges, so its shape is the
+    /// drawing's and it starts where the text does. Made once per logo.
+    @MainActor
+    static func trimmed(_ image: UIImage, key: String) -> UIImage {
+        if let hit = cache.object(forKey: key as NSString) { return hit }
+        let result = trim(image) ?? image
+        cache.setObject(result, forKey: key as NSString)
+        return result
+    }
+
+    private static func trim(_ image: UIImage) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        switch cg.alphaInfo {
+        case .none, .noneSkipLast, .noneSkipFirst: return nil
+        default: break
+        }
+        let w = cg.width, h = cg.height
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+        // Anything fainter than this is empty (soft glows, stray pixels).
+        let threshold: UInt8 = 12
+        var minX = w, minY = h, maxX = -1, maxY = -1
+        for y in 0..<h {
+            let row = y * w * 4
+            for x in 0..<w where pixels[row + x * 4 + 3] > threshold {
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        if minX == 0, minY == 0, maxX == w - 1, maxY == h - 1 { return nil }
+        // (The buffer's rows run top to bottom, as the image's.)
+        guard let cropped = cg.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1,
+                                                   height: maxY - minY + 1)) else { return nil }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+}
+
 struct RemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
@@ -500,6 +565,10 @@ struct RemoteImage: View {
     /// Shown instead when the image can't be loaded (e.g. a logo → the
     /// title as text).
     var fallback: AnyView? = nil
+    /// A LOGO: trimmed of its empty edges and sized by area (`LogoFit`),
+    /// the view hugging it (something sits on it) — instead of filling the
+    /// room it's given. Nothing while it loads.
+    var logoFit: LogoFit? = nil
 
     @State private var image: UIImage?
     @State private var shownKey: String?
@@ -507,8 +576,9 @@ struct RemoteImage: View {
 
     init(url: String?, contentMode: ContentMode = .fill, alignment: Alignment = .center,
          maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil, showsPlaceholder: Bool = true,
-         fallback: AnyView? = nil) {
+         fallback: AnyView? = nil, logoFit: LogoFit? = nil) {
         self.url = url
+        self.logoFit = logoFit
         self.showsPlaceholder = showsPlaceholder
         self.fallback = fallback
         self.contentMode = contentMode
@@ -526,6 +596,33 @@ struct RemoteImage: View {
     }
 
     var body: some View {
+        if let logoFit {
+            fitted(logoFit)
+        } else {
+            filling
+        }
+    }
+
+    private func fitted(_ fit: LogoFit) -> some View {
+        // (An empty Group never starts its task: a zero-size anchor.)
+        ZStack(alignment: .bottomLeading) {
+            Color.clear.frame(width: 0, height: 0)
+            if let image, let key = shownKey {
+                let logo = LogoFit.trimmed(image, key: key)
+                let size = fit.size(for: logo.size)
+                Image(uiImage: logo)
+                    .resizable()
+                    .frame(width: size.width, height: size.height)
+                    .id(shownKey)
+                    .transition(.opacity)
+            } else if failed, let fallback {
+                fallback.transition(.opacity)
+            }
+        }
+        .task(id: url) { await load(url) }
+    }
+
+    private var filling: some View {
         Color.clear.overlay(alignment: alignment) {
             if let image {
                 Image(uiImage: image)
@@ -1874,23 +1971,25 @@ struct MDBListRatingsRow: View {
                     Text(stacked.top).foregroundStyle(brand)
                     Text(stacked.bottom).foregroundStyle(stacked.bottomFill ?? brand)
                 }
-                .font(.system(size: 8.5, weight: .heavy))
+                .font(.system(size: 9, weight: .heavy))
                 .tracking(0.4)
             } else {
                 Text(entry.provider.label)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .tracking(0.5)
                     .foregroundStyle(brand)
             }
             Text(entry.text)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.white.opacity(0.85))
         }
         // (One height for every chip, stacked name or not.)
-        .frame(height: 21)
+        .frame(height: 22)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .overlay { shape.stroke(brand, lineWidth: 1.25).opacity(0.7) }
+        // The source's own colour, solid (see-through, a bright picture
+        // tinted it).
+        .overlay { shape.stroke(brand, lineWidth: 1.75) }
     }
 
     var body: some View {

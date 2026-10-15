@@ -75,7 +75,27 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   view tree, disabled while hidden.
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
-  Everything in the page is flat (`FlatControl`). Exception: Details' buttons.
+  Everything in the page is flat (`FlatControl`). Details' and the
+  billboard's buttons (`DetailActionButton`) and Details' season buttons
+  (`FixedFocusSeasonFace`) share one face (`ActionFace`): at rest a
+  frosted pill like the top bar's current tab (the system's thin
+  material, dark — blurred, darker; not glass — a 1 pt edge brighter
+  along the top; a flat white 16 % lacked contrast), content in the text's
+  colour; focused: a white capsule (the one pure white), dark content,
+  5 % larger, soft shadow; in quick (0.15 s), out 0.35 s — over a
+  resting pill the capsule fades into it (same size: shrunk, two pills
+  showed); with nothing at rest it shrinks into the button (88 %) as it fades, both from the start, the
+  fade even (a delayed fade overlapped the next capsule); the content
+  turns light in one quick step at about half the fade (blended along
+  it, it vanished into the capsule's grey midway — a flicker).
+  Seasons: only the row's season on a pill — the flat light grey
+  (`FlatControl.selected`, the current one of a set; the blur looked
+  odd there) — the others plain, muted. Text semibold, icons bold, 26 pt (the ⓘ 28; the buttons 64 tall).
+  The billboard and Details alike: Play labelled, the rest icon-only
+  (billboard: Library, Details, Next — only its chevron, no pill;
+  Details: Library, Trailer, Summary), their names under them while
+  focused. (Tried: bold text; every button labelled.) (Tried and dropped: glass; a dark fill
+  at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
 - Motion tokens (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s
@@ -103,7 +123,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Billboard**: Featured row with invisible cells; picture in UIKit, text in
   SwiftUI above. Content = `BillboardPicks` (new episodes → "Because you
   watched" → trending) with a reason label above the logo. Compact text: logo,
-  chips (status + 3 ratings), facts, tagline — no summary. Down as on
+  chips (status + 3 ratings), facts, tagline — no summary (tried: 3 lines under the tagline, too alike). Down as on
   Details: one move, the picture stays (blurring into the colours), the
   first row peeking 60 pt up the bottom edge under the billboard (its name
   above its darkened cards, the page dots on that line). Pages by itself every 5 s, stops at the last title.
@@ -111,17 +131,42 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`StagePictureView.drift`); the text only crossfades, in place, as one
   block (`BillboardCrossfade` — run from inside the rows' host, else it
   only swapped; the text drifting looked restless). 0.35 s.
+  Effects kept minimal: the shade is one fade from the left
+  (`BillboardShade`, a light 20 % at the right edge for bright pictures;
+  the bottom fade and its dark corner were dropped),
+  the text block has one small shadow (35 %, 4 pt) — no per-part shadows.
+  Text block: reason → logo → chips → facts → tagline, one visible gap
+  (`gap`, 19) between parts, a little more around the chips
+  (`chipsSpace`, 26); the reason sits on the logo as drawn
+  (`RemoteImage(logoFit:)`), not at a fixed spot. Logos sized by area
+  (`LogoFit`, `logoArea` 46 000 pt² within 560 × 160; 65 000 within
+  640 × 190 was too large), trimmed of their
+  transparent edges first (they start at the text's edge). Chips: solid outlines, 1.75 pt (see-through
+  ones took the picture's colour): the status badge off-white (white
+  85 %), a rating its source's colour, like its name. Facts and tagline 26 pt (`textSize`); facts medium, 70 %
+  (`FixedFocusText.facts`), quieter than the chips. Tagline fallback:
+  the name (kept). (Tried and dropped: the tagline as a quote, 28 pt
+  italic 85 %.)
+  Buttons (Details' look, `BillboardControls`, in their own host over
+  the rows — `FixedFocusRows.billboardControls`; the text and dots stay
+  under them): Play (the episode under it, focused; searching on the button; hold:
+  sources; Back stops a search), + Library, i Details,
+  › Next. Focus is the buttons' (`externalBillboard`, as Details); Play
+  first. Left from Play: the title before, Right from › (or Select): the
+  next — focus stays where it is, so Right again browses on (`.page`
+  command). Moving between the buttons stops the paging by itself.
+  (Tried and dropped: no buttons, Select on the billboard opening
+  Details, the text standing lower.)
 - **Details** uses the billboard's text and shade. Four buttons: Play,
   Library, Trailer, Summary (`text.alignleft`). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
   (`DetailSummaryPanel`); Back closes it, focus back on the button.
-  Play's pill says only "Play"; its caption (like the circles', only while
-  focused) says which episode and the time left ("S2:E13  ·  46m left"),
-  or "Finding a source…" while it searches.
+  Play says "Play"; under it, while focused, a show's episode ("S2:E13";
+  a film: nothing — the time left dropped; tried: the episode on the
+  button), or "Finding a source…" while it searches.
 - **Details' episode row**: under the billboard the episodes' cards peek
   60 pt up the bottom edge, darkened to 50 % (a black cover on the cards,
-  not transparency — `FixedFocusRows.rigidPeek`). In the row, glass season
-  buttons replace the row's name (moving focus; focusing one jumps the row
+  not transparency — `FixedFocusRows.rigidPeek`). In the row, season buttons replace the row's name (moving focus; focusing one jumps the row
   there; Up from any card lands on the row's season); the season progress
   ("Season 2 • 3 of 13 watched", ticks) between the buttons and the cards.
   The season buttons and the map come up with the row, fading in (the

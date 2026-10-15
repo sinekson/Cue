@@ -1497,6 +1497,8 @@ struct HomeUIKitView: View {
     @State var billboardTaglines: [String: String] = [:]
     /// The dots' last state (so they fade out unchanged).
     @State private var lastBillboard: FixedFocusBillboardPosition?
+    /// The billboard's buttons' focus.
+    @State private var billboardBridge = FocusBridge<BillboardControl>()
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1564,8 +1566,10 @@ struct HomeUIKitView: View {
                                if active { HomeBack.shared.depth = $0 }
                            },
                            onFocusArt: { focusedArt = $0 },
-                           // The billboard paging by itself (Settings →
-                           // Appearance → Billboard pages by itself).
+                           // The billboard's focus: its buttons (as Details').
+                           externalBillboard: true,
+                           // The billboard paging (its buttons, and by itself
+                           // — Settings → Appearance → Billboard pages by itself).
                            command: billboardCommand,
                            // The billboard as Details': the first row peeks up
                            // the bottom edge (its name above its cards); the
@@ -1577,6 +1581,8 @@ struct HomeUIKitView: View {
                            rigidPeekShowsName: true,
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
+                           billboardControls: billboardControls,
+                           billboardControlsHeight: FixedFocusBillboardText.buttonsY + 130,
                            // The picture under the text: the controller's own,
                            // moved with the billboard's distance.
                            pinnedBillboardPicture: true,
@@ -1999,27 +2005,18 @@ struct FixedFocusBillboardText: View {
         .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
     }
 
-    /// The logo's room (the reason above it).
-    private var logoRoom: some View {
+    /// The logo (else the name), sized by area (`logoArea`, within
+    /// `logoMaxSize`), the view as large as it's
+    /// drawn — so the reason sits on it.
+    private var logoView: some View {
         Group {
             if let logo = logo ?? item.logo {
                 // A logo that can't be loaded falls back to the name.
-                RemoteImage(url: logo, contentMode: .fit, alignment: .bottomLeading,
-                            maxDimension: TitleBlock.logoWidth, showsPlaceholder: false,
-                            fallback: AnyView(nameText))
-                    .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
-                    .frame(width: TitleBlock.logoWidth)
+                RemoteImage(url: logo, maxDimension: Self.logoMaxSize.width, showsPlaceholder: false,
+                            fallback: AnyView(nameText),
+                            logoFit: LogoFit(area: Self.logoArea, maxSize: Self.logoMaxSize))
             } else {
                 nameText
-            }
-        }
-        .frame(height: TitleBlock.logoHeight, alignment: .bottomLeading)
-        // Above the logo's room, at the same spot for every title.
-        .overlay(alignment: .topLeading) {
-            if let reason {
-                BillboardReasonLabel(reason: reason)
-                    .frame(height: 30, alignment: .leading)
-                    .offset(y: -Self.reasonRise)
             }
         }
     }
@@ -2027,8 +2024,22 @@ struct FixedFocusBillboardText: View {
     /// Extra room above the chips (and the tagline after them): a plain
     /// line step left ~6 pt between the facts and the chips' boxes.
     static let chipsGap: CGFloat = 9
-    /// The reason sits this far above the logo's room.
-    static let reasonRise: CGFloat = 40
+    /// THE BLOCK'S GAPS, as seen (between what's drawn, not the lines'
+    /// frames): one gap between its parts, a little more around the chips.
+    static let gap: CGFloat = 19
+    static let chipsSpace: CGFloat = 26
+    /// Every logo covers about this much (pt²): e.g. 420 × 110 wide,
+    /// 260 × 160 (its height cap) near square.
+    static let logoArea: CGFloat = 46_000
+    static let logoMaxSize = CGSize(width: TitleBlock.logoWidth, height: TitleBlock.logoHeight)
+    /// The reason's line frame (30 pt) holds this much below its baseline.
+    static let reasonInset: CGFloat = 6.5
+    /// THE BLOCK'S TEXT (facts, tagline): one size, a little above the
+    /// base; its line's frame and what that holds above its capitals /
+    /// below its baseline.
+    static let textSize: CGFloat = 26
+    static let lineHeight: CGFloat = 32
+    static let lineInset: CGFloat = 7
     /// How many rating sources show (the first ones, in Settings' order).
     static let ratingsShown = 3
     /// Where the Detail page's buttons start: below the chips line.
@@ -2049,42 +2060,48 @@ struct FixedFocusBillboardText: View {
             .lineLimit(2)
             .minimumScaleFactor(0.74)
             .frame(maxWidth: TitleBlock.logoWidth, alignment: .bottomLeading)
-            .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
     }
 
     /// The block's BOTTOM (the tagline) stands here — it grows up with
     /// what it has, as the Apple TV app's text sits on its buttons. (On
     /// Details: room for the buttons right below.)
-    static var bottom: CGFloat { buttonsY - 44 }
+    static var bottom: CGFloat { buttonsY - 30 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            logoRoom
+            if let reason {
+                BillboardReasonLabel(reason: reason)
+                    .frame(height: 30, alignment: .leading)
+                    .padding(.bottom, Self.gap - Self.reasonInset)
+            }
+            logoView
 
             VStack(alignment: .leading, spacing: 0) {
-                Color.clear.frame(height: Self.logoToChips)
-                // The status badge and ratings, right under the logo.
+                // The status badge and ratings (boxes: no inset).
                 chips
-                // THE FACTS — what it is: the relevant line, so the bright one.
-                // (Without the rating: the chips carry it.)
+                    .padding(.top, Self.chipsSpace)
+                // THE FACTS — what it is, quieter than the logo and the
+                // chips. (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
-                    .font(.system(size: FixedFocusMetrics.textSize, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .font(.system(size: Self.textSize, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.facts))
                     .lineLimit(1)
-                    .frame(height: FixedFocusMetrics.factsHeight, alignment: .leading)
-                    .padding(.top, FixedFocusMetrics.factsOffset - 30 + Self.chipsGap)
+                    .frame(height: Self.lineHeight, alignment: .leading)
+                    .padding(.top, Self.chipsSpace - Self.lineInset)
                 // The tagline — the mood, quiet and italic; no tagline: the
                 // name (ALWAYS a line here: every title's block has the same
                 // height, nothing moves).
                 Text(tagline ?? item.name)
-                    .font(.system(size: FixedFocusMetrics.textSize, weight: .regular).italic())
+                    .font(.system(size: Self.textSize, weight: .regular).italic())
                     .foregroundStyle(Color.white.opacity(FixedFocusText.tagline))
                     .lineLimit(1)
-                    .frame(height: 30, alignment: .leading)
-                    .padding(.top, FixedFocusMetrics.factsOffset - 30)
+                    .frame(height: Self.lineHeight, alignment: .leading)
+                    .padding(.top, Self.gap - 2 * Self.lineInset)
             }
-            .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
         }
+        // ONE shadow for the whole block (reason, logo, chips, facts,
+        // tagline): small and tight, the shade does the rest.
+        .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
         .frame(width: Self.width, alignment: .leading)
     }
 }
@@ -2117,7 +2134,6 @@ private struct BillboardReasonLabel: View {
             }
         }
         .lineLimit(1)
-        .shadow(color: .black.opacity(0.5), radius: 8, y: 2)
     }
 
     /// "Because you watched" runs on into its title; the others get a dot.
@@ -2234,66 +2250,37 @@ enum FixedFocusShowInfo {
 }
 
 /// THE STAGE'S SHADE — what lies over a full-screen backdrop so text reads
-/// on it: two fades (left, bottom). ONE definition for Home's billboard and the Detail page:
-/// the same picture looks the same on both.
+/// on it: one fade from the left. ONE definition for Home's billboard and
+/// the Detail page: the same picture looks the same on both.
 struct BillboardShade: View {
-    /// What keeps the billboard's text readable: two fades, left and
-    /// bottom (`twoFadesImage`).
     var body: some View {
-        Image(uiImage: Self.twoFadesImage).resizable()
+        Image(uiImage: Self.image).resizable()
             .allowsHitTesting(false)
     }
 
-    /// The billboard's dark fade over the left side (see
-    /// `billboardLeftStops`). Not under the rows: their background is plain.
-    var leftFade: some View {
-        LinearGradient(stops: Self.billboardLeftStops, startPoint: .leading, endPoint: .trailing)
-    }
+    /// The fade, darkest at the screen's left edge, clear past the text
+    /// column, then a little dark again towards the right edge (bright
+    /// pictures). No bottom fade, no top band, no vignette.
+    static let points: [(x: Double, y: Double)] = [
+        (0, 0.8),                                      // the screen's edge
+        (0.05, 0.75),
+        (0.1, 0.70),
+        (0.2, 0.66),                                    // the column's middle
+        (0.36, 0.52),
+        (0.48, 0.28),                                   // past the column
+        (0.64, 0.28),
+        (0.82, 0.28),
+        (1, 0.28),                                       // the right edge
+    ]
 
-    /// The billboard's left fade, built around ONE requirement: at the text
-    /// column's right edge — as far as the summary's lines reach — the text
-    /// must still be readable on a bright picture (75 % here; the
-    /// calculated minimum is `scrimNeeded(textOpacity:)`, 61 % for the
-    /// summary, plus reserve). From there it gets gradually darker to the
-    /// left — a little by the column's middle, much at the screen's edge —
-    /// and fades smoothly into the clear picture to the right. One smooth
-    /// curve through these points; many stops: no bands.
-    static let billboardLeftStops: [Gradient.Stop] = {
-        let columnEnd = Double((FixedFocusMetrics.boxFrame.maxX - FixedFocusMetrics.textIndent) / 1920)
-        let end = 0.7
-        /// (share of the width, darkness)
-        let points: [(x: Double, y: Double)] = [
-            (0, 0.97),                                  // the screen's edge
-            (0.1, 0.95),
-            (columnEnd / 2, 0.9),                       // the column's middle
-            (columnEnd, 0.75),                          // its right edge
-            (columnEnd + (end - columnEnd) * 0.5, 0.33),
-            (end, 0),
-        ]
-        return smoothStops(points, levelStart: false)
-    }()
-
-    /// Black stops along one smooth curve through `points` (share of the
-    /// gradient, darkness) — monotone cubic interpolation (Fritsch–Carlson):
-    /// smooth through every point, never overshooting; level at the ends
-    /// (a soft landing; `levelStart` false: the first slope as it comes).
-    static func smoothStops(_ points: [(x: Double, y: Double)], levelStart: Bool = true) -> [Gradient.Stop] {
-        let darkness = smoothCurve(points, levelStart: levelStart)
-        let start = points[0].x, end = points[points.count - 1].x
-        let steps = 48
-        return (0...steps).map { i in
-            let x = start + (end - start) * Double(i) / Double(steps)
-            return .init(color: .black.opacity(darkness(x)), location: x)
-        }
-    }
-
-    /// The curve itself: darkness at any share (0 before the first point's
-    /// value… held flat outside the points).
-    static func smoothCurve(_ points: [(x: Double, y: Double)], levelStart: Bool = true) -> (Double) -> Double {
+    /// The darkness at any share of the width: one smooth curve through
+    /// `points` — monotone cubic interpolation (Fritsch–Carlson): smooth
+    /// through every point, never overshooting; level where it ends.
+    static func curve(_ points: [(x: Double, y: Double)]) -> (Double) -> Double {
         let n = points.count
         let slopes = (0..<n - 1).map { (points[$0 + 1].y - points[$0].y) / (points[$0 + 1].x - points[$0].x) }
         var tangents = (0..<n).map { i -> Double in
-            if i == 0 { return levelStart ? 0 : slopes[0] }
+            if i == 0 { return slopes[0] }
             if i == n - 1 { return 0 }
             return slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2
         }
@@ -2319,75 +2306,22 @@ struct BillboardShade: View {
         }
     }
 
-    /// "Two fades": the left and the bottom
-    /// curve below, stacked — the darkening comes out of the bottom-left
-    /// corner. (Tried: the darker of the two at every point.)
-    /// No top band, no vignette. Made once (half size, stretched: all soft).
-    static let twoFadesLeft: [(x: Double, y: Double)] = [
-        (0, 0.8),                                      // the screen's edge
-        (0.05, 0.75),
-        (0.1, 0.70),
-        (0.2, 0.66),                                    // the column's middle
-        (0.36, 0.52),
-        (0.48, 0.28),                                   // past the column
-        (0.64, 0),
-    ]
-    static let twoFadesBottom: [(x: Double, y: Double)] = [
-        (0.4, 0),
-        (0.6, 0.25),
-        (0.75, 0.47),                                   // the info block's foot
-        (0.9, 0.65),
-        (0.95, 0.74),
-        (1, 0.8),                                      // the screen's edge
-    ]
-    /// A black shade from its alpha bytes (RGBA, premultiplied).
-    static func blackImage(_ pixels: [UInt8], width w: Int, height h: Int) -> UIImage {
+    /// Made once: one line of pixels (black, only the alpha — RGBA,
+    /// premultiplied), stretched to the screen.
+    static let image: UIImage = {
+        let w = 960
+        let dark = curve(points)
+        var pixels = [UInt8](repeating: 0, count: w * 4)
+        for x in 0..<w {
+            pixels[x * 4 + 3] = UInt8((dark((Double(x) + 0.5) / Double(w)) * 255).rounded())
+        }
         let provider = CGDataProvider(data: Data(pixels) as CFData)!
-        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+        let cg = CGImage(width: w, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
                          space: CGColorSpaceCreateDeviceRGB(),
                          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
                          provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
         return UIImage(cgImage: cg)
-    }
-
-    static let twoFadesImage: UIImage = {
-        let w = 960, h = 540
-        let left = smoothCurve(twoFadesLeft, levelStart: false)
-        let bottom = smoothCurve(twoFadesBottom)
-        let across = (0..<w).map { left((Double($0) + 0.5) / Double(w)) }
-        let down = (0..<h).map { bottom((Double($0) + 0.5) / Double(h)) }
-        var pixels = [UInt8](repeating: 0, count: w * h * 4)
-        for y in 0..<h {
-            for x in 0..<w {
-                // Black, premultiplied: only the alpha. STACKED (one over
-                // the other): the darkening comes out of the corner.
-                let dark = 1 - (1 - across[x]) * (1 - down[y])
-                pixels[(y * w + x) * 4 + 3] = UInt8((dark * 255).rounded())
-            }
-        }
-        return blackImage(pixels, width: w, height: h)
     }()
-
-    /// How much black a WHITE picture needs over it for white text of
-    /// `textOpacity` to reach `contrast` against it (WCAG's contrast ratio;
-    /// 4.5 is its bar for body text). Any real picture is darker: more
-    /// contrast than this.
-    static func scrimNeeded(textOpacity: Double, contrast: Double = 4.5) -> Double {
-        func luminance(_ v: Double) -> Double {
-            v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
-        }
-        func reached(_ black: Double) -> Double {
-            let ground = 1 - black
-            let text = textOpacity + (1 - textOpacity) * ground
-            return (luminance(text) + 0.05) / (luminance(ground) + 0.05)
-        }
-        var low = 0.0, high = 1.0
-        for _ in 0..<30 {
-            let mid = (low + high) / 2
-            if reached(mid) >= contrast { high = mid } else { low = mid }
-        }
-        return high
-    }
 }
 
 /// Text levels: a hierarchy, mostly off-white.
@@ -2398,8 +2332,12 @@ enum FixedFocusText {
     static let heading: CGFloat = primary
     /// Facts and other secondary lines.
     static let secondary: CGFloat = 0.55
+    /// The billboard's facts line: under the logo and the chips, above
+    /// the tagline.
+    static let facts: CGFloat = 0.7
     /// The billboard's tagline: quieter than the facts.
     static let tagline: CGFloat = 0.58
+
 }
 
 /// The focused card's look: the unfocused cards' edge, bright (no ring
@@ -2514,7 +2452,7 @@ extension HomeUIKitView {
             try? await Task.sleep(for: .seconds(BillboardAutoPage.interval))
             guard !Task.isCancelled, autoPageRunning, billboard == position else { return }
             billboardCommand = FixedFocusRowsCommand(
-                action: .select(rowID: featuredRowID, index: position.index + 1))
+                action: .page(rowID: featuredRowID, index: position.index + 1))
         }
         .onChange(of: rows.first(where: { $0.id == featuredRowID })?.items.map(\.id)) { _, _ in
             autoPageDone = false
@@ -2571,7 +2509,44 @@ extension HomeUIKitView {
         .frame(width: 1920, height: 1080, alignment: .topLeading)
     }
 
-    /// Select on the billboard: into Details.
+    /// THE BILLBOARD'S BUTTONS (Details' look): Play, Library, Details,
+    /// Next. Left from Play: the title before; Right from Next (or Select
+    /// on it): the next one — focus stays where it is, so Right again
+    /// browses on. Down: the first row.
+    var billboardControls: AnyView {
+        AnyView(BillboardControls(
+            item: billboardTitle, progress: billboardTitle.flatMap { progress[$0.id] },
+            bridge: billboardBridge,
+            onPage: pageBillboard,
+            onDetails: { if let item = billboardTitle { openBillboardTitle(item) } },
+            // Moving between the buttons: the paging by itself stops (the
+            // title would change under the button you're about to press).
+            onMove: { autoPageDone = true })
+            .environmentObject(library)
+            .environmentObject(PlayLauncher.shared)
+            .frame(height: DetailActionButton.height)
+            .padding(.leading, FixedFocusMetrics.titleInset)
+            .padding(.top, FixedFocusBillboardText.buttonsY)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
+    }
+
+    /// The billboard's title now (its text may still be crossfading to it).
+    private var billboardTitle: MetaItem? {
+        guard let position = billboard ?? lastBillboard,
+              let row = rows.first(where: { $0.id == featuredRowID }),
+              row.items.indices.contains(position.index) else { return billboardItem }
+        return row.items[position.index]
+    }
+
+    /// One title along (−1: back), focus staying on the button.
+    private func pageBillboard(_ step: Int) {
+        guard let position = billboard ?? lastBillboard else { return }
+        let index = position.index + step
+        guard (0..<position.count).contains(index) else { return }
+        billboardCommand = FixedFocusRowsCommand(action: .page(rowID: featuredRowID, index: index))
+    }
+
+    /// Details' button: into Details.
     func openBillboardTitle(_ item: MetaItem) {
         guard let onSelectFeatured else { onSelect(item); return }
         // As from any card (`DetailTransition.open`): Home dims, its picture
@@ -2579,12 +2554,6 @@ extension HomeUIKitView {
         DetailTransition.shared.open(item) { onSelectFeatured(item) }
     }
 
-    /// Play's label as Details will first show it: where Continue Watching
-    /// has the show, else the first episode.
-    static func playTitle(_ item: MetaItem, progress entry: WatchProgress?) -> String {
-        guard item.isSeries else { return "Play" }
-        return "Play S\(entry?.season ?? 1):E\(entry?.episode ?? 1)"
-    }
 
     /// The billboard's titles changed (its picks arrived): show the title now
     /// at its position.
@@ -2641,6 +2610,68 @@ extension HomeUIKitView {
     /// MDBList's arrive, as on the Detail page.
     private func billboardRatingsRow(_ item: MetaItem) -> AnyView? {
         FixedFocusBillboardText.ratingsChips(billboardRatings[item.id], settings: mdblist.settings, item: item)
+    }
+}
+
+enum BillboardControl: Hashable { case play, library, details, next }
+
+/// Home's billboard buttons — Details' (`DetailActionButton`): Play (a
+/// show's episode under it; hold: the sources), Library,
+/// Details, Next. ONE view for every title: focus stays put as the
+/// billboard pages.
+struct BillboardControls: View {
+    let item: MetaItem?
+    /// Continue Watching's entry for it (Play's episode).
+    let progress: WatchProgress?
+    let bridge: FocusBridge<BillboardControl>
+    let onPage: (Int) -> Void
+    let onDetails: () -> Void
+    let onMove: () -> Void
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var launcher: PlayLauncher
+
+    var body: some View {
+        FocusBridgeHost(bridge: bridge, defaultValue: .play, onChange: { old, new in
+            if old != nil, let new, new != .next { onMove() }
+        }) { focus in
+            HStack(spacing: CueSpacing.md) {
+                let finding = item.map { launcher.searching?.hasPrefix($0.id + "|") == true } ?? false
+                DetailActionButton(
+                    icon: "play.fill", title: "Play", isPrimary: true, lit: false, busy: finding,
+                    caption: finding ? "Finding a source…" : episode,
+                    // (Searching shows on the button, as on Details; Back
+                    // stops it — the page's Back.)
+                    action: { if let item { launcher.play(title: item, overlay: false) } },
+                    onHold: { if let item { launcher.chooseSource(title: item, overlay: false) } })
+                    .focused(focus, equals: .play)
+                    .onMoveCommand { if $0 == .left { onPage(-1) } }
+                // (One focus section, as on Details: a move into the row
+                // resolves against them as a unit.)
+                HStack(spacing: CueSpacing.md) {
+                    let saved = item.map(library.contains) ?? false
+                    DetailActionButton(
+                        icon: saved ? "checkmark" : "plus", title: saved ? "In Library" : "Library",
+                        isPrimary: false, lit: false, bare: true,
+                        action: { if let item { library.toggle(item) } })
+                        .focused(focus, equals: .library)
+                    DetailActionButton(icon: "info.circle", title: "Details", isPrimary: false, lit: false,
+                                       bare: true, iconSize: 28, action: onDetails)
+                        .focused(focus, equals: .details)
+                    DetailActionButton(icon: "chevron.right", title: "Next", isPrimary: false, lit: false,
+                                       bare: true, plain: true, action: { onPage(1) })
+                        .focused(focus, equals: .next)
+                        .onMoveCommand { if $0 == .right { onPage(1) } }
+                }
+                .focusSection()
+            }
+        }
+    }
+
+    /// Under Play while focused: a show's episode (Continue Watching's,
+    /// else the first); a film: nothing.
+    private var episode: String? {
+        guard let item, item.isSeries else { return nil }
+        return "S\(progress?.season ?? 1):E\(progress?.episode ?? 1)"
     }
 }
 
@@ -2876,9 +2907,14 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// Its height from the top of the screen: no more than its content needs
     /// — over the rows it hides them from focus (tvOS skips what's covered).
     var billboardOverlayHeight: CGFloat = 1080
-    /// The overlay UNDER the rows (Home: the billboard's focus is its own
-    /// hidden cards — anything over them hides them from focus).
+    /// The overlay UNDER the rows (Home: its dots reach down over the first
+    /// row's peek — over the rows it would hide it from focus; its buttons
+    /// go over them, `billboardControls`).
     var billboardOverlayBelowRows = false
+    /// The billboard's buttons, over the rows when the text is under them
+    /// (Home), from the screen's top, `billboardControlsHeight` tall.
+    var billboardControls: AnyView? = nil
+    var billboardControlsHeight: CGFloat = 1080
     /// RIGID billboard (Home): its picture doesn't scroll with the rows — it
     /// stays, blurs and darkens on the way down, then gives way to the
     /// background's colours (`StagePictureView.blursBelow`).
@@ -2974,6 +3010,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rigidBillboardTravel = rigidBillboardTravel
         controller.pinnedBillboardPicture = pinnedBillboardPicture
         controller.setBillboardOverlay(billboardOverlay)
+        controller.billboardControlsHeight = billboardControlsHeight
+        controller.setBillboardControls(billboardControls)
         controller.setPageHeader(pageHeader, height: pageHeaderHeight)
     }
 }
@@ -3368,7 +3406,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return [cell]
         }
         // On the billboard, its focus is the overlay's (Details' Play).
-        if pendingFocusRow == nil, billboardFocusOutside, let overlayHost { return [overlayHost] }
+        if pendingFocusRow == nil, billboardFocusOutside, let host = controlsHost ?? overlayHost { return [host] }
         if let index = pendingFocusRow {
             pendingFocusRow = nil
             if let rowCell = outer.cellForItem(at: IndexPath(item: index, section: 0)) as? FixedFocusRowCell,
@@ -3614,10 +3652,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // its cards stop taking focus now (`billboardCardsOff`), so focus
             // settles again — on the outside's own default (Play; see
             // `preferredFocusEnvironments`).
+            // (To these rows, not the window: from there, Home's top bar
+            // was the default.)
             DispatchQueue.main.async { [weak self] in
-                guard let self, let window = self.view.window,
-                      let system = UIFocusSystem.focusSystem(for: window) else { return }
-                system.requestFocusUpdate(to: window)
+                guard let self, let system = UIFocusSystem.focusSystem(for: self.view) else { return }
+                system.requestFocusUpdate(to: self)
                 system.updateFocusIfNeeded()
             }
         }
@@ -4050,6 +4089,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// The billboard's overlay (see `FixedFocusRows.billboardOverlay`).
     private var overlayHost: UIHostingController<AnyView>?
+    /// The billboard's buttons (see `FixedFocusRows.billboardControls`).
+    private var controlsHost: UIHostingController<AnyView>?
+    var billboardControlsHeight: CGFloat = 1080
     var billboardOverlayHeight: CGFloat = 1080
     var billboardOverlayBelowRows = false
     var rigidBillboardTravel: CGFloat?
@@ -4210,11 +4252,45 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         UIView.performWithoutAnimation { applyOverlayPosition() }
     }
 
+    /// The billboard's buttons over the rows — the text under them (Home:
+    /// `billboardOverlayBelowRows`) — reaching down to them and their
+    /// captions, no further (it would cover the rows from focus). Moved and
+    /// dimmed with the overlay.
+    func setBillboardControls(_ content: AnyView?) {
+        guard content != nil || controlsHost != nil else { return }
+        loadViewIfNeeded()
+        guard let content else {
+            controlsHost?.willMove(toParent: nil)
+            controlsHost?.view.removeFromSuperview()
+            controlsHost?.removeFromParent()
+            controlsHost = nil
+            return
+        }
+        if let controlsHost {
+            controlsHost.rootView = environment(content)
+            return
+        }
+        let host = UIHostingController(rootView: environment(content))
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        addChild(host)
+        view.addSubview(host.view)
+        host.didMove(toParent: self)
+        controlsHost = host
+        layoutOverlay()
+        UIView.performWithoutAnimation { applyOverlayPosition() }
+    }
+
     /// From the top of the screen, its height; moved by a transform (see
     /// `applyOverlayPosition`).
     private func layoutOverlay() {
         let height = min(billboardOverlayHeight, view.bounds.height)
         if let host = overlayHost {
+            host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
+            host.view.center = CGPoint(x: view.bounds.midX, y: height / 2)
+        }
+        if let host = controlsHost {
+            let height = min(billboardControlsHeight, view.bounds.height)
             host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
             host.view.center = CGPoint(x: view.bounds.midX, y: height / 2)
         }
@@ -4227,7 +4303,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let depth = max(focusedRow - featured, 0)
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
-        if let host = overlayHost {
+        for host in [overlayHost, controlsHost].compactMap({ $0 }) {
             host.view.transform = CGAffineTransform(translationX: 0, y: -scroll)
             host.view.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
         }
@@ -4272,18 +4348,30 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         case .focusBillboard:
             // (No billboard — a folder's rows: the first row.)
             requestFocusFar(row: featuredIndex ?? 0)
-        case let .select(rowID, index):
-            guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }),
-                  rows[rowIndex].items.indices.contains(index), focusedRow == rowIndex,
-                  let focused = UIFocusSystem.focusSystem(for: view)?.focusedItem as? UIView,
-                  focused.isDescendant(of: outer), !HoldMenu.shared.isOpen else { return }
-            selected[rowID] = index
-            let cell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
-            if cell?.isDestination == true { cell?.aim(index) } else { cell?.jump(to: index) }
-            DispatchQueue.main.async { self.requestFocus(row: rowIndex) }
-
-
+        case let .page(rowID, index):
+            // (After the page's update: its callbacks set the page's state.)
+            DispatchQueue.main.async { self.page(rowID: rowID, index: index) }
         }
+    }
+
+    /// The billboard to a title (`page` command).
+    private func page(rowID: String, index: Int) {
+        guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }), isFeatured(rowIndex) else { return }
+        let row = rows[rowIndex]
+        let old = selected[rowID] ?? 0
+        guard row.items.indices.contains(index), index != old else { return }
+        selected[rowID] = index
+        let item = row.items[index]
+        let cell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
+        // Its hidden cards at the title (the way back up lands there).
+        cell?.jump(to: index)
+        cell?.showStage(item, direction: index > old ? 1 : -1, animated: true)
+        onFocusArt(item.background ?? item.poster)
+        onFocusItem(item, FixedFocusBillboardPosition(index: index, count: row.items.count))
+        TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
+        FixedFocusTint.prepare([index + 1, index - 1, index + 2]
+            .filter { row.items.indices.contains($0) }
+            .compactMap { row.items[$0].background ?? row.items[$0].poster })
     }
 
     /// Focus to one view in the rows, through this controller's preferred
@@ -4371,6 +4459,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 return false
             }
         }
+        // Up from the first row into a billboard whose focus is outside
+        // (its buttons): through its hidden card (the billboard's arrival),
+        // then on to the buttons — the engine went past it (Home: to the
+        // top bar).
         // Up out of a row with its own way out (Details' episodes → seasons).
         if context.focusHeading.contains(.up), previousInside,
            let from = context.previouslyFocusedView as? FixedFocusDestinationItem, let fromRow = from.rowCell,
@@ -4667,12 +4759,12 @@ final class FixedFocusHeaderButton: UIView {
     }
     private var lit = false
     private var pressed = false
-    private let host: UIHostingController<FixedFocusHeaderPill>
+    private let host: UIHostingController<FixedFocusSeasonFace>
 
     init(label: String, index: Int) {
         self.label = label
         self.index = index
-        host = UIHostingController(rootView: FixedFocusHeaderPill(label: label, lit: false, selected: false))
+        host = UIHostingController(rootView: FixedFocusSeasonFace(label: label, lit: false, selected: false))
         super.init(frame: .zero)
         host.view.backgroundColor = .clear
         host.view.isUserInteractionEnabled = false
@@ -4694,18 +4786,29 @@ final class FixedFocusHeaderButton: UIView {
     }
 
     private func render() {
-        host.rootView = FixedFocusHeaderPill(label: label, lit: lit, selected: selected)
-        let scale = lit ? FixedFocusHeaderPill.focusScale - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
-        UIView.animate(withDuration: Motion.focusDuration, delay: 0,
-                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+        host.rootView = FixedFocusSeasonFace(label: label, lit: lit, selected: selected)
+        let scale = lit ? DetailActionButton.focusScale - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
+        // (The action buttons' timing: in quick, out slower.)
+        UIView.animate(withDuration: lit ? 0.15 : 0.35, delay: 0, usingSpringWithDamping: 1,
+                       initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.transform = CGAffineTransform(scaleX: scale, y: scale)
         }
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        if context.nextFocusedView === self { lit = true; render() }
-        else if context.previouslyFocusedView === self { lit = false; pressed = false; render() }
+        // Along the row the season follows focus: marked at once here (the
+        // page's own update came a frame later — the old button showed the
+        // season's pill for a moment: a flicker).
+        let along = (context.nextFocusedView as? FixedFocusHeaderButton)?.rowCell === rowCell
+            && (context.previouslyFocusedView as? FixedFocusHeaderButton)?.rowCell === rowCell
+        if context.nextFocusedView === self {
+            if along { selected = true }
+            lit = true; render()
+        } else if context.previouslyFocusedView === self {
+            if along { selected = false }
+            lit = false; pressed = false; render()
+        }
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -4729,7 +4832,29 @@ final class FixedFocusHeaderButton: UIView {
     }
 }
 
-/// A header button's face (see `FixedFocusHeaderButton`).
+/// A season button's face (see `FixedFocusHeaderButton`): the action
+/// buttons' (`ActionFace`) — the row's season in the text's colour, the
+/// others quieter.
+struct FixedFocusSeasonFace: View {
+    let label: String
+    let lit: Bool
+    let selected: Bool
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: DetailActionButton.textSize, weight: .semibold))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, DetailActionButton.textPadding)
+            .frame(height: FixedFocusHeaderButton.height)
+            // The row's season on the light grey (the current one of a
+            // set), the others plain.
+            .modifier(ActionFace(lit: lit, rest: selected ? DetailActionButton.restContent : FlatControl.contentMuted,
+                                 pill: selected, current: true))
+    }
+}
+
+/// A browse page's glass pill (Movies | Series, the sort button).
 struct FixedFocusHeaderPill: View {
     let label: String
     let lit: Bool
@@ -4798,12 +4923,10 @@ struct FixedFocusRowsCommand: Equatable {
         case focusRow(rowID: String)
         /// Back to the billboard (Details: on to its buttons).
         case focusBillboard
-        /// The row's card `index` takes focus — as a press there would, the
-        /// row first aimed at it (the billboard paging by itself, wrapping
-        /// from the last title to the first). Only while focus is in that
-        /// row: never pulled from elsewhere.
-        case select(rowID: String, index: Int)
-
+        /// The billboard to its title `index` with focus where it is — its
+        /// buttons (Home's): the picture drifts, the text crossfades, as a
+        /// press on its cards did.
+        case page(rowID: String, index: Int)
     }
     let action: Action
     let id = UUID()
@@ -5391,7 +5514,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         setNeedsLayout()
     }
 
-    /// The row's header (see `FixedFocusRows.rowHeaders`): glass buttons in
+    /// The row's header (see `FixedFocusRows.rowHeaders`): season buttons in
     /// the name's place while the row has focus — the name gives way.
     private var headerButtons: [FixedFocusHeaderButton] = []
     private let headerStack = UIStackView()
