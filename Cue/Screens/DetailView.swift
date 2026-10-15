@@ -1458,7 +1458,6 @@ struct DetailActionButton: View {
     /// overlapped the next button's capsule).
     static let leave: Animation = .spring(duration: 0.35, bounce: 0)
     static let leaveFade: Animation = .linear(duration: 0.35)
-    static let leaveContent: Animation = .linear(duration: 0.04).delay(0.14)
     static let leaveScale: CGFloat = 0.88
     private var litAnimation: Animation { shownLit ? Self.open : Self.leave }
     /// Focused: this much larger.
@@ -1539,10 +1538,6 @@ struct ActionFace: ViewModifier {
         content
             .foregroundStyle(lit ? FlatControl.contentOnFocus : rest)
             .shadow(color: .black.opacity(lit || pill ? 0 : 0.35), radius: 4, y: 2)
-            // Leaving: dark → light quickly, once the capsule is about half
-            // gone (blended over the whole fade, the content passed through
-            // the capsule's grey and vanished for a moment — a flicker).
-            .animation(lit ? DetailActionButton.open : DetailActionButton.leaveContent, value: lit)
             // The pill under, the focus capsule over it (shrinking into it).
             .background {
                 ZStack {

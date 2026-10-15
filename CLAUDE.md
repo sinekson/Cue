@@ -86,8 +86,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   resting pill the capsule fades into it (same size: shrunk, two pills
   showed); with nothing at rest it shrinks into the button (88 %) as it fades, both from the start, the
   fade even (a delayed fade overlapped the next capsule); the content
-  turns light in one quick step at about half the fade (blended along
-  it, it vanished into the capsule's grey midway — a flicker).
+  blends along with it (tried: a quick switch at half the fade).
   Seasons: only the row's season on a pill — the flat light grey
   (`FlatControl.selected`, the current one of a set; the blur looked
   odd there) — the others plain, muted. Text semibold, icons bold, 26 pt (the ⓘ 28; the buttons 64 tall).
