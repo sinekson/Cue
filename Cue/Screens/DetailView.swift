@@ -1517,7 +1517,14 @@ struct DetailActionButton: View {
 /// the content with the text's small shadow); focused, a white capsule, dark
 /// content; leaving, the capsule shrinks into the button as it fades
 /// (`DetailActionButton.leave`, `leaveFade`).
+extension EnvironmentValues {
+    /// Drawn into an image (the billboard's buttons going out with their
+    /// card): the frosted pill as a flat stand-in — a blur can't be drawn.
+    @Entry var actionFaceStill = false
+}
+
 struct ActionFace: ViewModifier {
+    @Environment(\.actionFaceStill) private var still
     let lit: Bool
     var rest: Color = DetailActionButton.restContent
     /// At rest on the frosted pill (the top bar's current tab, not glass);
@@ -1547,7 +1554,11 @@ struct ActionFace: ViewModifier {
                         Capsule().fill(FlatControl.selected).opacity(pill ? 1 : 0)
                     } else {
                         ZStack {
-                            Capsule().fill(.thinMaterial).environment(\.colorScheme, .dark)
+                            if still {
+                                Capsule().fill(Color.black.opacity(0.35))
+                            } else {
+                                Capsule().fill(.thinMaterial).environment(\.colorScheme, .dark)
+                            }
                             Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
                         }
                         .opacity(pill ? 1 : 0)

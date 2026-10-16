@@ -1583,6 +1583,18 @@ struct HomeUIKitView: View {
                            billboardOverlayBelowRows: true,
                            billboardControls: billboardControls,
                            billboardControlsHeight: FixedFocusBillboardText.buttonsY + 130,
+                           // Its text on its pictures: each title one card.
+                           billboardPageText: { AnyView(billboardText($0)) },
+                           // Paging mid-slide: focus to the side it went —
+                           // Next going right, Play going left.
+                           onBillboardStep: { billboardBridge.request($0 > 0 ? .next : .play) },
+                           billboardEdge: { [billboardBridge] in
+                               switch billboardBridge.current {
+                               case .next: 1
+                               case .play: -1
+                               default: 0
+                               }
+                           },
                            // The picture under the text: the controller's own,
                            // moved with the billboard's distance.
                            pinnedBillboardPicture: true,
@@ -1597,22 +1609,11 @@ struct HomeUIKitView: View {
                 if let position, position.index == position.count - 1 { autoPageDone = true }
                 focused = item
                 if let position {
-                    // Left/Right on the billboard: the text crossfades (see
-                    // `BillboardCrossfade`). The logo is decoded BEFORE the
-                    // title swaps (a moment at most), so it fades in with the
-                    // text instead of appearing a beat later.
-                    Task { @MainActor in
-                        if let logo = item.logo {
-                            await withTaskGroup(of: Void.self) { group in
-                                group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
-                                group.addTask { try? await Task.sleep(for: .milliseconds(250)) }
-                                await group.next()
-                                group.cancelAll()
-                            }
-                        }
-                        withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) { billboardItem = item }
-                        warmNeighbourLogos(around: position.index)
-                    }
+                    // Paging: the text comes in on its picture
+                    // (`billboardPageText`; the neighbours' logos are
+                    // decoded ahead).
+                    billboardItem = item
+                    warmNeighbourLogos(around: position.index)
                 }
                 billboard = position
             }
@@ -2414,14 +2415,10 @@ extension HomeUIKitView {
     private static func dotsMid(depth: Int) -> CGFloat { depth == 0 ? peekDotsMid : rigidDotsMid }
 
 
-    /// The billboard's text and dots for the rows to host — their own
-    /// animations (a change made in a `withAnimation` here doesn't carry
-    /// into the rows' host).
+    /// The billboard's text and dots for the rows to host (a change of
+    /// title: on the pictures — `billboardPageText`).
     var billboardOverlay: AnyView {
-        AnyView(billboardContent
-            .animation(FixedFocusMotion.animation(duration: Motion.moveDuration),
-                       value: billboardItem?.id)
-            .environmentObject(mdblist))
+        AnyView(billboardContent.environmentObject(mdblist))
     }
 
     /// THE BILLBOARD (the Featured row in focus): the title's backdrop edge
@@ -2466,7 +2463,9 @@ extension HomeUIKitView {
     var billboardContent: some View {
         ZStack(alignment: .topLeading) {
             if let item = billboardItem {
-                BillboardCrossfade(item: item) { billboardText($0) }
+                // (The text itself is on the picture — `billboardPageText`;
+                // its data loads here.)
+                Color.clear.frame(width: 0, height: 0)
                     // The ratings (cached by the service), as on Details.
                     .task(id: item.id) {
                         if billboardInfo[item.id] == nil, let info = await FixedFocusShowInfo.load(item) {
@@ -2540,10 +2539,7 @@ extension HomeUIKitView {
 
     /// One title along (−1: back), focus staying on the button.
     private func pageBillboard(_ step: Int) {
-        guard let position = billboard ?? lastBillboard else { return }
-        let index = position.index + step
-        guard (0..<position.count).contains(index) else { return }
-        billboardCommand = FixedFocusRowsCommand(action: .page(rowID: featuredRowID, index: index))
+        billboardCommand = FixedFocusRowsCommand(action: .step(rowID: featuredRowID, by: step))
     }
 
     /// Details' button: into Details.
@@ -2663,7 +2659,7 @@ struct BillboardControls: View {
                         .onMoveCommand { if $0 == .right { onPage(1) } }
                 }
                 .focusSection()
-            }
+                }
         }
     }
 
@@ -2672,34 +2668,6 @@ struct BillboardControls: View {
     private var episode: String? {
         guard let item, item.isSeries else { return nil }
         return "S\(progress?.season ?? 1):E\(progress?.episode ?? 1)"
-    }
-}
-
-/// The billboard's text changing title: a crossfade in place, in the
-/// picture's time (only the picture drifts — the text drifting looked
-/// restless). Started from INSIDE (the text lives in the rows' own host,
-/// where a change animated from outside — the page's `withAnimation`, a
-/// transition there — just swaps).
-struct BillboardCrossfade<Page: View>: View {
-    let item: MetaItem
-    @ViewBuilder let page: (MetaItem) -> Page
-    @State private var shown: MetaItem?
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            if let shown {
-                // (The same title: live — a rating, the tagline arriving.)
-                page(shown.id == item.id ? item : shown)
-                    .id(shown.id)
-                    .transition(.opacity)
-            }
-        }
-        .onAppear { if shown == nil { shown = item } }
-        .onChange(of: item.id) { _, _ in
-            withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) {
-                shown = item
-            }
-        }
     }
 }
 
@@ -2915,6 +2883,14 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// (Home), from the screen's top, `billboardControlsHeight` tall.
     var billboardControls: AnyView? = nil
     var billboardControlsHeight: CGFloat = 1080
+    /// The billboard's text ON its pictures (Home): each picture carries
+    /// its title's text — one card, sliding as one (`StagePictureView`).
+    var billboardPageText: ((MetaItem) -> AnyView)? = nil
+    /// A press during the billboard's slide paged (+1 / -1).
+    var onBillboardStep: (Int) -> Void = { _ in }
+    /// Focus on the billboard's last button (+1, Next) / first (-1, Play),
+    /// else 0 — holding Left/Right there pages on.
+    var billboardEdge: () -> Int = { 0 }
     /// RIGID billboard (Home): its picture doesn't scroll with the rows — it
     /// stays, blurs and darkens on the way down, then gives way to the
     /// background's colours (`StagePictureView.blursBelow`).
@@ -2957,6 +2933,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.environment = { [mdblist, theme] in
             AnyView($0.environmentObject(mdblist).environmentObject(theme))
         }
+        controller.billboardPageText = billboardPageText
+        controller.onBillboardStep = onBillboardStep
+        controller.billboardEdge = billboardEdge
         controller.onFocusItem = onFocusItem
         controller.onDepth = onDepth
         controller.onFocusArt = onFocusArt
@@ -3588,14 +3567,20 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
               let rowCell = cell.rowCell, rows.indices.contains(rowCell.rowIndex) else { return }
         let rowIndex = rowCell.rowIndex
         let row = rows[rowIndex]
-        guard row.items.indices.contains(cell.itemIndex) else { return }
-        let item = row.items[cell.itemIndex]
+        // A billboard whose focus is outside (Home's buttons) takes focus on
+        // its hidden cards only on the way back up — on whichever is above
+        // the row's card: it's the CURRENT title that arrives (the card
+        // above switched the billboard to another).
+        let itemIndex = isFeatured(rowIndex) && externalBillboard
+            ? min(selected[row.id] ?? cell.itemIndex, max(row.items.count - 1, 0)) : cell.itemIndex
+        guard row.items.indices.contains(itemIndex) else { return }
+        let item = row.items[itemIndex]
         let featured = isFeatured(rowIndex)
         onFocusArt(item.background ?? item.poster)
-        onFocusItem(item, featured ? FixedFocusBillboardPosition(index: cell.itemIndex, count: row.items.count) : nil)
-        TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: cell.itemIndex)
+        onFocusItem(item, featured ? FixedFocusBillboardPosition(index: itemIndex, count: row.items.count) : nil)
+        TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: itemIndex)
         // The next cards' colours, ready before you get there.
-        FixedFocusTint.prepare([cell.itemIndex + 1, cell.itemIndex - 1, cell.itemIndex + 2]
+        FixedFocusTint.prepare([itemIndex + 1, itemIndex - 1, itemIndex + 2]
             .filter { row.items.indices.contains($0) }
             .compactMap { row.items[$0].background ?? row.items[$0].poster })
         onDepth(depth(of: rowIndex))
@@ -3603,7 +3588,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // from the top bar, back from a page): nothing moved — no move to
         // play (it replayed the box's slide, and the next press waited on it).
         let fromOutside = context.previouslyFocusedView.map { !$0.isDescendant(of: outer) } ?? true
-        if fromOutside, hasFocus, rowIndex == focusedRow, cell.itemIndex == selected[row.id],
+        if fromOutside, hasFocus, rowIndex == focusedRow, itemIndex == selected[row.id],
            box.alpha == 1 || featured {
             return
         }
@@ -3615,7 +3600,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let verticalDrift = false
         let direction: CGFloat = rowChanged
             ? (rowIndex > focusedRow ? 1 : -1)
-            : (cell.itemIndex >= (selected[row.id] ?? 0) ? 1 : -1)
+            : (itemIndex >= (selected[row.id] ?? 0) ? 1 : -1)
         let oldRowCell = rowChanged
             ? outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell : nil
         if rowChanged, !verticalDrift, box.alpha == 1 {
@@ -3639,7 +3624,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if billboardScroll, !featured, rigidRest == nil { sendRowsBelowAway() }
         // Up: the rows sink a whole scroll, with the picture.
         if billboardScroll, featured, rigidRest == nil { belowAway = true }
-        selected[row.id] = cell.itemIndex
+        selected[row.id] = itemIndex
         focusedRow = rowIndex
         // The row's card size (a change of row hands the box over to the
         // cells first, so it never visibly resizes).
@@ -3700,7 +3685,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
-                rowCell.focus(index: cell.itemIndex)
+                rowCell.focus(index: itemIndex)
                 // The row list doesn't scroll: its layout places every row
                 // around the focused one, and the rows glide to their places.
                 self.outer.collectionViewLayout.invalidateLayout()
@@ -3728,7 +3713,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
         move()
         hasFocus = true
-        loadShowInfo(for: item, in: row, at: cell.itemIndex)
+        loadShowInfo(for: item, in: row, at: itemIndex)
     }
 
     /// Moves (Up/Down, Left/Right) still running in the rows.
@@ -4091,6 +4076,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var overlayHost: UIHostingController<AnyView>?
     /// The billboard's buttons (see `FixedFocusRows.billboardControls`).
     private var controlsHost: UIHostingController<AnyView>?
+    /// …in their place, which moves with the billboard (up and down); the
+    /// buttons slide sideways inside it — two layers, so the rows' own
+    /// updates never restart the slide on another curve (they did: the
+    /// buttons drifted from their card).
+    private let controlsPlace = UIView()
     var billboardControlsHeight: CGFloat = 1080
     var billboardOverlayHeight: CGFloat = 1080
     var billboardOverlayBelowRows = false
@@ -4137,11 +4127,20 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
     /// The pinned billboard picture (see `FixedFocusRows.pinnedBillboardPicture`).
     private(set) var pinnedStage: StagePictureView?
+    /// The billboard's text on each of its pictures (see
+    /// `FixedFocusRows.billboardPageText`).
+    var billboardPageText: ((MetaItem) -> AnyView)? {
+        didSet {
+            pinnedStage?.text = billboardPageText.map { text in { [weak self] in self?.environment(text($0)) ?? text($0) } }
+            pinnedStage?.refreshText()
+        }
+    }
 
     private func makePinnedStage() {
         guard pinnedStage == nil else { return }
         let stage = StagePictureView()
         stage.blursBelow = rigidBillboardTravel == nil
+        stage.text = billboardPageText.map { text in { [weak self] in self?.environment(text($0)) ?? text($0) } }
         view.insertSubview(stage, at: 0)
         stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
         stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
@@ -4158,6 +4157,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // under the rows.
         if rigidBillboardTravel != nil {
             stage.transform = CGAffineTransform(translationX: 0, y: -billboardUp(depth: depth))
+            // Its text, below: dimmed as the overlay is.
+            stage.textAlpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
             return
         }
         stage.setBelow(depth > 0)
@@ -4260,6 +4261,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard content != nil || controlsHost != nil else { return }
         loadViewIfNeeded()
         guard let content else {
+            controlsPlace.removeFromSuperview()
             controlsHost?.willMove(toParent: nil)
             controlsHost?.view.removeFromSuperview()
             controlsHost?.removeFromParent()
@@ -4274,7 +4276,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         host.view.backgroundColor = .clear
         host.safeAreaRegions = []
         addChild(host)
-        view.addSubview(host.view)
+        if controlsPlace.superview == nil { view.addSubview(controlsPlace) }
+        controlsPlace.addSubview(host.view)
         host.didMove(toParent: self)
         controlsHost = host
         layoutOverlay()
@@ -4291,8 +4294,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
         if let host = controlsHost {
             let height = min(billboardControlsHeight, view.bounds.height)
-            host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
-            host.view.center = CGPoint(x: view.bounds.midX, y: height / 2)
+            let bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: height)
+            controlsPlace.bounds = bounds
+            controlsPlace.center = CGPoint(x: view.bounds.midX, y: height / 2)
+            host.view.bounds = bounds
+            host.view.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }
     }
 
@@ -4303,9 +4309,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let depth = max(focusedRow - featured, 0)
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
-        for host in [overlayHost, controlsHost].compactMap({ $0 }) {
-            host.view.transform = CGAffineTransform(translationX: 0, y: -scroll)
-            host.view.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
+        for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {
+            moved.transform = CGAffineTransform(translationX: 0, y: -scroll)
+            moved.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
         }
     }
 
@@ -4351,10 +4357,102 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         case let .page(rowID, index):
             // (After the page's update: its callbacks set the page's state.)
             DispatchQueue.main.async { self.page(rowID: rowID, index: index) }
+        case let .step(rowID, by):
+            DispatchQueue.main.async { self.step(rowID: rowID, by: by) }
+        }
+    }
+
+    /// While the billboard slides, Left/Right page again from any of its
+    /// buttons (no walking along them to Play or Next first).
+    private var slidingUntil: CFTimeInterval = 0
+    /// …in its first half only: later, a press moves along the buttons
+    /// (when that's possible again is easy to tell).
+    private static let pagingShare: CFTimeInterval = 0.75
+    /// A press during the slide that paged: focus to the side it went
+    /// (+1: the last button, Next; -1: the first, Play).
+    var onBillboardStep: (Int) -> Void = { _ in }
+
+    /// The buttons in with the new card: from where it started, in its
+    /// spring (inside their place — see `controlsPlace`).
+    private func slideControls(from offset: CGFloat) {
+        guard let host = controlsHost else { return }
+        // (From `offset` itself: a slide still running would have started
+        // this one from where the buttons were — the wrong side, a reverse.)
+        host.view.layer.removeAnimation(forKey: "transform")
+        host.view.mask = nil
+        UIView.performWithoutAnimation {
+            host.view.transform = CGAffineTransform(translationX: offset, y: 0)
+        }
+        FixedFocusMotion.run(duration: StagePictureView.slideDuration) {
+            host.view.transform = .identity
+        } completion: { _ in }
+    }
+
+    /// HOLDING Left/Right on the billboard's buttons: tvOS repeats focus
+    /// moves along them, and once at the end (Play going left, Next going
+    /// right) — nowhere to go — it pages on, steadily, while held.
+    var billboardEdge: () -> Int = { 0 }
+    private var holdTimer: Timer?
+    private static let holdInterval: TimeInterval = 0.15
+
+    private func arrow(_ presses: Set<UIPress>) -> Int? {
+        if presses.contains(where: { $0.type == .rightArrow }) { return 1 }
+        if presses.contains(where: { $0.type == .leftArrow }) { return -1 }
+        return nil
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let step = arrow(presses), billboardFocusOutside {
+            holdTimer?.invalidate()
+            holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.billboardFocusOutside, self.billboardEdge() == step,
+                          let featured = self.featuredIndex, self.rows.indices.contains(featured) else { return }
+                    let id = self.rows[featured].id
+                    self.step(rowID: id, by: step)
+                }
+            }
+        }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if arrow(presses) != nil { holdTimer?.invalidate(); holdTimer = nil }
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if arrow(presses) != nil { holdTimer?.invalidate(); holdTimer = nil }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    /// A reverse whose leaving card is in front: the buttons (over
+    /// everything) show only beside its edge — a mask moving with it, in
+    /// the buttons' own coordinates (both in the same spring: so is the
+    /// edge there).
+    private func coverControls(_ cover: (from: CGFloat, to: CGFloat, showsRight: Bool), startOffset: CGFloat) {
+        guard let host = controlsHost else { return }
+        let size = host.view.bounds.size
+        func shown(_ edge: CGFloat) -> CGRect {
+            cover.showsRight ? CGRect(x: edge, y: 0, width: 3 * size.width, height: size.height)
+                : CGRect(x: edge - 3 * size.width, y: 0, width: 3 * size.width, height: size.height)
+        }
+        let mask = UIView(frame: shown(cover.from - startOffset))
+        mask.backgroundColor = .black
+        host.view.mask = mask
+        FixedFocusMotion.run(duration: StagePictureView.slideDuration) {
+            mask.frame = shown(cover.to)
+        } completion: { _ in
+            if host.view.mask === mask { host.view.mask = nil }
         }
     }
 
     /// The billboard to a title (`page` command).
+    /// One title along, as a press (Next, Right, a held arrow).
+    private func step(rowID: String, by step: Int) {
+        page(rowID: rowID, index: (selected[rowID] ?? 0) + step)
+    }
+
     private func page(rowID: String, index: Int) {
         guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }), isFeatured(rowIndex) else { return }
         let row = rows[rowIndex]
@@ -4362,10 +4460,29 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard row.items.indices.contains(index), index != old else { return }
         selected[rowID] = index
         let item = row.items[index]
+        let direction: CGFloat = index > old ? 1 : -1
         let cell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
         // Its hidden cards at the title (the way back up lands there).
         cell?.jump(to: index)
-        cell?.showStage(item, direction: index > old ? 1 : -1, animated: true)
+        // The buttons go with the cards: a still copy out on the old one,
+        // the buttons themselves in on the new one.
+        if billboardFocusOutside, let stage = pinnedStage, let host = controlsHost {
+            // Drawn at rest, the frost as a flat stand-in (`ActionFace.still`:
+            // a blur can't be drawn into an image — it came out black).
+            let size = host.view.bounds.size
+            let renderer = ImageRenderer(content: host.rootView
+                .environment(\.actionFaceStill, true)
+                .frame(width: size.width, height: size.height))
+            renderer.scale = view.traitCollection.displayScale
+            if let image = renderer.uiImage { stage.carry(UIImageView(image: image), from: host.view) }
+        }
+        cell?.showStage(item, direction: direction, animated: true)
+        if billboardFocusOutside {
+            let start = pinnedStage?.lastStartOffset ?? direction * StagePictureView.pictureSize.width
+            slideControls(from: start)
+            if let cover = pinnedStage?.lastCover { coverControls(cover, startOffset: start) }
+        }
+        slidingUntil = CACurrentMediaTime() + StagePictureView.slideDuration * Self.pagingShare
         onFocusArt(item.background ?? item.poster)
         onFocusItem(item, FixedFocusBillboardPosition(index: index, count: row.items.count))
         TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
@@ -4425,6 +4542,20 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
         // (The rows, not this view: the billboard's overlay is in it too.)
         let previousInside = context.previouslyFocusedView?.isDescendant(of: outer) == true
+        // Left/Right DURING the billboard's slide: the title before / next,
+        // focus staying on its button.
+        if CACurrentMediaTime() < slidingUntil, let host = controlsHost,
+           context.previouslyFocusedView?.isDescendant(of: host.view) == true,
+           let featured = featuredIndex, rows.indices.contains(featured),
+           context.focusHeading.contains(.left) || context.focusHeading.contains(.right) {
+            let step = context.focusHeading.contains(.right) ? 1 : -1
+            let id = rows[featured].id
+            DispatchQueue.main.async {
+                self.step(rowID: id, by: step)
+                self.onBillboardStep(step)
+            }
+            return false
+        }
         // Down from the billboard's own focus (Details' buttons) that doesn't
         // reach the rows — the first row's current card isn't under the
         // button (an episode further along) and the search settled back on
@@ -4927,6 +5058,8 @@ struct FixedFocusRowsCommand: Equatable {
         /// buttons (Home's): the picture drifts, the text crossfades, as a
         /// press on its cards did.
         case page(rowID: String, index: Int)
+        /// One title along (+1 / -1), as a press (none past either end).
+        case step(rowID: String, by: Int)
     }
     let action: Action
     let id = UUID()
@@ -5764,17 +5897,17 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // Full screen: TMDB's ORIGINAL file, whatever size the pick came
         // with (a saved pick or cached catalog may still carry a smaller
         // rendition — soft on a 4K TV).
-        placeStage(TMDBService.originalSize(item.background) ?? item.poster,
+        placeStage(TMDBService.originalSize(item.background) ?? item.poster, item: item,
                    direction: direction, animated: animated)
     }
 
-    private func placeStage(_ url: String?, direction: CGFloat, animated: Bool) {
+    private func placeStage(_ url: String?, item: MetaItem, direction: CGFloat, animated: Bool) {
         guard isFeatured, controller?.hidesBillboardPicture != true else { return }
         // Pinned: the controller's, not part of this row.
         if let pinned = controller?.pinnedStage {
             stage?.removeFromSuperview()
             stage = nil
-            pinned.show(url, direction: direction, animated: animated)
+            pinned.show(url, item: item, direction: direction, animated: animated)
             return
         }
         if stage == nil {
@@ -5784,7 +5917,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             setNeedsLayout()
             layoutIfNeeded()
         }
-        stage?.show(url, direction: direction, animated: animated)
+        stage?.show(url, item: item, direction: direction, animated: animated)
     }
 
     /// The catalog (and its titles and art) this cell last showed.
@@ -8200,5 +8333,3 @@ enum FixedFocusMotion {
         run(duration: Motion.moveDuration, animations: animations, completion: { _ in completion() })
     }
 }
-
-

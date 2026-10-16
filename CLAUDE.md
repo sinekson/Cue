@@ -126,10 +126,36 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details: one move, the picture stays (blurring into the colours), the
   first row peeking 60 pt up the bottom edge under the billboard (its name
   above its darkened cards, the page dots on that line). Pages by itself every 5 s, stops at the last title.
-  Left/Right: the picture crossfades drifting 16 pt the way you went
-  (`StagePictureView.drift`); the text only crossfades, in place, as one
-  block (`BillboardCrossfade` — run from inside the rows' host, else it
-  only swapped; the text drifting looked restless). 0.35 s.
+  Paging: the new picture slides in over the old from the side you went
+  (0.7 s, a no-bounce spring: fast, then slow), the old one moving half
+  the width the same way, no fade (`StagePictureView.slideDuration`,
+  `outgoingShare`; tried: a crossfade drifting 16 pt). Each picture
+  carries its own shade (one piece — a fixed shade showed in front of
+  the moving pictures), and its text too: each picture card hosts its
+  title's text (`FixedFocusRows.billboardPageText` → `StagePictureView`
+  pages), so card, shade and text slide as one, the old text covered by
+  the new card's edge. The buttons go with the cards in looks: a still
+  copy at rest rides out on the old card (drawn — `ActionFace.still`, a
+  flat stand-in for the frost, which can't be drawn), the buttons
+  themselves come in with the new one (focus staying on its button) —
+  sliding inside their own place, which only moves up and down (one
+  layer for both: the rows' updates restarted the slide, detached).
+  In the slide's first 75 %, Left/Right page again from any button and
+  focus goes to the side it went (right: Next, left: Play); later a
+  press moves along the buttons (when that's possible
+  again is easy to tell). Back to the card still going out: the slide
+  reverses (the front card returns where it came from), no new card
+  stacked on the moving pair. A reverse starts the cards from where they are,
+  at rest (blended into the running slide, they left the buttons). A
+  leaving card in front hides the buttons behind it (a mask moving with
+  its edge — the buttons are over everything). Cards no longer shown go once
+  at rest (`prune` — a slide cut short reported "not finished" and its
+  card stayed underneath, showing when a later slide uncovered it).
+  Holding Left/Right: tvOS moves focus along the buttons; at the end
+  (Play / Next) it pages on every 0.45 s while held (`holdTimer`).
+  Up from the rows: the hidden card focus lands on is taken as the
+  CURRENT title (the one above the row's card switched the billboard). The dots stay put. (Tried: the text crossfading in place, 0.35 s; the text as its
+  own SwiftUI layer sliding in step — it drifted from the picture.)
   Effects kept minimal: the shade is one fade from the left
   (`BillboardShade`, a light 20 % at the right edge for bright pictures;
   the bottom fade and its dark corner were dropped),
@@ -152,8 +178,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   sources; Back stops a search), + Library, i Details,
   › Next. Focus is the buttons' (`externalBillboard`, as Details); Play
   first. Left from Play: the title before, Right from › (or Select): the
-  next — focus stays where it is, so Right again browses on (`.page`
-  command). Moving between the buttons stops the paging by itself.
+  next — focus stays where it is, so Right again browses on (`.step`
+  command); none past either end — Next stays on the last title, doing
+  nothing (tried: wrapping round to the first; only 10 titles). Moving between the buttons stops the paging by itself.
   (Tried and dropped: no buttons, Select on the billboard opening
   Details, the text standing lower.)
 - **Details** uses the billboard's text and shade. Four buttons: Play,
