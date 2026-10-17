@@ -23,7 +23,7 @@ enum Spotlight {
     /// Gap between the box and posters, and between posters.
     static let spacing: CGFloat = 24
     /// Corner radius of the box and posters.
-    static let cornerRadius: CGFloat = 16
+    static let cornerRadius: CGFloat = 18
     /// Posters built to the right of the box (a few past the screen edge).
     static let postersAhead = 5
     /// Rows are RINGS: after the last title comes an END CARD ("↺ Back to

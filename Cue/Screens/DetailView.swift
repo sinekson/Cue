@@ -1417,6 +1417,9 @@ struct DetailActionButton: View {
     var iconSize = DetailActionButton.iconSize
     let action: () -> Void
     var onHold: (() -> Void)? = nil
+    /// Holding Select opens this menu instead (the billboard's Details:
+    /// Play, Choose Source).
+    var holdEntries: [MenuEntry]? = nil
 
     /// Its hold menu open (Play).
     @State private var held = false
@@ -1443,8 +1446,10 @@ struct DetailActionButton: View {
     static let height: CGFloat = 64
     static let focusFill = Color.white
     static let restContent = Color.white.opacity(FixedFocusText.primary)
-    /// Inside the capsule, either side.
+    /// Inside the capsule, either side (the season buttons).
     static let textPadding: CGFloat = 22
+    /// A labelled button's name alone, either side.
+    static let labelPadding: CGFloat = 34
     /// The content: text and icons one size (the ⓘ larger — its circle
     /// reads small).
     static let textSize: CGFloat = 26
@@ -1467,25 +1472,35 @@ struct DetailActionButton: View {
     static let captionGap: CGFloat = 12
 
     var body: some View {
-        Button(action: action) {
+        // (Not when its hold menu just opened: the release still reached
+        // the button — Details opened under the menu.)
+        Button(action: { if !held { action() } }) {
             HStack(spacing: 10) {
-                Group {
-                    if busy {
-                        ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
-                    } else {
-                        Image(systemName: icon)
-                            .font(.system(size: iconSize, weight: .bold))
+                // A labelled button: its name alone — while it works, a
+                // spinner in its place, the name's width kept (the row never
+                // moves); an icon button: its icon.
+                if bare {
+                    Group {
+                        if busy {
+                            ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
+                        } else {
+                            Image(systemName: icon)
+                                .font(.system(size: iconSize, weight: .bold))
+                        }
                     }
-                }
-                .frame(width: Self.iconBox, height: Self.iconBox)
-                if !bare {
+                    .frame(width: Self.iconBox, height: Self.iconBox)
+                } else {
                     Text(title)
                         .font(.system(size: Self.textSize, weight: .semibold))
                         .lineLimit(1)
                         .fixedSize()
+                        .opacity(busy ? 0 : 1)
+                        .overlay {
+                            if busy { ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8) }
+                        }
                 }
             }
-            .padding(.horizontal, bare ? 0 : Self.textPadding)
+            .padding(.horizontal, bare ? 0 : Self.labelPadding)
             .frame(width: bare ? Self.height : nil, height: Self.height)
             .modifier(ActionFace(lit: shownLit, pill: !plain))
             // Under it while focused (outside its frame: the row never moves
@@ -1506,8 +1521,9 @@ struct DetailActionButton: View {
         .buttonStyle(DetailPressStyle(lit: shownLit, held: held, onFocus: focusChanged))
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
-        .holdMenu(focused: shownLit && onHold != nil, direct: true, onHeld: { held = $0 }) {
-            onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
+        .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
+                  onHeld: { held = $0 }) {
+            holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
         }
     }
 }

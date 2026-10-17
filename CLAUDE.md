@@ -89,9 +89,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   blends along with it (tried: a quick switch at half the fade).
   Seasons: only the row's season on a pill — the flat light grey
   (`FlatControl.selected`, the current one of a set; the blur looked
-  odd there) — the others plain, muted. Text semibold, icons bold, 26 pt (the ⓘ 28; the buttons 64 tall).
-  The billboard and Details alike: Play labelled, the rest icon-only
-  (billboard: Library, Details, Next — only its chevron, no pill;
+  odd there) — the others plain, muted. Text semibold, icons bold, 26 pt (the buttons 64 tall).
+  The first button labelled — its name alone, no icon (tried: with its
+  icon); searching, a spinner in the name's place, same width — (billboard:
+  Details; Details: Play), the rest
+  icon-only (billboard: Library, Next — only its chevron, no pill;
   Details: Library, Trailer, Summary), their names under them while
   focused. (Tried: bold text; every button labelled.) (Tried and dropped: glass; a dark fill
   at rest — grey, black, black with a light edge; nothing at rest.)
@@ -141,7 +143,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   sliding inside their own place, which only moves up and down (one
   layer for both: the rows' updates restarted the slide, detached).
   In the slide's first 75 %, Left/Right page again from any button and
-  focus goes to the side it went (right: Next, left: Play); later a
+  focus goes to the side it went (right: Next, left: Details); later a
   press moves along the buttons (when that's possible
   again is easy to tell). Back to the card still going out: the slide
   reverses (the front card returns where it came from), no new card
@@ -152,7 +154,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   at rest (`prune` — a slide cut short reported "not finished" and its
   card stayed underneath, showing when a later slide uncovered it).
   Holding Left/Right: tvOS moves focus along the buttons; at the end
-  (Play / Next) it pages on every 0.45 s while held (`holdTimer`).
+  (Details / Next) it pages on every 0.45 s while held (`holdTimer`).
   Up from the rows: the hidden card focus lands on is taken as the
   CURRENT title (the one above the row's card switched the billboard). The dots stay put. (Tried: the text crossfading in place, 0.35 s; the text as its
   own SwiftUI layer sliding in step — it drifted from the picture.)
@@ -174,15 +176,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   italic 85 %.)
   Buttons (Details' look, `BillboardControls`, in their own host over
   the rows — `FixedFocusRows.billboardControls`; the text and dots stay
-  under them): Play (the episode under it, focused; searching on the button; hold:
-  sources; Back stops a search), + Library, i Details,
-  › Next. Focus is the buttons' (`externalBillboard`, as Details); Play
-  first. Left from Play: the title before, Right from › (or Select): the
-  next — focus stays where it is, so Right again browses on (`.step`
-  command); none past either end — Next stays on the last title, doing
-  nothing (tried: wrapping round to the first; only 10 titles). Moving between the buttons stops the paging by itself.
-  (Tried and dropped: no buttons, Select on the billboard opening
-  Details, the text standing lower.)
+  under them): ⓘ Details (labelled, first; hold: a menu — Play, Choose
+  Source; a search shows on the button, Back stops it), + Library,
+  › Next. No Play button: most picks are for discovering, Continue
+  Watching right below plays, and playing (a source search) is heavy —
+  behind Details or the hold (also safe to land on when paging left).
+  Focus is the buttons' (`externalBillboard`, as Details); Details
+  first. Left from Details: the title before, Right from › (or Select):
+  the next — focus stays where it is, so Right again browses on (`.step`
+  command); none past either end. Moving between the buttons stops the
+  paging by itself. (Tried and dropped: no buttons; Select on the
+  billboard opening Details; the text standing lower; a Play button
+  first, the episode under it; wrapping round to the first.)
 - **Details** uses the billboard's text and shade. Four buttons: Play,
   Library, Trailer, Summary (`text.alignleft`). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
@@ -295,6 +300,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   title's background, the old solid colours. No vignette anywhere; below
   Details' billboard only blur + one dim (`dimBelow`; the shade and the
   vignette there were dropped).
+- **Card corners**: 18 pt, continuous (`Spotlight.cornerRadius`). (Tried:
+  16; 22 circular, measured as the Apple TV app's; a user setting with
+  five choices.)
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
   episodes, Saved for Later, cast, studios, Search's banner) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner

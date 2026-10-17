@@ -1587,11 +1587,11 @@ struct HomeUIKitView: View {
                            billboardPageText: { AnyView(billboardText($0)) },
                            // Paging mid-slide: focus to the side it went —
                            // Next going right, Play going left.
-                           onBillboardStep: { billboardBridge.request($0 > 0 ? .next : .play) },
+                           onBillboardStep: { billboardBridge.request($0 > 0 ? .next : .details) },
                            billboardEdge: { [billboardBridge] in
                                switch billboardBridge.current {
                                case .next: 1
-                               case .play: -1
+                               case .details: -1
                                default: 0
                                }
                            },
@@ -2508,13 +2508,13 @@ extension HomeUIKitView {
         .frame(width: 1920, height: 1080, alignment: .topLeading)
     }
 
-    /// THE BILLBOARD'S BUTTONS (Details' look): Play, Library, Details,
-    /// Next. Left from Play: the title before; Right from Next (or Select
+    /// THE BILLBOARD'S BUTTONS (Details' look): Details, Library, Next.
+    /// Left from Details: the title before; Right from Next (or Select
     /// on it): the next one — focus stays where it is, so Right again
     /// browses on. Down: the first row.
     var billboardControls: AnyView {
         AnyView(BillboardControls(
-            item: billboardTitle, progress: billboardTitle.flatMap { progress[$0.id] },
+            item: billboardTitle,
             bridge: billboardBridge,
             onPage: pageBillboard,
             onDetails: { if let item = billboardTitle { openBillboardTitle(item) } },
@@ -2609,16 +2609,14 @@ extension HomeUIKitView {
     }
 }
 
-enum BillboardControl: Hashable { case play, library, details, next }
+enum BillboardControl: Hashable { case details, library, next }
 
-/// Home's billboard buttons — Details' (`DetailActionButton`): Play (a
-/// show's episode under it; hold: the sources), Library,
-/// Details, Next. ONE view for every title: focus stays put as the
-/// billboard pages.
+/// Home's billboard buttons — Details' look (`DetailActionButton`):
+/// Details (labelled, first; hold: Play / Choose Source — playing is a
+/// heavy step, it's behind Details or the hold), Library, Next. ONE view
+/// for every title: focus stays put as the billboard pages.
 struct BillboardControls: View {
     let item: MetaItem?
-    /// Continue Watching's entry for it (Play's episode).
-    let progress: WatchProgress?
     let bridge: FocusBridge<BillboardControl>
     let onPage: (Int) -> Void
     let onDetails: () -> Void
@@ -2627,19 +2625,25 @@ struct BillboardControls: View {
     @EnvironmentObject private var launcher: PlayLauncher
 
     var body: some View {
-        FocusBridgeHost(bridge: bridge, defaultValue: .play, onChange: { old, new in
+        FocusBridgeHost(bridge: bridge, defaultValue: .details, onChange: { old, new in
             if old != nil, let new, new != .next { onMove() }
         }) { focus in
             HStack(spacing: CueSpacing.md) {
                 let finding = item.map { launcher.searching?.hasPrefix($0.id + "|") == true } ?? false
                 DetailActionButton(
-                    icon: "play.fill", title: "Play", isPrimary: true, lit: false, busy: finding,
-                    caption: finding ? "Finding a source…" : episode,
-                    // (Searching shows on the button, as on Details; Back
-                    // stops it — the page's Back.)
-                    action: { if let item { launcher.play(title: item, overlay: false) } },
-                    onHold: { if let item { launcher.chooseSource(title: item, overlay: false) } })
-                    .focused(focus, equals: .play)
+                    icon: "info.circle", title: "Details", isPrimary: true, lit: false, busy: finding,
+                    // (A search from its hold menu shows here; Back stops it.)
+                    caption: finding ? "Finding a source…" : nil,
+                    action: onDetails,
+                    holdEntries: item.map { item in [
+                        MenuEntry(title: "Play", icon: "play.fill") {
+                            launcher.play(title: item, overlay: false)
+                        },
+                        MenuEntry(title: "Choose Source", icon: "list.bullet") {
+                            launcher.chooseSource(title: item, overlay: false)
+                        },
+                    ] })
+                    .focused(focus, equals: .details)
                     .onMoveCommand { if $0 == .left { onPage(-1) } }
                 // (One focus section, as on Details: a move into the row
                 // resolves against them as a unit.)
@@ -2650,24 +2654,14 @@ struct BillboardControls: View {
                         isPrimary: false, lit: false, bare: true,
                         action: { if let item { library.toggle(item) } })
                         .focused(focus, equals: .library)
-                    DetailActionButton(icon: "info.circle", title: "Details", isPrimary: false, lit: false,
-                                       bare: true, iconSize: 28, action: onDetails)
-                        .focused(focus, equals: .details)
                     DetailActionButton(icon: "chevron.right", title: "Next", isPrimary: false, lit: false,
                                        bare: true, plain: true, action: { onPage(1) })
                         .focused(focus, equals: .next)
                         .onMoveCommand { if $0 == .right { onPage(1) } }
                 }
                 .focusSection()
-                }
+            }
         }
-    }
-
-    /// Under Play while focused: a show's episode (Continue Watching's,
-    /// else the first); a film: nothing.
-    private var episode: String? {
-        guard let item, item.isSeries else { return nil }
-        return "S\(progress?.season ?? 1):E\(progress?.episode ?? 1)"
     }
 }
 
@@ -2888,7 +2882,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var billboardPageText: ((MetaItem) -> AnyView)? = nil
     /// A press during the billboard's slide paged (+1 / -1).
     var onBillboardStep: (Int) -> Void = { _ in }
-    /// Focus on the billboard's last button (+1, Next) / first (-1, Play),
+    /// Focus on the billboard's last button (+1, Next) / first (-1, Details),
     /// else 0 — holding Left/Right there pages on.
     var billboardEdge: () -> Int = { 0 }
     /// RIGID billboard (Home): its picture doesn't scroll with the rows — it
@@ -4389,7 +4383,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     /// HOLDING Left/Right on the billboard's buttons: tvOS repeats focus
-    /// moves along them, and once at the end (Play going left, Next going
+    /// moves along them, and once at the end (Details going left, Next going
     /// right) — nowhere to go — it pages on, steadily, while held.
     var billboardEdge: () -> Int = { 0 }
     private var holdTimer: Timer?
