@@ -147,11 +147,6 @@ struct LibraryView: View {
                     .padding(.leading, CueSpacing.sm)
             }
             Spacer()
-            Image("CueLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(height: 40)
-                .accessibilityLabel("Cue")
         }
         .padding(.horizontal, CueSpacing.huge)
     }

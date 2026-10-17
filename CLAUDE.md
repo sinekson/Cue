@@ -342,6 +342,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   next press). Glass panel beside the card; pressed −3 %, open +2 %.
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.
+- **App icon and Top Shelf images**: generated, never hand-edited —
+  `swift Tools/AppIcon/render.swift` writes them into the asset catalog.
+  One play drawn like the note on Apple's Musik icon (grey-white, slightly
+  see-through, a sharp dark rim) on Musik's gradient 6° pinker (OKLCH, the
+  most chroma P3 holds), all in Display P3. Layers: background / the play's
+  shadow / the play (the play lifts off its shadow on focus). Tried and
+  dropped: wordmarks ("CUE" with a ring C, the E in a play), a 3D key, two
+  plays, other colours (sRGB was too tame).
 - **Series status chip**: AIRING / RETURNING / ENDED [year]
   (`FixedFocusShowInfo.status`).
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
