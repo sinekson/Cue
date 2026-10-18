@@ -229,7 +229,6 @@ enum StremioAPI {
     static func catalog(
         addon: InstalledAddon,
         catalog: ManifestCatalog,
-        search: String? = nil,
         genre: String? = nil,
         skip: Int? = nil
     ) async throws -> [MetaItem] {
@@ -239,12 +238,8 @@ enum StremioAPI {
         // Stremio catalog "extra" args are one path segment; multiple props
         // are joined with `&` (e.g. `/genre=Action&skip=100.json`).
         var extras: [String] = []
-        if let search, !search.isEmpty {
-            extras.append("search=\(encodeExtraValue(search))")
-        } else {
-            if let genre, !genre.isEmpty { extras.append("genre=\(encodeExtraValue(genre))") }
-            if let skip, skip > 0 { extras.append("skip=\(skip)") }
-        }
+        if let genre, !genre.isEmpty { extras.append("genre=\(encodeExtraValue(genre))") }
+        if let skip, skip > 0 { extras.append("skip=\(skip)") }
         if !extras.isEmpty { path += "/" + extras.joined(separator: "&") }
         path += ".json"
         // Built through the addon rather than by concatenating `baseURL`: a
@@ -252,10 +247,8 @@ enum StremioAPI {
         // that query has to be re-appended AFTER `.json` or the request goes
         // out unauthenticated and silently returns nothing.
         let url = addon.resourceURL(path)
-        // Don't cache search results (query-specific, one-shot); catalogs are
-        // cached briefly so revisiting Home is instant.
-        let ttl: TimeInterval = (search?.isEmpty == false) ? 0 : 120
-        let response: CatalogResponse = try await get(url, ttl: ttl)
+        // Cached briefly so revisiting Home is instant.
+        let response: CatalogResponse = try await get(url, ttl: 120)
         // De-dup by id: duplicate identifiers in a catalog crash the tvOS focus
         // engine when rendered in a ForEach (aggregator addons emit them).
         let metas = (response.metas ?? []).filter { !$0.name.isEmpty }.deduplicatedByID()

@@ -617,6 +617,10 @@ enum TMDBService {
         let name: String
         let profileURL: String?
         let knownFor: String?
+        /// TMDB's popularity, and the votes of their best-known title (for
+        /// Search's own order).
+        var popularity: Double = 0
+        var knownForVotes: Int = 0
     }
 
     static func searchPeople(_ query: String) async -> [PersonSearchResult] {
@@ -626,6 +630,9 @@ enum TMDBService {
             struct Item: Decodable {
                 let id: Int; let name: String; let profile_path: String?
                 let known_for_department: String?
+                let popularity: Double?
+                struct Title: Decodable { let vote_count: Int? }
+                let known_for: [Title]?
             }
             let results: [Item]
         }
@@ -633,7 +640,9 @@ enum TMDBService {
         return body.results.prefix(20).map {
             PersonSearchResult(id: $0.id, name: $0.name,
                                profileURL: imageURL($0.profile_path, size: "w300"),
-                               knownFor: $0.known_for_department)
+                               knownFor: $0.known_for_department,
+                               popularity: $0.popularity ?? 0,
+                               knownForVotes: $0.known_for?.compactMap(\.vote_count).max() ?? 0)
         }
     }
 
@@ -759,6 +768,9 @@ enum TMDBService {
         let releaseInfo: String?
         let rating: Double?
         var genres: [String]? = nil
+        /// TMDB's vote count, where the order needs it (Search's best-known
+        /// titles).
+        var votes: Int = 0
     }
 
     /// TMDB's genre id→name lists are small and effectively fixed — hardcoded
@@ -1954,7 +1966,7 @@ enum TMDBService {
             let id: Int; let title: String?; let name: String?
             let poster_path: String?; let backdrop_path: String?
             let overview: String?; let release_date: String?; let first_air_date: String?
-            let vote_average: Double?
+            let vote_average: Double?; let vote_count: Int?
         }
         guard let body: DiscoverResponse = try? await get(path, query: query) else { return ([], 0, 0) }
         let items: [TMDBRawItem] = (body.results ?? []).compactMap { r in
@@ -1965,10 +1977,24 @@ enum TMDBService {
                 background: imageURL(r.backdrop_path, size: "original"),
                 description: r.overview,
                 releaseInfo: (r.release_date ?? r.first_air_date).map { String($0.prefix(4)) },
-                rating: r.vote_average
+                rating: r.vote_average,
+                votes: r.vote_count ?? 0
             )
         }
         return (items, body.total_results ?? items.count, body.total_pages ?? 1)
+    }
+
+    /// A studio's best-known titles, films and shows together, by their
+    /// votes (lasting fame) — Search's Top Results after the studio.
+    static func studioBestKnown(id: Int, limit: Int) async -> [MetaItem] {
+        let filter = ["with_companies": String(id), "sort_by": "vote_count.desc"]
+        async let movies = discoverPage(path: "/discover/movie", with: filter, isMovie: true,
+                                        language: preferredLanguage)
+        async let shows = discoverPage(path: "/discover/tv", with: filter, isMovie: false,
+                                       language: preferredLanguage)
+        let all = await (movies.items + shows.items).filter { $0.poster != nil }.sorted { $0.votes > $1.votes }
+        // (A few more than asked for: some have no IMDb id.)
+        return Array(await mapToMetaItems(Array(all.prefix(limit * 2))).filter { $0.id.hasPrefix("tt") }.prefix(limit))
     }
 
     /// A studio's or network's page header: its logo and where it is from.
@@ -2068,6 +2094,17 @@ enum TMDBService {
         return PersonCredits(entries: entries)
     }
 
+    /// A person's best-known titles, films and shows together — what they
+    /// played (voice roles too) or directed, by votes and popularity (log
+    /// scale) — Search's Top Results after the person.
+    static func bestKnown(_ credits: PersonCredits, limit: Int) async -> [MetaItem] {
+        let ranked = credits.entries.sorted {
+            log1p(Double($0.votes)) + log1p($0.popularity) > log1p(Double($1.votes)) + log1p($1.popularity)
+        }
+        return Array(await mapToMetaItems(ranked.prefix(limit * 2).map(\.raw))
+            .filter { $0.id.hasPrefix("tt") }.prefix(limit))
+    }
+
     /// A page of a person's movies or shows in `sort`'s order.
     static func credits(_ credits: PersonCredits, isMovie: Bool, sort: BrowseSort, page: Int) async -> BrowsePage {
         let today = Date().formatted(.iso8601.year().month().day())
@@ -2112,9 +2149,8 @@ extension TMDBService {
         return await mapToMetaItems(body.raw(defaultMovie: true, limit: limit))
     }
 
-    /// How well known a title is, from TMDB's own search: to rank an add-on's
-    /// search results (those are text matches, blind to fame — an unrated
-    /// variety show above the series everyone means).
+    /// How well known a title is (TMDB's votes and popularity): Search's
+    /// order.
     struct SearchFame: Sendable {
         let name: String
         let originalName: String?
@@ -2128,38 +2164,115 @@ extension TMDBService {
         var score: Double { log1p(Double(votes)) + log1p(popularity) }
     }
 
-    /// TMDB's films and series for a search, with their fame — two requests
-    /// side by side (one page each). Empty without a key.
-    static func searchFame(_ query: String) async -> [SearchFame] {
+    /// One title from TMDB's search.
+    struct SearchHit: Sendable {
+        fileprivate let raw: TMDBRawItem
+        let fame: SearchFame
+    }
+
+    /// TMDB's films and series for a search — two requests side by side
+    /// (one page each): Search's suggestions, order and results. Empty
+    /// without a key.
+    static func search(_ query: String) async -> [SearchHit] {
         guard hasAPIKey else { return [] }
         struct Page: Decodable {
             struct Result: Decodable {
+                let id: Int
                 let title: String?
                 let name: String?
                 let original_title: String?
                 let original_name: String?
                 let release_date: String?
                 let first_air_date: String?
+                let poster_path: String?
+                let backdrop_path: String?
+                let overview: String?
+                let vote_average: Double?
                 let popularity: Double?
                 let vote_count: Int?
             }
             let results: [Result]?
         }
-        func search(_ kind: String) async -> [SearchFame] {
+        func search(_ kind: String) async -> [SearchHit] {
             let isMovie = kind == "movie"
             guard let page: Page = try? await get("/search/\(kind)", query: ["query": query, "language": preferredLanguage])
             else { return [] }
             return (page.results ?? []).compactMap { result in
-                guard let name = result.title ?? result.name else { return nil }
+                guard let name = result.title ?? result.name, !name.isEmpty else { return nil }
                 let date = result.release_date ?? result.first_air_date
-                return SearchFame(name: name, originalName: result.original_title ?? result.original_name,
-                                  year: date.flatMap { Int($0.prefix(4)) }, isMovie: isMovie,
-                                  popularity: result.popularity ?? 0, votes: result.vote_count ?? 0)
+                let year = date.flatMap { Int($0.prefix(4)) }
+                let raw = TMDBRawItem(
+                    tmdbID: result.id, isMovie: isMovie, name: name,
+                    poster: imageURL(result.poster_path, size: "w500"),
+                    background: imageURL(result.backdrop_path, size: "w1280"),
+                    description: result.overview, releaseInfo: year.map(String.init),
+                    rating: result.vote_average.flatMap { $0 > 0 ? $0 : nil })
+                return SearchHit(raw: raw, fame: SearchFame(
+                    name: name, originalName: result.original_title ?? result.original_name, year: year,
+                    isMovie: isMovie, popularity: result.popularity ?? 0, votes: result.vote_count ?? 0))
             }
         }
         async let movies = search("movie")
         async let series = search("tv")
         return await movies + series
+    }
+
+    /// TMDB's combined search (films, series, people — one list, its own
+    /// order): Search's Top Results. Titles by their IMDb ids (none, or no
+    /// picture: left out), people as `person:<id>` cards (no photo: left
+    /// out) — in TMDB's order.
+    static func searchMulti(_ query: String) async -> [MetaItem] {
+        guard hasAPIKey else { return [] }
+        struct Page: Decodable {
+            struct Result: Decodable, Sendable {
+                let id: Int
+                let media_type: String?
+                let title: String?
+                let name: String?
+                let release_date: String?
+                let first_air_date: String?
+                let poster_path: String?
+                let backdrop_path: String?
+                let profile_path: String?
+                let overview: String?
+                let vote_average: Double?
+                let known_for_department: String?
+            }
+            let results: [Result]?
+        }
+        guard let page: Page = try? await get("/search/multi", query: ["query": query, "language": preferredLanguage])
+        else { return [] }
+        let results = (page.results ?? []).filter { ["movie", "tv", "person"].contains($0.media_type ?? "") }
+        let ids = await boundedConcurrentMap(results, limit: imdbResolveWindow) { result in
+            result.media_type == "person" ? "" : await imdbID(tmdbID: result.id, isMovie: result.media_type == "movie") ?? ""
+        }
+        var seen = Set<String>()
+        return results.indices.compactMap { index -> MetaItem? in
+            let result = results[index]
+            guard let name = result.title ?? result.name, !name.isEmpty else { return nil }
+            if result.media_type == "person" {
+                guard let photo = imageURL(result.profile_path, size: "w300") else { return nil }
+                return MetaItem(id: "person:\(result.id)", type: "person", name: name, poster: photo,
+                                background: nil, releaseInfo: result.known_for_department)
+            }
+            let id = ids[index]
+            let poster = imageURL(result.poster_path, size: "w500")
+            let background = imageURL(result.backdrop_path, size: "w1280")
+            guard id.hasPrefix("tt"), poster != nil || background != nil, seen.insert(id).inserted else { return nil }
+            return MetaItem(id: id, type: result.media_type == "movie" ? "movie" : "series", name: name,
+                            poster: poster, background: background,
+                            logo: "https://images.metahub.space/logo/medium/\(id)/img",
+                            description: result.overview,
+                            releaseInfo: (result.release_date ?? result.first_air_date).map { String($0.prefix(4)) },
+                            imdbRating: result.vote_average.flatMap { $0 > 0 ? String(format: "%.1f", $0) : nil })
+        }
+    }
+
+    /// Search's titles, playable: by their IMDb ids (what the stream
+    /// add-ons take) — those without one, or without any picture, left out.
+    static func playable(_ hits: [SearchHit]) async -> [MetaItem] {
+        let pictured = hits.map(\.raw).filter { $0.poster != nil || $0.background != nil }
+        return await mapToMetaItems(pictured).filter { $0.id.hasPrefix("tt") }
     }
 
     /// A TMDB result list (recommendations, trending).

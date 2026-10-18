@@ -3,317 +3,478 @@ import SwiftUI
 @MainActor
 final class SearchViewModel: ObservableObject {
     @Published var query = ""
-    @Published var results: [MetaItem] = []
-    /// How well known the titles of this search are (TMDB) — for the order.
-    @Published var fame: [TMDBService.SearchFame] = []
+    /// What the last search found — every kind, published at once.
+    @Published private(set) var found = SearchFound()
     @Published var isSearching = false
-    /// The scope chosen in the search bar: Top Result, Movies or Series
-    /// (back to Top Result with each new search).
+    /// The scope chosen in the line: Top Results, Movies, Series, People or
+    /// Studios (back to Top Results with each new search).
     @Published var scope: SearchScope = .top
+    /// What you may mean, as you type: TMDB's names (`suggest`).
+    @Published private(set) var suggestions: [String] = []
+    /// The titles last opened from Search (newest first): the row while the
+    /// field is empty.
+    @Published private(set) var recentTitles: [MetaItem] = SearchViewModel.loadRecentTitles()
 
     private var searchTask: Task<Void, Never>?
+    private var suggestTask: Task<Void, Never>?
+    /// TMDB's answers by query (lowercased): the suggestions', the results'
+    /// and their order's — one search for all three.
+    private var hitCache: [String: [TMDBService.SearchHit]] = [:]
 
-    func search(addonManager: AddonManager) {
+    /// TMDB's films and series for a query, asked once.
+    private func hits(for query: String) async -> [TMDBService.SearchHit] {
+        let key = query.lowercased()
+        if let known = hitCache[key] { return known }
+        let found = await TMDBService.search(query)
+        hitCache[key] = found
+        return found
+    }
+
+    /// The suggestions for what's typed: at once from what an earlier,
+    /// shorter query brought (filtered here), then TMDB's own answer a
+    /// moment later (120 ms after the last key, older lookups dropped).
+    /// (Focusing a suggestion only previews its text in the field; the
+    /// query changes once it's chosen.)
+    func suggest() {
+        suggestTask?.cancel()
+        let typed = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !typed.isEmpty else { setSuggestions([]); return }
+        if let base = (1...typed.count).reversed().lazy
+            .map({ String(typed.prefix($0)) }).first(where: { self.hitCache[$0] != nil }) {
+            setSuggestions(Self.names((hitCache[base] ?? []).map(\.fame), for: typed))
+        }
+        guard hitCache[typed] == nil else { return }
+        suggestTask = Task {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            let found = await hits(for: typed)
+            guard !Task.isCancelled else { return }
+            setSuggestions(Self.names(found.map(\.fame), for: typed))
+        }
+    }
+
+    /// Only a real change (each one re-applies the system's row).
+    private func setSuggestions(_ names: [String]) {
+        if names != suggestions { suggestions = names }
+    }
+
+    /// The names that go on with what's typed (lowercased, as the Apple TV
+    /// app's): their start or a word's (`matchBonus`), the best known first
+    /// with its bonus; each once.
+    private static func names(_ fame: [TMDBService.SearchFame], for typed: String) -> [String] {
+        let q = matchForm(typed)
+        var seen = Set<String>()
+        return fame.compactMap { entry -> (name: String, score: Double)? in
+            matchBonus(matchForm(entry.name), q).map { (entry.name.lowercased(), entry.score + $0) }
+        }
+        .sorted { $0.score > $1.score }
+        .map(\.name)
+        .filter { seen.insert($0).inserted }
+        .prefix(8).map { $0 }
+    }
+
+    // MARK: Recent titles
+
+    private static let recentTitlesKey = "cue.search.recentTitles"
+    private static let recentTitlesLimit = 12
+
+    private static func loadRecentTitles() -> [MetaItem] {
+        guard let data = UserDefaults.standard.data(forKey: recentTitlesKey) else { return [] }
+        return (try? JSONDecoder().decode([MetaItem].self, from: data)) ?? []
+    }
+
+    /// A title opened from Search: first among the recent ones.
+    func opened(_ item: MetaItem) {
+        let list = [item] + recentTitles.filter { $0.id != item.id }
+        recentTitles = Array(list.prefix(Self.recentTitlesLimit))
+        if let data = try? JSONEncoder().encode(recentTitles) {
+            UserDefaults.standard.set(data, forKey: Self.recentTitlesKey)
+        }
+    }
+
+    /// The results: TMDB's films and series for the query (the same search
+    /// as the suggestions'), playable by their IMDb ids — what the stream
+    /// add-ons take, wherever a title was found (`TMDBService.playable`).
+    func search() {
         searchTask?.cancel()
         scope = .top
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2 else {
-            results = []
-            fame = []
+            found = SearchFound()
             isSearching = false
             return
         }
         isSearching = true
-        let targets: [(InstalledAddon, ManifestCatalog)] = Self.searchTargets(addonManager)
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
-            // TMDB's view of the same search, side by side with the add-ons'.
-            async let fame = TMDBService.searchFame(trimmed)
-
-            // Collect by target INDEX, not by completion. `for await` on a task
-            // group yields in the order tasks finish, so the merged list was
-            // ordered by whichever add-on answered fastest — a race. A slow
-            // Cinemeta behind a fast torrent aggregator put junk on top, and
-            // the same search could come back in a different order twice in a
-            // row. Now the order is the one `searchTargets` decided.
-            var byTarget = [Int: [MetaItem]](minimumCapacity: targets.count)
-            await withTaskGroup(of: (Int, [MetaItem]).self) { group in
-                for (index, target) in targets.enumerated() {
-                    // Resolved out here: the class is @MainActor, so the
-                    // task's body can't reach its static members.
-                    let cap = Self.limit(for: target.0)
-                    group.addTask {
-                        let items = (try? await StremioAPI.catalog(
-                            addon: target.0, catalog: target.1, search: trimmed)) ?? []
-                        // Cap each catalog's contribution. One add-on
-                        // returning hundreds of per-release rows buried every
-                        // other add-on's real titles.
-                        return (index, Array(items.prefix(cap)))
-                    }
+            // All kinds at once: switching the scope shows them at once.
+            async let foundTop = TMDBService.searchMulti(trimmed)
+            async let foundPeople = TMDBService.searchPeople(trimmed)
+            async let foundStudios = TMDBService.searchCompanies(trimmed)
+            let hits = await hits(for: trimmed)
+            let items = await TMDBService.playable(hits)
+            let (combined, persons, companies) = await (foundTop, foundPeople, foundStudios)
+            guard !Task.isCancelled else { return }
+            var next = SearchFound()
+            next.query = trimmed
+            next.top = combined
+            next.results = items
+            next.fame = hits.map(\.fame)
+            // Only people with a photo, as titles with a picture and
+            // studios with a logo (the rest: namesakes nobody means, and
+            // thousands of small production firms).
+            let pictured = persons.filter { $0.profileURL != nil }
+            next.people = pictured.map {
+                MetaItem(id: "person:\($0.id)", type: "person", name: $0.name, poster: $0.profileURL,
+                         background: nil, releaseInfo: $0.knownFor)
+            }
+            next.personFame = Dictionary(pictured.map { ("person:\($0.id)", Self.fame(of: $0)) },
+                                         uniquingKeysWith: { first, _ in first })
+            next.studios = companies.filter { $0.logoURL != nil }.map {
+                MetaItem(id: "company:\($0.id)", type: "company", name: $0.name, poster: $0.logoURL,
+                         background: nil)
+            }
+            // A person or studio leading Top Results (in either order):
+            // their best-known titles, fetched before anything shows — the
+            // page swaps in whole.
+            let leads = Set([true, false].compactMap { next.lead(own: $0) })
+            next.related = await withTaskGroup(of: (String, [MetaItem]).self) { group in
+                for lead in leads {
+                    group.addTask { (lead.id, await Self.bestKnown(of: lead)) }
                 }
-                for await (index, items) in group { byTarget[index] = items }
+                var related: [String: [MetaItem]] = [:]
+                for await (id, titles) in group { related[id] = titles }
+                return related
             }
             guard !Task.isCancelled else { return }
-
-            var merged: [MetaItem] = []
-            var seen = Set<String>()
-            for index in targets.indices {
-                // Keyed on `id` alone: the grids' `ForEach` identify rows by
-                // `MetaItem.id`, so "tt123" as `series` from one addon and
-                // as `tv` from another must not both survive.
-                for item in byTarget[index] ?? [] where !seen.contains(item.id) {
-                    seen.insert(item.id)
-                    merged.append(item)
-                }
-            }
-            let known = await fame
-            guard !Task.isCancelled else { return }
-            self.fame = known
-            results = merged
+            found = next
             isSearching = false
         }
     }
 
-    /// Most results one catalog may contribute to a search.
-    private static let perCatalogLimit = 40
-    /// A much tighter cap for stream-only source add-ons. Ranking them last
-    /// stops them leading the results but not from filling the tail: four
-    /// searchable catalogs at the normal cap is still 160 per-release rows
-    /// behind the real titles. They keep a foothold rather than a flood.
-    private static let sourceAddonLimit = 8
-
-    private static func limit(for addon: InstalledAddon) -> Int {
-        searchRank(addon) == 2 ? sourceAddonLimit : perCatalogLimit
+    /// A leading person's or studio's best-known titles (Top Results).
+    private nonisolated static func bestKnown(of lead: MetaItem) async -> [MetaItem] {
+        guard let id = tmdbID(lead) else { return [] }
+        if lead.type == "person" {
+            return await TMDBService.bestKnown(TMDBService.personCredits(id: id), limit: SearchFound.topCount)
+        }
+        return await TMDBService.studioBestKnown(id: id, limit: SearchFound.topCount)
     }
 
-    /// Every searchable catalog, metadata add-ons first.
-    ///
-    /// Search is for finding TITLES. An add-on that provides `meta` describes
-    /// titles; one that only provides `stream` is a source aggregator whose
-    /// catalog lists individual releases. When such an add-on sat above
-    /// Cinemeta in the list, search filled up with single torrents for random
-    /// episodes and users had to reorder their add-ons by hand to get it back.
-    /// Ordering by capability rather than by install position is that
-    /// workaround, done automatically.
-    ///
-    /// Source add-ons are still searched, just last — excluding them outright
-    /// would silently drop results from a legitimately configured add-on.
-    static func searchTargets(_ addonManager: AddonManager) -> [(InstalledAddon, ManifestCatalog)] {
-        addonManager.catalogAddons
-            .enumerated()
-            // `sorted` is not documented as stable, so the install index is an
-            // explicit tiebreaker — without it, add-ons of equal rank could
-            // reshuffle between searches.
+    /// A person's fame on the titles' scale: their popularity (counted
+    /// double — people have no votes) plus half their best-known title's
+    /// votes (log scale). Christopher Nolan above the documentaries named
+    /// after him; a minor actor of a famous film not above the film.
+    private static func fame(of person: TMDBService.PersonSearchResult) -> Double {
+        2 * log1p(person.popularity) + 0.5 * log1p(Double(person.knownForVotes))
+    }
+
+    /// A person's or studio's TMDB id (`person:<id>`, `company:<id>`).
+    nonisolated static func tmdbID(_ item: MetaItem) -> Int? {
+        item.id.split(separator: ":").last.flatMap { Int($0) }
+    }
+
+    /// A name as it's matched: lowercased, accents gone, words apart (any
+    /// punctuation a space) — "Dune: Part Two" → "dune part two".
+    nonisolated static func matchForm(_ s: String) -> String {
+        String(s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : " " })
+            .split(separator: " ").joined(separator: " ")
+    }
+
+    /// How a name goes on with what's typed (both in `matchForm`) — the
+    /// suggestions' rule: nil, it doesn't — neither its start nor one of its
+    /// words starts with it; else the bonus on its fame: the name itself +3,
+    /// its start +1, a word 0.
+    nonisolated static func matchBonus(_ name: String, _ typed: String) -> Double? {
+        guard !typed.isEmpty else { return nil }
+        if name == typed { return 3 }
+        if name.hasPrefix(typed) { return 1 }
+        return name.contains(" " + typed) ? 0 : nil
+    }
+
+}
+
+/// What one search found — every kind, in TMDB's order — and both orders
+/// over it (Render Lab → Search: Cue's order).
+struct SearchFound {
+    var query = ""
+    /// TMDB's combined search (films, series, people): Top Results in its
+    /// order.
+    var top: [MetaItem] = []
+    /// Films and series (TMDB's film and series searches), with their fame
+    /// for Cue's order.
+    var results: [MetaItem] = []
+    var fame: [TMDBService.SearchFame] = []
+    /// People (`person:<id>`) and their fame on the titles' scale.
+    var people: [MetaItem] = []
+    var personFame: [String: Double] = [:]
+    /// Studios (`company:<id>`).
+    var studios: [MetaItem] = []
+    /// A leading person's or studio's best-known titles, by its id.
+    var related: [String: [MetaItem]] = [:]
+
+    /// Top Results: as many as fit across, no scrolling.
+    static let topCount = 6
+
+    private typealias Model = SearchViewModel
+
+    /// Top Results: the order's list, a studio taken in when it's what you
+    /// typed (`withStudio`); led by a person or studio, the rest of the
+    /// places their best-known titles.
+    func topResults(own: Bool) -> [MetaItem] {
+        let base = withStudio(own ? rankedTop() : top, count: Self.topCount)
+        guard let lead = base.first, let more = related[lead.id], !more.isEmpty else { return base }
+        var seen: Set<String> = [lead.id]
+        return [lead] + more.filter { seen.insert($0.id).inserted }.prefix(Self.topCount - 1)
+    }
+
+    /// The person or studio leading Top Results in that order, if one does.
+    func lead(own: Bool) -> MetaItem? {
+        withStudio(own ? rankedTop() : top, count: 1).first.flatMap { ["person", "company"].contains($0.type) ? $0 : nil }
+    }
+
+    // MARK: Cue's own order
+
+    /// THE ORDER: only names whose start — or a word's — starts with what
+    /// was typed ("di" → Die Hard, The Diplomat, Digimon; TMDB's fuzzier
+    /// finds left out; none match, a typo: all), the best known first —
+    /// fame plus a bonus for the name itself or its start (`matchBonus`):
+    /// enough to lift an exact match among names about as known, not a
+    /// minor one over a famous one.
+    private func ranked(_ items: [MetaItem], fame: (MetaItem) -> Double) -> [(item: MetaItem, score: Double)] {
+        let typed = Model.matchForm(query)
+        var scored = items.enumerated().map { offset, item in
+            (item: item, bonus: Model.matchBonus(Model.matchForm(item.name), typed), fame: fame(item), offset: offset)
+        }
+        if scored.contains(where: { $0.bonus != nil }) { scored.removeAll { $0.bonus == nil } }
+        return scored
             .sorted { a, b in
-                let (ra, rb) = (Self.searchRank(a.element), Self.searchRank(b.element))
-                return ra == rb ? a.offset < b.offset : ra < rb
+                let (x, y) = (a.fame + (a.bonus ?? 0), b.fame + (b.bonus ?? 0))
+                return x != y ? x > y : a.offset < b.offset
             }
-            .flatMap { entry in
-                (entry.element.manifest.catalogs ?? [])
-                    .filter { $0.supportsSearch }
-                    .map { (entry.element, $0) }
-            }
+            .map { ($0.item, $0.fame + ($0.bonus ?? 0)) }
     }
 
-    /// Lower sorts first: metadata providers, then anything else, then
-    /// stream-only source add-ons.
-    private static func searchRank(_ addon: InstalledAddon) -> Int {
-        if addon.manifest.providesMeta { return 0 }
-        if addon.manifest.providesStreams { return 2 }
-        return 1
+    /// The titles in Cue's order, by the fame of their own TMDB entry (the
+    /// same name, kind and year — else one a year off: a release date told
+    /// differently).
+    func rankedTitles() -> [(item: MetaItem, score: Double)] {
+        func key(_ s: String) -> String { Model.matchForm(s).replacingOccurrences(of: " ", with: "") }
+        var byName: [String: [TMDBService.SearchFame]] = [:]
+        for entry in fame {
+            for name in Set([entry.name, entry.originalName].compactMap { $0 }.map(key)) {
+                byName[name, default: []].append(entry)
+            }
+        }
+        return ranked(results) { item in
+            let same = (byName[key(item.name)] ?? []).filter { $0.isMovie == (item.type == "movie") }
+            let year = item.year.flatMap(Int.init)
+            let entry = year.flatMap { y in same.first { $0.year == y } ?? same.first { ($0.year.map { abs($0 - y) <= 1 }) ?? true } }
+                ?? (year == nil ? same.max { $0.score < $1.score } : nil)
+            return entry?.score ?? 0
+        }
+    }
+
+    func rankedPeople() -> [(item: MetaItem, score: Double)] {
+        ranked(people) { personFame[$0.id] ?? 0 }
+    }
+
+    /// Studios: only those whose name — or a word — starts with what was
+    /// typed (none: all), the name itself first, else TMDB's order.
+    func rankedStudios() -> [MetaItem] {
+        ranked(studios) { _ in 0 }.map(\.item)
+    }
+
+    /// Top Results in Cue's order: titles and people together, by score.
+    func rankedTop() -> [MetaItem] {
+        (rankedTitles() + rankedPeople()).sorted { $0.score > $1.score }.map(\.item)
+    }
+
+    /// One studio into Top Results (both orders), when it's what you
+    /// typed: the name itself → first; its name or a word starting with it
+    /// (3 letters on) → second, after the first hit. At most one — the
+    /// list keeps its length. None while a title or person has that very
+    /// name ("dune": the films, not a studio called Dune).
+    func withStudio(_ list: [MetaItem], count: Int) -> [MetaItem] {
+        let typed = Model.matchForm(query)
+        let bonuses = studios.map { Model.matchBonus(Model.matchForm($0.name), typed) }
+        let named = (results + people).contains { Model.matchForm($0.name) == typed }
+        let pick: (item: MetaItem, place: Int)?
+        if named {
+            pick = nil
+        } else if let exact = studios.indices.first(where: { bonuses[$0] == 3 }) {
+            pick = (studios[exact], 0)
+        } else if typed.count >= 3, let start = studios.indices.first(where: { bonuses[$0] != nil }) {
+            pick = (studios[start], 1)
+        } else {
+            pick = nil
+        }
+        var out = Array(list.prefix(count))
+        if let pick {
+            out.insert(pick.item, at: min(pick.place, out.count))
+            out = Array(out.prefix(count))
+        }
+        return out
     }
 }
 
 /// SEARCH: Apple's own search field and keyboard at the top (dictation with
-/// the remote's mic); below it — recent searches while it's empty — in a fixed
-/// area (nothing scrolls — the keyboard stays where it is), the results on
-/// Home's rows:
-/// - TOP RESULT first: the best match as one big card, the
-///   billboard's text in it (`SearchTopResultCell`);
-/// - then Movies and Series (the top result's kind first): posters at a
-///   glance, name and year under each (Home's destination rows).
-/// One row view: Up and Down between them are the rows' own moves.
+/// the remote's mic), its suggestions under the keys — the recent searches
+/// while the field is empty, else what you may mean. Under them the line
+/// with the scopes (Top Results | Movies | Series) and one row of posters:
+/// the results, or the titles last opened from Search. Nothing scrolls but
+/// the row, sideways; the line and the row sit where the system puts its
+/// page: up while no suggestions show, down when they do, at once (as in
+/// the Apple TV app — `SearchKeyboardLine`).
 struct SearchView: View {
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var mdblist: MDBListSettingsStore
     // Owned by RootView so the query + results PERSIST across tab switches.
     @ObservedObject var viewModel: SearchViewModel
-    /// Its tab is in front (the rows leave the focus engine otherwise).
+    @ObservedObject private var probe = RenderProbe.shared
+    /// Its tab is in front (the row leaves the focus engine otherwise).
     var active = true
 
-    let onSelect: (MetaItem) -> Void
-    /// Details, pushed without the system's slide (the Top Result's window
-    /// has already brought it in).
+    /// Details, pushed without the system's slide (`DetailTransition` has
+    /// already brought it in).
     var onOpenInPlace: (MetaItem) -> Void = { _ in }
+    /// A person's / a studio's page (TMDB id, name).
+    var onOpenPerson: (Int, String) -> Void = { _, _ in }
+    var onOpenStudio: (Int, String) -> Void = { _, _ in }
 
-    /// Recent searches (newest first), shown while the field is empty.
+    /// Recent searches (newest first), the suggestions while the field is empty.
     @AppStorage("cue.search.recent") private var recentStorage = ""
     private var recent: [String] { recentStorage.split(separator: "\n").map(String.init) }
 
-    /// Recent searches (or what the page says) this far under the
-    /// keyboard's line.
-    private static let statusTop: CGFloat = 0
+    /// The page's top at its lowest — suggestions on show (window points),
+    /// once known: the posters' size, the same in both places.
+    @State private var lowestTop: CGFloat?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ATVBackground()
-            // (Read here, not by this view: a change of the keyboard's height
-            // needn't re-run this body — that re-applies the suggestions and
-            // the system reloads them.)
-            SearchKeyboardReader(metrics: keyboard) { keyboardHeight in
-            if hasRows {
-                // The whole page, under the keyboard too: it scrolls with
-                // the grid.
-                // Up to the screen's top, under the bar (the page starts
-                // below it).
+            if let lowestTop {
                 GeometryReader { geo in
                     let above = geo.frame(in: .global).minY
-                    grid(height: geo.size.height + above, keyboardHeight: keyboardHeight + above)
-                        .padding(.top, -above)
+                    page(rowHeight: Self.rowHeight(screenHeight: geo.size.height + above, lowestTop: lowestTop))
                 }
-                .ignoresSafeArea()
-                // The scope bar on the page, not in the grid's scroll view
-                // (from the keyboard, Down never found it there); it scrolls
-                // with the grid all the same (`SearchKeyboardScroll`).
-                GeometryReader { _ in
-                    SearchScopeBarHost(viewModel: viewModel, mover: barMover)
-                        .frame(height: SearchScopeBar.pillHeight)
-                        .padding(.top, max(0, keyboardHeight + SearchScopeBar.top))
-                }
-                .ignoresSafeArea()
-            } else {
-                // In the grid's place: from the screen's edges (as the grid),
-                // just under the keyboard's line.
-                GeometryReader { _ in
-                    status
-                        .padding(.leading, FixedFocusMetrics.inset)
-                        .padding(.top, keyboardHeight + Self.statusTop)
-                }
-                .ignoresSafeArea()
+                .ignoresSafeArea(edges: [.horizontal, .bottom])
             }
-            }
-            SearchKeyboardScroll(enabled: hasRows, hidesLine: hasRows, mover: barMover) { height in
-                if keyboard.height != height { keyboard.height = height }
-            }
-            .frame(width: 1, height: 1)
+            SearchKeyboardLine { if lowestTop != $0 { lowestTop = $0 } }
+                .frame(width: 1, height: 1)
         }
         // Only a real change (the field writes its text back as the system
         // re-applies the suggestions; the same text needn't rebuild the page).
         .searchable(text: Binding(get: { viewModel.query },
                                   set: { if $0 != viewModel.query { viewModel.query = $0 } }),
                     prompt: "Movies and series")
-        // As in the Apple TV app, between the keys and the line: the field
-        // empty, the recent searches (newest first); with text, what you may
-        // mean — the best matches' names. Select searches. (Only
-        // completions: a Button among them — Clear — sent tvOS into an
-        // endless focus/reload loop that froze Search.)
+        // As in the Apple TV app, between the keys and the line (tvOS draws
+        // no icons on them — a `UISearchSuggestionItem`'s neither): the field empty, the recent searches (newest first);
+        // with text, what you may mean (`SearchViewModel.suggest`). Select
+        // searches. (Only completions: a Button among them — Clear — sent
+        // tvOS into an endless focus/reload loop that froze Search.)
         .searchSuggestions {
-            if shownSuggestions.recent {
-                ForEach(shownSuggestions.items, id: \.self) { search in
-                    Label(search, systemImage: "clock.arrow.circlepath").searchCompletion(search)
-                }
+            if viewModel.query.isEmpty {
+                ForEach(recent, id: \.self) { search in Text(search).searchCompletion(search) }
             } else {
-                ForEach(shownSuggestions.items, id: \.self) { name in
-                    Text(name).searchCompletion(name)
-                }
+                ForEach(viewModel.suggestions, id: \.self) { name in Text(name).searchCompletion(name) }
             }
         }
         .onChange(of: viewModel.query) { _, _ in
-            viewModel.search(addonManager: addonManager)
-            refreshSuggestions()
+            viewModel.search()
+            viewModel.suggest()
         }
-        .onChange(of: viewModel.results.map(\.id)) { _, _ in refreshSuggestions() }
-        .onChange(of: recentStorage) { _, _ in refreshSuggestions(force: true) }
-        .onAppear { refreshSuggestions(force: true) }
     }
 
-    /// The system's field and keyboard, above the results (`SearchKeyboardScroll`).
-    @State private var keyboard = SearchKeyboardMetrics()
-    /// The scope bar's view, moved with the grid's scroll.
-    @State private var barMover = SearchBarMover()
+    /// The row's room with the page at its lowest.
+    private static func rowHeight(screenHeight: CGFloat, lowestTop: CGFloat) -> CGFloat {
+        max(200, screenHeight - lowestTop + pillRaise - SearchScopeBar.pillHeight - gap - bottomGap)
+    }
 
-    private var hasRows: Bool { !viewModel.results.isEmpty }
-
-    /// The suggestions: the best matches' names (lowercased), each once,
-    /// without what's typed itself.
-    /// The suggestions on show — kept while the field shows one of them:
-    /// focusing a suggestion puts its text in the field (tvOS); a row
-    /// rebuilt for that text would take the focused one away.
-    @State private var shownSuggestions: (recent: Bool, items: [String]) = (true, [])
-
-    private func refreshSuggestions(force: Bool = false) {
-        let query = viewModel.query
-        if !force, shownSuggestions.items.contains(where: { $0.caseInsensitiveCompare(query) == .orderedSame }) {
-            return
+    /// The line with the scopes, then the row (or what the page says).
+    private func page(rowHeight: CGFloat) -> some View {
+        let typed = !viewModel.query.isEmpty
+        let items = typed ? scoped : viewModel.recentTitles
+        // The same gap under the pill as over it, to the cards at rest (the
+        // row keeps room above them for a focused card's growth).
+        let growthRoom = SearchRowController.growthRoom(rowHeight: rowHeight)
+        return VStack(alignment: .leading, spacing: Self.gap - growthRoom) {
+            SearchScopeBar(viewModel: viewModel, showsPill: typed)
+            ZStack(alignment: .topLeading) {
+                SearchResultsRow(items: items, subtitles: Self.subtitles(items), height: rowHeight,
+                                 onSelect: open)
+                    // Hidden by its contents' absence, never transparent
+                    // (tvOS skips transparent views).
+                if items.isEmpty { status.padding(.leading, FixedFocusMetrics.inset) }
+            }
+            .frame(height: rowHeight)
         }
-        shownSuggestions = query.isEmpty ? (true, recent) : (false, suggestions)
+        .padding(.top, -Self.pillRaise)
     }
 
-    private var suggestions: [String] {
-        guard !viewModel.query.isEmpty else { return [] }
-        let typed = viewModel.query.lowercased().trimmingCharacters(in: .whitespaces)
-        var seen = Set<String>()
-        return Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
-            .map { $0.name.lowercased() }
-            .filter { $0 != typed && seen.insert($0).inserted }
-            .prefix(8).map { $0 }
+    /// Over and under the pill (from the suggestions, to the cards), and
+    /// under the captions.
+    private static let gap: CGFloat = 40
+    private static let bottomGap: CGFloat = 50
+    /// The pill above the page's top: the system starts the page 71 pt
+    /// under its suggestions (tvOS 27); the pill `gap` under them. (Partly
+    /// outside the page, it still takes focus.)
+    private static let pillRaise: CGFloat = 31
+
+    /// The cards of the scope chosen — in Cue's own order or TMDB's
+    /// (Render Lab → Search: Cue's order).
+    private var scoped: [MetaItem] {
+        let own = probe.flags.searchOwnOrder
+        let found = viewModel.found
+        switch viewModel.scope {
+        case .top: return found.topResults(own: own)
+        case .movies:
+            return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type == "movie" }
+        case .series:
+            return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type != "movie" }
+        case .people: return own ? found.rankedPeople().map(\.item) : found.people
+        case .studios: return own ? found.rankedStudios() : found.studios
+        }
     }
 
-    /// The results as the browse pages' grid: the best match as one big
-    /// card (Top Result), or one type's posters, best match first.
-    private func grid(height: CGFloat, keyboardHeight: CGFloat) -> some View {
-        // Under the scope bar (on the line under the keyboard).
-        let topSpace = max(0, keyboardHeight + SearchScopeBar.top + SearchScopeBar.height
-                              - FolderGridController.headerTopMargin)
-        // The Top Result reaches down to the screen's bottom, the side
-        // margin from it.
-        let resultsTop = topSpace + FolderGridController.headerTopMargin + FolderGridController.firstLineGap
-        let ranked = Self.ranked(viewModel.results, for: viewModel.query, fame: viewModel.fame)
-        let scope = viewModel.scope
-        let items = scope == .top ? [] : ranked.filter { ($0.type == "movie") == (scope == .movies) }
-        return FolderPosterGrid(
-            header: nil,
-            headerHeight: 0,
-            items: items, subtitles: Self.years(items),
-            onSelect: select, onOpenDetails: openDetails,
-            topSpace: topSpace,
-            focusesFirstTitle: false,
-            topResults: scope == .top ? ranked.prefix(1).map(Self.withArt) : [],
-            topResultHeight: max(300, height - resultsTop - FixedFocusMetrics.inset))
+    /// Under each card: a title's year, a person's line of work (TMDB's
+    /// "Acting", "Directing"…), nothing for a studio.
+    private static func subtitles(_ items: [MetaItem]) -> [String: String] {
+        Dictionary(items.compactMap { item in
+            (item.type == "person" ? item.releaseInfo : item.type == "company" ? nil : item.year).map { (item.id, $0) }
+        }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// Under each poster: its year.
-    private static func years(_ items: [MetaItem]) -> [String: String] {
-        Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } },
-                   uniquingKeysWith: { first, _ in first })
-    }
-
-    /// No results to show: searching, nothing found, the recent searches or
-    /// what to do.
+    /// No posters to show: searching, nothing found, or what to do.
     @ViewBuilder
     private var status: some View {
         if viewModel.isSearching {
-            CueLoadingView(label: "Searching").frame(maxWidth: .infinity).frame(height: 420)
+            CueLoadingView(label: "Searching").frame(maxWidth: .infinity).frame(height: 300)
         } else if viewModel.query.count >= 2 {
             CueEmptyState(icon: "magnifyingglass", title: "No results",
                           message: "Nothing matched “\(viewModel.query)”.")
-                .frame(maxWidth: .infinity).frame(height: 420)
-        } else if viewModel.query.isEmpty, !recent.isEmpty {
-            // (The recent searches are the suggestions, under the keys.)
-            EmptyView()
-        } else {
+                .frame(maxWidth: .infinity).frame(height: 300)
+        } else if viewModel.query.isEmpty {
             Text("Search for a movie or a series — or hold the microphone button and say it.")
                 .font(.system(size: FixedFocusMetrics.textSize))
                 .foregroundStyle(AppGlass.textMuted)
         }
     }
 
-    /// A result's Select: into Details (`DetailTransition`), and the query
-    /// joins the recent ones.
-    private func openDetails(_ item: MetaItem) {
+    /// A card's Select: a title into Details (`DetailTransition`) — it
+    /// joins the recent titles; a person's or studio's page. The query
+    /// joins the recent searches.
+    private func open(_ item: MetaItem) {
         remember()
-        DetailTransition.shared.open(item) { onOpenInPlace(item) }
+        switch item.type {
+        case "person":
+            if let id = SearchViewModel.tmdbID(item) { onOpenPerson(id, item.name) }
+        case "company":
+            if let id = SearchViewModel.tmdbID(item) { onOpenStudio(id, item.name) }
+        default:
+            viewModel.opened(item)
+            DetailTransition.shared.open(item) { onOpenInPlace(item) }
+        }
     }
 
     /// The query joins the recent ones.
@@ -323,203 +484,87 @@ struct SearchView: View {
         let list = [query] + recent.filter { $0.caseInsensitiveCompare(query) != .orderedSame }
         recentStorage = list.prefix(8).joined(separator: "\n")
     }
-
-    /// Selecting a result: it opens, and the query joins the recent ones.
-    private func select(_ item: MetaItem) {
-        remember()
-        onSelect(item)
-    }
-
-    /// The order: how well the NAME matches what was typed (exactly, from
-    /// its start, anywhere, not at all), then — within each — how well known
-    /// the title is: TMDB's votes and popularity (`fame`, matched by name,
-    /// year and kind); titles TMDB doesn't know after those, rated before
-    /// unrated, by rating. The add-ons' own order only breaks ties: theirs is
-    /// a text match, blind to fame.
-    static func ranked(_ items: [MetaItem], for query: String,
-                       fame: [TMDBService.SearchFame]) -> [MetaItem] {
-        func norm(_ s: String) -> String {
-            s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        /// For matching names across sources: letters and digits only.
-        func key(_ s: String) -> String { String(norm(s).unicodeScalars.filter(CharacterSet.alphanumerics.contains)) }
-        func year(_ item: MetaItem) -> Int? {
-            item.releaseInfo.flatMap { $0.firstMatch(of: /\d{4}/) }.flatMap { Int($0.output) }
-        }
-        var fameByName: [String: [TMDBService.SearchFame]] = [:]
-        for entry in fame {
-            for name in Set([entry.name, entry.originalName].compactMap { $0 }.map(key)) {
-                fameByName[name, default: []].append(entry)
-            }
-        }
-        func score(_ item: MetaItem) -> Double? {
-            let isMovie = item.type == "movie"
-            let itemYear = year(item)
-            return fameByName[key(item.name)]?
-                .filter { $0.isMovie == isMovie }
-                .filter { entry in
-                    guard let a = entry.year, let b = itemYear else { return true }
-                    return abs(a - b) <= 1
-                }
-                .map(\.score).max()
-        }
-        let q = norm(query)
-        let scored = items.enumerated().map { offset, item -> (item: MetaItem, tier: Int, fame: Double?,
-                                                               rating: Double?, offset: Int) in
-            let name = norm(item.name)
-            let tier = name == q ? 0 : name.hasPrefix(q) ? 1 : name.contains(q) ? 2 : 3
-            return (item, tier, score(item), item.imdbRating.flatMap(Double.init), offset)
-        }
-        return scored.sorted { a, b in
-            if a.tier != b.tier { return a.tier < b.tier }
-            switch (a.fame, b.fame) {
-            case let (x?, y?) where x != y: return x > y
-            case (.some, nil): return true
-            case (nil, .some): return false
-            default: break
-            }
-            switch (a.rating, b.rating) {
-            case let (x?, y?) where x != y: return x > y
-            case (.some, nil): return true
-            case (nil, .some): return false
-            default: return a.offset < b.offset
-            }
-        }.map(\.item)
-    }
-
-    /// Search results often come without a backdrop or logo: MetaHub's for
-    /// IMDb titles (a card without one shows the poster).
-    private static func withArt(_ item: MetaItem) -> MetaItem {
-        guard item.id.hasPrefix("tt"), item.background == nil || item.logo == nil else { return item }
-        return MetaItem(id: item.id, type: item.type, name: item.name, poster: item.poster,
-                        background: item.background
-                            ?? "https://images.metahub.space/background/medium/\(item.id)/img",
-                        logo: item.logo ?? "https://images.metahub.space/logo/medium/\(item.id)/img",
-                        description: item.description, releaseInfo: item.releaseInfo,
-                        imdbRating: item.imdbRating, runtime: item.runtime, genres: item.genres,
-                        cast: item.cast, videos: item.videos)
-    }
 }
 
 /// Search's scopes.
 enum SearchScope: Hashable, CaseIterable {
-    case top, movies, series
+    case top, movies, series, people, studios
 
     var label: String {
         switch self {
-        case .top: return "Top Result"
+        case .top: return "Top Results"
         case .movies: return "Movies"
         case .series: return "Series"
+        case .people: return "People"
+        case .studios: return "Studios"
         }
     }
 }
 
-/// The keyboard's height (the page's scroll), observed only by what's laid
-/// out under it (`SearchKeyboardReader`).
-final class SearchKeyboardMetrics: ObservableObject {
-    @Published var height: CGFloat = 0
-}
-
-private struct SearchKeyboardReader<Content: View>: View {
-    @ObservedObject var metrics: SearchKeyboardMetrics
-    @ViewBuilder let content: (CGFloat) -> Content
-    var body: some View { content(metrics.height) }
-}
-
-/// The scope bar's UIKit view, for `SearchKeyboardScroll` to move.
-final class SearchBarMover {
-    weak var view: UIView?
-}
-
-/// The scope bar in its own hosting view, so it can be moved with the
-/// grid's scroll point for point without a SwiftUI update per frame. (In a
-/// container: SwiftUI places the container and resets its transform; the
-/// bar inside is ours to move.)
-private struct SearchScopeBarHost: UIViewControllerRepresentable {
-    @ObservedObject var viewModel: SearchViewModel
-    let mover: SearchBarMover
-
-    final class Container: UIViewController {
-        let host: UIHostingController<SearchScopeBar>
-        init(_ bar: SearchScopeBar) {
-            host = UIHostingController(rootView: bar)
-            super.init(nibName: nil, bundle: nil)
-        }
-        required init?(coder: NSCoder) { fatalError() }
-        override func viewDidLoad() {
-            super.viewDidLoad()
-            view.backgroundColor = .clear
-            host.view.backgroundColor = .clear
-            host.safeAreaRegions = []
-            addChild(host)
-            host.view.frame = view.bounds
-            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            view.addSubview(host.view)
-            host.didMove(toParent: self)
-        }
-    }
-
-    func makeUIViewController(context: Context) -> Container {
-        let container = Container(SearchScopeBar(viewModel: viewModel))
-        container.loadViewIfNeeded()
-        mover.view = container.host.view
-        return container
-    }
-
-    func updateUIViewController(_ container: Container, context: Context) {
-        container.host.rootView = SearchScopeBar(viewModel: viewModel)
-    }
-}
-
-/// THE SCOPE BAR, as in the Apple TV app: Top Result | Movies | Series in
-/// the top bar's glass pill (`glassPill` — its size, type and highlight),
-/// set into the line under the keyboard (the system's own line is hidden
-/// meanwhile — `SearchKeyboardScroll.hidesLine`). Moving focus along it
-/// switches the scope, as along the top bar.
+/// THE LINE under the suggestions, as in the Apple TV app: Top Results |
+/// Movies | Series in a flat pill (in the page, not floating: no glass),
+/// the Apple TV app's shape and sizes (measured on its search: a capsule
+/// 68 pt tall, the highlight 10 pt inside it, 29 pt labels 33 pt from its
+/// ends, a faint light edge along the top) in `FlatControl`'s fills: the
+/// pill at rest, the current scope the current one of a set, the focused
+/// one white with dark text; the highlight glides between them — set into it (the system's own line is hidden —
+/// `SearchKeyboardLine`); the field empty, the line alone. Moving focus
+/// along the pill switches the scope, as along the top bar.
 struct SearchScopeBar: View {
     @ObservedObject var viewModel: SearchViewModel
+    var showsPill = true
     @FocusState private var focus: SearchScope?
     @Namespace private var highlight
 
-    static let pillHeight = GlassPill.itemHeight + 2 * GlassPill.inset
-    /// Its top, from the keyboard's bottom: the line 12 pt under the
-    /// keyboard (where the Apple TV app's moves to).
-    static let top: CGFloat = 12 - pillHeight / 2
-    /// The pill, then the gap to the results.
-    static let height = pillHeight + 24
+    private static let itemHeight: CGFloat = 48
+    private static let inset: CGFloat = 10
+    private static let textSize: CGFloat = 29
+    private static let textPadding: CGFloat = 33
+    static let pillHeight = itemHeight + 2 * inset
     /// The line's gap around the pill.
     private static let lineGap: CGFloat = 40
 
-    var body: some View { scopeRow }
-
-    private var scopeRow: some View {
+    var body: some View {
         let focused = focus != nil
         let lit = focus ?? viewModel.scope
         return HStack(spacing: Self.lineGap) {
             line
-            HStack(spacing: 0) {
-                ForEach(SearchScope.allCases, id: \.self) { scope in
-                    Button { viewModel.scope = scope } label: {
-                        Text(scope.label)
-                            .font(.system(size: GlassPill.textSize, weight: .semibold))
-                            .padding(.horizontal, GlassPill.textPadding)
-                            .foregroundStyle(GlassPill.contentColor(current: lit == scope,
-                                                                    onFocusHighlight: focused && lit == scope))
-                            .frame(height: GlassPill.itemHeight)
-                            .animation(.easeOut(duration: 0.18), value: lit)
-                            .glassPillItem(scope, in: highlight)
+            if showsPill {
+                HStack(spacing: 0) {
+                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                        Button { viewModel.scope = scope } label: {
+                            Text(scope.label)
+                                .font(.system(size: Self.textSize, weight: .semibold))
+                                .padding(.horizontal, Self.textPadding)
+                                .foregroundStyle(GlassPill.contentColor(current: lit == scope,
+                                                                        onFocusHighlight: focused && lit == scope))
+                                .frame(height: Self.itemHeight)
+                                .animation(.easeOut(duration: 0.18), value: lit)
+                                .glassPillItem(scope, in: highlight)
+                        }
+                        .buttonStyle(PlainCardButtonStyle())
+                        .focused($focus, equals: scope)
                     }
-                    .buttonStyle(PlainCardButtonStyle())
-                    .focused($focus, equals: scope)
                 }
+                .background {
+                    Capsule().fill(focused ? FlatControl.focus : FlatControl.selected)
+                        .matchedGeometryEffect(id: lit, in: highlight, isSource: false)
+                        .animation(GlassPill.glide, value: lit)
+                        .animation(GlassPill.focusChange, value: focused)
+                }
+                .padding(Self.inset)
+                // Its full width: the line's halves give way, not the labels.
+                .fixedSize()
+                .background {
+                    Capsule().fill(FlatControl.rest)
+                        .overlay(Capsule().strokeBorder(ActionFace.pillEdge, lineWidth: 1))
+                }
+                .defaultFocus($focus, viewModel.scope)
+                // Focused, it grows a little (as the top bar).
+                .scaleEffect(focused ? GlassSidebar.focusedScale : 1)
+                .animation(.smooth(duration: 0.3), value: focused)
+                line
             }
-            .glassPill(highlight: lit, in: highlight, focused: focused)
-            .defaultFocus($focus, viewModel.scope)
-            // Focused, it grows a little (as the top bar).
-            .scaleEffect(focused ? GlassSidebar.focusedScale : 1)
-            .animation(.smooth(duration: 0.3), value: focused)
-            line
         }
         .focusSection()
         .frame(height: Self.pillHeight)
@@ -527,7 +572,7 @@ struct SearchScopeBar: View {
         .onChange(of: focus) { old, now in
             guard let now else { return }
             if old == nil {
-                // Coming in (Down from the keyboard, Up from the results):
+                // Coming in (Down from the suggestions, Up from the row):
                 // onto the current scope, not the nearest one.
                 if now != viewModel.scope {
                     let scope = viewModel.scope
@@ -546,68 +591,164 @@ struct SearchScopeBar: View {
     }
 }
 
-/// The system's search field and keyboard scroll with the results' grid,
-/// point for point — the page scrolls, as in the Apple TV app (at the
-/// grid's top — the first line — the keyboard shows: Up reaches it, the
-/// engine never finds it once it's out). The results controller's content
-/// scroll view is a hidden one we move — the system scrolls its keyboard
-/// with it. Placed at the top of the results area (where the keyboard
-/// ends).
-/// Back on Search (the page's `onExitCommand` asks): in the results, up to
-/// the keyboard (`SearchKeyboardScroll.Anchor.backToKeyboard`).
+/// THE ROW: Saved for Later's cards (`FixedFocusDestinationCell` — moving
+/// focus, the focused card grown, name and year under each), one shape for
+/// every kind — 2:3 like a poster: a title's poster, a person's portrait,
+/// a studio's logo on a light plate — as tall as the room under the line
+/// allows (six fit across: Top Results doesn't scroll); it scrolls
+/// sideways only.
+private struct SearchResultsRow: UIViewControllerRepresentable {
+    let items: [MetaItem]
+    let subtitles: [String: String]
+    /// The row's room: the cards, their lift and their captions.
+    let height: CGFloat
+    let onSelect: (MetaItem) -> Void
+
+    func makeUIViewController(context: Context) -> SearchRowController { SearchRowController() }
+
+    func updateUIViewController(_ controller: SearchRowController, context: Context) {
+        controller.onSelect = onSelect
+        controller.show(items, subtitles: subtitles, height: height)
+    }
+}
+
+final class SearchRowController: UIViewController, UICollectionViewDataSource,
+                                 UICollectionViewDelegateFlowLayout, HoldMenuProviding {
+    var onSelect: (MetaItem) -> Void = { _ in }
+
+    private var items: [MetaItem] = []
+    private var subtitles: [String: String] = [:]
+    private var card = CGSize(width: 200, height: 300)
+    private var rowHeight: CGFloat = 0
+    private let layout = UICollectionViewFlowLayout()
+    private var collectionView: UICollectionView!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        layout.scrollDirection = .horizontal
+        collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        collectionView.backgroundColor = .clear
+        // The lifted card and its shadow reach past the row.
+        collectionView.clipsToBounds = false
+        collectionView.showsHorizontalScrollIndicator = false
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.remembersLastFocusedIndexPath = true
+        collectionView.dataSource = self
+        collectionView.delegate = self
+        collectionView.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "poster")
+        view.addSubview(collectionView)
+    }
+
+    /// The card: the row's room less its captions and the growth above.
+    static func cardHeight(rowHeight: CGFloat) -> CGFloat {
+        ((rowHeight - FixedFocusMetrics.captionRoom) / (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.down)
+    }
+
+    /// Above the cards: what a focused one grows by on each side.
+    static func growthRoom(rowHeight: CGFloat) -> CGFloat {
+        (cardHeight(rowHeight: rowHeight) * FixedFocusMetrics.movingFocusLift / 2).rounded()
+    }
+
+    func show(_ items: [MetaItem], subtitles: [String: String], height: CGFloat) {
+        loadViewIfNeeded()
+        rowHeight = height
+        applyCardSize()
+        self.subtitles = subtitles
+        guard items.map(\.id) != self.items.map(\.id) else { return }
+        self.items = items
+        collectionView.reloadData()
+        collectionView.contentOffset = .zero
+    }
+
+    /// 2:3 cards as tall as the room holds.
+    private func applyCardSize() {
+        let height = Self.cardHeight(rowHeight: rowHeight)
+        let size = CGSize(width: (height / 1.5).rounded(), height: height)
+        if size != card, size.width > 0 {
+            card = size
+            let gap = FixedFocusMetrics.destinationGap(cardWidth: size.width)
+            layout.minimumLineSpacing = gap
+            layout.itemSize = CGSize(width: size.width, height: size.height + FixedFocusMetrics.captionRoom)
+            layout.sectionInset = UIEdgeInsets(top: Self.growthRoom(rowHeight: rowHeight),
+                                               left: FixedFocusMetrics.inset, bottom: 0, right: FixedFocusMetrics.inset)
+            collectionView.reloadData()
+        }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        items.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let item = items[indexPath.item]
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath)
+            as! FixedFocusDestinationCell
+        cell.configure(item, subtitle: subtitles[item.id], index: indexPath.item, rowCell: nil, card: card,
+                       isLogo: item.type == "company")
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        onSelect(items[indexPath.item])
+    }
+
+    /// Select held on a title: its menu (`TitleMenu`, see `HoldMenu`).
+    func holdMenu(for focused: UIView) -> HoldMenuRequest? {
+        guard let cell = focused as? FixedFocusDestinationCell, let path = collectionView.indexPath(for: cell),
+              items.indices.contains(path.item), ["movie", "series"].contains(items[path.item].type)
+        else { return nil }
+        let entries = TitleMenu.shared.entries(for: items[path.item])
+        guard !entries.isEmpty else { return nil }
+        return HoldMenuRequest(entries: entries, anchor: cell.convert(cell.cardFrame, to: nil))
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        HoldMenu.shared.install()
+    }
+}
+
+/// Back on Search (the page's `onExitCommand` asks): from the scopes or the
+/// row, onto the keyboard (`SearchKeyboardLine.Anchor.backToKeyboard`).
 @MainActor
 final class SearchBack {
     static let shared = SearchBack()
-    weak var anchor: SearchKeyboardScroll.Anchor?
+    weak var anchor: SearchKeyboardLine.Anchor?
 }
 
-struct SearchKeyboardScroll: UIViewRepresentable {
-    /// Results showing: only then does the keyboard make way.
-    var enabled: Bool
-    /// The system's line under the keyboard hidden (the scope bar draws its
-    /// own, lower).
-    var hidesLine = false
-    /// The scope bar, moved with the grid as the keyboard is.
-    var mover: SearchBarMover?
-    /// The keyboard's height (the page's scroll), once known.
-    var onHeight: (CGFloat) -> Void
+/// The page's top at its lowest, in window points: where the system puts it
+/// with its suggestions on show (up by their room while none do —
+/// `suggestionsRoom`); the posters are sized for it. Our line sits at the
+/// page's top, its pill inside the page (focus never reaches what's outside
+/// it). The system's line is hidden (the scope bar draws its own). Also: no
+/// "search for what's typed" chip (`styleSuggestions`).
+struct SearchKeyboardLine: UIViewRepresentable {
+    var onLowestTop: (CGFloat) -> Void
 
     func makeUIView(context: Context) -> Anchor { Anchor() }
 
     func updateUIView(_ anchor: Anchor, context: Context) {
-        anchor.onHeight = onHeight
-        anchor.enabled = enabled
-        anchor.hidesLine = hidesLine
-        anchor.mover = mover
-        // The grid comes in this same update: once it's there.
-        DispatchQueue.main.async { anchor.followGrid() }
+        anchor.onLowestTop = onLowestTop
+        DispatchQueue.main.async { anchor.measure() }
     }
 
     final class Anchor: UIView {
-        var onHeight: (CGFloat) -> Void = { _ in }
-        var enabled = false
-        var mover: SearchBarMover?
-        var hidesLine = false {
-            didSet { if hidesLine != oldValue { applyLine() } }
-        }
-        /// The grid's page, followed.
-        private var gridObservation: NSKeyValueObservation?
-        private weak var followedGrid: UIScrollView?
-        private let tracker = UIScrollView()
+        var onLowestTop: (CGFloat) -> Void = { _ in }
         private weak var search: UISearchController?
-        /// The results' hosting view (the grid is in it).
+        /// The system's page under the keyboard (ours is in it).
         private weak var page: UIView?
-        private var height: CGFloat = 0
-        /// From the system's line to where the results start (as without
-        /// suggestions).
-        private static let lineToResults: CGFloat = 31
+        private var lowestTop: CGFloat?
+        /// How far the system's line moves down when its suggestions show
+        /// (their row and its gaps — tvOS 27: 66 pt row, 102 in all)…
+        private static let suggestionsRoom: CGFloat = 102
+        /// …and from it to the page's top.
+        private static let lineToPage: CGFloat = 31
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             isUserInteractionEnabled = false
-            tracker.isHidden = true
-            tracker.isUserInteractionEnabled = false
-            tracker.contentInsetAdjustmentBehavior = .never
         }
 
         required init?(coder: NSCoder) { fatalError() }
@@ -624,16 +765,7 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             self.search = search
             page = view
             SearchBack.shared.anchor = self
-            results.view.insertSubview(tracker, at: 0)
-            results.setContentScrollView(tracker, for: .top)
-            // The grid reaches up under the top bar, past the page's top
-            // (the page sits under the bar — the system's field ignores the
-            // safe area): the system's containers mustn't cut it off there.
-            var ancestor = page?.superview
-            while let view = ancestor, !(view is UIWindow) {
-                view.clipsToBounds = false
-                ancestor = view.superview
-            }
+            styleSuggestions(search)
             measure()
         }
 
@@ -642,22 +774,23 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             measure()
         }
 
-        private func measure() {
-            guard let page else { return }
-            // Where the results start: the keyboard's bottom — lower with
-            // the system's suggestions under the keys (they lie over the
-            // results; the system's line, hidden or not, goes down under
-            // them). As the keyboard scrolls away, its offset is added back.
-            var top = convert(CGPoint.zero, to: page).y - page.bounds.minY
-            if let root = search?.view, let line = lines(root).first {
-                let lineY = line.convert(line.bounds, to: page).maxY - page.bounds.minY + tracker.contentOffset.y
-                top = max(top, lineY + Self.lineToResults)
-            }
-            tracker.frame = CGRect(origin: .zero, size: page.bounds.size)
-            tracker.contentSize = CGSize(width: page.bounds.width, height: page.bounds.height + top)
-            if top != height, top > 0 {
-                height = top
-                onHeight(top)
+        func measure() {
+            guard let root = search?.view, let window, let systemLine = lines(root).first else { return }
+            for line in lines(root) { line.isHidden = true }
+            let y = systemLine.convert(systemLine.bounds, to: window).maxY
+                + (suggestionsShown(in: systemLine.superview, above: systemLine) ? 0 : Self.suggestionsRoom)
+                + Self.lineToPage
+            guard y != lowestTop else { return }
+            lowestTop = y
+            onLowestTop(y)
+        }
+
+        /// The suggestions as the Apple TV app's: without the system's own
+        /// first one, "what you typed" in quotes (its default suggestion —
+        /// a private switch, left alone where it's missing).
+        private func styleSuggestions(_ search: UISearchController) {
+            if search.responds(to: NSSelectorFromString("_setShouldDisplayDefaultSuggestion:")) {
+                search.setValue(false, forKey: "shouldDisplayDefaultSuggestion")
             }
         }
 
@@ -668,59 +801,41 @@ struct SearchKeyboardScroll: UIViewRepresentable {
             return (hairline ? [view] : []) + view.subviews.flatMap(lines)
         }
 
-        private func applyLine() {
-            guard let root = search?.view else { return }
-            for line in lines(root) { line.isHidden = hidesLine }
+        /// The suggestions' row (a collection view beside the line) on show.
+        private func suggestionsShown(in container: UIView?, above line: UIView) -> Bool {
+            container?.subviews.contains { view in
+                guard let row = view as? UICollectionView, !row.isHidden, row.frame.maxY <= line.frame.minY
+                else { return false }
+                return !row.visibleCells.isEmpty
+            } ?? false
         }
 
-        /// Back with focus in the results (the scope bar, the grid): the
-        /// page back to its top — the keyboard with it — and focus onto the
-        /// keyboard. False: focus isn't in the results.
+        /// Back with focus in our page (the scopes, the row): onto the
+        /// keyboard. False: focus isn't there.
         func backToKeyboard() -> Bool {
             guard let page, let search, let window,
-                  let focused = UIFocusSystem.focusSystem(for: window)?.focusedItem as? UIView,
-                  focused.isDescendant(of: page) else { return false }
-            // (A request straight into the keyboard is ignored: the results
-            // step out of focus's way for a moment, and the search screen's
+                  let focused = UIFocusSystem.focusSystem(for: window)?.focusedItem,
+                  Self.environment(focused, isIn: page) else { return false }
+            // (A request straight into the keyboard is ignored: the page
+            // steps out of focus's way for a moment, and the search screen's
             // own choice — its keyboard — takes it.)
-            let toKeyboard = { [weak page] in
-                guard let page, let system = UIFocusSystem.focusSystem(for: window) else { return }
-                page.isUserInteractionEnabled = false
-                system.requestFocusUpdate(to: search)
-                system.updateFocusIfNeeded()
-                page.isUserInteractionEnabled = true
-            }
-            if let grid = followedGrid, grid.contentOffset.y > -grid.contentInset.top + 1 {
-                grid.setContentOffset(CGPoint(x: 0, y: -grid.contentInset.top), animated: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: toKeyboard)
-            } else {
-                toKeyboard()
-            }
+            guard let system = UIFocusSystem.focusSystem(for: window) else { return true }
+            page.isUserInteractionEnabled = false
+            system.requestFocusUpdate(to: search)
+            system.updateFocusIfNeeded()
+            page.isUserInteractionEnabled = true
             return true
         }
 
-        /// The grid's page: the keyboard scrolls with it.
-        func followGrid() {
-            applyLine()
-            measure()
-            func find(_ view: UIView) -> UIScrollView? {
-                (view.next as? FolderGridController)?.scrollView ?? view.subviews.lazy.compactMap(find).first
+        /// Focus somewhere in `view` (SwiftUI's controls aren't views: by
+        /// their environments).
+        private static func environment(_ item: UIFocusEnvironment, isIn view: UIView) -> Bool {
+            var environment: UIFocusEnvironment? = item
+            while let current = environment {
+                if current === view { return true }
+                environment = current.parentFocusEnvironment
             }
-            let grid = enabled ? page.flatMap(find) : nil
-            guard grid !== followedGrid || grid == nil && gridObservation != nil else { return }
-            followedGrid = grid
-            gridObservation = grid?.observe(\.contentOffset, options: [.initial, .new]) { [weak self] grid, _ in
-                MainActor.assumeIsolated {
-                    let offset = max(0, grid.contentOffset.y + grid.contentInset.top)
-                    guard let self else { return }
-                    self.tracker.contentOffset.y = offset
-                    self.mover?.view?.transform = CGAffineTransform(translationX: 0, y: -offset)
-                }
-            }
-            if grid == nil {
-                tracker.contentOffset.y = 0
-                mover?.view?.transform = .identity
-            }
+            return false
         }
     }
 }

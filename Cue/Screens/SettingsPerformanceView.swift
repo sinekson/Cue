@@ -145,6 +145,15 @@ struct RenderLabSettings: View {
                 )
             }
 
+            SettingsGroupCard(title: "Search", subtitle: "Which order Search's results come in.") {
+                PerfToggleRow(
+                    icon: "arrow.up.arrow.down",
+                    title: "Search: Cue's order",
+                    subtitle: "On: titles and people whose name (or a word of it) starts with what's typed, the best known first, an exact name lifted. Off: TMDB's own order, as it comes.",
+                    isOn: Binding(get: { probe.flags.searchOwnOrder }, set: { probe.flags.searchOwnOrder = $0 })
+                )
+            }
+
             SettingsGroupCard(title: "Measure", subtitle: "Live frame rate over the whole app") {
                 PerfToggleRow(
                     icon: "speedometer",

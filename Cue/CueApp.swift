@@ -543,45 +543,6 @@ struct RootView: View {
                         NSLog("[CuePiP] isPictureInPictureSupported=%d",
                               AVPictureInPictureController.isPictureInPictureSupported() ? 1 : 0)
                     }
-                    // Dev: what search will query, in order, and what one real
-                    // query returns from each — the ordering is the whole point
-                    // of searchTargets and is otherwise invisible.
-                    if args.contains("-searchProbe") {
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 6_000_000_000)
-                            let targets = SearchViewModel.searchTargets(addonManager)
-                            var lines: [String] = []
-                            for (i, t) in targets.enumerated() {
-                                let m = t.0.manifest
-                                lines.append("\(i). \(m.name) [\(t.1.type)/\(t.1.id)]"
-                                             + " meta=\(m.providesMeta) stream=\(m.providesStreams)")
-                            }
-                            // Write the ORDER first: the slow part below is a
-                            // real query per catalog and must not be able to
-                            // lose the answer we already have.
-                            UserDefaults.standard.set(lines.joined(separator: "\n"),
-                                                      forKey: "dev.searchProbe")
-                            NSLog("[CueSearch] order written (%d targets)", targets.count)
-                            await withTaskGroup(of: (Int, [MetaItem]).self) { group in
-                                for (i, t) in targets.enumerated() {
-                                    group.addTask {
-                                        ((i, (try? await StremioAPI.catalog(
-                                            addon: t.0, catalog: t.1, search: "breaking bad")) ?? []))
-                                    }
-                                }
-                                var got: [Int: [MetaItem]] = [:]
-                                for await (i, items) in group { got[i] = items }
-                                for i in targets.indices {
-                                    let items = got[i] ?? []
-                                    lines.append("RESULT \(i) \(targets[i].0.manifest.name): \(items.count) — "
-                                                 + items.prefix(3).map(\.name).joined(separator: " | "))
-                                }
-                            }
-                            UserDefaults.standard.set(lines.joined(separator: "\n"),
-                                                      forKey: "dev.searchProbe")
-                            NSLog("[CueSearch] probe written")
-                        }
-                    }
                     // Dev: remove a title from Continue Watching through the
                     // same call the hold menu makes, so the fan-out to Cue
                     // can be exercised without the tvOS UI.
@@ -1157,7 +1118,7 @@ struct RootView: View {
             NavigationStack(path: $searchPath) {
                 searchRoot(active: active)
                     .onExitCommand {
-                        // In the results: back up to the keyboard first.
+                        // From the scopes or the row: onto the keyboard first.
                         if SearchBack.shared.anchor?.backToKeyboard() == true { return }
                         focusSidebar(1)
                     }
@@ -1165,7 +1126,6 @@ struct RootView: View {
             }
             // Apple's search field and keyboard (UISearchController) ignore
             // the safe-area inset, and sat under the bar — a plain one here.
-            // (The results' grid reaches up under the bar all the same.)
             .padding(.top, searchPath.isEmpty ? GlassSidebar.topBarClearance : 0)
         case .library:
             NavigationStack(path: $libraryPath) {
@@ -1444,11 +1404,20 @@ struct RootView: View {
         SearchView(
             viewModel: searchViewModel,
             active: active,
-            onSelect: { openDetail($0) { searchPath.append($0) } },
             onOpenInPlace: { item in
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { searchPath.append(Route.detail(item)) }
+            },
+            onOpenPerson: { id, name in
+                TMDBBrowseViewModel.open(.person(id), title: name) {
+                    searchPath.append(Route.person(id: id, name: name))
+                }
+            },
+            onOpenStudio: { id, name in
+                TMDBBrowseViewModel.open(.company(id), title: name) {
+                    searchPath.append(Route.tmdbCompany(id: id, name: name))
+                }
             }
         )
         .probeScreen("Search")

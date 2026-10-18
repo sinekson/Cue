@@ -300,36 +300,16 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
     var placeholder = false
     /// Back's way in (see `GridBack`).
     var back: GridBack? = nil
-    /// Room above the header, part of the page (Search: under the keyboard,
-    /// which scrolls with it).
-    var topSpace: CGFloat = 0
-    /// The first titles in: focus onto the first (Search: it stays on the
-    /// keyboard).
-    var focusesFirstTitle = true
-    /// Search's Top Results: up to three tall cards, instead of the posters.
-    var topResults: [MetaItem] = []
-    /// Their height (Search: down to near the screen's bottom).
-    var topResultHeight: CGFloat = 400
-
-    @EnvironmentObject private var mdblist: MDBListSettingsStore
-    @EnvironmentObject private var theme: ThemeManager
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
     func updateUIViewController(_ controller: FolderGridController, context: Context) {
-        controller.topSpace = topSpace
         back?.controller = controller
-        controller.focusesFirstTitle = focusesFirstTitle
-        controller.topResultHeight = topResultHeight
-        // The top results' chips get the app's stores.
-        controller.environment = { [mdblist, theme] in
-            AnyView($0.environmentObject(mdblist).environmentObject(theme))
-        }
         controller.onSelect = onSelect
         controller.onOpenDetails = onOpenDetails
         controller.onDisplay = onDisplay
-        controller.show(header: header, headerHeight: headerHeight, items: topResults.isEmpty ? items : topResults,
-                        banner: !topResults.isEmpty, subtitles: subtitles, placeholder: placeholder)
+        controller.show(header: header, headerHeight: headerHeight, items: items,
+                        subtitles: subtitles, placeholder: placeholder)
     }
 }
 
@@ -339,21 +319,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     var onOpenDetails: ((MetaItem) -> Void)?
     var onDisplay: ((MetaItem) -> Void)?
 
-    var topSpace: CGFloat = 0 {
-        didSet { if topSpace != oldValue { syncHeaderHost() } }
-    }
-    var focusesFirstTitle = true
-    var environment: (AnyView) -> AnyView = { $0 }
-    /// The titles show as Search's top results.
-    private var isBanner = false
     /// Placeholders show (`FolderPosterGrid.placeholder`).
     private var isPlaceholder = false
-    /// Their height (Search: down to near the screen's bottom).
-    var topResultHeight: CGFloat = 400 {
-        didSet { if topResultHeight != oldValue, isViewLoaded { collectionView.collectionViewLayout.invalidateLayout() } }
-    }
-    /// The page (Search's keyboard follows it).
-    var scrollView: UIScrollView { collectionView }
 
     private var header: AnyView?
     private var items: [MetaItem] = []
@@ -407,7 +374,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "poster")
-        collectionView.register(SearchTopResultCell.self, forCellWithReuseIdentifier: "top")
         view.addSubview(collectionView)
         syncHeaderHost()
     }
@@ -425,8 +391,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                 host.removeFromParent()
                 headerHost = nil
             }
-            // No header (Search): the titles still start under `topSpace`.
-            applyTopInset(topSpace + Self.headerTopMargin)
+            applyTopInset(Self.headerTopMargin)
             return
         }
         let host: UIHostingController<AnyView>
@@ -454,9 +419,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
             controlsGuideTop = guideTop
             headerHost = host
         }
-        applyTopInset(topSpace + headerHeight + Self.headerTopMargin)
+        applyTopInset(headerHeight + Self.headerTopMargin)
         host.view.frame = CGRect(x: 0, y: -headerHeight, width: collectionView.bounds.width, height: headerHeight)
-        controlsGuideTop?.constant = topSpace + Self.headerTopMargin + headerHeight - 8
+        controlsGuideTop?.constant = Self.headerTopMargin + headerHeight - 8
         syncControlsGuide()
     }
 
@@ -520,13 +485,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     /// The header is never reloaded (it updates itself, its focus stays).
-    func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem], banner: Bool = false,
+    func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem],
               subtitles: [String: String], placeholder: Bool = false) {
         let leavingPlaceholder = isPlaceholder && !placeholder
         isPlaceholder = placeholder
         if isViewLoaded { collectionView.isUserInteractionEnabled = !placeholder }
-        let changed = items.map(\.id) != self.items.map(\.id) || banner != isBanner
-        isBanner = banner
+        let changed = items.map(\.id) != self.items.map(\.id)
         let heightChanged = headerHeight != self.headerHeight
         self.header = header
         self.headerHeight = headerHeight
@@ -551,7 +515,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         } else {
             collectionView.reloadData()
         }
-        if !filledOnce, !items.isEmpty, focusesFirstTitle, !placeholder {
+        if !filledOnce, !items.isEmpty, !placeholder {
             filledOnce = true
             // The first titles in: focus to the first, unless it has moved on
             // (the loading state, which held focus, goes in the same update).
@@ -576,13 +540,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let item = items[indexPath.item]
-        if isBanner {
-            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "top", for: indexPath)
-                as! SearchTopResultCell
-            cell.environment = environment
-            cell.configure(item, index: indexPath.item)
-            return cell
-        }
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath)
             as! FixedFocusDestinationCell
         cell.configure(item, subtitle: subtitles[item.id], index: indexPath.item, rowCell: nil, card: Self.card)
@@ -591,7 +548,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        if isBanner { return CGSize(width: FixedFocusMetrics.bannerWidth, height: topResultHeight) }
         return CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
     }
 
@@ -617,8 +573,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         let entries = TitleMenu.shared.entries(for: items[path.item])
         guard !entries.isEmpty else { return nil }
         // The card, without its caption (a destination card's picture).
-        let card = (cell as? FixedFocusDestinationCell)?.cardFrame ?? (cell as? SearchTopResultCell)?.cardFrame
-            ?? cell.bounds
+        let card = (cell as? FixedFocusDestinationCell)?.cardFrame ?? cell.bounds
         return HoldMenuRequest(entries: entries, anchor: cell.convert(card, to: nil))
     }
 
@@ -764,146 +719,5 @@ enum TileArt {
         let scale = min(rect.width / image.width, rect.height / image.height)
         let size = CGSize(width: image.width * scale, height: image.height * scale)
         return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-    }
-}
-
-/// Search's Top Result: a card the content's width, from the grid's top
-/// down to near the screen's bottom, the backdrop's middle filling it; at its foot, over a
-/// dark fade, the billboard's text in its styles — the logo (or the name),
-/// the chips, the facts, the tagline (no tagline: the name). Focused: Cue's
-/// outline (no lift).
-final class SearchTopResultCell: UICollectionViewCell, FixedFocusDestinationItem {
-    private(set) var itemIndex = 0
-    var rowCell: FixedFocusRowCell? { nil }
-    /// Outside a row: the app's stores for its chips.
-    var environment: (AnyView) -> AnyView = { $0 }
-
-    private static let pad: CGFloat = 36
-    private static let logoHeight: CGFloat = 84
-
-    private let card = UIView()
-    private let picture = UIImageView()
-    private let fade = CAGradientLayer()
-    private let logo = LeftAlignedImageView()
-    /// The title in big type, where there's no logo.
-    private let name = UILabel()
-    private let facts = UILabel()
-    /// The tagline (TMDB) — no tagline: the name.
-    private let tagline = UILabel()
-    private let chips = UIHostingController(rootView: AnyView(EmptyView()))
-    /// Loads the facts' season count and the tagline.
-    private var extras: Task<Void, Never>?
-    private let outline = UIView()
-    private let edge = UIImageView()
-    private var item: MetaItem?
-
-    var cardFrame: CGRect { bounds }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        card.clipsToBounds = true
-        card.layer.cornerRadius = Spotlight.cornerRadius
-        card.layer.cornerCurve = .continuous
-        card.backgroundColor = UIColor(white: 0.12, alpha: 1)
-        contentView.addSubview(card)
-        picture.contentMode = .scaleAspectFill
-        picture.clipsToBounds = true
-        card.addSubview(picture)
-        fade.colors = [0, 0.6, 0.9].map { UIColor.black.withAlphaComponent($0).cgColor }
-        fade.locations = [0, 0.5, 1]
-        card.layer.addSublayer(fade)
-        // The billboard's styles: the name big and bold, the facts bright,
-        // the tagline quiet and italic.
-        name.font = .systemFont(ofSize: 44, weight: .bold)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        name.numberOfLines = 2
-        facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .medium)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        tagline.font = UIFont(descriptor: UIFont.systemFont(ofSize: FixedFocusMetrics.textSize)
-            .fontDescriptor.withSymbolicTraits(.traitItalic) ?? UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).fontDescriptor,
-                              size: FixedFocusMetrics.textSize)
-        tagline.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tagline)
-        chips.view.backgroundColor = .clear
-        chips.safeAreaRegions = []
-        for view: UIView in [logo, name, chips.view, facts, tagline] { card.addSubview(view) }
-        edge.isUserInteractionEnabled = false
-        card.addSubview(edge)
-        // A logo arriving replaces the name: laid out again.
-        logo.imageView.onImage = { [weak self] in self?.setNeedsLayout() }
-        outline.isUserInteractionEnabled = false
-        outline.layer.borderColor = FixedFocusRing.color.cgColor
-        outline.layer.borderWidth = FixedFocusRing.width
-        outline.layer.cornerRadius = Spotlight.cornerRadius
-        outline.layer.cornerCurve = .continuous
-        outline.alpha = 0
-        contentView.addSubview(outline)
-        FixedFocusRing.attachShadow(to: outline)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(_ item: MetaItem, index: Int) {
-        itemIndex = index
-        if self.item?.id != item.id {
-            picture.image = nil
-            FixedFocusImages.load(item.background ?? item.poster, into: picture, maxDimension: 1280)
-            logo.image = nil
-            FixedFocusImages.load(item.logo, into: logo.imageView, maxDimension: 600)
-            facts.text = FixedFocusShowInfo.factsLine(item)
-            tagline.text = TMDBService.knownFacts(for: item)?.tagline ?? item.name
-            extras?.cancel()
-            extras = Task { @MainActor [weak self] in
-                async let info = FixedFocusShowInfo.load(item)
-                async let facts = TMDBService.facts(for: item)
-                let (size, titleFacts) = await (info, facts)
-                guard let self, !Task.isCancelled, self.item?.id == item.id else { return }
-                self.facts.text = FixedFocusShowInfo.factsLine(item, info: size)
-                if let line = titleFacts?.tagline { self.tagline.text = line }
-            }
-        }
-        self.item = item
-        name.text = item.name
-        chips.rootView = environment(AnyView(TitleChipsLine(item: item)))
-        outline.alpha = isFocused ? 1 : 0
-        setNeedsLayout()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        card.frame = bounds
-        outline.frame = bounds
-        outline.layer.borderWidth = FixedFocusRing.width
-        picture.frame = card.bounds
-        edge.image = FixedFocusCardEdge.rim
-        edge.frame = card.bounds
-        // At the card's foot, up from the bottom in the billboard's order
-        // and rhythm: the logo (or the name), the chips, the facts, the
-        // tagline.
-        let x = Self.pad, width = bounds.width - 2 * Self.pad
-        let hasLogo = logo.image != nil
-        name.isHidden = hasLogo
-        logo.isHidden = !hasLogo
-        let titleHeight = hasLogo ? Self.logoHeight
-            : name.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let line = FixedFocusMetrics.factsHeight
-        let gap = FixedFocusMetrics.factsOffset - 30   // the billboard's line step
-        var y = bounds.height - Self.pad - 30
-        tagline.frame = CGRect(x: x, y: y, width: width, height: 30)
-        y -= gap + line
-        facts.frame = CGRect(x: x, y: y, width: width, height: line)
-        y -= gap + FixedFocusBillboardText.chipsGap + line
-        chips.view.frame = CGRect(x: x, y: y, width: width, height: line)
-        y -= FixedFocusBillboardText.logoToChips + titleHeight
-        logo.frame = CGRect(x: x, y: y, width: min(width, 520), height: Self.logoHeight)
-        name.frame = CGRect(x: x, y: y, width: width, height: titleHeight)
-        let fadeTop = max(0, y - 100)
-        fade.frame = CGRect(x: 0, y: fadeTop, width: bounds.width, height: bounds.height - fadeTop)
-    }
-
-    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
-        let focused = isFocused
-        FixedFocusMotion.run(duration: Motion.focusDuration) {
-            self.outline.alpha = focused ? 1 : 0
-        } completion: { _ in }
     }
 }

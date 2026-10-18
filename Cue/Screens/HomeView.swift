@@ -3467,8 +3467,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Taller than the screen: rows sliding out of (or into) the screen
         // stay inside the list's visible area, so UIKit keeps their cells
         // and they SLIDE — outside it, it drops them and fades them in place.
-        // (From the size only: Search scrolls the whole page by the
-        // view's bounds origin — `SearchKeyboardScroll`.)
         outer.frame = CGRect(origin: .zero, size: view.bounds.size).insetBy(dx: 0, dy: -FixedFocusRowsLayout.overscan)
         if let stage = pinnedStage {
             stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
@@ -7349,7 +7347,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         logo.isHidden = !isLogo
         picture.backgroundColor = isLogo ? UIColor(white: 0.9, alpha: 1) : nil
         if isLogo {
-            picture.image = nil
+            // (Drops a reused card's poster still on its way — it landed
+            // over the logo's plate.)
+            FixedFocusImages.load(nil, into: picture, maxDimension: 0)
             logo.image = nil
             if let art { FixedFocusImages.load(art, into: logo, maxDimension: max(card.width, card.height)) }
             return

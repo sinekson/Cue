@@ -54,7 +54,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 - `Cue/Screens/HomeView.swift` (~9k lines): UIKit Home (`HomeUIKitView`,
   `FixedFocusRowsController`, cells), billboard (`FixedFocusBillboardText`),
-  Search's banner (`FixedFocusBannerCell`), `DetailTransition`.
+  `DetailTransition`.
 - `Cue/Screens/DetailView.swift`: Details; `DetailPreparer` (data from disk at
   the press) at the end.
 - `Cue/Screens/StagePicture.swift`: billboard/Details picture (`StagePictureView`),
@@ -304,7 +304,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   16; 22 circular, measured as the Apple TV app's; a user setting with
   five choices.)
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
-  episodes, Saved for Later, cast, studios, Search's banner) has a printed
+  episodes, Saved for Later, cast, studios) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner
   (`FixedFocusCardEdge.rim`). Focus: no ring — the same edge, bright (2 pt, white 75 %;
   `FixedFocusRing`), a soft shadow outside the card (`attachShadow`, the cards' shadow picture),
@@ -331,11 +331,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   up to the top (focus on the first title); on the first line, out. The
   page's `onExitCommand` decides (`GridBack`): a press the grid took
   itself still reached the navigation, which left.
-- **Back (Search)**: in the results (scope bar, grid), Back scrolls the
-  page to its top (the keyboard with it) and focus goes to the keyboard
+- **Back (Search)**: from the scopes or the row, Back goes to the keyboard
   (query, scope and results kept); on the keyboard, the top bar.
-  `SearchBack` → `SearchKeyboardScroll.Anchor.backToKeyboard`: a focus
-  request into the keyboard is ignored, so the results are briefly not
+  `SearchBack` → `SearchKeyboardLine.Anchor.backToKeyboard`: a focus
+  request into the keyboard is ignored, so the page is briefly not
   interactive and the search controller's own choice (its keyboard) takes
   focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
@@ -381,50 +380,98 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   pages (their `TMDBBrowseViewModel`, a `PreparedPage`; the grid's
   `placeholder:` — two lines of empty posters; only the first load, a
   Movies | Series / sort change keeps its own loading).
-- **Search's results** are the browse pages' grid (`FolderPosterGrid`,
-  six across), in the ranked order. The scope bar (`SearchScopeBar`, the
-  Apple TV app's way): before results only the system's line under the
-  keyboard; with results that line hides and ours sits lower, the top
-  bar's glass pill in it (`glassPill`, same size, type, highlight; grows
-  focused) — Top Result | Movies | Series, all three always. Moving along
-  it switches the scope; coming in (Down from the keyboard, Up from the
-  grid) lands on the current one. Top Result (chosen with each new
-  search): only the #1, one card the content's width (`SearchTopResultCell`, the
-  grid's `topResults`) from the grid's top down to the side margin above
-  the screen's bottom; the backdrop; at the foot the billboard's text in
-  its styles: logo (or name), chips, facts, tagline (else the name).
-  Parked — to revisit (with Search's scrolling annoyances). Tried and
-  dropped: 3 or 2 cards (16:9 with the info under them, boxy, tall); tall
-  cards cut off by the screen's bottom edge; the poster as the picture. Movies / Series: their posters. The bar is on the
-  page, not in the grid's header (from the keyboard, Down never found it
-  in the scroll view), in its own hosting view that `SearchKeyboardScroll`
-  moves with the grid. Focus stays on the keyboard as results arrive.
-  Suggestions (`.searchSuggestions`, the system's row between the keys and
-  the line): the field empty, the recent searches; with text, the best
-  matches' names, lowercased. Select searches for one. Only completions —
-  a Button among them (a Clear) sent tvOS into an endless focus/reload
-  loop that froze Search. The row is kept while the field shows one of
-  them (focusing a suggestion puts its text in the field). They lie over
-  the results: we start our line where the system's (hidden) line goes
-  under them. Field text: the system's size. (Tried and dropped: our own
-  row in the recent searches' size — the system's can't be sized, 38 pt
-  in private cells; our "Recent searches" pills.)
-  (Tried and dropped: the results as rows; the system's scope bar
-  — `.searchScopes`, a `UISegmentedControl`, can't take our glass; our
-  pills in the grid's header.)
-- **Search's keyboard scrolls away** (`SearchKeyboardScroll`, SwiftUI
-  `.searchable` kept): the results controller's content scroll view is a
-  hidden one we move (`setContentScrollView`) — the system scrolls its
-  field and keyboard with it. The grid spans the page under the keyboard
-  (`topSpace`) and the keyboard follows its scroll point for point (KVO);
-  at the grid's top (first line, pills) it shows, so Up reaches it — the
-  engine never finds it once it's out, and programmatic focus into it is
-  ignored. The page sits under the top bar (padding: the field ignores
-  the safe area); the grid reaches up past it under the glass, the system
-  containers above it unclipped. Tried and dropped: moving the
-  results' hosting view (the system places it) or a transform on the
-  rows (SwiftUI's frame undoes it); `UISearchController` embedded by hand
-  (field not on screen, crashes).
+- **Search**: SwiftUI `.searchable` (the system's field, keyboard,
+  dictation, suggestions). Nothing scrolls but the row, sideways.
+  Where it comes from: TMDB, not the add-ons' catalogs: its combined
+  search (`TMDBService.searchMulti` — films, series and people in one
+  list), its film and series searches (`TMDBService.search`, a page each,
+  cached by query — also the suggestions'), its person and company
+  searches. Titles are playable by their IMDb ids (`external_ids`,
+  cached): what the stream add-ons take, wherever a title was found;
+  titles without an IMDb id or any picture, people without a photo,
+  studios without a logo left out. From the 2nd letter (the 1st only
+  suggests). Top Results: exactly 6 (they fit across: no scrolling).
+  TWO ORDERS, to compare on the TV (Render Lab → "Search: Cue's order",
+  `RenderProbe.flags.searchOwnOrder`, on by default — remove the switch
+  once decided):
+  - **TMDB's**, as it comes: Top Results the combined search's first 6;
+    each scope its own search's order.
+  - **Cue's** (`SearchViewModel.ranked`): only names whose start or a
+    word's starts with what's typed (`matchForm`: lowercased, no
+    accents, punctuation a space — "dune part" finds "Dune: Part Two";
+    none match, a typo: all), the best known first — fame plus a bonus:
+    the name itself +3, its start +1 (`matchBonus`). A title's fame: log
+    votes + log popularity of its own TMDB entry (same name, kind, year);
+    a person's: 2 × log popularity + ½ × log of their best-known title's
+    votes (Christopher Nolan above the "Nolan" documentaries, a minor
+    actor not above his film). Top Results: titles and people together,
+    by that score. Studios: the exact name first, else TMDB's order.
+    Limit: TMDB matches whole words, so two letters find titles with that
+    word ("di" → Italian titles, not Die Hard) until the third.
+  - **Both**: one studio into Top Results when it's what you typed — the
+    name itself first, a name or word starting with it (3 letters on)
+    second; none while a title or person has that very name ("dune": the
+    films, not a studio called Dune). Led by a person or studio, Top
+    Results' other 5 places are their best-known titles: a person's
+    films and shows they played (voice roles too) or directed, by votes +
+    popularity (`TMDBService.bestKnown`, from `personCredits`); a studio's
+    films and shows by votes (`studioBestKnown`, discover by company) —
+    "zendaya" → Zendaya, Spider-Man…, Dune; "pixar" → Pixar, Inside Out,
+    Up, Coco… Fetched before the results show (one more request; the
+    page swaps in whole — `SearchFound`, one snapshot per search). (Tried:
+    a cut-off for what counts as "top" — within 6 of the best, at least 9;
+    the user chose exactly 6.)
+  (Tried and dropped: the add-ons' search catalogs — junk entries, the
+  slowest add-on deciding the wait.)
+  Under the keys the system's suggestions: the
+  field empty, the recent searches; with text, TMDB's names
+  (`SearchViewModel.suggest` — 120 ms after the last key, older lookups
+  dropped, at once from an earlier shorter query's answer filtered on the
+  device), lowercased: names whose start or a word's starts with what's
+  typed (`matchForm`, `matchBonus`), the best known first. No icons (tvOS draws none on
+  them, `UISearchSuggestionItem`'s icon neither) and no quoted "what you
+  typed" chip (the controller's private `shouldDisplayDefaultSuggestion`
+  switch, off — private API, kept on purpose). Focusing one previews it in the field; Select searches
+  (the system then clears the row until the next key). Under them the
+  line (`SearchScopeBar`, our own — the system's hidden) with a flat pill
+  Top Results | Movies | Series | People | Studios, as the Apple TV app's (the field empty:
+  the line alone): its shape and sizes measured — a capsule 68 pt tall,
+  the highlight 10 pt inside, 29 pt semibold labels 33 pt from its ends,
+  the line stopping 40 pt from it — in our dark flat fills (theirs is the
+  light variant): `FlatControl.rest` behind with `ActionFace.pillEdge`
+  along the top, the current scope `FlatControl.selected`, focused white
+  with dark content, the highlight gliding (tried: the top bar's glass
+  pill);
+  moving along it switches, coming in lands on the current one. The line
+  sits at the top of the page the system lays out under the keyboard, so
+  it and the row move with it: up 102 pt while no suggestions show (an
+  empty field without recent searches, a suggestion just chosen), down
+  when they do — at once, as in the Apple TV app (tried: a fixed place
+  with the suggestions' room kept — the empty room looked odd). The pill
+  sits 40 pt under the suggestions, as far as the cards under it (at
+  rest): raised 31 pt above that page's top (`pillRaise` — the system
+  starts it 71 pt under them). Partly outside it still takes focus; wholly
+  outside, focus never reached it. Under the line ONE row of posters
+  (`SearchResultsRow`): Saved for Later's cards (`FixedFocusDestinationCell`,
+  moving focus, name and a second line under each — a title's year, a
+  person's line of work, "Acting"), one shape for every kind, 2:3: a
+  title's poster, a person's portrait, a studio's logo on a light plate
+  (most logos are dark on clear); as tall as the room to the screen's
+  bottom allows with the page at its lowest (50 pt above the edge) — one
+  size in both places (`SearchKeyboardLine` reports that lowest top).
+  Select: a title its Details, a person or studio its page. (Tried and
+  dropped: Top Results as 3 landscape backdrops with their logos, studios
+  as landscape plates — every scope its own shape. Collections — later,
+  perhaps; networks have no TMDB search.) The field empty: the last 12 titles opened from
+  Search (`cue.search.recentTitles`).
+  Focus stays on the keyboard as results arrive. Only completions in the
+  suggestions — a Button among them (a Clear) sent tvOS into an endless
+  focus/reload loop that froze Search. (Tried and dropped: the keyboard
+  scrolling away with a grid of results — a hidden content scroll view,
+  the system's line moved, ancestors unclipped; `UISearchContainerViewController`
+  with our UIKit results — on the sim the Mac keyboard stopped typing, on
+  the TV the keyboard took the system's language; a Top Result card; our
+  own suggestion row; the results as Home's rows; the system's scope bar.)
 - **Collections**: one panel row per collection on Home. A folder page is
   Home's rows (`FixedFocusRows`): a catalog per row, all its titles, the
   focused row at Home's spot, the next peeking; the folder's cover

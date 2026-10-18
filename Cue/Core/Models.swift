@@ -231,11 +231,6 @@ struct ManifestCatalog: Codable, Identifiable, Hashable {
         return extra?.contains { $0.isRequired == true } ?? false
     }
 
-    var supportsSearch: Bool {
-        if extraSupported?.contains("search") == true { return true }
-        return extra?.contains { $0.name == "search" } ?? false
-    }
-
     /// Genres this catalog can filter by (from the `genre` extra's options).
     var genreOptions: [String] {
         extra?.first { $0.name == "genre" }?.options ?? []
