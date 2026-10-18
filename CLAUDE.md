@@ -176,11 +176,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   italic 85 %.)
   Buttons (Details' look, `BillboardControls`, in their own host over
   the rows — `FixedFocusRows.billboardControls`; the text and dots stay
-  under them): ⓘ Details (labelled, first; hold: a menu — Play, Choose
-  Source; a search shows on the button, Back stops it), + Library,
-  › Next. No Play button: most picks are for discovering, Continue
+  under them): ⓘ Details (labelled, first; no hold — tried: a menu with
+  Play, Choose Source), + Library, › Next. No Play button: most picks are for discovering, Continue
   Watching right below plays, and playing (a source search) is heavy —
-  behind Details or the hold (also safe to land on when paging left).
+  behind Details (also safe to land on when paging left).
   Focus is the buttons' (`externalBillboard`, as Details); Details
   first. Left from Details: the title before, Right from › (or Select):
   the next — focus stays where it is, so Right again browses on (`.step`
@@ -300,9 +299,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   title's background, the old solid colours. No vignette anywhere; below
   Details' billboard only blur + one dim (`dimBelow`; the shade and the
   vignette there were dropped).
-- **Card corners**: 18 pt, continuous (`Spotlight.cornerRadius`). (Tried:
-  16; 22 circular, measured as the Apple TV app's; a user setting with
-  five choices.)
+- **Card corners**: 22 pt, continuous (`Spotlight.cornerRadius`; the Apple
+  TV app's size). (Tried: 16; 18 continuous; 22 circular, as measured in
+  the Apple TV app; a user setting with five choices.)
 - **Card edge**: every card (posters, the fixed box, Continue Watching,
   episodes, Saved for Later, cast, studios) has a printed
   card's light frame — a 2 pt line, white 30 %, inside its corner
@@ -313,7 +312,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Settings → Appearance → Focus edge (on by default) turns the edge off
   (`FixedFocusRing.edgeOn`; switching relayouts every view — live). The
   fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
-  caption reads. (Tried and dropped: the 4 pt white ring.)
+  caption reads. (Tried and dropped: the 4 pt white ring; the row's name
+  moving up as the focused card grows, as the captions step down — weird.)
 - **Back (Home, Movies, Series, Details)**: below the billboard, Back goes up to
   it first (Details: focus on Play; a source search or the summary panel
   first closes) (its title as it is, the rows keeping their places); on the
@@ -338,7 +338,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   interactive and the search controller's own choice (its keyboard) takes
   focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
-  next press). Glass panel beside the card; pressed −3 %, open +2 %.
+  next press). Glass panel beside the card; pressed −3 %, open +2 %. Placed
+  from the card at its held size (`FixedFocusDestinationCell.holdMenu`):
+  its left edge on the next card's left edge (opening left: its right
+  edge on the card before's right edge — `neighbourEdges`; no cards
+  beside it: `gap`, 28), level with its top — or, when it doesn't
+  fit below that (Search's low row), with its bottom. Behind it the
+  screen dims (black 30 %, `HoldMenuController.dimming`), the held card
+  cut out (not its shadow); dropdowns don't dim. (Tried: a fixed gap
+  beside the held card.)
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.
 - **App icon and Top Shelf images**: generated, never hand-edited —
@@ -519,8 +527,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   in-app debrid/TorrServer, themes/accent palettes, external players,
   Trakt/SIMKL accounts (public Trakt lists stay), Stremio account.
 - Ask before touching the Nuvio sync.
-- Rejected looks: glows, underlines, dimming the screen for the top bar or
-  hold menus, bouncy springs, "through colour" / cascade /
+- Rejected looks: glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
   Left/Right: a full page scroll (too much movement), the text's parts
   staggered (cascade).

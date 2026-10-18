@@ -2522,7 +2522,6 @@ extension HomeUIKitView {
             // title would change under the button you're about to press).
             onMove: { autoPageDone = true })
             .environmentObject(library)
-            .environmentObject(PlayLauncher.shared)
             .frame(height: DetailActionButton.height)
             .padding(.leading, FixedFocusMetrics.titleInset)
             .padding(.top, FixedFocusBillboardText.buttonsY)
@@ -2612,8 +2611,8 @@ extension HomeUIKitView {
 enum BillboardControl: Hashable { case details, library, next }
 
 /// Home's billboard buttons — Details' look (`DetailActionButton`):
-/// Details (labelled, first; hold: Play / Choose Source — playing is a
-/// heavy step, it's behind Details or the hold), Library, Next. ONE view
+/// Details (labelled, first — playing is a heavy step, it's behind
+/// Details), Library, Next. ONE view
 /// for every title: focus stays put as the billboard pages.
 struct BillboardControls: View {
     let item: MetaItem?
@@ -2622,27 +2621,15 @@ struct BillboardControls: View {
     let onDetails: () -> Void
     let onMove: () -> Void
     @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var launcher: PlayLauncher
 
     var body: some View {
         FocusBridgeHost(bridge: bridge, defaultValue: .details, onChange: { old, new in
             if old != nil, let new, new != .next { onMove() }
         }) { focus in
             HStack(spacing: CueSpacing.md) {
-                let finding = item.map { launcher.searching?.hasPrefix($0.id + "|") == true } ?? false
                 DetailActionButton(
-                    icon: "info.circle", title: "Details", isPrimary: true, lit: false, busy: finding,
-                    // (A search from its hold menu shows here; Back stops it.)
-                    caption: finding ? "Finding a source…" : nil,
-                    action: onDetails,
-                    holdEntries: item.map { item in [
-                        MenuEntry(title: "Play", icon: "play.fill") {
-                            launcher.play(title: item, overlay: false)
-                        },
-                        MenuEntry(title: "Choose Source", icon: "list.bullet") {
-                            launcher.chooseSource(title: item, overlay: false)
-                        },
-                    ] })
+                    icon: "info.circle", title: "Details", isPrimary: true, lit: false,
+                    action: onDetails)
                     .focused(focus, equals: .details)
                     .onMoveCommand { if $0 == .left { onPage(-1) } }
                 // (One focus section, as on Details: a move into the row
@@ -5673,11 +5660,17 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             revealedSelection = selected
             revealSelected(animated: animated && shown)
         }
+        let trading = shown || headerStack.alpha != 0
         let apply = {
             self.headerStack.alpha = shown ? 1 : 0
-            // (Never a fade: the name and the header trade places in the
-            // billboard's move — `moveHeader`.)
-            UIView.performWithoutAnimation { self.title.alpha = shown ? 0 : self.titleAlpha }
+            // (Never a fade where the name and the header trade places in
+            // the billboard's move — `moveHeader`. Otherwise the name
+            // brightens with the row's move, as the row itself does.)
+            if trading {
+                UIView.performWithoutAnimation { self.title.alpha = shown ? 0 : self.titleAlpha }
+            } else {
+                self.title.alpha = self.titleAlpha
+            }
         }
         if animated, headerStack.alpha != (shown ? 1 : 0) {
             UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
@@ -6856,17 +6849,8 @@ extension FixedFocusRowsController: HoldMenuProviding {
         func held(_ rect: CGRect, _ scale: CGFloat) -> CGRect {
             rect.insetBy(dx: -rect.width * (scale - 1) / 2, dy: -rect.height * (scale - 1) / 2)
         }
-        if isDestination(rowIndex) {
-            // The card, without its caption.
-            let card = CGRect(origin: .zero, size: CGSize(width: focused.bounds.width,
-                                                          height: destinationCard(rowIndex).height))
-            let lift = FixedFocusMetrics.movingFocusLift
-            let cell = focused as? FixedFocusDestinationCell
-            let rest = focused.convert(card, to: nil)
-            return HoldMenuRequest(entries: entries,
-                                   anchor: held(rest, 1 + lift + FixedFocusMetrics.heldGrowth),
-                                   onHeld: { [weak cell] in cell?.setHeld($0) },
-                                   row: (rest, FixedFocusMetrics.destinationGap(cardWidth: card.width)))
+        if isDestination(rowIndex), let cell = focused as? FixedFocusDestinationCell {
+            return cell.holdMenu(entries)
         }
         guard box.alpha == 1 else {
             return HoldMenuRequest(entries: entries, anchor: focused.convert(focused.bounds, to: nil))
@@ -6877,8 +6861,7 @@ extension FixedFocusRowsController: HoldMenuProviding {
                                           width: box.bounds.width, height: box.bounds.height), to: nil)
         return HoldMenuRequest(entries: entries,
                                anchor: held(boxRect, FixedFocusMetrics.boxScale + FixedFocusMetrics.heldGrowth),
-                               onHeld: { [weak self] in self?.setBoxHeld($0) },
-                               row: (boxRect, FixedFocusMetrics.gap))
+                               onHeld: { [weak self] in self?.setBoxHeld($0) })
     }
 }
 
@@ -7300,6 +7283,17 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     /// The card itself, without its caption (in the cell).
     var cardFrame: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: cardHeight) }
+
+    /// Its hold menu (`HoldMenu`): beside the card at its held size —
+    /// lifted and a little grown — without its caption.
+    func holdMenu(_ entries: [MenuEntry]) -> HoldMenuRequest {
+        let lift = FixedFocusMetrics.movingFocusLift
+        let scale = lift > 0 && !Self.lift ? 1 + lift + FixedFocusMetrics.heldGrowth : 1
+        let card = cardFrame
+        let held = card.insetBy(dx: -card.width * (scale - 1) / 2, dy: -card.height * (scale - 1) / 2)
+        return HoldMenuRequest(entries: entries, anchor: convert(held, to: nil),
+                               onHeld: { [weak self] in self?.setHeld($0) })
+    }
 
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,

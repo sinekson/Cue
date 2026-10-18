@@ -828,7 +828,7 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         else { return nil }
         let entries = TitleMenu.shared.entries(for: items[path.item])
         guard !entries.isEmpty else { return nil }
-        return HoldMenuRequest(entries: entries, anchor: cell.convert(cell.cardFrame, to: nil))
+        return cell.holdMenu(entries)
     }
 
     override func viewDidAppear(_ animated: Bool) {

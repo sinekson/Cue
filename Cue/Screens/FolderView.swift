@@ -572,9 +572,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
               items.indices.contains(path.item) else { return nil }
         let entries = TitleMenu.shared.entries(for: items[path.item])
         guard !entries.isEmpty else { return nil }
-        // The card, without its caption (a destination card's picture).
-        let card = (cell as? FixedFocusDestinationCell)?.cardFrame ?? cell.bounds
-        return HoldMenuRequest(entries: entries, anchor: cell.convert(card, to: nil))
+        if let card = cell as? FixedFocusDestinationCell { return card.holdMenu(entries) }
+        return HoldMenuRequest(entries: entries, anchor: cell.convert(cell.bounds, to: nil))
     }
 
     override func viewDidAppear(_ animated: Bool) {

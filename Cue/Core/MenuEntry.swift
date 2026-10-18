@@ -27,12 +27,33 @@ struct HoldMenuRequest {
     /// No menu: the hold runs the (first) entry at once (Details' Play →
     /// its sources).
     var direct = false
-    /// The card at rest in its row and the gap to its neighbours: the menu
-    /// then starts where the next card does (right) or ends where the one
-    /// before ends (left). Nil: just beside the held card.
-    var row: (rest: CGRect, gap: CGFloat)? = nil
     /// A dropdown: the panel opens under the anchor, on its left edge.
     var below = false
+    /// The neighbouring cards' facing edges (window x): the menu starts on
+    /// the next card's left edge, or ends on the one before's right edge.
+    /// Nil: `gap` beside the held card.
+    var beside: (left: CGFloat?, right: CGFloat?)? = nil
+}
+
+extension UICollectionViewCell {
+    /// Where the cards beside it start (right) and end (left) in the window,
+    /// on its own line — a missing one (the row's end) where it would be.
+    func neighbourEdges() -> (left: CGFloat?, right: CGFloat?)? {
+        guard let list = superview as? UICollectionView, let path = list.indexPath(for: self) else { return nil }
+        let me = list.layoutAttributesForItem(at: path)?.frame ?? frame
+        func card(_ step: Int) -> CGRect? {
+            let item = path.item + step
+            guard item >= 0, item < list.numberOfItems(inSection: path.section),
+                  let other = list.layoutAttributesForItem(at: IndexPath(item: item, section: path.section))?.frame,
+                  abs(other.midY - me.midY) < 1 else { return nil }
+            return other
+        }
+        let next = card(1), before = card(-1)
+        let right = next?.minX ?? before.map { me.maxX + (me.minX - $0.maxX) }
+        let left = before?.maxX ?? next.map { me.minX - ($0.minX - me.maxX) }
+        func window(_ x: CGFloat?) -> CGFloat? { x.map { list.convert(CGPoint(x: $0, y: me.midY), to: nil).x } }
+        return (window(left), window(right))
+    }
 }
 
 /// A UIKit screen with hold menus: the menu for the focused card (nil: none
@@ -131,7 +152,11 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
             while let current = responder {
                 if let provider = current as? HoldMenuProviding {
                     // The nearest provider decides (nil: no menu here).
-                    return provider.holdMenu(for: focused)
+                    var request = provider.holdMenu(for: focused)
+                    if request?.beside == nil, let cell = focused as? UICollectionViewCell {
+                        request?.beside = cell.neighbourEdges()
+                    }
+                    return request
                 }
                 responder = current.next
             }
@@ -215,18 +240,21 @@ private final class HoldMenuFrame {
 }
 
 /// The menu itself: a glass panel beside the card, growing out of the card's
-/// side (the screen behind it not dimmed — see `dimming`).
+/// side; the screen behind it dimmed, the held card left out (`dimming`).
 private final class HoldMenuController: UIViewController {
     private let request: HoldMenuRequest
     private let dim = UIView()
+    /// The dim's hole: the held card, as it shows.
+    private let hole = CAShapeLayer()
     private var panel: UIHostingController<HoldMenuPanel>!
     private var closing = false
 
-    /// How much the screen dims behind the menu (off: the held card's
-    /// growth says enough).
-    static let dimming: CGFloat = 0
-    /// The panel's gap to the card, and the screen margin it keeps.
-    static let gap: CGFloat = 28
+    /// How much the screen dims behind a hold menu — not the held card,
+    /// and not behind a dropdown.
+    static let dimming: CGFloat = 0.35
+    /// The panel's gap to a card with none beside it, and the screen margin
+    /// it keeps.
+    static let gap: CGFloat = 18
     static let margin: CGFloat = 60
 
     init(request: HoldMenuRequest) {
@@ -242,6 +270,8 @@ private final class HoldMenuController: UIViewController {
         view.backgroundColor = .clear
         dim.backgroundColor = .black
         dim.alpha = 0
+        hole.fillRule = .evenOdd
+        dim.layer.mask = hole
         view.addSubview(dim)
         panel = UIHostingController(rootView: HoldMenuPanel(entries: request.entries,
                                                             onPick: { [weak self] in self?.close(then: $0.run) },
@@ -258,12 +288,17 @@ private final class HoldMenuController: UIViewController {
         guard !closing else { return }
         let size = panel.sizeThatFits(in: CGSize(width: view.bounds.width, height: view.bounds.height))
         let anchor = view.convert(request.anchor, from: nil)
-        // Right of the card, level with its top; left of it if it doesn't
-        // fit. In a row: on the neighbouring card's edge.
-        let (start, end): (CGFloat, CGFloat) = request.row.map { row in
-            let rest = view.convert(row.rest, from: nil)
-            return (rest.maxX + row.gap, rest.minX - row.gap)
-        } ?? (anchor.maxX + Self.gap, anchor.minX - Self.gap)
+        let path = UIBezierPath(rect: view.bounds)
+        // (Its corners grown with the card.)
+        let grown = 1 + FixedFocusMetrics.movingFocusLift + FixedFocusMetrics.heldGrowth
+        path.append(UIBezierPath(roundedRect: anchor, cornerRadius: Spotlight.cornerRadius * grown))
+        hole.frame = view.bounds
+        hole.path = path.cgPath
+        // Right of the card (held), level with its top, starting on the
+        // next card's left edge; left of it, ending on the one before's
+        // right edge, if it doesn't fit. (No cards beside it: `gap` away.)
+        let start = request.beside?.right ?? anchor.maxX + Self.gap
+        let end = request.beside?.left ?? anchor.minX - Self.gap
         if request.below {
             // Under the button, sharing its left edge — or its right edge, for
             // a button on the screen's right half.
@@ -278,11 +313,16 @@ private final class HoldMenuController: UIViewController {
         }
         let right = start + size.width <= view.bounds.width - Self.margin
         let x = right ? start : end - size.width
-        let y = min(max(anchor.minY, Self.margin), view.bounds.height - Self.margin - size.height)
-        // Grows out of its top corner facing the card.
-        panel.view.layer.anchorPoint = CGPoint(x: right ? 0 : 1, y: 0)
+        // Level with the card's top — a card low on the screen (Search's):
+        // with its bottom instead, rather than somewhere in between.
+        let bottom = view.bounds.height - Self.margin
+        let top = anchor.minY + size.height <= bottom
+        let y = top ? max(anchor.minY, Self.margin)
+            : min(max(anchor.maxY - size.height, Self.margin), bottom - size.height)
+        // Grows out of its corner facing the card, on the edge it shares.
+        panel.view.layer.anchorPoint = CGPoint(x: right ? 0 : 1, y: top ? 0 : 1)
         panel.view.bounds = CGRect(origin: .zero, size: size)
-        panel.view.center = CGPoint(x: right ? x : x + size.width, y: y)
+        panel.view.center = CGPoint(x: right ? x : x + size.width, y: top ? y : y + size.height)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -294,7 +334,7 @@ private final class HoldMenuController: UIViewController {
                        options: [.allowUserInteraction]) {
             self.panel.view.alpha = 1
             self.panel.view.transform = .identity
-            self.dim.alpha = Self.dimming
+            self.dim.alpha = self.request.below ? 0 : Self.dimming
         }
     }
 
