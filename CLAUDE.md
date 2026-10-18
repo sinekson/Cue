@@ -313,8 +313,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Projector. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
   Search / Library following the title, neutral pages keeping the last
   title's background, the old solid colours. No vignette anywhere; below
-  Details' billboard only blur + one dim (`dimBelow`; the shade and the
-  vignette there were dropped).
+  Details' billboard only blur + one dim (`dimBelow`, 55 %; a bright
+  picture more — enough for a mean luma of 0.18, `StageArt.dimBelow(for:)`;
+  the pages opened from Details alike; the shade and the vignette there
+  were dropped; tried: darkening bright pictures everywhere).
 - **Card corners**: 22 pt, continuous (`Spotlight.cornerRadius`; the Apple
   TV app's size). (Tried: 16; 18 continuous; 22 circular, as measured in
   the Apple TV app; a user setting with five choices.)

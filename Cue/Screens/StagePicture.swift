@@ -302,4 +302,42 @@ enum StageArt {
         renderer.scale = 1
         return renderer.uiImage
     }()
+
+    /// DETAILS' DIM below its billboard, by the picture's own brightness:
+    /// at least `StagePictureView.dimBelow`, more for a bright picture —
+    /// enough to bring its mean brightness down to `brightestBelow` (a
+    /// light one, blurred, glared through the usual dim). Measured once
+    /// per picture (its mean luma, from the picture in memory).
+    static let brightestBelow: CGFloat = 0.50
+    private static var brightness: [String: CGFloat] = [:]
+
+    static func dimBelow(for url: String?) -> CGFloat {
+        guard let mean = mean(url) else { return StagePictureView.dimBelow }
+        return max(StagePictureView.dimBelow, 1 - brightestBelow / mean)
+    }
+
+    private static func mean(_ url: String?) -> CGFloat? {
+        guard let url else { return nil }
+        if let known = brightness[url] { return known }
+        let key = RemoteImage.memoryKey(url, maxDimension: StagePictureView.pictureSize.width, maxPixels: nil)
+        guard let cg = ImageCache.shared.image(for: key)?.cgImage else { return nil }
+        let (w, h) = (32, 18)
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+        var sum: CGFloat = 0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            sum += 0.2126 * CGFloat(pixels[i]) + 0.7152 * CGFloat(pixels[i + 1]) + 0.0722 * CGFloat(pixels[i + 2])
+        }
+        let mean = max(sum / CGFloat(w * h) / 255, 0.01)
+        brightness[url] = mean
+        return mean
+    }
 }

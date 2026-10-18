@@ -839,7 +839,8 @@ struct DetailView: View {
             .scaleEffect(ModeSwap.depthScale(depth))
             .frame(width: 1920, height: 1080)
             .clipped()
-            Color.black.opacity(below ? StagePictureView.dimBelow : 0)
+            // Below: the dim, more for a bright picture.
+            Color.black.opacity(below ? StageArt.dimBelow(for: url) : 0)
             // The billboard's shade, exactly Home's (`StageArt.shade`).
             Group {
                 if let shade = StageArt.shade {
@@ -1879,7 +1880,7 @@ struct DetailsBackdropBackground: View {
                             .frame(width: 1920, height: 1080)
                             .clipped()
                     }
-                    Color.black.opacity(StagePictureView.dimBelow)
+                    Color.black.opacity(StageArt.dimBelow(for: url))
                 }
                 .frame(width: 1920, height: 1080)
             }
