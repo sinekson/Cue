@@ -4360,6 +4360,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// …in its first half only: later, a press moves along the buttons
     /// (when that's possible again is easy to tell).
     private static let pagingShare: CFTimeInterval = 0.75
+    /// A step from a press during the slide, not yet taken.
+    private var slideStepQueued = false
     /// A press during the slide that paged: focus to the side it went
     /// (+1: the last button, Next; -1: the first, Play).
     var onBillboardStep: (Int) -> Void = { _ in }
@@ -4540,9 +4542,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
            context.previouslyFocusedView?.isDescendant(of: host.view) == true,
            let featured = featuredIndex, rows.indices.contains(featured),
            context.focusHeading.contains(.left) || context.focusHeading.contains(.right) {
+            // (One press asks this for every candidate it tries: one step.)
+            guard !slideStepQueued else { return false }
+            slideStepQueued = true
             let step = context.focusHeading.contains(.right) ? 1 : -1
             let id = rows[featured].id
             DispatchQueue.main.async {
+                self.slideStepQueued = false
                 self.step(rowID: id, by: step)
                 self.onBillboardStep(step)
             }
