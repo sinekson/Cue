@@ -365,12 +365,13 @@ struct RootView: View {
                     profiles.onSwitchLocal = { [weak addonManager,
                                                 weak playerSettings,
                                                 weak tmdbSettings, weak streamBadges,
-                                                weak profiles] id in
+                                                weak searchViewModel, weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
                         streamBadges?.setProfile(id)
+                        searchViewModel?.setProfile(id)
                         // Every store just re-pointed at another profile's
                         // data; reconcile the new picture everywhere rather
                         // than waiting for a tick.
@@ -392,11 +393,12 @@ struct RootView: View {
                     profiles.onProfileDeleted = { [weak addonManager,
                                                    weak playerSettings,
                                                    weak tmdbSettings, weak streamBadges,
-                                                   weak nuvioSync] id in
+                                                   weak searchViewModel, weak nuvioSync] id in
                         addonManager?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
                         streamBadges?.forgetProfile(id)
+                        searchViewModel?.forgetProfile(id)
                         nuvioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
                     }

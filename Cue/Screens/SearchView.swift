@@ -13,7 +13,13 @@ final class SearchViewModel: ObservableObject {
     @Published private(set) var suggestions: [String] = []
     /// The titles last opened from Search (newest first): the row while the
     /// field is empty.
-    @Published private(set) var recentTitles: [MetaItem] = SearchViewModel.loadRecentTitles()
+    @Published private(set) var recentTitles: [MetaItem] = []
+    /// Recent searches (newest first), the suggestions while the field is empty.
+    @Published private(set) var recentSearches: [String] = []
+    /// Both recent lists are the active profile's.
+    private var profile = ProfileScopedDefaults.activeProfileID
+
+    init() { loadRecent() }
 
     private var searchTask: Task<Void, Never>?
     private var suggestTask: Task<Void, Never>?
@@ -73,14 +79,29 @@ final class SearchViewModel: ObservableObject {
         .prefix(8).map { $0 }
     }
 
-    // MARK: Recent titles
+    // MARK: Recent titles and searches (per profile)
 
     private static let recentTitlesKey = "cue.search.recentTitles"
+    private static let recentSearchesKey = "cue.search.recent"
     private static let recentTitlesLimit = 12
+    private static let recentSearchesLimit = 8
 
-    private static func loadRecentTitles() -> [MetaItem] {
-        guard let data = UserDefaults.standard.data(forKey: recentTitlesKey) else { return [] }
-        return (try? JSONDecoder().decode([MetaItem].self, from: data)) ?? []
+    private func loadRecent() {
+        recentTitles = ProfileScopedDefaults.data(Self.recentTitlesKey, profile)
+            .flatMap { try? JSONDecoder().decode([MetaItem].self, from: $0) } ?? []
+        recentSearches = (ProfileScopedDefaults.string(Self.recentSearchesKey, profile) ?? "")
+            .split(separator: "\n").map(String.init)
+    }
+
+    /// Another profile is active: its recent lists.
+    func setProfile(_ id: Int) {
+        guard id != profile else { return }
+        profile = id
+        loadRecent()
+    }
+
+    func forgetProfile(_ id: Int) {
+        ProfileScopedDefaults.forget([Self.recentTitlesKey, Self.recentSearchesKey], profile: id)
     }
 
     /// A title opened from Search: first among the recent ones.
@@ -88,8 +109,18 @@ final class SearchViewModel: ObservableObject {
         let list = [item] + recentTitles.filter { $0.id != item.id }
         recentTitles = Array(list.prefix(Self.recentTitlesLimit))
         if let data = try? JSONEncoder().encode(recentTitles) {
-            UserDefaults.standard.set(data, forKey: Self.recentTitlesKey)
+            UserDefaults.standard.set(data, forKey: ProfileScopedDefaults.key(Self.recentTitlesKey, profile))
         }
+    }
+
+    /// The query joins the recent searches.
+    func remember() {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else { return }
+        let list = [query] + recentSearches.filter { $0.caseInsensitiveCompare(query) != .orderedSame }
+        recentSearches = Array(list.prefix(Self.recentSearchesLimit))
+        UserDefaults.standard.set(recentSearches.joined(separator: "\n"),
+                                  forKey: ProfileScopedDefaults.key(Self.recentSearchesKey, profile))
     }
 
     /// The results: TMDB's films and series for the query (the same search
@@ -373,9 +404,6 @@ struct SearchView: View {
     var onOpenPerson: (Int, String) -> Void = { _, _ in }
     var onOpenStudio: (Int, String) -> Void = { _, _ in }
 
-    /// Recent searches (newest first), the suggestions while the field is empty.
-    @AppStorage("cue.search.recent") private var recentStorage = ""
-    private var recent: [String] { recentStorage.split(separator: "\n").map(String.init) }
 
     var body: some View {
         // (No background of its own: the app's, full-screen behind the
@@ -401,7 +429,7 @@ struct SearchView: View {
         // tvOS into an endless focus/reload loop that froze Search.)
         .searchSuggestions {
             if viewModel.query.isEmpty {
-                ForEach(recent, id: \.self) { search in Text(search).searchCompletion(search) }
+                ForEach(viewModel.recentSearches, id: \.self) { search in Text(search).searchCompletion(search) }
             } else {
                 ForEach(viewModel.suggestions, id: \.self) { name in Text(name).searchCompletion(name) }
             }
@@ -501,7 +529,7 @@ struct SearchView: View {
     /// joins the recent titles; a person's or studio's page. The query
     /// joins the recent searches.
     private func open(_ item: MetaItem) {
-        remember()
+        viewModel.remember()
         switch item.type {
         case "person":
             if let id = SearchViewModel.tmdbID(item) { onOpenPerson(id, item.name) }
@@ -511,14 +539,6 @@ struct SearchView: View {
             viewModel.opened(item)
             DetailTransition.shared.open(item) { onOpenInPlace(item) }
         }
-    }
-
-    /// The query joins the recent ones.
-    private func remember() {
-        let query = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else { return }
-        let list = [query] + recent.filter { $0.caseInsensitiveCompare(query) != .orderedSame }
-        recentStorage = list.prefix(8).joined(separator: "\n")
     }
 }
 

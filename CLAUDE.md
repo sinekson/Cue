@@ -479,7 +479,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   dropped: Top Results as 3 landscape backdrops with their logos, studios
   as landscape plates — every scope its own shape. Collections — later,
   perhaps; networks have no TMDB search.) The field empty: the last 12 titles opened from
-  Search (`cue.search.recentTitles`).
+  Search (`cue.search.recentTitles`). Both recent lists (searches: the last
+  8, `cue.search.recent`) are per profile (`ProfileScopedDefaults`).
   Loading: searching with nothing on show yet (the first search, or
   after none found), 6 placeholder cards (`FixedFocusPlaceholder`, no
   focus) in the row's place, the results taking over in one 0.25 s fade;
