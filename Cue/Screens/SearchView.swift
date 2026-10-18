@@ -410,9 +410,8 @@ struct SearchView: View {
         // tabs, shows through — one here, under the bar's clearance, was a
         // second picture cut off below the bar.)
         ZStack(alignment: .topLeading) {
-            GeometryReader { geo in
-                page(rowHeight: SearchRowController.rowHeight(width: geo.size.width))
-            }
+            page(rowHeight: SearchRowController.rowHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .ignoresSafeArea(edges: [.horizontal, .bottom])
             SearchKeyboardLine()
                 .frame(width: 1, height: 1)
@@ -718,17 +717,12 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         view.addSubview(collectionView)
     }
 
-    /// The row's room for six cards as wide as the line above them (its
-    /// ends at the page's inset): the cards, their growth, their captions.
-    static func rowHeight(width: CGFloat) -> CGFloat {
-        let room = width - 2 * FixedFocusMetrics.inset
-        var cardWidth = (room / 6).rounded(.down)
-        while cardWidth > 100, 6 * cardWidth + 5 * FixedFocusMetrics.destinationGap(cardWidth: cardWidth) > room {
-            cardWidth -= 1
-        }
-        let card = (cardWidth * 1.5).rounded()
-        return (card * (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.up) + FixedFocusMetrics.captionRoom
-    }
+    /// The row's room for six cards as wide as the line above them (THE
+    /// portrait poster, `FixedFocusMetrics.posterCard`): the cards, their
+    /// growth, their captions.
+    static let rowHeight: CGFloat =
+        (FixedFocusMetrics.posterCard.height * (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.up)
+        + FixedFocusMetrics.captionRoom
 
     /// The card: the row's room less its captions and the growth above.
     static func cardHeight(rowHeight: CGFloat) -> CGFloat {

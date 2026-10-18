@@ -13,12 +13,13 @@ enum Spotlight {
     static let continueRowID = "spotlight.continueWatching"
     static let featuredRowID = "spotlight.featured"
 
-    /// Height of the focus box AND the posters beside it.
-    static let rowHeight: CGFloat = 420
-    /// Portrait 2:3 poster at row height (280pt). At 420 exactly three
-    /// posters fit beside the box, plus a peek of a fourth at the edge.
+    /// Height of the focus box AND the posters beside it: THE portrait
+    /// poster's (`FixedFocusMetrics.posterCard`, 398 — every poster in the
+    /// app one size; was 420).
+    static let rowHeight: CGFloat = FixedFocusMetrics.posterCard.height
+    /// Portrait 2:3 poster at row height (265 pt).
     static var posterWidth: CGFloat { rowHeight * 2 / 3 }
-    /// Landscape 16:9 box at row height (~747pt).
+    /// Landscape 16:9 box at row height (~707 pt).
     static var boxWidth: CGFloat { rowHeight * 16 / 9 }
     /// Gap between the box and posters, and between posters.
     static let spacing: CGFloat = 24

@@ -2769,14 +2769,14 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var landscapeRowIDs: Set<String> = []
     /// Collection rows: landscape tiles in a panel (see `FixedFocusPanelView`).
     var panelRowIDs: Set<String> = []
-    /// Destination rows (see `FixedFocusMetrics.destinationPosterHeight`).
+    /// Destination rows (see `FixedFocusMetrics.posterCard`).
     var destinationRowIDs: Set<String> = []
     /// Rows of ONE wide banner (Search's Top Result: see
     /// `FixedFocusBannerCell`), and its height.
     var bannerRowIDs: Set<String> = []
     var bannerHeight: CGFloat = FixedFocusMetrics.bannerHeight
-    /// Destination rows' posters' height (Search: smaller, under the keyboard).
-    var destinationPosterHeight: CGFloat = FixedFocusMetrics.destinationPosterHeight
+    /// Destination rows of smaller portraits (`FixedFocusMetrics.portraitCard`).
+    var portraitRowIDs: Set<String> = []
     /// Where the focused row's name sits (Home's spot by default)…
     var rowTop: CGFloat = FixedFocusMetrics.rowTop
     /// …and how much of the rows above and below shows.
@@ -2951,7 +2951,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.destinationRowIDs = destinationRowIDs
         controller.bannerRowIDs = bannerRowIDs
         controller.bannerHeight = bannerHeight
-        controller.destinationPosterHeight = destinationPosterHeight
+        controller.portraitRowIDs = portraitRowIDs
         controller.rowTop = rowTop
         controller.aboveVisible = aboveVisible
         controller.belowVisible = belowVisible
@@ -2995,8 +2995,8 @@ enum FixedFocusMetrics {
     /// alignment: the corner makes the edge look further in than it is).
     static let textIndent: CGFloat = 5
     static var titleInset: CGFloat { inset + textIndent }
-    /// The original Home's sizes exactly (box 16:9 and posters 2:3, both
-    /// 420 pt tall) — about 3½ posters right of the box.
+    /// The box 16:9 and the posters 2:3, both the portrait poster's height
+    /// (`Spotlight.rowHeight`) — about 3½ posters right of the box.
     static let height: CGFloat = Spotlight.rowHeight
     static let posterWidth: CGFloat = Spotlight.posterWidth
     static let boxWidth: CGFloat = Spotlight.boxWidth
@@ -3035,15 +3035,28 @@ enum FixedFocusMetrics {
     /// DESTINATION rows (Saved for Later, collections) — you go there for
     /// something you already know, not to be shown one title at a time:
     /// the system's own scrolling and lift, and a caption under every card.
-    /// Saved for Later: posters at the rows' usual size…
-    static let destinationPosterHeight: CGFloat = height
-    /// …smaller posters, more in view: Search's titles, Details' people.
-    static let compactPosterHeight: CGFloat = 330
+    /// THE PORTRAIT POSTER of moving focus — Search, Saved for Later,
+    /// Details' rows, the grids: six across the content's width, the
+    /// rows' gaps (`destinationGap(cardWidth:)`) between them.
+    static let posterCard = posters(across: 6)
+    /// Smaller portraits for long rows of people (Details' Cast & Crew):
+    /// seven across.
+    static let portraitCard = posters(across: 7)
+    /// 2:3 cards, `count` across the content's width with the rows' gaps.
+    private static func posters(across count: Int) -> CGSize {
+        let n = CGFloat(count)
+        var width = (bannerWidth / n).rounded(.down)
+        while width > 100, n * width + (n - 1) * (gap + width * movingFocusLift / 2).rounded() > bannerWidth {
+            width -= 1
+        }
+        return CGSize(width: width, height: (width * 1.5).rounded())
+    }
     /// A short custom row in focus ends this far above the screen's bottom
     /// (see `FixedFocusCustomRow.contentHeight`).
     static let customBottomGap: CGFloat = 60
-    /// A logo row's cards (Details' network & studios).
-    static let logoCard = CGSize(width: 260, height: 140)
+    /// A logo row's cards (Details' network & studios): the portrait
+    /// posters' width, so they line up with the rows above.
+    static let logoCard = CGSize(width: posterCard.width, height: 140)
     /// …collections: landscape tiles (doors).
     static let destinationTileHeight: CGFloat = 300
     /// Continue Watching's cards: the landscape tiles' size (more of them
@@ -3193,7 +3206,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// and focus as destination rows do.
     var bannerRowIDs: Set<String> = []
     var bannerHeight = FixedFocusMetrics.bannerHeight
-    var destinationPosterHeight = FixedFocusMetrics.destinationPosterHeight
+    var portraitRowIDs: Set<String> = []
 
     func isBanner(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && bannerRowIDs.contains(rows[rowIndex].id)
@@ -3212,7 +3225,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return isLandscape(rowIndex)
             ? CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight),
                      height: FixedFocusMetrics.destinationTileHeight)
-            : CGSize(width: destinationPosterHeight * 2 / 3, height: destinationPosterHeight)
+            : rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id)
+                ? FixedFocusMetrics.portraitCard : FixedFocusMetrics.posterCard
     }
     /// The focused row's name, on screen (the box below it).
     var rowTop: CGFloat = FixedFocusMetrics.rowTop {
@@ -5440,9 +5454,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// A moving-focus row's captions only while it has focus — as the fixed
     /// box's info: rows above and below show only their cards (the same
     /// preview strip as any row).
+    /// A fixed row's posters too (their name and year; the box has its info).
     func applyCaptions() {
-        guard let strip = destinationStrip else { return }
-        for case let card as FixedFocusDestinationCell in strip.visibleCells { card.setCaptionShown(isFocusRow) }
+        for case let card as FixedFocusPosterCell in strip.visibleCells { card.setCaptionShown(isFocusRow) }
+        guard let destinationStrip else { return }
+        for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells { card.setCaptionShown(isFocusRow) }
     }
 
     /// The cards darkened as the row's state says (see the controller's
@@ -6113,6 +6129,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
             cell.setPast(isPast(indexPath.item))
             cell.setConcealed(concealed)
+            cell.setCaptionShown(isFocusRow, animated: false)
             UIView.performWithoutAnimation { cell.dim = cardDim }
         }
         return cell
@@ -7466,6 +7483,45 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let info = UIView()
     private let name = UILabel()
     private let facts = UILabel()
+    /// A poster's caption (not grown): its name and year, as under a
+    /// moving-focus card at rest.
+    private let caption = UIView()
+    private let captionName = UILabel()
+    private let captionYear = UILabel()
+    private var grown = false
+    /// Its row focused (rows above and below: the cards alone).
+    private var captionShown = false
+    func setCaptionShown(_ shown: Bool, animated: Bool = true) {
+        guard shown != captionShown else { return }
+        captionShown = shown
+        if animated { fadeCaption(out: !shown) } else { UIView.performWithoutAnimation { applyAlpha() } }
+    }
+    /// Out quickly (gone before its card has travelled far — the move's
+    /// own duration carried it a long way); in as the mirror of that: over
+    /// the same share of the way, at its end (`captionFadeIn`).
+    static let captionFadeOut: Double = 0.08
+    /// When, in a move of `duration` (the rows' no-bounce spring), the card
+    /// has as much of its way left as it covered in `captionFadeOut`.
+    static func captionFadeIn(duration: Double) -> Double {
+        // The spring's progress: 1 − (1 + ωt)·e^(−ωt), ω = 2π / duration.
+        let omega = 2 * Double.pi / duration
+        func progress(_ t: Double) -> Double { 1 - (1 + omega * t) * exp(-omega * t) }
+        let target = 1 - progress(captionFadeOut)
+        var low = 0.0, high = duration
+        for _ in 0..<30 {
+            let mid = (low + high) / 2
+            if progress(mid) < target { low = mid } else { high = mid }
+        }
+        return low
+    }
+    private func fadeCaption(out: Bool) {
+        let move = Self.vertical?.duration ?? Motion.moveDuration
+        let start = Self.captionFadeIn(duration: move)
+        UIView.animate(withDuration: out ? Self.captionFadeOut : move - start,
+                       delay: out ? 0 : start,
+                       options: [out ? .curveLinear : .curveEaseOut, .beginFromCurrentState,
+                                 .overrideInheritedDuration, .overrideInheritedCurve]) { self.applyAlpha() }
+    }
     private var item: MetaItem?
     private var backdropFor: String?
     /// Continue Watching: a landscape card (backdrop always), with its state.
@@ -7530,6 +7586,14 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         info.alpha = 0
         info.isUserInteractionEnabled = false
         addSubview(info)
+        captionName.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
+        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionResting)
+        captionYear.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
+        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionDetail)
+        caption.addSubview(captionName)
+        caption.addSubview(captionYear)
+        caption.isUserInteractionEnabled = false
+        addSubview(caption)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -7575,6 +7639,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                              height: FixedFocusMetrics.factsHeight)
         name.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: 30)
         facts.frame = CGRect(x: 0, y: 36, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
+        caption.frame = CGRect(x: 0, y: cardHeight + FixedFocusMetrics.infoGap,
+                               width: FixedFocusMetrics.posterWidth,
+                               height: FixedFocusMetrics.captionRoom - FixedFocusMetrics.infoGap)
+        captionName.frame = CGRect(x: 0, y: 0, width: caption.bounds.width, height: 30)
+        captionYear.frame = CGRect(x: 0, y: FixedFocusMetrics.captionLineOffset,
+                                   width: caption.bounds.width, height: 30)
     }
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell,
@@ -7617,6 +7687,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         }
         state.alpha = 0
         shade.isHidden = false
+        captionName.text = item.name
+        captionYear.text = item.year
+        applyAlpha()
         FixedFocusImages.load(item.poster ?? item.background, into: poster,
                               maxDimension: FixedFocusMetrics.height)
         FixedFocusImages.load(nil, into: backdrop, maxDimension: 0)
@@ -7656,6 +7729,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     private func applyAlpha() {
         contentView.alpha = concealed || underPressedBox ? 0 : past ? FixedFocusMetrics.previousAlpha : 1
+        // The caption: only under a poster (not the box, a landscape card,
+        // a placeholder) in
+        // the box's row, not left of the box (its sliver at the edge).
+        let plain = captionShown && !past && !invisible && !landscape && !grown
+            && !FixedFocusPlaceholder.isPlaceholder(item)
+        caption.alpha = plain && !concealed && !underPressedBox ? 1 : 0
     }
 
     /// Showing the box itself (grown, not under the fixed box).
@@ -7700,6 +7779,10 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// shows under every grown cell (it travels with its title).
     func setGrown(_ grown: Bool, contentHidden: Bool) {
         if invisible { return }
+        if grown != self.grown {
+            self.grown = grown
+            fadeCaption(out: grown)
+        }
         if grown, let item { chips.show(item) }
         if landscape {
             // Continue Watching: always the landscape card; the outline only

@@ -125,7 +125,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Animation in `didUpdateFocus`. Fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus (the
   row stays, focus moves across the cards — grown 5 % — a caption under
-  each).
+  each). The fixed rows' posters right of the box also get a
+  caption (name, year — at rest's levels) while their row has focus, as
+  moving-focus rows (`FixedFocusPosterCell.caption`; none under the box,
+  left of it, or in rows out of focus — no extra room between rows).
+  Going it fades out in 0.08 s (`captionFadeOut`; it rode the move's
+  own duration a long way), coming back in as its mirror: over the
+  same share of the way (the spring's first 0.08 s covers ~40 %), at its
+  end (`captionFadeIn`; tried: the last 0.12 s — too late).
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
   The focused row stays at its fixed spot near the top (not centred). The
   row below always starts the same gap (`peekGap`) below what the focused
@@ -224,12 +231,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   button; the map above the buttons; the map under the episodes' captions.
 - **Details' collection** (films; TMDB's collection — not Cue's Collections):
   the first row below the billboard, above More Like This, named "More from
-  the … Collection". Fixed focus; the other parts in release order (the film
+  the … Collection". Moving focus, posters with a caption (as Cast &
+  Crew's; tried: fixed focus); the other parts in release order (the film
   itself left out), starting on the first; upcoming parts kept, parts
   without a picture left out. Details' peek never shows a row name (one
   title's page — Apple's rule); Home's does.
 - **Details' Cast & Crew**: after More Like This. Moving focus, portraits
-  (2:3, Search's poster size — `compactPosterHeight`, TMDB `h632`), name + role under each; creators /
+  (2:3, smaller than the posters — seven across, `portraitCard`; many
+  people; tried: the portrait poster's size), name + role under each; creators /
   director first, then the cast (a show: `aggregate_credits`, most episodes
   first), about 20; no photo: initials; Select: the person's page; no menu.
 - **Details' About**: the page's last row — a SwiftUI view in the rows
@@ -247,7 +256,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Before it, **Network & Studios**: a moving-focus row of logos on
   light plates (`logoRowIDs`), Select: their titles.
 - **Details' Cast & Crew**: after More Like This. Moving focus, portraits
-  (2:3, Search's poster size — `compactPosterHeight`, TMDB `h632`), name + role under each; creators /
+  (2:3, smaller than the posters — seven across, `portraitCard`; many
+  people; tried: the portrait poster's size), name + role under each; creators /
   director first, then the cast (a show: `aggregate_credits`, most episodes
   first), about 20; no photo: initials; Select: the person's page; no menu.
 - **Details' About**: the page's last row — a SwiftUI view in the rows
@@ -283,8 +293,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   titles arrive; more pages as focus nears the end. (Tried and dropped:
   the header fixed above the grid — too much room lost; tvOS's own focus
   scroll plus resetting the page on the first line — it jumped.)
-- **Details' More Like This**: fixed focus (Home's catalog style — the box
-  tells the title). TMDB recommendations (else similar), 12 titles; titles
+- **Details' More Like This**: moving focus, posters with a caption (as
+  Cast & Crew's; tried: fixed focus, Home's catalog style). TMDB recommendations (else similar), 12 titles; titles
   not yet out or without any picture left out; watched films last.
 - **Into Details** (`DetailTransition`, Core Animation overlay):
   - Fade everywhere: Home dims, the cover zooms (0.55 s), info fades in at 85 %. ~0.8 s.
@@ -319,6 +329,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture more — enough for a mean luma of 0.18, `StageArt.dimBelow(for:)`;
   the pages opened from Details alike; the shade and the vignette there
   were dropped; tried: darkening bright pictures everywhere).
+- **Portrait posters** (Search, Saved for Later, Details' collection and
+  More Like This, the folder and browse grids, the fixed-focus rows — not
+  Cast & Crew's portraits): ONE size, six across the content's width
+  with the rows' gaps (`FixedFocusMetrics.posterCard`, 265 × 398). The
+  fixed rows are that tall (`Spotlight.rowHeight` = its height; was 420),
+  the box 16:9 at it (~707 × 398), growing the same 4 %. The studios' logo plates
+  the same width (265 × 140, `logoCard`), lined up with them. (Tried: Saved for Later
+  at Home's row height, Details' rows smaller, 330 tall.)
 - **Card corners**: 22 pt, continuous (`Spotlight.cornerRadius`; the Apple
   TV app's size). (Tried: 16; 18 continuous; 22 circular, as measured in
   the Apple TV app; a user setting with five choices.)

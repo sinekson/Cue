@@ -699,10 +699,13 @@ struct DetailView: View {
                            // Episodes: landscape tiles (the collections' size —
                            // about 3½ in view), moving focus.
                            landscapeRowIDs: seasonIDs,
-                           // Cast & Crew: moving focus too — portraits, a
-                           // caption (name, role) under each.
-                           destinationRowIDs: seasonIDs.union([Self.castRowID, Self.studiosRowID]),
-                           destinationPosterHeight: Self.portraitHeight,
+                           // The collection, More Like This, Cast & Crew:
+                           // moving focus too — posters / portraits, a
+                           // caption under each.
+                           destinationRowIDs: seasonIDs.union([Self.collectionRowID, Self.moreRowID,
+                                                               Self.castRowID, Self.studiosRowID]),
+                           // Cast & Crew: smaller portraits — many people.
+                           portraitRowIDs: [Self.castRowID],
                            onSelect: onSelectItem,
                            onSelectFeatured: { _ in },
                            onResume: { _ in },
@@ -886,6 +889,7 @@ struct DetailView: View {
 
     private static let episodesRowID = seasonRowPrefix + "all"
     private static let collectionRowID = "detail.collection"
+    private static let moreRowID = "detail.more"
     private static let castRowID = "detail.cast"
     private static let aboutRowID = "detail.about"
     /// About's room: from under its name at the rows' spot to the screen's
@@ -900,8 +904,6 @@ struct DetailView: View {
     private static let personPrefix = "person:"
     /// About this many people in Cast & Crew.
     private static let castCount = 20
-    /// Cast & Crew's portraits: Search's poster size (smaller than Home's).
-    private static let portraitHeight = FixedFocusMetrics.compactPosterHeight
     /// TMDB's "The Lord of the Rings Collection" as the row's name: "More
     /// from the Lord of the Rings Collection" (a name not ending in
     /// "Collection": "More from …").
@@ -1013,7 +1015,7 @@ struct DetailView: View {
             // (Films you've seen last — TMDB's order otherwise.)
             let more = viewModel.moreLikeThis
             let seen = more.filter { watched.isWatched($0) }
-            rows.append(HomeRow(id: "detail.more", title: "More Like This",
+            rows.append(HomeRow(id: Self.moreRowID, title: "More Like This",
                                 items: more.filter { !watched.isWatched($0) } + seen))
         }
         // The people: creators / director first, then the cast — portraits.
