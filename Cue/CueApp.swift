@@ -1088,6 +1088,7 @@ struct RootView: View {
                     // Stays non-focusable until Home has content to hold
                     // initial focus (onContentReady); timer is the fallback.
                     .task {
+                        await LaunchPreloader.shared.lifted()
                         try? await Task.sleep(nanoseconds: 3_000_000_000)
                         // Cold-launch fallback ONLY. When a tab switch is
                         // deliberately waiting on onContentReady, this timer
@@ -1361,6 +1362,9 @@ struct RootView: View {
         sidebarAwaitingContent = false
         sidebarReenableTask?.cancel()
         sidebarReenableTask = Task { @MainActor in
+            // Counted from the launch curtain's lift: under it Home is ready
+            // but disabled, and an enabled rail took the first focus.
+            await LaunchPreloader.shared.lifted()
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             AppProbe.focus("rail re-enabled by timer")
@@ -1881,19 +1885,23 @@ enum FocusTrace {
 
 // MARK: - Launch (docs/LOADING-PLAN.md §4)
 
-/// THE LAUNCH: on a cold start, while a small ring shows, the closest things
-/// get ready — Home's rows and billboard from disk, the billboard's pictures
-/// and colours decoded, the first row's posters, the one-time artwork — and
-/// Home is built under it. It ends when that's done (at least `minimum`
-/// shown), or at `cap` — never waiting on the network: what isn't on disk
-/// loads as usual afterwards. Every step reports a count and its time
+/// THE LAUNCH: on a cold start, under the launch curtain (the app's background
+/// and the launch screen's play, growing and shrinking — `LaunchStageView`),
+/// the closest things get ready — Home's rows and billboard from disk, the
+/// billboard's pictures and colours decoded, the first row's posters, the
+/// one-time artwork — and Home is built under it. That ends when it's done (at least `minimum` shown), or at `cap`
+/// — never waiting on the network: what isn't on disk loads as usual
+/// afterwards. Then the play is pushed and the curtain fades into Home; input
+/// comes back with the fade (`lift`). Every step reports a count and its time
 /// (Render Lab → Launch: show numbers).
 @MainActor
 final class LaunchPreloader: ObservableObject {
     static let shared = LaunchPreloader()
 
+    /// Over the app, input off — until the play has been pushed.
     @Published private(set) var curtain = true
-    @Published private(set) var progress: Double = 0
+    /// Everything's ready: the curtain pushes the play, then fades.
+    @Published private(set) var opening = false
     @Published private(set) var lines: [String] = []
 
     static let minimum: Double = 0.6
@@ -1914,27 +1922,41 @@ final class LaunchPreloader: ObservableObject {
         }
     }
 
-    /// Covered by the welcome screen or the profile gate: no curtain.
-    func skip() { finish(note: "covered") }
+    /// Covered by the welcome screen or the profile gate: the curtain just goes.
+    func skip() {
+        finish(note: "covered")
+        lift()
+    }
 
     private func finish(note: String) {
         guard !finished else { return }
         finished = true
         line(String(format: "Total     %.2f s  (%@)", elapsed, note))
-        progress = 1
+        opening = true
+        Task {
+            try? await Task.sleep(for: .seconds(Self.numbersLinger))
+            numbersShown = false
+        }
+    }
+
+    /// Returns once the curtain has lifted (at once if it has).
+    func lifted() async {
+        while curtain { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+
+    /// The play has been pushed (or the curtain was covered): the curtain fades
+    /// into Home and input comes back.
+    func lift() {
+        guard curtain else { return }
         curtain = false
-        // Input back on: the focus engine doesn't pick a focus by itself —
-        // the first press only woke it. Asked to, once the page is enabled.
+        // The focus engine doesn't pick a focus by itself — the first press
+        // only woke it. Asked to, once the page is enabled.
         Task {
             try? await Task.sleep(for: .milliseconds(50))
             let window = UIApplication.shared.connectedScenes
                 .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
             window?.rootViewController?.setNeedsFocusUpdate()
             window?.rootViewController?.updateFocusIfNeeded()
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(Self.numbersLinger))
-            numbersShown = false
         }
     }
 
@@ -1972,7 +1994,6 @@ final class LaunchPreloader: ObservableObject {
         line(String(format: "Disk      rows %d · picks %d%@ (waited %.0f ms) · records %d/%d · %.0f ms",
                     rows.count, picks.count, home.billboardPicks.isEmpty ? " (highlights)" : "",
                     picksWait, records, firstTitles.count, (CACurrentMediaTime() - t) * 1000))
-        progress = 0.15
 
         // ③ One-time artwork (cheap; first so it's off the way), on the main
         // actor — under the curtain.
@@ -1981,7 +2002,6 @@ final class LaunchPreloader: ObservableObject {
         _ = FixedFocusCardEdge.shadowImage
         _ = BillboardShade.image
         line(String(format: "Setup     artwork 3 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
-        progress = 0.25
 
         // ② Decodes, from disk only, a few at a time: the billboard's first
         // backdrops (the stage's own size), every logo, the first colours, the
@@ -2014,8 +2034,6 @@ final class LaunchPreloader: ObservableObject {
             }
         }
         var done: [String: (ok: Int, all: Int)] = [:]
-        let total = max(jobs.count, 1)
-        var finishedJobs = 0
         // A few at a time (the decodes themselves are off the main actor).
         var next = 0
         await withTaskGroup(of: (String, Bool).self) { group in
@@ -2031,8 +2049,6 @@ final class LaunchPreloader: ObservableObject {
                 entry.all += 1
                 if ok { entry.ok += 1 }
                 done[kind] = entry
-                finishedJobs += 1
-                progress = 0.25 + 0.75 * Double(finishedJobs) / Double(total)
                 start()
             }
         }
@@ -2043,14 +2059,14 @@ final class LaunchPreloader: ObservableObject {
             }.joined(separator: " · ")
         line(String(format: "Decode    %@ · %.0f ms", summary, (CACurrentMediaTime() - t) * 1000))
 
-        // Shown at least `minimum` (no flash of a ring).
+        // Shown at least `minimum` (the play breathes once, not a flash).
         if elapsed < Self.minimum { try? await Task.sleep(for: .seconds(Self.minimum - elapsed)) }
         finish(note: "ready")
     }
 }
 
-/// The launch screen: a small ring, and — Render Lab → Launch: show numbers
-/// — what was loaded and how long it took.
+/// The launch curtain (`LaunchStageView`) and — Render Lab → Launch: show
+/// numbers — what was loaded and how long it took.
 struct LaunchCurtain: View {
     @ObservedObject private var launch = LaunchPreloader.shared
     @ObservedObject private var probe = RenderProbe.shared
@@ -2059,16 +2075,8 @@ struct LaunchCurtain: View {
         ZStack {
             if launch.curtain {
                 ZStack {
-                    Color.black
-                    ZStack {
-                        Circle().stroke(Color.white.opacity(0.15), lineWidth: 5)
-                        Circle().trim(from: 0, to: launch.progress)
-                            .stroke(Color.white.opacity(FixedFocusText.primary),
-                                    style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .animation(.easeOut(duration: 0.2), value: launch.progress)
-                    }
-                    .frame(width: 56, height: 56)
+                    ATVBackground()
+                    LaunchStage(opening: launch.opening)
                 }
                 .transition(.opacity)
             }
@@ -2093,6 +2101,114 @@ struct LaunchCurtain: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.3), value: launch.numbersShown)
+    }
+}
+
+private struct LaunchStage: UIViewRepresentable {
+    let opening: Bool
+
+    func makeUIView(context: Context) -> LaunchStageView { LaunchStageView() }
+
+    func updateUIView(_ view: LaunchStageView, context: Context) {
+        if opening { view.open { LaunchPreloader.shared.lift() } }
+    }
+}
+
+/// The launch curtain's play, in Core Animation — it keeps its pace while
+/// Home is built on the main thread underneath. It takes over from the launch
+/// screen with the same picture (`LaunchPlay`, Tools/AppIcon/render.swift: the
+/// play `playHeight` tall in a `frameSide` square, centred) over the app's
+/// background: the play grows and shrinks while the app loads. `open`: a push —
+/// the play sinks in and comes back — then the curtain fades into Home.
+final class LaunchStageView: UIView {
+    // As render.swift's launch play and its `playShape`.
+    private static let playHeight: CGFloat = 220
+    private static let frameSide: CGFloat = 640
+    private static let playWidthRatio: CGFloat = 0.9
+    private static let playCorner: CGFloat = 0.13
+    private static let opticalNudge: CGFloat = 0.03
+
+    private static let breath: (scale: CGFloat, duration: CFTimeInterval) = (1.08, 0.8)
+    private static let pushed: CGFloat = 0.8
+    private static let pushDuration: CFTimeInterval = 0.12
+    private static let holdDuration: CFTimeInterval = 0.05
+    private static let releaseDuration: CFTimeInterval = 0.25
+
+    private let play = CALayer()
+    private var breathing = false
+    private var opened = false
+
+    init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        play.contents = UIImage(named: "LaunchPlay")?.cgImage
+        layer.addSublayer(play)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !bounds.isEmpty else { return }
+        let centre = incentre
+        let frame = Self.frameSide
+        let origin = CGPoint(x: bounds.midX - frame / 2, y: bounds.midY - frame / 2)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        play.bounds = CGRect(x: 0, y: 0, width: frame, height: frame)
+        play.anchorPoint = CGPoint(x: (centre.x - origin.x) / frame, y: (centre.y - origin.y) / frame)
+        play.position = centre
+        CATransaction.commit()
+        if !breathing && !opened {
+            breathing = true
+            let breathe = CABasicAnimation(keyPath: "transform.scale")
+            breathe.fromValue = 1
+            breathe.toValue = Self.breath.scale
+            breathe.duration = Self.breath.duration
+            breathe.autoreverses = true
+            breathe.repeatCount = .infinity
+            breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            play.add(breathe, forKey: "breathe")
+        }
+    }
+
+    /// The push; `done` once the play is back, for the curtain to fade.
+    func open(_ done: @escaping () -> Void) {
+        guard !opened else { return }
+        opened = true
+        // From wherever the breath is.
+        let now = (play.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1
+        play.removeAnimation(forKey: "breathe")
+
+        let total = Self.pushDuration + Self.holdDuration + Self.releaseDuration
+        let push = CAKeyframeAnimation(keyPath: "transform.scale")
+        push.values = [now, Self.pushed, Self.pushed, 1]
+        push.keyTimes = [0, Self.pushDuration / total, (Self.pushDuration + Self.holdDuration) / total, 1]
+            .map { NSNumber(value: $0) }
+        push.timingFunctions = [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .linear),
+                                CAMediaTimingFunction(name: .easeOut)]
+        push.duration = total
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(done)
+        play.add(push, forKey: "push")
+        CATransaction.commit()
+    }
+
+    /// The play scales around its incentre: the point equally far from its
+    /// three sides (the unrounded triangle's — its left side is straight, at
+    /// the drawn shape's left). The drawn shape as render.swift's `playShape`:
+    /// centred, plus the optical nudge.
+    private var incentre: CGPoint {
+        let h = Self.playHeight, w = h * Self.playWidthRatio, r = h * Self.playCorner
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: 0, y: h / 2))
+        p.addArc(tangent1End: .zero, tangent2End: CGPoint(x: w, y: h / 2), radius: r)
+        p.addArc(tangent1End: CGPoint(x: w, y: h / 2), tangent2End: CGPoint(x: 0, y: h), radius: r)
+        p.addArc(tangent1End: CGPoint(x: 0, y: h), tangent2End: .zero, radius: r)
+        p.closeSubpath()
+        let left = bounds.midX + h * Self.opticalNudge - p.boundingBoxOfPath.width / 2
+        let side = (w * w + h * h / 4).squareRoot()
+        return CGPoint(x: left + h * w / (h + 2 * side), y: bounds.midY)
     }
 }
 

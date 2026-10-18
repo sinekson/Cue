@@ -1,7 +1,7 @@
-// Renders Cue's tvOS app icon layers and Top Shelf images into the asset
-// catalog: one play, drawn like the note on Apple's Musik icon — a grey-white,
-// slightly see-through glyph with a tight dark rim, on Musik's gradient, a
-// little pinker.
+// Renders Cue's tvOS app icon layers, Top Shelf images and the launch screen's
+// play into the asset catalog: one play, drawn like the note on Apple's Musik icon — a
+// grey-white, slightly see-through glyph with a tight dark rim, on Musik's
+// gradient, a little pinker.
 //   swift Tools/AppIcon/render.swift [preview.png]
 // Sizes are in a 400 × 240 design space and scaled per output.
 // Back layer: the background. Middle: the play's shadow. Front: the play and its
@@ -9,6 +9,10 @@
 // The Top Shelf images (shown when the Top Shelf extension has nothing) are the
 // same picture flattened: the background, the play at `topShelfPlayShare` of
 // their height.
+// The launch screen (`LaunchScreen`) is the app's background colour (read from
+// the `AppBackground` colour set) full-screen with the play, `launchPlayHeight`
+// tall, centred; the launch curtain (`LaunchStageView`) takes over from it with
+// the same play (`LaunchPlay`, in a `launchFrame` square, centred).
 // Colours are Display P3 values (as on the TV — sRGB was too tame).
 
 import AppKit
@@ -31,6 +35,8 @@ let playCorner: CGFloat = 0.13          // × height
 let playWidthRatio: CGFloat = 0.9       // width ÷ height
 let opticalNudge: CGFloat = 0.03        // × height, right of the drawn shape's centre
 let topShelfPlayShare: CGFloat = 0.4    // the play's height ÷ a Top Shelf image's height
+let launchPlayHeight: CGFloat = 220     // points on the 1920 × 1080 screen (= LaunchStageView.playHeight)
+let launchFrame: CGFloat = 640          // the play's picture, square, centred
 
 // MARK: - Drawing
 
@@ -115,21 +121,41 @@ func render(_ layers: [Layer], pixels: CGSize) -> Data {
     return NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .png, properties: [:])!
 }
 
-/// A Top Shelf image: the background over the whole of it, the icon's play
-/// (with its shadow and rim) scaled up around its centre.
-func renderTopShelf(points: CGSize, scale: CGFloat) -> Data {
+/// A flat picture of `points`: the background over the whole of it (`.back`;
+/// or `fill`), the icon's play (`.middle` its shadow, `.front` itself) `play`
+/// points tall, scaled up around the picture's centre.
+func renderPicture(points: CGSize, scale: CGFloat, play: CGFloat, fill: CGColor? = nil, _ parts: [Layer]) -> Data {
     let ctx = CGContext(data: nil, width: Int(points.width * scale), height: Int(points.height * scale),
                         bitsPerComponent: 8, bytesPerRow: 0, space: space,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: scale, y: scale)
-    vertical(ctx, rgb(backgroundTop), rgb(backgroundBottom), CGRect(origin: .zero, size: points))
-    let k = points.height * topShelfPlayShare / playHeight
+    if let fill {
+        ctx.setFillColor(fill); ctx.fill(CGRect(origin: .zero, size: points))
+    }
+    if parts.contains(.back) {
+        vertical(ctx, rgb(backgroundTop), rgb(backgroundBottom), CGRect(origin: .zero, size: points))
+    }
+    let k = play / playHeight
     ctx.translateBy(x: points.width / 2 - design.width / 2 * k, y: points.height / 2 - design.height / 2 * k)
     ctx.scaleBy(x: k, y: k)
     shadowScale = scale * k
-    draw(.middle, in: ctx)
-    draw(.front, in: ctx)
+    for part in [Layer.middle, .front] where parts.contains(part) { draw(part, in: ctx) }
     return NSBitmapImageRep(cgImage: ctx.makeImage()!).representation(using: .png, properties: [:])!
+}
+
+/// An image set in the catalog's root, one file per scale.
+func imageSet(_ name: String, _ files: [(scale: Int, data: Data)]) {
+    let set = root.appendingPathComponent("../\(name).imageset").standardized
+    try? fm.removeItem(at: set)
+    try! fm.createDirectory(at: set, withIntermediateDirectories: true)
+    var entries: [String] = []
+    for f in files {
+        let file = "\(name)\(f.scale == 1 ? "" : "@\(f.scale)x").png"
+        try! f.data.write(to: set.appendingPathComponent(file))
+        entries.append(#"{"idiom":"tv","scale":"\#(f.scale)x","filename":"\#(file)"}"#)
+    }
+    try! #"{"images":[\#(entries.joined(separator: ","))],"info":{"author":"xcode","version":1}}"#
+        .write(to: set.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
 }
 
 // MARK: - Output
@@ -169,12 +195,28 @@ for (stack, base) in [("App Icon", CGSize(width: 400, height: 240)),
 for (set, file, points) in [("Top Shelf Image", "topshelf", CGSize(width: 1920, height: 720)),
                             ("Top Shelf Image Wide", "topshelf-wide", CGSize(width: 2320, height: 720))] {
     let url = root.appendingPathComponent("\(set).imageset")
-    try! renderTopShelf(points: points, scale: 1).write(to: url.appendingPathComponent("\(file).png"))
-    try! renderTopShelf(points: points, scale: 2).write(to: url.appendingPathComponent("\(file)@2x.png"))
+    for scale in [1, 2] {
+        try! renderPicture(points: points, scale: CGFloat(scale), play: points.height * topShelfPlayShare,
+                           [.back, .middle, .front])
+            .write(to: url.appendingPathComponent("\(file)\(scale == 1 ? "" : "@2x").png"))
+    }
 }
+
+/// The app's background colour, from its colour set (sRGB, "0x1B"-style components).
+let appBackground: CGColor = {
+    let url = root.appendingPathComponent("../AppBackground.colorset/Contents.json").standardized
+    let json = try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    let c = ((json["colors"] as! [[String: Any]])[0]["color"] as! [String: Any])["components"] as! [String: String]
+    func v(_ key: String) -> CGFloat { CGFloat(Int(c[key]!.dropFirst(2), radix: 16)!) / 255 }
+    return CGColor(srgbRed: v("red"), green: v("green"), blue: v("blue"), alpha: 1)
+}()
+let screen = CGSize(width: 1920, height: 1080), frame = CGSize(width: launchFrame, height: launchFrame)
+imageSet("LaunchScreen", [1, 2].map { ($0, renderPicture(points: screen, scale: CGFloat($0), play: launchPlayHeight,
+                                                        fill: appBackground, [.front])) })
+imageSet("LaunchPlay", [1, 2].map { ($0, renderPicture(points: frame, scale: CGFloat($0), play: launchPlayHeight, [.front])) })
 
 if CommandLine.arguments.count > 1 {
     try! render([.back, .middle, .front], pixels: CGSize(width: 800, height: 480))
         .write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
 }
-print("wrote the icon layers and Top Shelf images")
+print("wrote the icon layers, Top Shelf images and the launch play")

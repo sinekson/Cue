@@ -69,6 +69,12 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UIUserInterfaceStyle: Dark
+        # The launch screen: the app's background colour with the icon's play,
+        # full-screen (Tools/AppIcon/render.swift — tvOS ignored UIColorName);
+        # the launch curtain (LaunchStageView) takes over from it in place.
+        UILaunchScreen:
+          UIImageName: LaunchScreen
+          UIImageRespectsSafeAreaInsets: false
         # Picture in Picture keeps rendering while the app is not frontmost, and
         # AVKit refuses to start PiP at all without the audio background mode.
         UIBackgroundModes:

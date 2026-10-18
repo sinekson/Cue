@@ -178,7 +178,7 @@ struct ATVBackground: View {
     var body: some View {
         let followed = titles && followsTitle
         ZStack {
-            Color(hex: 0x1B1C1F)
+            Color("AppBackground")   // also the launch screen's
             if followed {
                 TitleBackgroundView()
                     .transition(.opacity)

@@ -355,6 +355,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
   (no late updates).
+  The launch: the system launch screen is the app's background colour
+  (`AppBackground` colour set) with the icon's play, 220 pt, centred
+  (`LaunchScreen`, from render.swift; tvOS ignores `UIColorName`). The
+  curtain takes over with the same: `ATVBackground` (the Projector picture
+  fading in) and the play (`LaunchStageView`, Core Animation — smooth while
+  Home is built underneath), growing and shrinking while the preload runs
+  (no ring). When it's done, a push (to 80 % and back, 0.42 s), then the
+  curtain fades into Home. Input and the top bar's focus timers start at
+  the lift. (Before ours, tvOS zooms the pink icon up — the system's.)
+  Tried and dropped: the pink picture full-screen (too bright), the play
+  opening into the app (Home through its growing shape — looked weird).
   Pages whose content loads (`PagePreparer`, `PageLoad`): the data starts
   at the press, the page opens once it's in or after 0.35 s at the latest —
   then with placeholders in the exact final layout (rows:

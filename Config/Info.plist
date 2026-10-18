@@ -57,6 +57,13 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIImageName</key>
+		<string>LaunchScreen</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<false/>
+	</dict>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
 </dict>
