@@ -42,11 +42,12 @@ enum AppBackground {
     static var followsTitle: Bool { UserDefaults.standard.bool(forKey: followsTitleKey) }
 }
 
-/// The app's still background: warm light from the top left (and,
-/// fainter, across the middle), a cool shadow bottom right — a base
-/// gradient and large, soft pools of
-/// light, blurred and grained (the grain also keeps the dark gradients from
-/// banding on a TV). Drawn once with Core Image at 1080p.
+/// The app's still background, after tvOS's own dark backdrop (Photos,
+/// the TV app — not available to apps): a dark warm grey, lighter across
+/// the top, a cool shadow bottom left, a brown one bottom right — a base
+/// gradient and large, soft pools, blurred and grained (the grain also
+/// keeps the dark gradients from banding on a TV). Drawn once with Core
+/// Image at 1080p.
 enum ProjectorPicture {
     private struct Pool {
         let color: UInt32
@@ -58,15 +59,28 @@ enum ProjectorPicture {
 
     /// Base gradient, top → bottom, leaning: its top end this many screen
     /// widths to the left.
-    private static let top: UInt32 = 0x232220
-    private static let bottom: UInt32 = 0x18181A
-    private static let tilt: CGFloat = 0.18
+    private static let top: UInt32 = 0x35322F
+    private static let bottom: UInt32 = 0x302C2D
+    private static let tilt: CGFloat = 0
 
     private static let pools = [
-        Pool(color: 0x3A3329, x: 0.08, y: -0.10, rx: 0.82, ry: 0.85),
-        // The same warmth, fainter, carried across the middle.
-        Pool(color: 0x2F2A23, x: 0.74, y: 0.75, rx: 0.42, ry: 0.55),
-        Pool(color: 0x1D2330, x: 1.00, y: 1.10, rx: 0.60, ry: 0.50),
+        // Warm grey light across the top, brightest a little right of centre.
+        Pool(color: 0x3A3532, x: 0.46, y: 0.05, rx: 0.34, ry: 0.42),
+        // The top corners darker: neutral left, grey right (from a dip
+        // just right of the light).
+        Pool(color: 0x2F302D, x: 0.00, y: 0.10, rx: 0.22, ry: 0.40),
+        Pool(color: 0x2A2A2A, x: 1.00, y: 0.00, rx: 0.22, ry: 0.25),
+        Pool(color: 0x2D2B2B, x: 0.70, y: 0.00, rx: 0.12, ry: 0.22),
+        // A dark band across the left, just under the middle.
+        Pool(color: 0x262627, x: 0.18, y: 0.68, rx: 0.28, ry: 0.16),
+        // A cool shadow, bottom left.
+        Pool(color: 0x1F2126, x: 0.02, y: 1.00, rx: 0.30, ry: 0.42),
+        // A warm mauve low in the middle, a brown shadow bottom right.
+        Pool(color: 0x383134, x: 0.55, y: 1.00, rx: 0.30, ry: 0.30),
+        Pool(color: 0x2D2A23, x: 0.98, y: 1.00, rx: 0.30, ry: 0.28),
+        // A faint warmth on the right, middle, and across the middle.
+        Pool(color: 0x373333, x: 0.80, y: 0.66, rx: 0.30, ry: 0.30),
+        Pool(color: 0x363232, x: 0.50, y: 0.38, rx: 0.40, ry: 0.18),
     ]
 
     /// The grain's full range (sRGB, 0–1): up to ±3 levels of 255.

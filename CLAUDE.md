@@ -282,10 +282,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   - Lessons: two identical layers crossfading dip (flicker); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.
-- **Background**: one still picture, Projector (warm light top left, reaching
-  far, a fainter warm spot right of centre, low, a cool shadow bottom right; `ProjectorPicture.render`: Core Image
+- **Background**: one still picture, Projector — recreated from tvOS's own
+  dark backdrop (Photos, the TV app; the system doesn't hand it to apps:
+  with nothing drawn, an app shows flat grey): a dark warm grey, lighter
+  across the top, a cool shadow bottom left, a brown one bottom right,
+  a mauve warmth low in the middle (`ProjectorPicture.render`: Core Image
   gradients, blur, grain added going 16 → 8 bit — no banding), on every
-  page. Settings → Appearance → "Background follows the title" (off by
+  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → "Background follows the title" (off by
   default): Home, Movies, Series follow the focused title
   (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
   only the tab in front sets it), the collection panels take its colour;
