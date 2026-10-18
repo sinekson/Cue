@@ -371,8 +371,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `FixedFocusRows.placeholderRows` + `placeholder:` — two unnamed rows of
   empty cards, no focus, no outline), the content taking over in one
   0.25 s fade, focus then going in. Placeholder look (`FixedFocusPlaceholder`):
-  a soft fill over the page (white 9 % → 7 %, no dark base), no card edge, a faint ellipsis glyph in the
-  middle, faint bars where the text goes; all breathing in step
+  a soft fill over the page (white 9 % → 7 %, no dark base), no card edge, nothing in it and no
+  text bars — the card alone, as the Apple TV app's (tried: an ellipsis
+  glyph in the middle, bars where the text goes); all breathing in step
   (`FixedFocusPulsing`: opacity 1 ↔ 0.55, 1.2 s each way; still under
   Reduce Motion). "Ready" includes the first screen's pictures
   decoded into memory (`FixedFocusImages.prefetch`, 0.7 s cap after the
@@ -391,6 +392,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   titles without an IMDb id or any picture, people without a photo,
   studios without a logo left out. From the 2nd letter (the 1st only
   suggests). Top Results: exactly 6 (they fit across: no scrolling).
+  Movies, Series, People, Studios: literal matches only. **Related**
+  (the pill's last scope, shown only when it has titles): what the search
+  is about, by its lead (Top Results' first card, in the order on — a
+  weak match too): a title — its collection's other parts, then Details'
+  More Like This (`TMDBService.detail`); a person — their best-known work
+  (`bestKnown`); a studio — its best-known titles (`studioBestKnown`);
+  about 20 (`relatedCount`). Fetched with the search (the page swaps in
+  whole).
   TWO ORDERS, to compare on the TV (Render Lab → "Search: Cue's order",
   `RenderProbe.flags.searchOwnOrder`, on by default — remove the switch
   once decided):
@@ -412,7 +421,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     name itself first, a name or word starting with it (3 letters on)
     second; none while a title or person has that very name ("dune": the
     films, not a studio called Dune). Led by a person or studio, Top
-    Results' other 5 places are their best-known titles: a person's
+    Results' other 5 places are their Related titles; led by a title, only
+    the places the matches leave ("frieren": the show, then what's like
+    it). A person's best-known: their
     films and shows they played (voice roles too) or directed, by votes +
     popularity (`TMDBService.bestKnown`, from `personCredits`); a studio's
     films and shows by votes (`studioBestKnown`, discover by company) —
@@ -434,14 +445,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   switch, off — private API, kept on purpose). Focusing one previews it in the field; Select searches
   (the system then clears the row until the next key). Under them the
   line (`SearchScopeBar`, our own — the system's hidden) with a flat pill
-  Top Results | Movies | Series | People | Studios, as the Apple TV app's (the field empty:
+  Top Results | Movies | Series | People | Studios | Related — only those
+  with results (Top Results always; while the first load runs, it alone),
+  as the Apple TV app's (the field empty:
   the line alone): its shape and sizes measured — a capsule 68 pt tall,
-  the highlight 10 pt inside, 29 pt semibold labels 33 pt from its ends,
+  the items 10 pt inside, 29 pt semibold labels 27 pt from its ends (33 inside the focused capsule),
   the line stopping 40 pt from it — in our dark flat fills (theirs is the
   light variant): `FlatControl.rest` behind with `ActionFace.pillEdge`
   along the top, the current scope `FlatControl.selected`, focused white
-  with dark content, the highlight gliding (tried: the top bar's glass
-  pill);
+  with dark content, the highlight gliding; focused, the pill keeps its
+  size (no grow); the current scope at rest 7 pt inside it, the white
+  capsule focused nearly filling it (4 pt from its edge, measured), with a shadow below (black 45 %, 12 pt, 8 down) (tried: the top bar's
+  glass pill);
   moving along it switches, coming in lands on the current one. The line
   sits at the top of the page the system lays out under the keyboard, so
   it and the row move with it: up 102 pt while no suggestions show (an
@@ -456,14 +471,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   moving focus, name and a second line under each — a title's year, a
   person's line of work, "Acting"), one shape for every kind, 2:3: a
   title's poster, a person's portrait, a studio's logo on a light plate
-  (most logos are dark on clear); as tall as the room to the screen's
-  bottom allows with the page at its lowest (50 pt above the edge) — one
-  size in both places (`SearchKeyboardLine` reports that lowest top).
+  (most logos are dark on clear); six as wide as the line above them
+  (`SearchRowController.rowHeight(width:)`) — one size whether the
+  suggestions show or not (without them the page sits higher, more room
+  below: accepted, as in the Apple TV app).
   Select: a title its Details, a person or studio its page. (Tried and
   dropped: Top Results as 3 landscape backdrops with their logos, studios
   as landscape plates — every scope its own shape. Collections — later,
   perhaps; networks have no TMDB search.) The field empty: the last 12 titles opened from
   Search (`cue.search.recentTitles`).
+  Loading: searching with nothing on show yet (the first search, or
+  after none found), 6 placeholder cards (`FixedFocusPlaceholder`, no
+  focus) in the row's place, the results taking over in one 0.25 s fade;
+  with results on show, they stay until the new ones swap in whole (no
+  blink while typing). Each new search's results (`SearchFound.batch` —
+  over placeholders or other results, even the same titles) swell once
+  and settle (`pulseScale`, 0.35 s, all at once — the Apple TV app's sign
+  of new results); switching scopes doesn't. Nothing found: one quiet line ("No results for
+  …"), no spinner, no icon.
   Focus stays on the keyboard as results arrive. Only completions in the
   suggestions — a Button among them (a Clear) sent tvOS into an endless
   focus/reload loop that froze Search. (Tried and dropped: the keyboard

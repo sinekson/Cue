@@ -5326,13 +5326,12 @@ class FixedFocusPulsing: UIView {
 }
 
 /// A card whose content is still loading (`FixedFocusRows.placeholderRows`,
-/// `FolderPosterGrid.placeholderItems`): a soft fill over the page, lighter
-/// at the top, at the card's corners — no edge (that belongs to a picture);
-/// a faint ellipsis in the middle; faint bars (`bar()`) where its text
-/// will be. It breathes (`FixedFocusPulsing`).
+/// `FolderPosterGrid.placeholderItems`): only a soft fill over the page,
+/// lighter at the top, at the card's corners, as the Apple TV app's — no
+/// edge (that belongs to a picture), nothing in it, no text to come. It
+/// breathes (`FixedFocusPulsing`).
 final class FixedFocusPlaceholder: FixedFocusPulsing {
     private let fill = CAGradientLayer()
-    private let glyph = UIImageView(image: UIImage(systemName: "ellipsis"))
 
     static func isPlaceholder(_ item: MetaItem?) -> Bool { item?.id.hasPrefix("placeholder-") == true }
 
@@ -5345,9 +5344,6 @@ final class FixedFocusPlaceholder: FixedFocusPulsing {
         // Over the page itself (no dark base: it hid the card on the page).
         fill.colors = [UIColor(white: 1, alpha: 0.09).cgColor, UIColor(white: 1, alpha: 0.07).cgColor]
         layer.addSublayer(fill)
-        glyph.tintColor = UIColor(white: 1, alpha: 0.18)
-        glyph.contentMode = .scaleAspectFit
-        addSubview(glyph)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -5358,18 +5354,6 @@ final class FixedFocusPlaceholder: FixedFocusPulsing {
         CATransaction.setDisableActions(true)
         fill.frame = bounds
         CATransaction.commit()
-        let size = min(64, (min(bounds.width, bounds.height) * 0.3).rounded())
-        glyph.frame = CGRect(x: (bounds.width - size) / 2, y: (bounds.height - size) / 2, width: size, height: size)
-    }
-
-    /// A line of text to come.
-    static func bar() -> UIView {
-        let bar = FixedFocusPulsing()
-        bar.isUserInteractionEnabled = false
-        bar.backgroundColor = UIColor(white: 1, alpha: 0.07)
-        bar.layer.cornerRadius = 10
-        bar.isHidden = true
-        return bar
     }
 }
 
@@ -7208,9 +7192,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private var cardHeight: CGFloat = 0
     private var shown: String?
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
-    /// Still loading: the placeholder card, and its caption to come.
+    /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
-    private let placeholderBars = [FixedFocusPlaceholder.bar(), FixedFocusPlaceholder.bar()]
     private var isPlaceholder = false
 
     override init(frame: CGRect) {
@@ -7225,7 +7208,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         contentView.addSubview(picture)
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
-        for bar in placeholderBars { contentView.addSubview(bar) }
         edge.isUserInteractionEnabled = false
         picture.addSubview(edge)
         stateShade.colors = [UIColor.clear.cgColor,
@@ -7295,12 +7277,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         placeholderCard.frame = card
         placeholderCard.isHidden = !isPlaceholder
         picture.isHidden = isPlaceholder
-        let captionY = card.maxY + FixedFocusMetrics.infoGap + 4
-        for (i, bar) in placeholderBars.enumerated() {
-            bar.isHidden = !isPlaceholder
-            bar.frame = CGRect(x: FixedFocusMetrics.textIndent, y: captionY + CGFloat(i) * FixedFocusMetrics.captionLineOffset,
-                               width: (card.width * (i == 0 ? 0.7 : 0.35)).rounded(), height: 20)
-        }
         dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
         // (As on Continue Watching's fixed-focus cards.)
@@ -7493,9 +7469,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         didSet { if dim != oldValue { dimCover.alpha = dim } }
     }
     private let dimCover = UIView()
-    /// Still loading: the placeholder card, and under a grown one its text.
+    /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
-    private let placeholderBars = [FixedFocusPlaceholder.bar(), FixedFocusPlaceholder.bar()]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -7510,7 +7485,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         }
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
-        for bar in placeholderBars { addSubview(bar) }
         shade.colors = [UIColor.clear.cgColor,
                         UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
         shade.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -7581,13 +7555,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         placeholderCard.isHidden = !placeholder
         poster.isHidden = placeholder
         backdrop.isHidden = placeholder
-        // Under a grown placeholder: its name and facts to come.
-        let textY = cardHeight + FixedFocusMetrics.infoGap + 4
-        for (i, bar) in placeholderBars.enumerated() {
-            bar.isHidden = !(placeholder && showsBox)
-            bar.frame = CGRect(x: FixedFocusMetrics.textIndent, y: textY + CGFloat(i) * FixedFocusMetrics.factsOffset,
-                               width: i == 0 ? 340 : 220, height: 22)
-        }
         state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)

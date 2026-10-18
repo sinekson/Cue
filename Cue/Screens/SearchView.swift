@@ -6,8 +6,8 @@ final class SearchViewModel: ObservableObject {
     /// What the last search found — every kind, published at once.
     @Published private(set) var found = SearchFound()
     @Published var isSearching = false
-    /// The scope chosen in the line: Top Results, Movies, Series, People or
-    /// Studios (back to Top Results with each new search).
+    /// The scope chosen in the line: Top Results, Movies, Series, People,
+    /// Studios or Related (back to Top Results with each new search).
     @Published var scope: SearchScope = .top
     /// What you may mean, as you type: TMDB's names (`suggest`).
     @Published private(set) var suggestions: [String] = []
@@ -100,7 +100,7 @@ final class SearchViewModel: ObservableObject {
         scope = .top
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2 else {
-            found = SearchFound()
+            found = SearchFound(batch: found.batch)
             isSearching = false
             return
         }
@@ -117,6 +117,7 @@ final class SearchViewModel: ObservableObject {
             let (combined, persons, companies) = await (foundTop, foundPeople, foundStudios)
             guard !Task.isCancelled else { return }
             var next = SearchFound()
+            next.batch = found.batch + 1
             next.query = trimmed
             next.top = combined
             next.results = items
@@ -135,13 +136,12 @@ final class SearchViewModel: ObservableObject {
                 MetaItem(id: "company:\($0.id)", type: "company", name: $0.name, poster: $0.logoURL,
                          background: nil)
             }
-            // A person or studio leading Top Results (in either order):
-            // their best-known titles, fetched before anything shows — the
-            // page swaps in whole.
+            // What leads Top Results (in either order): its Related titles,
+            // fetched before anything shows — the page swaps in whole.
             let leads = Set([true, false].compactMap { next.lead(own: $0) })
             next.related = await withTaskGroup(of: (String, [MetaItem]).self) { group in
                 for lead in leads {
-                    group.addTask { (lead.id, await Self.bestKnown(of: lead)) }
+                    group.addTask { (lead.id, await Self.related(to: lead)) }
                 }
                 var related: [String: [MetaItem]] = [:]
                 for await (id, titles) in group { related[id] = titles }
@@ -153,13 +153,31 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
-    /// A leading person's or studio's best-known titles (Top Results).
-    private nonisolated static func bestKnown(of lead: MetaItem) async -> [MetaItem] {
-        guard let id = tmdbID(lead) else { return [] }
-        if lead.type == "person" {
-            return await TMDBService.bestKnown(TMDBService.personCredits(id: id), limit: SearchFound.topCount)
+    /// RELATED: what a search is about, by its lead — a title: its
+    /// collection's other parts (release order), then Details' More Like
+    /// This (TMDB's recommendations, else similar; out already, with a
+    /// picture); a person: their best-known work; a studio: its best-known
+    /// titles. Films and shows together.
+    private nonisolated static func related(to lead: MetaItem) async -> [MetaItem] {
+        let limit = SearchFound.relatedCount
+        switch lead.type {
+        case "person":
+            guard let id = tmdbID(lead) else { return [] }
+            return await TMDBService.bestKnown(TMDBService.personCredits(id: id), limit: limit)
+        case "company":
+            guard let id = tmdbID(lead) else { return [] }
+            return await TMDBService.studioBestKnown(id: id, limit: limit)
+        default:
+            guard let detail = await TMDBService.detail(imdbID: lead.id, type: lead.type) else { return [] }
+            var parts: [MetaItem] = []
+            if let collection = detail.collection {
+                parts = await TMDBService.collectionItems(id: collection.id)
+                    .filter { $0.poster != nil || $0.background != nil }
+            }
+            var seen: Set<String> = [lead.id]
+            let all: [MetaItem] = parts + detail.moreLikeThis
+            return Array(all.filter { seen.insert($0.id).inserted }.prefix(limit))
         }
-        return await TMDBService.studioBestKnown(id: id, limit: SearchFound.topCount)
     }
 
     /// A person's fame on the titles' scale: their popularity (counted
@@ -212,27 +230,39 @@ struct SearchFound {
     var personFame: [String: Double] = [:]
     /// Studios (`company:<id>`).
     var studios: [MetaItem] = []
-    /// A leading person's or studio's best-known titles, by its id.
+    /// What leads Top Results: its Related titles, by its id.
     var related: [String: [MetaItem]] = [:]
+    /// Counts the searches published: new results (the row's pulse), not a
+    /// scope switched.
+    var batch = 0
 
     /// Top Results: as many as fit across, no scrolling.
     static let topCount = 6
+    /// Related: about a row and a half's scroll.
+    static let relatedCount = 20
 
     private typealias Model = SearchViewModel
 
     /// Top Results: the order's list, a studio taken in when it's what you
     /// typed (`withStudio`); led by a person or studio, the rest of the
-    /// places their best-known titles.
+    /// places their Related titles; led by a title, only the places the
+    /// matches leave ("frieren": the show, then what's like it).
     func topResults(own: Bool) -> [MetaItem] {
         let base = withStudio(own ? rankedTop() : top, count: Self.topCount)
         guard let lead = base.first, let more = related[lead.id], !more.isEmpty else { return base }
-        var seen: Set<String> = [lead.id]
-        return [lead] + more.filter { seen.insert($0.id).inserted }.prefix(Self.topCount - 1)
+        let kept = ["person", "company"].contains(lead.type) ? [lead] : base
+        var seen = Set(kept.map(\.id))
+        return kept + more.filter { seen.insert($0.id).inserted }.prefix(Self.topCount - kept.count)
     }
 
-    /// The person or studio leading Top Results in that order, if one does.
+    /// What leads Top Results in that order (its first card), if anything.
     func lead(own: Bool) -> MetaItem? {
-        withStudio(own ? rankedTop() : top, count: 1).first.flatMap { ["person", "company"].contains($0.type) ? $0 : nil }
+        withStudio(own ? rankedTop() : top, count: 1).first
+    }
+
+    /// The Related scope: the lead's.
+    func relatedTitles(own: Bool) -> [MetaItem] {
+        lead(own: own).flatMap { related[$0.id] } ?? []
     }
 
     // MARK: Cue's own order
@@ -323,7 +353,8 @@ struct SearchFound {
 /// SEARCH: Apple's own search field and keyboard at the top (dictation with
 /// the remote's mic), its suggestions under the keys — the recent searches
 /// while the field is empty, else what you may mean. Under them the line
-/// with the scopes (Top Results | Movies | Series) and one row of posters:
+/// with the scopes (Top Results | Movies | Series | People | Studios |
+/// Related) and one row of posters:
 /// the results, or the titles last opened from Search. Nothing scrolls but
 /// the row, sideways; the line and the row sit where the system puts its
 /// page: up while no suggestions show, down when they do, at once (as in
@@ -346,21 +377,16 @@ struct SearchView: View {
     @AppStorage("cue.search.recent") private var recentStorage = ""
     private var recent: [String] { recentStorage.split(separator: "\n").map(String.init) }
 
-    /// The page's top at its lowest — suggestions on show (window points),
-    /// once known: the posters' size, the same in both places.
-    @State private var lowestTop: CGFloat?
-
     var body: some View {
+        // (No background of its own: the app's, full-screen behind the
+        // tabs, shows through — one here, under the bar's clearance, was a
+        // second picture cut off below the bar.)
         ZStack(alignment: .topLeading) {
-            ATVBackground()
-            if let lowestTop {
-                GeometryReader { geo in
-                    let above = geo.frame(in: .global).minY
-                    page(rowHeight: Self.rowHeight(screenHeight: geo.size.height + above, lowestTop: lowestTop))
-                }
-                .ignoresSafeArea(edges: [.horizontal, .bottom])
+            GeometryReader { geo in
+                page(rowHeight: SearchRowController.rowHeight(width: geo.size.width))
             }
-            SearchKeyboardLine { if lowestTop != $0 { lowestTop = $0 } }
+            .ignoresSafeArea(edges: [.horizontal, .bottom])
+            SearchKeyboardLine()
                 .frame(width: 1, height: 1)
         }
         // Only a real change (the field writes its text back as the system
@@ -386,22 +412,23 @@ struct SearchView: View {
         }
     }
 
-    /// The row's room with the page at its lowest.
-    private static func rowHeight(screenHeight: CGFloat, lowestTop: CGFloat) -> CGFloat {
-        max(200, screenHeight - lowestTop + pillRaise - SearchScopeBar.pillHeight - gap - bottomGap)
-    }
-
     /// The line with the scopes, then the row (or what the page says).
     private func page(rowHeight: CGFloat) -> some View {
         let typed = !viewModel.query.isEmpty
-        let items = typed ? scoped : viewModel.recentTitles
+        let found = typed ? scoped : viewModel.recentTitles
+        // Searching with nothing on show yet: placeholders in the final
+        // layout. With results on show, they stay until the new ones swap
+        // in whole (no blink at every pause while typing).
+        let loading = typed && viewModel.isSearching && found.isEmpty
+        let items = loading ? Array(FolderPosterGrid.placeholderItems.prefix(SearchFound.topCount)) : found
         // The same gap under the pill as over it, to the cards at rest (the
         // row keeps room above them for a focused card's growth).
         let growthRoom = SearchRowController.growthRoom(rowHeight: rowHeight)
         return VStack(alignment: .leading, spacing: Self.gap - growthRoom) {
-            SearchScopeBar(viewModel: viewModel, showsPill: typed)
+            SearchScopeBar(viewModel: viewModel, showsPill: typed, scopes: shownScopes)
             ZStack(alignment: .topLeading) {
                 SearchResultsRow(items: items, subtitles: Self.subtitles(items), height: rowHeight,
+                                 placeholder: loading, batch: typed ? viewModel.found.batch : nil,
                                  onSelect: open)
                     // Hidden by its contents' absence, never transparent
                     // (tvOS skips transparent views).
@@ -412,21 +439,28 @@ struct SearchView: View {
         .padding(.top, -Self.pillRaise)
     }
 
-    /// Over and under the pill (from the suggestions, to the cards), and
-    /// under the captions.
+    /// Over and under the pill (from the suggestions, to the cards).
     private static let gap: CGFloat = 40
-    private static let bottomGap: CGFloat = 50
     /// The pill above the page's top: the system starts the page 71 pt
     /// under its suggestions (tvOS 27); the pill `gap` under them. (Partly
     /// outside the page, it still takes focus.)
     private static let pillRaise: CGFloat = 31
 
+    /// The pill's scopes: only those with results (they come with the
+    /// results, at once — while the first load runs, Top Results alone);
+    /// Top Results always.
+    private var shownScopes: [SearchScope] {
+        SearchScope.allCases.filter { $0 == .top || !items(in: $0).isEmpty }
+    }
+
     /// The cards of the scope chosen — in Cue's own order or TMDB's
     /// (Render Lab → Search: Cue's order).
-    private var scoped: [MetaItem] {
+    private var scoped: [MetaItem] { items(in: viewModel.scope) }
+
+    private func items(in scope: SearchScope) -> [MetaItem] {
         let own = probe.flags.searchOwnOrder
         let found = viewModel.found
-        switch viewModel.scope {
+        switch scope {
         case .top: return found.topResults(own: own)
         case .movies:
             return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type == "movie" }
@@ -434,6 +468,7 @@ struct SearchView: View {
             return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type != "movie" }
         case .people: return own ? found.rankedPeople().map(\.item) : found.people
         case .studios: return own ? found.rankedStudios() : found.studios
+        case .related: return found.relatedTitles(own: own)
         }
     }
 
@@ -445,20 +480,21 @@ struct SearchView: View {
         }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// No posters to show: searching, nothing found, or what to do.
+    /// No posters to show: nothing found, or what to do — one quiet line
+    /// where the cards would be.
     @ViewBuilder
     private var status: some View {
-        if viewModel.isSearching {
-            CueLoadingView(label: "Searching").frame(maxWidth: .infinity).frame(height: 300)
-        } else if viewModel.query.count >= 2 {
-            CueEmptyState(icon: "magnifyingglass", title: "No results",
-                          message: "Nothing matched “\(viewModel.query)”.")
-                .frame(maxWidth: .infinity).frame(height: 300)
+        if viewModel.query.count >= 2, !viewModel.isSearching {
+            statusLine("No results for “\(viewModel.query)”.")
         } else if viewModel.query.isEmpty {
-            Text("Search for a movie or a series — or hold the microphone button and say it.")
-                .font(.system(size: FixedFocusMetrics.textSize))
-                .foregroundStyle(AppGlass.textMuted)
+            statusLine("Search for a movie or a series — or hold the microphone button and say it.")
         }
+    }
+
+    private func statusLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: FixedFocusMetrics.textSize))
+            .foregroundStyle(AppGlass.textMuted)
     }
 
     /// A card's Select: a title into Details (`DetailTransition`) — it
@@ -488,7 +524,7 @@ struct SearchView: View {
 
 /// Search's scopes.
 enum SearchScope: Hashable, CaseIterable {
-    case top, movies, series, people, studios
+    case top, movies, series, people, studios, related
 
     var label: String {
         switch self {
@@ -497,6 +533,7 @@ enum SearchScope: Hashable, CaseIterable {
         case .series: return "Series"
         case .people: return "People"
         case .studios: return "Studios"
+        case .related: return "Related"
         }
     }
 }
@@ -513,13 +550,20 @@ enum SearchScope: Hashable, CaseIterable {
 struct SearchScopeBar: View {
     @ObservedObject var viewModel: SearchViewModel
     var showsPill = true
+    var scopes = SearchScope.allCases
     @FocusState private var focus: SearchScope?
     @Namespace private var highlight
 
     private static let itemHeight: CGFloat = 48
     private static let inset: CGFloat = 10
+    /// The highlight's gap to the pill's edge: at rest, and focused
+    /// (measured: 4 pt).
+    private static let restInset: CGFloat = 7
+    private static let focusedInset: CGFloat = 4
     private static let textSize: CGFloat = 29
-    private static let textPadding: CGFloat = 33
+    /// Text to the item's ends: the focused capsule (6 pt wider each side)
+    /// then shows 33 pt beside the label, as the Apple TV app's.
+    private static let textPadding: CGFloat = 27
     static let pillHeight = itemHeight + 2 * inset
     /// The line's gap around the pill.
     private static let lineGap: CGFloat = 40
@@ -531,7 +575,7 @@ struct SearchScopeBar: View {
             line
             if showsPill {
                 HStack(spacing: 0) {
-                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                    ForEach(scopes, id: \.self) { scope in
                         Button { viewModel.scope = scope } label: {
                             Text(scope.label)
                                 .font(.system(size: Self.textSize, weight: .semibold))
@@ -547,7 +591,16 @@ struct SearchScopeBar: View {
                     }
                 }
                 .background {
+                    // At rest the current scope `restInset` inside the pill;
+                    // focused, the white capsule nearly fills it (the Apple
+                    // TV app's: `focusedInset` from its edge), with a
+                    // shadow below to lift it (stronger than the buttons':
+                    // the pill is dark).
                     Capsule().fill(focused ? FlatControl.focus : FlatControl.selected)
+                        .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 12, y: 8)
+                        // (Inside the matched frame: outside, the effect's
+                        // frame won and the padding did nothing.)
+                        .padding((focused ? Self.focusedInset : Self.restInset) - Self.inset)
                         .matchedGeometryEffect(id: lit, in: highlight, isSource: false)
                         .animation(GlassPill.glide, value: lit)
                         .animation(GlassPill.focusChange, value: focused)
@@ -559,10 +612,8 @@ struct SearchScopeBar: View {
                     Capsule().fill(FlatControl.rest)
                         .overlay(Capsule().strokeBorder(ActionFace.pillEdge, lineWidth: 1))
                 }
+                // (Focused, the pill keeps its size — only the capsule in it grows.)
                 .defaultFocus($focus, viewModel.scope)
-                // Focused, it grows a little (as the top bar).
-                .scaleEffect(focused ? GlassSidebar.focusedScale : 1)
-                .animation(.smooth(duration: 0.3), value: focused)
                 line
             }
         }
@@ -594,21 +645,25 @@ struct SearchScopeBar: View {
 /// THE ROW: Saved for Later's cards (`FixedFocusDestinationCell` — moving
 /// focus, the focused card grown, name and year under each), one shape for
 /// every kind — 2:3 like a poster: a title's poster, a person's portrait,
-/// a studio's logo on a light plate — as tall as the room under the line
-/// allows (six fit across: Top Results doesn't scroll); it scrolls
-/// sideways only.
+/// a studio's logo on a light plate — six as wide as the line above them
+/// (Top Results doesn't scroll); it scrolls sideways only.
 private struct SearchResultsRow: UIViewControllerRepresentable {
     let items: [MetaItem]
     let subtitles: [String: String]
     /// The row's room: the cards, their lift and their captions.
     let height: CGFloat
+    /// Placeholder cards (searching, nothing on show yet): no focus.
+    var placeholder = false
+    /// The search the cards are from (`SearchFound.batch`; nil: not a
+    /// search's) — a new one pulses.
+    var batch: Int?
     let onSelect: (MetaItem) -> Void
 
     func makeUIViewController(context: Context) -> SearchRowController { SearchRowController() }
 
     func updateUIViewController(_ controller: SearchRowController, context: Context) {
         controller.onSelect = onSelect
-        controller.show(items, subtitles: subtitles, height: height)
+        controller.show(items, subtitles: subtitles, height: height, placeholder: placeholder, batch: batch)
     }
 }
 
@@ -620,6 +675,8 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
     private var subtitles: [String: String] = [:]
     private var card = CGSize(width: 200, height: 300)
     private var rowHeight: CGFloat = 0
+    private var isPlaceholder = false
+    private var shownBatch: Int?
     private let layout = UICollectionViewFlowLayout()
     private var collectionView: UICollectionView!
 
@@ -641,6 +698,18 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         view.addSubview(collectionView)
     }
 
+    /// The row's room for six cards as wide as the line above them (its
+    /// ends at the page's inset): the cards, their growth, their captions.
+    static func rowHeight(width: CGFloat) -> CGFloat {
+        let room = width - 2 * FixedFocusMetrics.inset
+        var cardWidth = (room / 6).rounded(.down)
+        while cardWidth > 100, 6 * cardWidth + 5 * FixedFocusMetrics.destinationGap(cardWidth: cardWidth) > room {
+            cardWidth -= 1
+        }
+        let card = (cardWidth * 1.5).rounded()
+        return (card * (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.up) + FixedFocusMetrics.captionRoom
+    }
+
     /// The card: the row's room less its captions and the growth above.
     static func cardHeight(rowHeight: CGFloat) -> CGFloat {
         ((rowHeight - FixedFocusMetrics.captionRoom) / (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.down)
@@ -651,16 +720,54 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         (cardHeight(rowHeight: rowHeight) * FixedFocusMetrics.movingFocusLift / 2).rounded()
     }
 
-    func show(_ items: [MetaItem], subtitles: [String: String], height: CGFloat) {
+    func show(_ items: [MetaItem], subtitles: [String: String], height: CGFloat, placeholder: Bool,
+              batch: Int?) {
         loadViewIfNeeded()
         rowHeight = height
         applyCardSize()
         self.subtitles = subtitles
-        guard items.map(\.id) != self.items.map(\.id) else { return }
-        self.items = items
-        collectionView.reloadData()
-        collectionView.contentOffset = .zero
+        let leavingPlaceholder = isPlaceholder && !placeholder
+        isPlaceholder = placeholder
+        collectionView.isUserInteractionEnabled = !placeholder
+        // A new search's results (from placeholders or others — even the
+        // same titles): they pulse. A scope switched: not.
+        let newBatch = !placeholder && batch != nil && batch != shownBatch && !items.isEmpty
+        if !placeholder { shownBatch = batch }
+        if items.map(\.id) != self.items.map(\.id) {
+            self.items = items
+            if leavingPlaceholder {
+                // The results take over the placeholders: one fade.
+                UIView.transition(with: collectionView, duration: Motion.fadeDuration,
+                                  options: [.transitionCrossDissolve, .allowAnimatedContent]) {
+                    self.collectionView.reloadData()
+                    self.collectionView.contentOffset = .zero
+                    self.collectionView.layoutIfNeeded()
+                }
+            } else {
+                collectionView.reloadData()
+                collectionView.contentOffset = .zero
+            }
+        }
+        if newBatch { pulse() }
     }
+
+    /// New results in place of others: the cards swell a little and settle
+    /// (the Apple TV app's sign that they changed) — all at once, no
+    /// cascade; on the cards' content, so a focused card's growth stays.
+    private func pulse() {
+        collectionView.layoutIfNeeded()
+        let swell = CAKeyframeAnimation(keyPath: "transform.scale")
+        swell.values = [1, Self.pulseScale, 1]
+        swell.keyTimes = [0, 0.4, 1]
+        swell.duration = Self.pulseDuration
+        swell.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        for cell in collectionView.visibleCells {
+            cell.contentView.layer.add(swell, forKey: "pulse")
+        }
+    }
+
+    private static let pulseScale: CGFloat = 1.02
+    private static let pulseDuration: CFTimeInterval = 0.35
 
     /// 2:3 cards as tall as the room holds.
     private func applyCardSize() {
@@ -718,33 +825,21 @@ final class SearchBack {
     weak var anchor: SearchKeyboardLine.Anchor?
 }
 
-/// The page's top at its lowest, in window points: where the system puts it
-/// with its suggestions on show (up by their room while none do —
-/// `suggestionsRoom`); the posters are sized for it. Our line sits at the
-/// page's top, its pill inside the page (focus never reaches what's outside
-/// it). The system's line is hidden (the scope bar draws its own). Also: no
-/// "search for what's typed" chip (`styleSuggestions`).
+/// Our hook into the system's search page: our line sits at the page's top,
+/// its pill inside the page (focus never reaches what's outside it). The
+/// system's line is hidden (the scope bar draws its own). Also: no "search
+/// for what's typed" chip (`styleSuggestions`), and Back onto the keyboard.
 struct SearchKeyboardLine: UIViewRepresentable {
-    var onLowestTop: (CGFloat) -> Void
-
     func makeUIView(context: Context) -> Anchor { Anchor() }
 
     func updateUIView(_ anchor: Anchor, context: Context) {
-        anchor.onLowestTop = onLowestTop
-        DispatchQueue.main.async { anchor.measure() }
+        DispatchQueue.main.async { anchor.hideSystemLine() }
     }
 
     final class Anchor: UIView {
-        var onLowestTop: (CGFloat) -> Void = { _ in }
         private weak var search: UISearchController?
         /// The system's page under the keyboard (ours is in it).
         private weak var page: UIView?
-        private var lowestTop: CGFloat?
-        /// How far the system's line moves down when its suggestions show
-        /// (their row and its gaps — tvOS 27: 66 pt row, 102 in all)…
-        private static let suggestionsRoom: CGFloat = 102
-        /// …and from it to the page's top.
-        private static let lineToPage: CGFloat = 31
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -766,23 +861,17 @@ struct SearchKeyboardLine: UIViewRepresentable {
             page = view
             SearchBack.shared.anchor = self
             styleSuggestions(search)
-            measure()
+            hideSystemLine()
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            measure()
+            hideSystemLine()
         }
 
-        func measure() {
-            guard let root = search?.view, let window, let systemLine = lines(root).first else { return }
+        func hideSystemLine() {
+            guard let root = search?.view else { return }
             for line in lines(root) { line.isHidden = true }
-            let y = systemLine.convert(systemLine.bounds, to: window).maxY
-                + (suggestionsShown(in: systemLine.superview, above: systemLine) ? 0 : Self.suggestionsRoom)
-                + Self.lineToPage
-            guard y != lowestTop else { return }
-            lowestTop = y
-            onLowestTop(y)
         }
 
         /// The suggestions as the Apple TV app's: without the system's own
@@ -799,15 +888,6 @@ struct SearchKeyboardLine: UIViewRepresentable {
             let hairline = view.bounds.height <= 1.5 && view.bounds.width > 1000
                 && view.backgroundColor == .tertiaryLabel
             return (hairline ? [view] : []) + view.subviews.flatMap(lines)
-        }
-
-        /// The suggestions' row (a collection view beside the line) on show.
-        private func suggestionsShown(in container: UIView?, above line: UIView) -> Bool {
-            container?.subviews.contains { view in
-                guard let row = view as? UICollectionView, !row.isHidden, row.frame.maxY <= line.frame.minY
-                else { return false }
-                return !row.visibleCells.isEmpty
-            } ?? false
         }
 
         /// Back with focus in our page (the scopes, the row): onto the
