@@ -58,7 +58,7 @@ struct NuvioSignInView: View {
         VStack(spacing: 0) {
             Text(title)
                 .font(.system(size: 48, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
 
             Group {
                 if let qr = account.qrLogin {
@@ -75,7 +75,7 @@ struct NuvioSignInView: View {
                         Text(qr.code)
                             .font(.system(size: 36, weight: .semibold, design: .monospaced))
                             .tracking(4)
-                            .foregroundStyle(Color.white)
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
                         Text(account.errorMessage ?? qr.statusText)
@@ -125,7 +125,7 @@ struct NuvioSignInView: View {
         VStack(spacing: 24) {
             Text("Sign in with email")
                 .font(.system(size: 48, weight: .bold))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 .padding(.bottom, 20)
 
             TextField("Email", text: $email)

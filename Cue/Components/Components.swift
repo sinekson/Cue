@@ -1272,7 +1272,7 @@ enum AppGlass {
     static let idleTint = Color.white.opacity(0.4)
     /// (85 %: nothing in the UI is pure white — `FixedFocusText.primary`.)
     static let text = Color.white.opacity(0.85)
-    static let textMuted = Color.white.opacity(0.62)
+    static let textMuted = Color.white.opacity(FixedFocusText.secondary)
     static let textOnFocus = Color.black.opacity(0.85)
     /// THE glass: every Liquid Glass surface in the app is this one —
     /// `.regular`, darkened by this tint (text stays crisp over bright art).
@@ -2340,7 +2340,7 @@ struct FusionToastHost: View {
                     }
                     Text(message)
                         .font(FusionType.button(theme.font))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 }
                 .padding(.horizontal, CueSpacing.xl)
                 .padding(.vertical, CueSpacing.md)

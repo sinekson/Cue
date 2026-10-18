@@ -496,7 +496,7 @@ private struct TextPanelView: View {
             VStack(alignment: .leading, spacing: 24) {
                 Text(title)
                     .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 Text(text)
                     .font(.system(size: 26, weight: .regular))
                     .foregroundStyle(Color.white.opacity(0.85))

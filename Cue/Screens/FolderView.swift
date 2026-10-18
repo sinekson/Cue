@@ -168,7 +168,7 @@ struct FolderView: View {
                     .padding(.top, Self.headerTop)
                 Text(emptyMessage)
                     .font(.system(size: 26))
-                    .foregroundStyle(Color.white.opacity(0.6))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -252,11 +252,11 @@ struct FolderHeader: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.system(size: 52, weight: .bold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
                     .lineLimit(1)
                 Text(subtitle)
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.6))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
                     .lineLimit(1)
             }
         }

@@ -311,7 +311,7 @@ struct DetailSummaryPanel: View {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(title)
                         .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(Color.white)
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                     Text(text)
                         .font(.system(size: 28))
                         .lineSpacing(6)

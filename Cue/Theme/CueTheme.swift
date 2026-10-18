@@ -25,8 +25,6 @@ enum CuePrimitives {
     static let neutral800 = Color(hex: 0x2D2D2D)
     static let neutral750 = Color(hex: 0x333333)
     static let neutral700 = Color(hex: 0x4D4D4D)
-    static let neutral500 = Color(hex: 0x9E9E9E)
-    static let neutral400 = Color(hex: 0xB3B3B3)
     static let neutral200 = Color(hex: 0xE0E0E0)
     static let neutral100 = Color(hex: 0xF5F5F5)
     static let red500 = Color(hex: 0xE53935)
@@ -76,9 +74,9 @@ struct ThemePalette: Identifiable, Equatable {
     // Stored (not computed) so the Apple TV theme's light palette can swap
     // them for dark-on-light text; every palette in CueThemes keeps these
     // defaults.
-    var textPrimary: Color = CuePrimitives.white
-    var textSecondary: Color = CuePrimitives.neutral400
-    var textTertiary: Color = CuePrimitives.neutral500
+    var textPrimary: Color = Color.white.opacity(0.85)
+    var textSecondary: Color = Color.white.opacity(0.6)
+    var textTertiary: Color = Color.white.opacity(0.45)
 
     /// The accent is LIGHT — White, Lavender, Mint. Their own ink
     /// (`onSecondary`) is dark, which is exactly what a translucent tint of

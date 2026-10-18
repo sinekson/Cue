@@ -102,7 +102,7 @@ struct SourcePanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Sources")
                     .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 Text(status)
                     .font(.system(size: 21))
                     .foregroundStyle(Color.white.opacity(0.55))
@@ -295,7 +295,7 @@ struct FindingSourceCard: View {
             VStack(spacing: 6) {
                 Text("Finding a source…")
                     .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(Color.white)
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 Text([search.title, search.episode].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 22))
                     .foregroundStyle(Color.white.opacity(0.6))
