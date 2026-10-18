@@ -112,6 +112,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Folder and browse pages' headers alike: the page's name as the row
   names (55 %), a person's bio 70 %, the kind label, facts and subtitle
   50 %.
+  Details' About the same: the summary, the facts and the chips' names
+  70 %, the small labels 50 %; the Summary panel's text 85 %.
 - Motion tokens (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s
   (no-bounce springs), fade 0.25 s. One press, one movement.
 - Animate transforms and opacity only. Never alpha 0 on a focusable list
