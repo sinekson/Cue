@@ -558,7 +558,7 @@ struct RemoteImage: View {
     /// Hard decode cap in PIXELS on the longest side, for full-bleed art that
     /// has no point size to derive from (see `PerformanceProfile.backdropPixelCap`).
     var maxPixels: CGFloat? = nil
-    /// Show the shimmer while loading (and when it fails). Off for LOGOS:
+    /// Show the placeholder while loading (and when it fails). Off for LOGOS:
     /// transparent art over a picture — a dark box behind it looked broken;
     /// nothing at all until the logo is there reads better.
     var showsPlaceholder = true
@@ -742,21 +742,17 @@ struct RemoteImage: View {
     }
 }
 
-/// Dimmed placeholder shown while an image downloads. Deliberately STATIC:
-/// the earlier breathing animation started a repeat-forever animation in
-/// every freshly created cell — during a fast row scroll that's dozens of
-/// simultaneous animations spinning up, which visibly stuttered scrolling on
-/// the A10X.
-private struct PlaceholderShimmer: View {
-    var body: some View {
-        CuePrimitives.neutral875
-            .overlay(
-                Image(systemName: "film")
-                    .font(.system(size: 30))
-                    .foregroundStyle(CuePrimitives.neutral700)
-            )
-            .opacity(0.7)
+/// While an image downloads: the cards' placeholder (`FixedFocusPlaceholder`
+/// — the soft fill, breathing on Core Animation, so many at once cost the
+/// main thread nothing), square: the caller's shape clips it.
+private struct PlaceholderShimmer: UIViewRepresentable {
+    func makeUIView(context: Context) -> FixedFocusPlaceholder {
+        let view = FixedFocusPlaceholder()
+        view.layer.cornerRadius = 0
+        return view
     }
+
+    func updateUIView(_ view: FixedFocusPlaceholder, context: Context) {}
 }
 
 // MARK: - Marquee title

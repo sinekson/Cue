@@ -4923,15 +4923,27 @@ final class FixedFocusHeaderButton: UIView {
         host.view.frame = bounds
     }
 
-    private func render() {
+    private func render(released: Bool = false) {
         host.rootView = FixedFocusSeasonFace(label: label, lit: lit, selected: selected)
-        let scale = lit ? DetailActionButton.focusScale - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
-        // (The action buttons' timing: in quick, out slower.)
-        UIView.animate(withDuration: lit ? 0.15 : 0.35, delay: 0, usingSpringWithDamping: 1,
+        let scale = lit ? DetailActionButton.focusScale * (pressed ? DetailActionButton.pressScale : 1) : 1
+        // The action buttons' timing: a press quick in, back on a spring;
+        // focus in quick, out slower.
+        let duration = pressed ? DetailActionButton.pressInTime : released ? 0.3 : lit ? 0.15 : 0.35
+        if pressed {
+            UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+                self.transform = CGAffineTransform(scaleX: scale, y: scale)
+            }
+            return
+        }
+        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1,
                        initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.transform = CGAffineTransform(scaleX: scale, y: scale)
         }
     }
+
+    /// When Select went down: a quick tap still shrinks all the way
+    /// (`DetailActionButton.pressInTime`) before it grows back.
+    private var pressedAt = Date.distantPast
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
@@ -4952,15 +4964,20 @@ final class FixedFocusHeaderButton: UIView {
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
         pressed = true
+        pressedAt = .now
         render()
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
-        pressed = false
-        render()
-        // Select: into the row, on the season's episode.
-        rowCell?.focusCards()
+        let left = DetailActionButton.pressInTime - Date.now.timeIntervalSince(pressedAt)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, left)) { [weak self] in
+            guard let self, self.pressed else { return }
+            self.pressed = false
+            self.render(released: true)
+            // Select: into the row, on the season's episode.
+            self.rowCell?.focusCards()
+        }
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -4989,48 +5006,6 @@ struct FixedFocusSeasonFace: View {
             // set), the others plain.
             .modifier(ActionFace(lit: lit, rest: selected ? DetailActionButton.restContent : FlatControl.contentMuted,
                                  pill: selected, current: true))
-    }
-}
-
-/// A browse page's glass pill (Movies | Series, the sort button).
-struct FixedFocusHeaderPill: View {
-    let label: String
-    let lit: Bool
-    let selected: Bool
-    /// A dropdown's button: a chevron after the label.
-    var chevron = false
-    /// A symbol before the label (the sort button's).
-    var icon: String? = nil
-    static let focusScale: CGFloat = 1.07
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: GlassPill.textSize * 0.8, weight: .semibold))
-            }
-            Text(label)
-                .font(.system(size: GlassPill.textSize, weight: .semibold))
-                .lineLimit(1)
-            if chevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: GlassPill.textSize * 0.7, weight: .bold))
-            }
-        }
-            .fixedSize()
-            .padding(.horizontal, 24)
-            .frame(height: FixedFocusHeaderButton.height)
-            .foregroundStyle(lit ? FlatControl.contentOnFocus : selected ? FlatControl.content : FlatControl.contentMuted)
-            .background {
-                ZStack {
-                    Color.clear.liquidGlass(in: Capsule())
-                    // The row's season: lighter glass; focused: the highlight.
-                    Capsule().fill(FlatControl.selected).opacity(selected && !lit ? 1 : 0)
-                    Capsule().fill(AppGlass.focusTint).opacity(lit ? 1 : 0)
-                }
-            }
-            .animation(Motion.focus, value: lit)
-            .animation(Motion.focus, value: selected)
     }
 }
 
@@ -5094,12 +5069,19 @@ final class FixedFocusBoxView: UIView {
         let backdrop = UIImageView()
         let shade = CAGradientLayer()
         let logo = UIImageView()
+        /// The backdrop on its way: the placeholder's look, nothing over it.
+        let loadingCard = FixedFocusPlaceholder()
+        /// It waits (true) or is in: the box's edge waits with it.
+        var onWaiting: (Bool) -> Void = { _ in }
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             backdrop.contentMode = .scaleAspectFill
             backdrop.clipsToBounds = true
             addSubview(backdrop)
+            loadingCard.isHidden = true
+            loadingCard.layer.cornerRadius = 0
+            addSubview(loadingCard)
             shade.colors = [UIColor.clear.cgColor,
                             UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
             shade.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -5114,6 +5096,7 @@ final class FixedFocusBoxView: UIView {
         override func layoutSubviews() {
             super.layoutSubviews()
             backdrop.frame = bounds
+            loadingCard.frame = bounds
             shade.frame = bounds
             layer.insertSublayer(shade, above: backdrop.layer)
             logo.frame = CGRect(x: Spotlight.logoInset,
@@ -5126,7 +5109,15 @@ final class FixedFocusBoxView: UIView {
             shade.isHidden = item.type == "collection"
             // (At the box's size — larger for a side-info row.)
             let width = max(bounds.width, FixedFocusMetrics.boxWidth)
-            FixedFocusImages.load(item.background ?? item.poster, into: backdrop, maxDimension: width)
+            let shaded = item.type != "collection"
+            FixedFocusImages.load(item.background ?? item.poster, into: backdrop, maxDimension: width,
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                self.loadingCard.follow(waiting: waiting)
+                self.shade.isHidden = waiting || !shaded
+                self.logo.isHidden = waiting
+                self.onWaiting(waiting)
+            })
             FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55)
         }
     }
@@ -5194,9 +5185,9 @@ final class FixedFocusBoxView: UIView {
         clip.clipsToBounds = true
         clip.layer.cornerRadius = Spotlight.cornerRadius
         clip.layer.cornerCurve = .continuous
-        clip.backgroundColor = UIColor(white: 0.12, alpha: 1)
         addSubview(clip)
         clip.addSubview(page)
+        follow(page)
         infoHost.isUserInteractionEnabled = false
         addSubview(infoHost)
         infoHost.addSubview(infoPage)
@@ -5235,7 +5226,7 @@ final class FixedFocusBoxView: UIView {
     /// indented).
     private var infoFrame: CGRect {
         CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + FixedFocusMetrics.boxInfoGap,
-               width: max(bounds.width, FixedFocusMetrics.boxWidth),
+               width: max(bounds.width, FixedFocusMetrics.boxWidth) - 2 * FixedFocusMetrics.textIndent,
                height: FixedFocusMetrics.infoHeight)
     }
 
@@ -5262,6 +5253,15 @@ final class FixedFocusBoxView: UIView {
         infoHost.transform = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale).translatedBy(x: 0, y: overhang)
     }
 
+    /// The current page's backdrop on its way: no edge (the placeholder's
+    /// look).
+    private func follow(_ page: Page) {
+        page.onWaiting = { [weak self, weak page] waiting in
+            guard let self, page === self.page else { return }
+            self.edge.isHidden = waiting
+        }
+    }
+
     /// `direction`: +1 moving right (new content comes from the right),
     /// −1 moving left. Render Lab → Box change: slide or crossfade.
     func show(_ item: MetaItem, animated: Bool,
@@ -5282,11 +5282,13 @@ final class FixedFocusBoxView: UIView {
         let dx = vertical ? 0 : direction * shift
         let dy = vertical ? direction * shift : 0
         let incoming = Page(frame: bounds.offsetBy(dx: dx, dy: dy))
+        follow(incoming)
         incoming.show(item)
         incoming.alpha = 0
         clip.addSubview(incoming)
         let outgoing = page
         page = incoming
+        edge.isHidden = incoming.loadingCard.isWaiting
         // The info drifts the same way, in sync.
         let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: dx, dy: dy))
         infoIn.show(item)
@@ -5320,9 +5322,13 @@ final class FixedFocusBoxView: UIView {
 class FixedFocusPulsing: UIView {
     private static let half: CFTimeInterval = 1.2
     private static let low: Float = 0.55
+    /// The layer that breathes (a sublayer: the view's own alpha stays free
+    /// to fade).
+    var pulseLayer: CALayer { layer }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        let layer = pulseLayer
         layer.removeAnimation(forKey: "pulse")
         guard window != nil, !UIAccessibility.isReduceMotionEnabled else { return }
         let pulse = CABasicAnimation(keyPath: "opacity")
@@ -5341,12 +5347,37 @@ class FixedFocusPulsing: UIView {
 }
 
 /// A card whose content is still loading (`FixedFocusRows.placeholderRows`,
-/// `FolderPosterGrid.placeholderItems`): only a soft fill over the page,
-/// lighter at the top, at the card's corners, as the Apple TV app's — no
-/// edge (that belongs to a picture), nothing in it, no text to come. It
-/// breathes (`FixedFocusPulsing`).
+/// `FolderPosterGrid.placeholderItems`) — or whose picture is (`follow`):
+/// only a soft fill over the page, lighter at the top, at the card's
+/// corners, as the Apple TV app's — no edge (that belongs to a picture),
+/// nothing in it, no text to come. It breathes (`FixedFocusPulsing`).
 final class FixedFocusPlaceholder: FixedFocusPulsing {
     private let fill = CAGradientLayer()
+    override var pulseLayer: CALayer { fill }
+
+    /// Over a picture on its way (`FixedFocusImages.load`'s `waiting`):
+    /// shown while it waits; once it's in, it fades away over it.
+    func follow(waiting: Bool) {
+        if waiting {
+            layer.removeAllAnimations()
+            alpha = 1
+            isHidden = false
+        } else if !isHidden, window != nil {
+            UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
+                           options: [.allowUserInteraction, .beginFromCurrentState]) {
+                self.alpha = 0
+            } completion: { finished in
+                guard finished, self.alpha == 0 else { return }
+                self.isHidden = true
+                self.alpha = 1
+            }
+        } else {
+            isHidden = true
+        }
+    }
+
+    /// While it shows: the picture's not there yet (its edge waits too).
+    var isWaiting: Bool { !isHidden && alpha > 0 }
 
     static func isPlaceholder(_ item: MetaItem?) -> Bool { item?.id.hasPrefix("placeholder-") == true }
 
@@ -5408,13 +5439,18 @@ enum FixedFocusImages {
         }
     }
 
-    static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat) {
+    /// `waiting`: true while the picture is on its way (the card shows the
+    /// placeholder — `FixedFocusPlaceholder`), false once it's in, or when
+    /// there's none to wait for.
+    static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat,
+                     waiting: ((Bool) -> Void)? = nil) {
         let slot = ObjectIdentifier(view)
         requested[slot] = url
-        guard let url else { view.image = nil; return }
+        guard let url else { view.image = nil; waiting?(false); return }
         let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
-        if let hit = ImageCache.shared.image(for: memoryKey) { view.image = hit; return }
+        if let hit = ImageCache.shared.image(for: memoryKey) { view.image = hit; waiting?(false); return }
         view.image = nil
+        waiting?(true)
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
         Task { @MainActor [weak view] in
             var image = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey)
@@ -5432,6 +5468,7 @@ enum FixedFocusImages {
             }
             guard let view, requested[slot] == url else { return }
             view.image = image
+            waiting?(false)
         }
     }
 }
@@ -6928,6 +6965,10 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     /// The text column: from the card's left, this wide.
     private static let textInset: CGFloat = 56
     private static let textWidth: CGFloat = 760
+    /// No picture at all.
+    private static let empty = UIColor(white: 0.12, alpha: 1)
+    /// The picture on its way: the placeholder's look.
+    private let loadingCard = FixedFocusPlaceholder()
     private static let logoHeight: CGFloat = 96
 
     override init(frame: CGRect) {
@@ -6938,11 +6979,14 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         card.clipsToBounds = true
         card.layer.cornerRadius = Spotlight.cornerRadius
         card.layer.cornerCurve = .continuous
-        card.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        card.backgroundColor = Self.empty
         contentView.addSubview(card)
         backdrop.contentMode = .scaleAspectFill
         backdrop.clipsToBounds = true
         card.addSubview(backdrop)
+        loadingCard.isHidden = true
+        loadingCard.layer.cornerRadius = 0
+        card.addSubview(loadingCard)
         // The billboard's left fade: dark under the text, gone by mid-card.
         fade.startPoint = CGPoint(x: 0, y: 0.5)
         fade.endPoint = CGPoint(x: 1, y: 0.5)
@@ -6985,7 +7029,13 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         self.rowCell = rowCell
         if self.item?.id != item.id {
             FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
-                                  maxDimension: StagePictureView.pictureSize.width)
+                                  maxDimension: StagePictureView.pictureSize.width,
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                self.loadingCard.follow(waiting: waiting)
+                self.card.backgroundColor = waiting ? nil : Self.empty
+                self.edge.isHidden = waiting
+            })
             logo.image = nil
             FixedFocusImages.load(item.logo, into: logo.imageView, maxDimension: 600)
         }
@@ -7023,6 +7073,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         shadow.center = CGPoint(x: bounds.midX, y: bounds.midY)
         edge.image = FixedFocusCardEdge.rim
         edge.frame = card.bounds
+        loadingCard.frame = card.bounds
         // A WINDOW onto the full-screen picture: the backdrop at the size and
         // place Details (and Home's billboard) give it, seen through the
         // card — the very same picture.
@@ -7209,6 +7260,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
     private var isPlaceholder = false
+    /// Its picture on its way: the placeholder's look over the empty card.
+    private let loadingCard = FixedFocusPlaceholder()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -7222,6 +7275,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         contentView.addSubview(picture)
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
+        loadingCard.isHidden = true
+        picture.addSubview(loadingCard)
         edge.isUserInteractionEnabled = false
         picture.addSubview(edge)
         stateShade.colors = [UIColor.clear.cgColor,
@@ -7264,7 +7319,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         NSLayoutConstraint.activate([
             captionGap,
             name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: FixedFocusMetrics.textIndent),
-            name.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            name.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -FixedFocusMetrics.textIndent),
             name.heightAnchor.constraint(equalToConstant: 30),
             detail.topAnchor.constraint(equalTo: name.topAnchor, constant: FixedFocusMetrics.captionLineOffset),
             detail.heightAnchor.constraint(equalToConstant: FixedFocusMetrics.factsHeight),
@@ -7288,6 +7343,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                                                             height: card.height * outlineScale))
         edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
+        loadingCard.frame = picture.bounds
         placeholderCard.frame = card
         placeholderCard.isHidden = !isPlaceholder
         picture.isHidden = isPlaceholder
@@ -7346,30 +7402,46 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         shown = key
         // A logo: on a light plate, fitted with room around it.
         logo.isHidden = !isLogo
-        picture.backgroundColor = isLogo ? UIColor(white: 0.9, alpha: 1) : nil
         if isLogo {
             // (Drops a reused card's poster still on its way — it landed
             // over the logo's plate.)
             FixedFocusImages.load(nil, into: picture, maxDimension: 0)
             logo.image = nil
-            if let art { FixedFocusImages.load(art, into: logo, maxDimension: max(card.width, card.height)) }
+            FixedFocusImages.load(art, into: logo, maxDimension: max(card.width, card.height),
+                                  waiting: { [weak self] in self?.pictureWaiting($0, plate: true) })
             return
         }
-        // (No picture: the title's name — a person's initials.)
-        let placeholder = item.type == "person"
-            ? item.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
-            : item.name
-        picture.image = TileArt.placeholder(size: card, text: art == nil ? placeholder : nil)
-        guard let art else { return }
+        guard let art else {
+            // No picture: the title's name — a person's initials.
+            let text = item.type == "person"
+                ? item.name.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+                : item.name
+            FixedFocusImages.load(nil, into: picture, maxDimension: 0)
+            picture.image = TileArt.placeholder(size: card, text: text)
+            pictureWaiting(false, plate: false)
+            return
+        }
         if Self.lift {
             // The system's effect needs the corners in the picture itself.
+            picture.image = nil
+            pictureWaiting(true, plate: false)
             TileArt.load(art, size: card, contain: false) { [weak self] image in
                 guard let self, self.shown == key, let image else { return }
                 self.picture.image = image
+                self.pictureWaiting(false, plate: false)
             }
         } else {
-            FixedFocusImages.load(art, into: picture, maxDimension: max(card.width, card.height))
+            FixedFocusImages.load(art, into: picture, maxDimension: max(card.width, card.height),
+                                  waiting: { [weak self] in self?.pictureWaiting($0, plate: false) })
         }
+    }
+
+    /// The picture (or a logo's plate) waits under the placeholder's look:
+    /// no edge, no plate until it's in.
+    private func pictureWaiting(_ waiting: Bool, plate: Bool) {
+        loadingCard.follow(waiting: waiting)
+        edge.isHidden = waiting
+        picture.backgroundColor = plate && !waiting ? UIColor(white: 0.9, alpha: 1) : nil
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -7535,6 +7607,10 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let dimCover = UIView()
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
+    /// The picture it shows on its way: the placeholder's look over it.
+    private let loadingCard = FixedFocusPlaceholder()
+    private var posterWaiting = false
+    private var backdropWaiting = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -7549,6 +7625,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         }
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
+        loadingCard.isHidden = true
+        contentView.addSubview(loadingCard)
         shade.colors = [UIColor.clear.cgColor,
                         UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
         shade.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -7622,8 +7700,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         edge.frame = card
         contentView.bringSubviewToFront(edge)
         placeholderCard.frame = card
+        loadingCard.frame = card
         let placeholder = FixedFocusPlaceholder.isPlaceholder(item)
-        edge.isHidden = placeholder
+        edge.isHidden = placeholder || loadingCard.isWaiting
         placeholderCard.isHidden = !placeholder
         poster.isHidden = placeholder
         backdrop.isHidden = placeholder
@@ -7631,7 +7710,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                              width: landscapeWidth - 48, height: 34)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
         let infoRect = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.boxInfoGap,
-                              width: landscapeWidth, height: FixedFocusMetrics.infoHeight)
+                              width: landscapeWidth - 2 * FixedFocusMetrics.textIndent,
+                              height: FixedFocusMetrics.infoHeight)
         info.bounds = CGRect(origin: .zero, size: infoRect.size)
         info.center = CGPoint(x: infoRect.midX, y: infoRect.midY)
         applyInfoCounterScale()
@@ -7639,8 +7719,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                              height: FixedFocusMetrics.factsHeight)
         name.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: 30)
         facts.frame = CGRect(x: 0, y: 36, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
-        caption.frame = CGRect(x: 0, y: cardHeight + FixedFocusMetrics.infoGap,
-                               width: FixedFocusMetrics.posterWidth,
+        caption.frame = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.infoGap,
+                               width: FixedFocusMetrics.posterWidth - 2 * FixedFocusMetrics.textIndent,
                                height: FixedFocusMetrics.captionRoom - FixedFocusMetrics.infoGap)
         captionName.frame = CGRect(x: 0, y: 0, width: caption.bounds.width, height: 30)
         captionYear.frame = CGRect(x: 0, y: FixedFocusMetrics.captionLineOffset,
@@ -7674,10 +7754,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             backdropFor = item.id
             shade.isHidden = item.type == "collection"
             FixedFocusImages.load(item.background ?? item.poster,
-                                  into: backdrop, maxDimension: landscapeWidth)
+                                  into: backdrop, maxDimension: landscapeWidth,
+                                  waiting: { [weak self] in self?.backdropWaiting = $0; self?.updateWaiting() })
             FixedFocusImages.load(progress == nil ? item.logo : nil, into: logo,
                                   maxDimension: landscapeWidth * 0.55)
-            FixedFocusImages.load(nil, into: poster, maxDimension: 0)
+            FixedFocusImages.load(nil, into: poster, maxDimension: 0,
+                                  waiting: { [weak self] in self?.posterWaiting = $0 })
             state.show(progress)
             state.alpha = progress == nil ? 0 : 1
             name.text = item.name
@@ -7691,11 +7773,20 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         captionYear.text = item.year
         applyAlpha()
         FixedFocusImages.load(item.poster ?? item.background, into: poster,
-                              maxDimension: FixedFocusMetrics.height)
-        FixedFocusImages.load(nil, into: backdrop, maxDimension: 0)
+                              maxDimension: FixedFocusMetrics.height,
+                              waiting: { [weak self] in self?.posterWaiting = $0; self?.updateWaiting() })
+        FixedFocusImages.load(nil, into: backdrop, maxDimension: 0,
+                              waiting: { [weak self] in self?.backdropWaiting = $0 })
         FixedFocusImages.load(nil, into: logo, maxDimension: 0)
         name.text = item.name
         facts.text = FixedFocusShowInfo.factsLine(item)
+    }
+
+    /// The picture it shows still on its way: the placeholder's look, no
+    /// edge (the box's backdrop under the fixed box: the box shows it).
+    private func updateWaiting() {
+        loadingCard.follow(waiting: landscape || showsBox ? backdropWaiting : posterWaiting)
+        setNeedsLayout()
     }
 
     /// The cell's outline.
@@ -7796,14 +7887,15 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         if grown, let item, backdropFor != item.id {
             backdropFor = item.id
             FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
-                                  maxDimension: FixedFocusMetrics.boxWidth)
+                                  maxDimension: FixedFocusMetrics.boxWidth,
+                                  waiting: { [weak self] in self?.backdropWaiting = $0; self?.updateWaiting() })
             FixedFocusImages.load(item.logo, into: logo, maxDimension: FixedFocusMetrics.boxWidth * 0.55)
         }
         // Under the fixed box (contentHidden) the poster simply stays: the
         // box covers it — no fade, only movement. It only gives way to the
         // backdrop while the cell itself shows the box (Up/Down opening).
         let shows = grown && !contentHidden
-        if shows != showsBox { showsBox = shows; setNeedsLayout() }
+        if shows != showsBox { showsBox = shows; updateWaiting(); setNeedsLayout() }
         poster.alpha = shows ? 0 : 1
         backdrop.alpha = shows ? 1 : 0
         // A placeholder (`FixedFocusRows.placeholderRows`): the empty card

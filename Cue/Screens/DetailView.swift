@@ -583,8 +583,11 @@ struct DetailView: View {
 
             // Info: the summary in a glass panel over the page; Back (or
             // Select) closes it, focus back on Info.
-            if summaryShown, let text = viewModel.meta.description {
-                DetailSummaryPanel(title: viewModel.meta.name, text: text) {
+            if summaryShown, viewModel.meta.description?.isEmpty == false {
+                DetailSummaryPanel(title: viewModel.meta.name,
+                                   genres: about.genres.map(\.name).joined(separator: " · "),
+                                   summary: about.summaryBox,
+                                   facts: about.factsBox.environmentObject(theme).environmentObject(mdblist)) {
                     summaryShown = false
                     returningToInfo = true
                     actionFocus = .info
@@ -1050,20 +1053,25 @@ struct DetailView: View {
         viewModel.meta.description?.isEmpty == false || viewModel.about != nil || !viewModel.companies.isEmpty
     }
 
-    /// About: the summary, the facts and ratings, genres and tags — with the
-    /// page's stores.
+    /// About: the summary, the facts and ratings, genres and tags (its
+    /// facts also in the Summary panel).
+    private var about: DetailAbout {
+        DetailAbout(meta: viewModel.meta, about: viewModel.about, facts: viewModel.facts,
+                    releaseDate: viewModel.releaseDate, contentRating: viewModel.contentRating,
+                    language: viewModel.language, ratings: viewModel.mdbRatings,
+                    settings: mdblist.settings, studiosShown: !viewModel.companies.isEmpty,
+                    crew: viewModel.crew,
+                    onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
+                    onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
+                    onFocus: { _ in },
+                    onContentHeight: { height in
+                        if abs(height - aboutContentHeight) > 1 { aboutContentHeight = height }
+                    })
+    }
+
+    /// About in the rows — with the page's stores.
     private var aboutBlock: AnyView {
-        AnyView(DetailAbout(meta: viewModel.meta, about: viewModel.about, facts: viewModel.facts,
-                            releaseDate: viewModel.releaseDate, contentRating: viewModel.contentRating,
-                            language: viewModel.language, ratings: viewModel.mdbRatings,
-                            settings: mdblist.settings, studiosShown: !viewModel.companies.isEmpty,
-                            crew: viewModel.crew,
-                            onSelectGenre: { onSelectGenre($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
-                            onSelectKeyword: { onSelectKeyword($0, !viewModel.meta.isSeries, viewModel.backdropURL) },
-                            onFocus: { _ in },
-                            onContentHeight: { height in
-                                if abs(height - aboutContentHeight) > 1 { aboutContentHeight = height }
-                            })
+        AnyView(about
             // (In line with the row's name.)
             .padding(.leading, FixedFocusMetrics.titleInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1166,10 +1174,10 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .trailer)
-                    // The summary in place, over the page (the billboard
+                    // About in place, over the page (the billboard
                     // shows only the tagline).
                     DetailActionButton(
-                        icon: "text.alignleft", title: "Summary",
+                        icon: "text.alignleft", title: "About",
                         isPrimary: false, lit: litAction == .info, bare: true,
                         action: {
                             if viewModel.meta.description?.isEmpty == false { summaryShown = true }
@@ -1470,6 +1478,12 @@ struct DetailActionButton: View {
     private var litAnimation: Animation { shownLit ? Self.open : Self.leave }
     /// Focused: this much larger.
     static let focusScale: CGFloat = 1.05
+    /// Pressed: shrunk to this share of its size (quick, `pressIn`), then
+    /// back (`pressOut`, a no-bounce spring). (Was 3 % less: unnoticed.)
+    static let pressScale: CGFloat = 0.9
+    static let pressInTime: Double = 0.1
+    static let pressIn: Animation = .easeOut(duration: pressInTime)
+    static let pressOut: Animation = .spring(duration: 0.3, bounce: 0)
     /// The caption: small, under the circle.
     static let captionSize: CGFloat = 20
     static let captionGap: CGFloat = 12
@@ -1540,10 +1554,15 @@ extension EnvironmentValues {
     /// Drawn into an image (the billboard's buttons going out with their
     /// card): the frosted pill as a flat stand-in — a blur can't be drawn.
     @Entry var actionFaceStill = false
+    /// The top bar's glass at rest (the thin frost read too see-through
+    /// over the billboard's bright pictures). false: the frost — kept for
+    /// now.
+    @Entry var actionFaceGlass = true
 }
 
 struct ActionFace: ViewModifier {
     @Environment(\.actionFaceStill) private var still
+    @Environment(\.actionFaceGlass) private var glass
     let lit: Bool
     var rest: Color = DetailActionButton.restContent
     /// At rest on the frosted pill (the top bar's current tab, not glass);
@@ -1574,11 +1593,16 @@ struct ActionFace: ViewModifier {
                     } else {
                         ZStack {
                             if still {
-                                Capsule().fill(Color.black.opacity(0.35))
+                                Capsule().fill(glass ? Color.white.opacity(0.18) : Color.black.opacity(0.35))
+                            } else if glass {
+                                Color.clear.liquidGlass(in: Capsule())
                             } else {
                                 Capsule().fill(.thinMaterial).environment(\.colorScheme, .dark)
                             }
-                            Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
+                            // (The glass has its own edge.)
+                            if !glass || still {
+                                Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
+                            }
                         }
                         .opacity(pill ? 1 : 0)
                     }
@@ -1615,18 +1639,39 @@ private struct DetailPressStyle: ButtonStyle {
         let lit: Bool
         let held: Bool
         let onFocus: (Bool) -> Void
+        /// Shown pressed: from the press on, for at least `pressIn`'s
+        /// time (a quick tap still shrinks all the way), then grows back.
+        @State private var down = false
+        @State private var downAt = Date.distantPast
+        @State private var releasing = false
 
         var body: some View {
             let base = lit ? DetailPressStyle.focusScale : 1
             let scale = held ? base + FixedFocusMetrics.heldGrowth
-                : configuration.isPressed ? base - (1 - FixedFocusMetrics.pressScale) : base
+                : down ? base * DetailActionButton.pressScale : base
             return configuration.label
                 .scaleEffect(scale)
-                // Focus: with the highlight, on its curve; a press quicker.
-                .animation(configuration.isPressed ? .easeOut(duration: 0.12)
+                // A press: quick in, back on a spring; focus: with the
+                // highlight, on its curve.
+                .animation(down ? DetailActionButton.pressIn
+                           : releasing ? DetailActionButton.pressOut
                            : lit ? DetailActionButton.open : DetailActionButton.leave,
                            value: scale)
                 .onChange(of: isFocused) { _, now in onFocus(now) }
+                .onChange(of: configuration.isPressed) { _, pressed in
+                    if pressed {
+                        downAt = .now
+                        releasing = false
+                        down = true
+                        return
+                    }
+                    let left = DetailActionButton.pressInTime - Date.now.timeIntervalSince(downAt)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, left)) {
+                        releasing = true
+                        down = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { releasing = false }
+                    }
+                }
         }
     }
 }

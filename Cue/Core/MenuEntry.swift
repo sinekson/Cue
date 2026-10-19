@@ -78,6 +78,10 @@ protocol HoldMenuProviding: AnyObject {
 /// focus is on the card as it goes.
 @MainActor
 final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
+    /// How much the screen dims behind a hold menu (not the held card, not
+    /// behind a dropdown) and behind the source panel.
+    static let dimming: CGFloat = 0.35
+
     static let shared = HoldMenu()
     /// How long Select is held before the menu opens (the system's is about
     /// half a second).
@@ -239,8 +243,8 @@ private final class HoldMenuFrame {
     var rect: CGRect = .zero
 }
 
-/// The menu itself: a glass panel beside the card, growing out of the card's
-/// side; the screen behind it dimmed, the held card left out (`dimming`).
+/// The menu itself: a glass panel beside the card, unfolding out of the
+/// card's side (`openScale`); the screen behind it dimmed, the held card left out (`HoldMenu.dimming`).
 private final class HoldMenuController: UIViewController {
     private let request: HoldMenuRequest
     private let dim = UIView()
@@ -249,9 +253,6 @@ private final class HoldMenuController: UIViewController {
     private var panel: UIHostingController<HoldMenuPanel>!
     private var closing = false
 
-    /// How much the screen dims behind a hold menu — not the held card,
-    /// and not behind a dropdown.
-    static let dimming: CGFloat = 0.35
     /// The panel's gap to a card with none beside it, and the screen margin
     /// it keeps.
     static let gap: CGFloat = 18
@@ -325,16 +326,29 @@ private final class HoldMenuController: UIViewController {
         panel.view.center = CGPoint(x: right ? x : x + size.width, y: top ? y : y + size.height)
     }
 
+    /// Unfolding out of the card (the Apple TV app's way): from this size,
+    /// at its corner facing the card, on the present spring; the glass
+    /// shows at once, the entries a moment later (`HoldMenuPanel`).
+    static let openScale: CGFloat = 0.5
+    static let openFade: Double = 0.12
+    /// Closing: back into that corner, quicker.
+    static let closeScale: CGFloat = 0.6
+    static let closeDuration: Double = 0.22
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         panel.view.alpha = 0
-        panel.view.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+        panel.view.transform = CGAffineTransform(scaleX: Self.openScale, y: Self.openScale)
         request.onHeld?(true)
-        UIView.animate(withDuration: 0.28, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0,
+        UIView.animate(springDuration: Motion.presentDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.allowUserInteraction]) {
-            self.panel.view.alpha = 1
             self.panel.view.transform = .identity
-            self.dim.alpha = self.request.below ? 0 : Self.dimming
+        }
+        UIView.animate(withDuration: Self.openFade, delay: 0, options: [.curveLinear, .allowUserInteraction]) {
+            self.panel.view.alpha = 1
+        }
+        UIView.animate(withDuration: Motion.fadeDuration, delay: 0, options: [.allowUserInteraction]) {
+            self.dim.alpha = self.request.below ? 0 : HoldMenu.dimming
         }
     }
 
@@ -352,9 +366,9 @@ private final class HoldMenuController: UIViewController {
         guard !closing else { return }
         closing = true
         request.onHeld?(false)
-        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseIn]) {
+        UIView.animate(withDuration: Self.closeDuration, delay: 0, options: [.curveEaseIn]) {
             self.panel.view.alpha = 0
-            self.panel.view.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
+            self.panel.view.transform = CGAffineTransform(scaleX: Self.closeScale, y: Self.closeScale)
             self.dim.alpha = 0
         } completion: { _ in
             self.dismiss(animated: false) {
@@ -374,6 +388,8 @@ private struct HoldMenuPanel: View {
     let onCancel: () -> Void
     @State private var confirming: Int?
     @FocusState private var focused: Int?
+    /// The entries come in a moment after the glass (it unfolds first).
+    @State private var shown = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -396,6 +412,8 @@ private struct HoldMenuPanel: View {
         }
         // As wide as its longest entry.
         .fixedSize(horizontal: true, vertical: false)
+        .opacity(shown ? 1 : 0)
+        .onAppear { withAnimation(.easeOut(duration: 0.2).delay(0.08)) { shown = true } }
         .padding(HoldMenuRowStyle.inset)
         .liquidGlass(in: RoundedRectangle(cornerRadius: HoldMenuRowStyle.corner + HoldMenuRowStyle.inset,
                                           style: .continuous))

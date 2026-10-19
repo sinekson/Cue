@@ -558,106 +558,186 @@ enum SearchScope: Hashable, CaseIterable {
 }
 
 /// THE LINE under the suggestions, as in the Apple TV app: Top Results |
-/// Movies | Series in a flat pill (in the page, not floating: no glass),
-/// the Apple TV app's shape and sizes (measured on its search: a capsule
-/// 68 pt tall, the highlight 10 pt inside it, 29 pt labels 33 pt from its
-/// ends, a faint light edge along the top) in `FlatControl`'s fills: the
-/// pill at rest, the current scope the current one of a set, the focused
-/// one white with dark text; the highlight glides between them — set into it (the system's own line is hidden —
-/// `SearchKeyboardLine`); the field empty, the line alone. Moving focus
-/// along the pill switches the scope, as along the top bar.
+/// Movies | Series in the scope pill (`ScopePill`) between the line's
+/// halves (the system's own line is hidden — `SearchKeyboardLine`); the
+/// field empty, the line alone. Moving focus along the pill switches the
+/// scope, as along the top bar.
 struct SearchScopeBar: View {
     @ObservedObject var viewModel: SearchViewModel
     var showsPill = true
     var scopes = SearchScope.allCases
-    @FocusState private var focus: SearchScope?
-    @Namespace private var highlight
 
-    private static let itemHeight: CGFloat = 48
-    private static let inset: CGFloat = 10
-    /// The highlight's gap to the pill's edge: at rest, and focused
-    /// (measured: 4 pt).
-    private static let restInset: CGFloat = 7
-    private static let focusedInset: CGFloat = 4
-    private static let textSize: CGFloat = 29
-    /// Text to the item's ends: the focused capsule (6 pt wider each side)
-    /// then shows 33 pt beside the label, as the Apple TV app's.
-    private static let textPadding: CGFloat = 27
-    static let pillHeight = itemHeight + 2 * inset
+    static let pillHeight = ScopePill<SearchScope>.height
     /// The line's gap around the pill.
     private static let lineGap: CGFloat = 40
 
     var body: some View {
-        let focused = focus != nil
-        let lit = focus ?? viewModel.scope
-        return HStack(spacing: Self.lineGap) {
+        HStack(spacing: Self.lineGap) {
             line
             if showsPill {
-                HStack(spacing: 0) {
-                    ForEach(scopes, id: \.self) { scope in
-                        Button { viewModel.scope = scope } label: {
-                            Text(scope.label)
-                                .font(.system(size: Self.textSize, weight: .semibold))
-                                .padding(.horizontal, Self.textPadding)
-                                .foregroundStyle(GlassPill.contentColor(current: lit == scope,
-                                                                        onFocusHighlight: focused && lit == scope))
-                                .frame(height: Self.itemHeight)
-                                .animation(.easeOut(duration: 0.18), value: lit)
-                                .glassPillItem(scope, in: highlight)
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                        .focused($focus, equals: scope)
-                    }
-                }
-                .background {
-                    // At rest the current scope `restInset` inside the pill;
-                    // focused, the white capsule nearly fills it (the Apple
-                    // TV app's: `focusedInset` from its edge), with a
-                    // shadow below to lift it (stronger than the buttons':
-                    // the pill is dark).
-                    Capsule().fill(focused ? FlatControl.focus : FlatControl.selected)
-                        .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 12, y: 8)
-                        // (Inside the matched frame: outside, the effect's
-                        // frame won and the padding did nothing.)
-                        .padding((focused ? Self.focusedInset : Self.restInset) - Self.inset)
-                        .matchedGeometryEffect(id: lit, in: highlight, isSource: false)
-                        .animation(GlassPill.glide, value: lit)
-                        .animation(GlassPill.focusChange, value: focused)
-                }
-                .padding(Self.inset)
-                // Its full width: the line's halves give way, not the labels.
-                .fixedSize()
-                .background {
-                    Capsule().fill(FlatControl.rest)
-                        .overlay(Capsule().strokeBorder(ActionFace.pillEdge, lineWidth: 1))
-                }
-                // (Focused, the pill keeps its size — only the capsule in it grows.)
-                .defaultFocus($focus, viewModel.scope)
+                ScopePill(scopes: scopes, label: \.label, current: viewModel.scope) { viewModel.scope = $0 }
                 line
             }
         }
         .focusSection()
         .frame(height: Self.pillHeight)
         .padding(.horizontal, FixedFocusMetrics.inset)
-        .onChange(of: focus) { old, now in
-            guard let now else { return }
-            if old == nil {
-                // Coming in (Down from the suggestions, Up from the row):
-                // onto the current scope, not the nearest one.
-                if now != viewModel.scope {
-                    let scope = viewModel.scope
-                    DispatchQueue.main.async { focus = scope }
-                }
-            } else if now != viewModel.scope {
-                // Along the pill: the scope follows.
-                viewModel.scope = now
-            }
-        }
     }
 
     /// The line's halves: as the system's (tertiary label colour, 1 pt).
     private var line: some View {
         Rectangle().fill(Color(uiColor: .tertiaryLabel)).frame(height: 1)
+    }
+}
+
+/// The scope pill (Search's scopes, the browse pages' Movies | Series): a
+/// flat pill (in the page, not floating: no glass), the Apple TV app's
+/// shape and sizes (measured on its search: a capsule 68 pt tall, the
+/// highlight 10 pt inside it, 29 pt labels 33 pt from its ends, a faint
+/// light edge along the top) in `FlatControl`'s fills: the pill at rest,
+/// the current scope the current one of a set, the focused one white with
+/// dark text; the highlight glides between them. Moving focus along it
+/// switches (`choose`); coming in lands on the current one.
+struct ScopePill<Scope: Hashable>: View {
+    let scopes: [Scope]
+    let label: (Scope) -> String
+    let current: Scope
+    let choose: (Scope) -> Void
+    @FocusState private var focus: Scope?
+    @Namespace private var highlight
+
+    init(scopes: [Scope], label: @escaping (Scope) -> String, current: Scope,
+         choose: @escaping (Scope) -> Void) {
+        self.scopes = scopes
+        self.label = label
+        self.current = current
+        self.choose = choose
+    }
+
+    static var itemHeight: CGFloat { 48 }
+    static var inset: CGFloat { 10 }
+    /// The highlight's gap to the pill's edge: at rest, and focused
+    /// (measured: 4 pt).
+    static var restInset: CGFloat { 7 }
+    static var focusedInset: CGFloat { 4 }
+    static var textSize: CGFloat { 29 }
+    /// Text to the item's ends: the focused capsule (6 pt wider each side)
+    /// then shows 33 pt beside the label, as the Apple TV app's.
+    static var textPadding: CGFloat { 27 }
+    static var height: CGFloat { itemHeight + 2 * inset }
+
+    var body: some View {
+        let focused = focus != nil
+        let lit = focus ?? current
+        return HStack(spacing: 0) {
+            ForEach(scopes, id: \.self) { scope in
+                Button { choose(scope) } label: {
+                    Text(label(scope))
+                        .font(.system(size: Self.textSize, weight: .semibold))
+                        .padding(.horizontal, Self.textPadding)
+                        .foregroundStyle(GlassPill.contentColor(current: lit == scope,
+                                                                onFocusHighlight: focused && lit == scope))
+                        .frame(height: Self.itemHeight)
+                        .animation(.easeOut(duration: 0.18), value: lit)
+                        .glassPillItem(scope, in: highlight)
+                }
+                .buttonStyle(PlainCardButtonStyle())
+                .focused($focus, equals: scope)
+            }
+        }
+        .background {
+            // At rest the current scope `restInset` inside the pill;
+            // focused, the white capsule nearly fills it (the Apple TV
+            // app's: `focusedInset` from its edge), with a shadow below to
+            // lift it (stronger than the buttons': the pill is dark).
+            Capsule().fill(focused ? FlatControl.focus : FlatControl.selected)
+                .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 12, y: 8)
+                // (Inside the matched frame: outside, the effect's frame
+                // won and the padding did nothing.)
+                .padding((focused ? Self.focusedInset : Self.restInset) - Self.inset)
+                .matchedGeometryEffect(id: lit, in: highlight, isSource: false)
+                .animation(GlassPill.glide, value: lit)
+                .animation(GlassPill.focusChange, value: focused)
+        }
+        .padding(Self.inset)
+        // Its full width: what's beside it gives way, not the labels.
+        .fixedSize()
+        .background { ScopePillSurface() }
+        // (Focused, the pill keeps its size — only the capsule in it grows.)
+        .defaultFocus($focus, current)
+        .onChange(of: focus) { old, now in
+            guard let now else { return }
+            if old == nil {
+                // Coming in: onto the current scope, not the nearest one.
+                if now != current {
+                    let scope = current
+                    DispatchQueue.main.async { focus = scope }
+                }
+            } else if now != current {
+                // Along the pill: the scope follows.
+                choose(now)
+            }
+        }
+    }
+}
+
+/// The scope pill's own surface: the flat rest fill, a light edge.
+struct ScopePillSurface: View {
+    var body: some View {
+        Capsule().fill(FlatControl.rest)
+            .overlay(Capsule().strokeBorder(ActionFace.pillEdge, lineWidth: 1))
+    }
+}
+
+/// A button in the scope pill's look, alone in its own pill (the browse
+/// pages' sort): nothing current at rest — the label plain on the pill —
+/// focused, the white capsule in it, as a scope's.
+struct ScopePillButton: View {
+    let label: String
+    var icon: String? = nil
+    /// A dropdown's: a chevron after the label.
+    var chevron = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { Face(label: label, icon: icon, chevron: chevron) }
+            .buttonStyle(PlainCardButtonStyle())
+    }
+
+    private struct Face: View {
+        @Environment(\.isFocused) private var focused
+        let label: String
+        let icon: String?
+        let chevron: Bool
+        private typealias Pill = ScopePill<Int>
+        /// Tighter than a scope's (icon, label and chevron are a lot for one
+        /// pill): the white capsule 24 pt beside them.
+        private static let padding: CGFloat = 18
+
+        var body: some View {
+            HStack(spacing: 10) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: Pill.textSize * 0.8, weight: .semibold))
+                }
+                Text(label).font(.system(size: Pill.textSize, weight: .semibold)).lineLimit(1)
+                if chevron {
+                    Image(systemName: "chevron.down").font(.system(size: Pill.textSize * 0.7, weight: .bold))
+                }
+            }
+            .fixedSize()
+            .padding(.horizontal, Self.padding)
+            .frame(height: Pill.itemHeight)
+            .foregroundStyle(GlassPill.contentColor(current: true, onFocusHighlight: focused))
+            .background {
+                Capsule().fill(FlatControl.focus)
+                    .shadow(color: .black.opacity(0.45), radius: 12, y: 8)
+                    .padding(Pill.focusedInset - Pill.inset)
+                    .opacity(focused ? 1 : 0)
+            }
+            .padding(Pill.inset)
+            .background { ScopePillSurface() }
+            .animation(GlassPill.focusChange, value: focused)
+        }
     }
 }
 

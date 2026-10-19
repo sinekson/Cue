@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// The sources, in a Liquid Glass popup on the right, styled like the
-/// system's context menu (glass platter, plain rows, the white highlight).
+/// The sources, in a Liquid Glass popup on the right, over the page dimmed
+/// (as a hold menu): the name, the episode, the add-ons' tabs, then the
+/// links (plain rows, the white highlight).
 /// Shown over the whole app by `SourcePicker` — from Details (hold Play) and
 /// Continue Watching ("Choose Source"). The links in the add-ons' own order
 /// (an aggregator like AIOStreams has sorted and filtered them), their labels'
@@ -18,14 +19,20 @@ struct SourcePanel: View {
     let onPlay: (StreamEntry, [StreamEntry]) -> Void
     let onClose: () -> Void
 
-    /// The add-on shown (nil: all).
+    /// The add-on shown — the one whose tab had focus last (nil: the first
+    /// link's).
     @State private var addon: String?
+    @FocusState private var tab: String?
     @State private var problem: String?
     @FocusState private var focused: UUID?
 
-    /// Wide enough for an aggregator's long lines; it still leaves Details'
-    /// text column clear.
-    static let width: CGFloat = 1000
+    /// Wide: an aggregator's long lines on as few lines as can be (1240
+    /// was too wide).
+    static let width: CGFloat = 1100
+    /// Not the screen's whole height (too chunky); the list scrolls.
+    private static let height: CGFloat = 900
+    /// The screen margin right of it.
+    private static let margin: CGFloat = 48
     private static let corner: CGFloat = 44
     /// The rows' highlight sits this far in from the platter's edge, its
     /// corners following the platter's (as in the system menu).
@@ -38,83 +45,123 @@ struct SourcePanel: View {
         self.onClose = onClose
     }
 
-    /// The links shown: all, or the add-on picked.
+    /// The add-on shown: the one picked, else the first link's.
+    private var current: String? {
+        addon ?? model.entries.first?.addonName ?? model.addonNames.first
+    }
+
+    /// The links shown: one add-on's.
     private var shown: [StreamEntry] {
-        guard let addon else { return model.entries }
-        return model.entries.filter { $0.addonName == addon }
+        model.entries.filter { $0.addonName == current }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
+        panel
+            .padding(.trailing, Self.margin)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            .focusSection()
+            .onExitCommand(perform: onClose)
+            .onChange(of: tab) { _, name in
+                if let name { addon = name }
+            }
+            .task {
+                let settings = playerSettings.settings
+                await model.load(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
+                                 filtersEnabled: settings.sourceFiltersEnabled,
+                                 streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+            }
+            .onChange(of: model.entries.first?.id) { _, first in
+                // The first link in: focus on it (once).
+                if focused == nil, let first { focused = first }
+            }
+            .alert("Can't play this source", isPresented: Binding(get: { problem != nil },
+                                                                  set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(problem ?? "")
+            }
+    }
+
+    /// As the About panel's: the name as a row's, under it the episode.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(model.meta.name)
+                .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
+                .lineLimit(1)
+            if let video = model.video, !video.seasonEpisodeCode.isEmpty {
+                Text([video.seasonEpisodeCode, video.title].compactMap { $0 }
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 22)
+    }
+
+    /// Search Again, the add-ons' tabs, and when the list was found.
+    private var controls: some View {
+        HStack(spacing: 16) {
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
-                    pill("All", selected: addon == nil) { addon = nil }
+                    // Ask every add-on again — also mid-search (one add-on
+                    // hanging). Icon only, before the add-ons.
+                    Button { searchAgain() } label: {
+                        Image(systemName: "arrow.clockwise").fontWeight(.semibold)
+                    }
+                    .buttonStyle(PillButtonStyle(selected: false))
+                    .accessibilityLabel("Search Again")
+                    // A tab shows its add-on's links as focus reaches it.
                     ForEach(model.addonNames, id: \.self) { name in
                         Button { addon = name } label: { addonLabel(name) }
-                            .buttonStyle(PillButtonStyle(selected: addon == name))
+                            .buttonStyle(PillButtonStyle(selected: current == name))
+                            .focused($tab, equals: name)
                     }
                 }
                 .padding(.vertical, 8)
-                .padding(.horizontal, 22)
+                .padding(.leading, 22)
             }
             .scrollClipDisabled()
             .focusSection()
-            list
+            // Kept current while open (the minutes go on).
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(found(at: context.date))
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                    .lineLimit(1)
+            }
+            .padding(.trailing, 22)
         }
-        .padding(.top, 28)
+    }
+
+    /// "Found just now" / "Found 4 min ago" — the last search's end, or the
+    /// cached list's.
+    private func found(at now: Date) -> String {
+        if model.isLoading { return "Searching…" }
+        guard let foundAt = model.foundAt else { return "" }
+        let minutes = Int(now.timeIntervalSince(foundAt) / 60)
+        return minutes < 1 ? "Found just now" : "Found \(minutes) min ago"
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            header
+            VStack(alignment: .leading, spacing: 18) {
+                controls
+                list
+            }
+        }
+        .padding(.top, 48)
         .padding(.horizontal, Self.inset)
         .padding(.bottom, Self.inset)
-        .frame(width: Self.width)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(width: Self.width, height: Self.height)
         .background {
             // The platter only: it stays still while the rows scroll over it.
-            // (The app's one glass — its tint keeps the text crisp.)
             let shape = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
             Color.clear
                 .liquidGlass(in: shape)
         }
-        .padding(.vertical, 48)
-        .padding(.trailing, 48)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-        .focusSection()
-        .onExitCommand(perform: onClose)
-        .task {
-            let settings = playerSettings.settings
-            await model.load(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
-                             filtersEnabled: settings.sourceFiltersEnabled,
-                             streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
-        }
-        .onChange(of: model.entries.first?.id) { _, first in
-            // The first link in: focus on it (once).
-            if focused == nil, let first { focused = first }
-        }
-        .alert("Can't play this source", isPresented: Binding(get: { problem != nil },
-                                                              set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(problem ?? "")
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Sources")
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                Text(status)
-                    .font(.system(size: 21))
-                    .foregroundStyle(Color.white.opacity(0.55))
-            }
-            Spacer(minLength: 0)
-            // Ask every add-on again — also mid-search (one add-on hanging).
-            Button { searchAgain() } label: {
-                Label("Search Again", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(PillButtonStyle(selected: false))
-        }
-        .padding(.horizontal, 22)
         .focusSection()
     }
 
@@ -140,21 +187,6 @@ struct SourcePanel: View {
                                filtersEnabled: settings.sourceFiltersEnabled,
                                streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
         }
-    }
-
-    private var status: String {
-        let code = model.video.map { "\($0.seasonEpisodeCode) · " } ?? ""
-        if model.isLoading {
-            return code + "Searching add-ons \(model.finishedAddons)/\(model.totalAddons)"
-        }
-        if addon != nil {
-            return code + "\(shown.count) of \(model.entries.count) sources"
-        }
-        let found = model.entries.isEmpty ? "No sources found" : "\(model.entries.count) sources"
-        // A list from the cache: say when it was found.
-        guard let cachedAt = model.cachedAt else { return code + found }
-        let minutes = Int(Date().timeIntervalSince(cachedAt) / 60)
-        return code + found + " · found " + (minutes < 1 ? "just now" : "\(minutes) min ago")
     }
 
     @ViewBuilder private var list: some View {
@@ -191,11 +223,6 @@ struct SourcePanel: View {
         }
     }
 
-    private func pill(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(title) }
-            .buttonStyle(PillButtonStyle(selected: selected))
-    }
-
     private func play(_ entry: StreamEntry) {
         // A cast link (DMM Cast): the system opens it, not the player.
         if entry.stream.isExternal, let link = entry.stream.externalUrl, let url = URL(string: link) {
@@ -221,15 +248,16 @@ private struct SourceRow: View {
 
     var body: some View {
         let primary = isFocused ? Color.black : Color.white
-        let secondary = isFocused ? Color.black.opacity(0.7) : Color.white.opacity(0.72)
+        // Focused, near-black (at 70 % it read grey on the white).
+        let secondary = isFocused ? Color.black.opacity(0.85) : Color.white.opacity(0.72)
         VStack(alignment: .leading, spacing: 8) {
             Text(entry.displayName)
-                .font(.system(size: 23, weight: .semibold))
+                .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !entry.displayDetail.isEmpty {
                 Text(entry.displayDetail)
-                    .font(.system(size: 21))
+                    .font(.system(size: 24))
                     .lineSpacing(3)
                     .foregroundStyle(secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -239,7 +267,7 @@ private struct SourceRow: View {
                 if !badges.isEmpty { StreamBadgeChips(badges: badges) }
                 Spacer(minLength: 8)
                 Text(entry.addonName)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(secondary)
                     .lineLimit(1)
             }
@@ -247,14 +275,16 @@ private struct SourceRow: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // As tall as its lines need (a last line was cut off).
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func tag(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.95))
             .padding(.horizontal, 10)
-            .frame(height: 29)
+            .frame(height: 32)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill((isFocused ? Color.black : Color.white).opacity(0.14)))
     }

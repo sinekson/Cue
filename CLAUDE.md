@@ -78,11 +78,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Everything in the page is flat (`FlatControl`). Details' and the
   billboard's buttons (`DetailActionButton`) and Details' season buttons
   (`FixedFocusSeasonFace`) share one face (`ActionFace`): at rest a
-  frosted pill like the top bar's current tab (the system's thin
-  material, dark — blurred, darker; not glass — a 1 pt edge brighter
-  along the top; a flat white 16 % lacked contrast), content in the text's
-  colour; focused: a white capsule (the one pure white), dark content,
-  5 % larger, soft shadow; in quick (0.15 s), out 0.35 s — over a
+  pill on the top bar's glass (`liquidGlass`, its own edge; the frost —
+  the system's thin material, dark, a 1 pt edge brighter along the top —
+  read too see-through over bright pictures, kept in the code for now:
+  `actionFaceGlass` false; a flat white 16 % lacked contrast; tried: a
+  thicker frost, dark and light; the scope pill's flat look), content in
+  the text's colour; focused: a white capsule (the one pure white), dark content,
+  5 % larger, soft shadow; in quick (0.15 s), out 0.35 s; pressed: shrinks to 90 % (0.1 s, at least that long for a quick tap), back on a no-bounce spring (0.3 s) (`DetailActionButton.pressScale`; 97 % went unnoticed) — over a
   resting pill the capsule fades into it (same size: shrunk, two pills
   showed); with nothing at rest it shrinks into the button (88 %) as it fades, both from the start, the
   fade even (a delayed fade overlapped the next capsule); the content
@@ -94,8 +96,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   icon); searching, a spinner in the name's place, same width — (billboard:
   Details; Details: Play), the rest
   icon-only (billboard: Library, Next — only its chevron, no pill;
-  Details: Library, Trailer, Summary), their names under them while
-  focused. (Tried: bold text; every button labelled.) (Tried and dropped: glass; a dark fill
+  Details: Library, Trailer, About), their names under them while
+  focused. (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
   at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
@@ -160,7 +162,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   pages), so card, shade and text slide as one, the old text covered by
   the new card's edge. The buttons go with the cards in looks: a still
   copy at rest rides out on the old card (drawn — `ActionFace.still`, a
-  flat stand-in for the frost, which can't be drawn), the buttons
+  flat stand-in for the glass, which can't be drawn), the buttons
   themselves come in with the new one (focus staying on its button) —
   sliding inside their own place, which only moves up and down (one
   layer for both: the rows' updates restarted the slide, detached).
@@ -210,9 +212,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   billboard opening Details; the text standing lower; a Play button
   first, the episode under it; wrapping round to the first.)
 - **Details** uses the billboard's text and shade. Four buttons: Play,
-  Library, Trailer, Summary (`text.alignleft`). Hold Play → straight to the
+  Library, Trailer, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
-  (`DetailSummaryPanel`); Back closes it, focus back on the button.
+  (`DetailSummaryPanel`): the name as a row's, the genres under it (" · ", a page header's subtitle — 24 pt medium, 50 %), then About's own summary
+  and facts and ratings (`summaryBox`, `factsBox` — its size, levels and
+  width), one under the other, 28 pt apart (tried: 18–20 apart; side by side; the summary alone,
+  28 pt, 1240 then 920 wide — empty); Back closes it, focus back on the
+  button.
   Play says "Play"; under it, while focused, a show's episode ("S2:E13";
   a film: nothing — the time left dropped; tried: the episode on the
   button), or "Finding a source…" while it searches.
@@ -273,12 +279,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Browse pages** (Details' genres, tags, studios, networks, cast — one view,
   `TMDBBrowseView`): a kind label (GENRE / TAG / STUDIO / NETWORK / ACTOR…),
   the name, one facts line; a person has a portrait and a 3-line bio, a
-  studio/network its logo on a light plate. Glass pills: Movies | Series
-  (only where both exist; a genre maps to the other side's id) and one
-  sort button (Popular / Top rated / Newest / A–Z; all but Popular also
-  filter: votes ≥ 200 / out, ≥ 10 / ≥ 50) — a sort icon before its label, at the
-  grid's right edge, apart from Movies | Series; TMDB's A–Z order kept whose list opens under it in
-  Cue's glass menu panel (`HoldMenu.openDropdown`), the current one checked.
+  studio/network its logo on a light plate. Movies | Series in Search's
+  scope pill (`ScopePill`; only where both exist; a genre maps to the
+  other side's id) — moving along it switches — and one sort button
+  (Popular / Top rated / Newest / A–Z; all but Popular also filter:
+  votes ≥ 200 / out, ≥ 10 / ≥ 50) in the pill's look, alone in its own
+  pill (`ScopePillButton`; nothing current at rest, the white capsule
+  focused): a sort icon before its label, a chevron after, at the grid's
+  right edge; a press opens its list under it in Cue's glass menu panel
+  (`HoldMenu.openDropdown`), the current one checked; TMDB's A–Z order
+  kept. (Tried: the season buttons' glass pills.)
   Then the folder pages' grid itself (`FolderPosterGrid`, hosting Home's
   `FixedFocusDestinationCell`; six across). The header and its controls
   are one view in the grid's top inset and scroll with it (a header *cell*
@@ -376,17 +386,37 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   interactive and the search controller's own choice (its keyboard) takes
   focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
-  next press). Glass panel beside the card; pressed −3 %, open +2 %. Placed
+  next press). Glass panel beside the card; pressed −3 %, open +2 %.
+  It unfolds out of the card, as the Apple TV app's: from 50 % at its
+  corner facing the card, on the present spring (0.45 s, no bounce),
+  the glass in 0.12 s, the entries a moment later; closing, back into
+  that corner (to 60 %, 0.22 s) (`HoldMenuController.openScale`; tried:
+  90 % from that corner, 0.28 s — it appeared beside the card). Placed
   from the card at its held size (`FixedFocusDestinationCell.holdMenu`):
   its left edge on the next card's left edge (opening left: its right
   edge on the card before's right edge — `neighbourEdges`; no cards
   beside it: `gap`, 28), level with its top — or, when it doesn't
   fit below that (Search's low row), with its bottom. Behind it the
-  screen dims (black 30 %, `HoldMenuController.dimming`), the held card
+  screen dims (black 30 %, `HoldMenu.dimming`), the held card
   cut out (not its shadow); dropdowns don't dim. (Tried: a fixed gap
   beside the held card.)
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.
+  The panel (`SourcePanel`): a plain pop-up as the hold menus — on the
+  right (48 pt in), 1100 × 900, glass, over the page dimmed
+  (`HoldMenu.dimming`), in with a slight grow from its right edge
+  (0.2 s). (Tried and dropped: full height, 1000 and 1240 wide; the
+  title's picture alone behind it with its logo left of the panel, or
+  with the billboard's shade and the panel in the middle, 0.5 s fade.)
+  In it: the name as a row's, a show's episode under
+  it ("S1:E1 · Pilot", the caption's second line); then Search Again (an
+  icon only, a press) and one tab per add-on — a tab shows its links as
+  focus reaches it, no press (no "All"); first, the first link's add-on —
+  and at the row's end when the list was found ("Found 4 min ago" —
+  a search's end or the cached list's, `foundAt`; "Searching…"). Then the
+  links: each one's text as the add-on wrote it (not ours to change),
+  Nuvio's badges under it (to become switchable), as tall as their
+  lines; text 26 / 24 pt, focused near-black (the second lines 85 %).
 - **App icon and Top Shelf images**: generated, never hand-edited —
   `swift Tools/AppIcon/render.swift` writes them into the asset catalog.
   One play drawn like the note on Apple's Musik icon (grey-white, slightly
@@ -421,12 +451,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   text bars — the card alone, as the Apple TV app's (tried: an ellipsis
   glyph in the middle, bars where the text goes); all breathing in step
   (`FixedFocusPulsing`: opacity 1 ↔ 0.55, 1.2 s each way; still under
-  Reduce Motion). "Ready" includes the first screen's pictures
+  Reduce Motion). The same look for any picture still on its way, everywhere
+  (every card, the fixed box, episodes, `RemoteImage`): the card's edge and
+  anything drawn on the picture (shade, logo, plate) wait with it, its caption
+  stays; the picture in, the placeholder fades off it
+  (`FixedFocusPlaceholder.follow`, `FixedFocusImages.load(waiting:)`). No
+  picture at all: unchanged (the name / initials, a dark tile). "Ready" includes the first screen's pictures
   decoded into memory (`FixedFocusImages.prefetch`, 0.7 s cap after the
   data) — the page swaps in whole, pictures included. Folders (`PageLoad`) and the browse
   pages (their `TMDBBrowseViewModel`, a `PreparedPage`; the grid's
-  `placeholder:` — two lines of empty posters; only the first load, a
-  Movies | Series / sort change keeps its own loading).
+  `placeholder:` — two lines of empty posters; a Movies | Series / sort
+  change too, focus staying on the control — the cards just can't take it).
 - **Search**: SwiftUI `.searchable` (the system's field, keyboard,
   dictation, suggestions). Nothing scrolls but the row, sideways.
   Where it comes from: TMDB, not the add-ons' catalogs: its combined

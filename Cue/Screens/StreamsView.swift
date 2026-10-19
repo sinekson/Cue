@@ -6,6 +6,9 @@ final class StreamsViewModel: ObservableObject {
     /// Addon → resolution section → size subsection → rows (see SourceSelection).
     @Published var groups: [AddonSourceGroup] = []
     @Published var isLoading = true
+    /// When the shown list was found: a search's end, or the time a cached
+    /// list (`SourceListCache`) was found — the picker says so.
+    @Published private(set) var foundAt: Date?
     @Published var finishedAddons = 0
     @Published var totalAddons = 0
     /// Addons that returned at least one usable link, in the order they arrived
@@ -164,9 +167,6 @@ final class StreamsViewModel: ObservableObject {
         rebuildGroups()
     }
 
-    /// When the shown list was found, if it came from `SourceListCache` (nil:
-    /// just searched) — the picker says so.
-    @Published private(set) var cachedAt: Date?
     /// The running sweep: a newer one (Search Again mid-search) makes an older
     /// one stop adding to the list.
     private var sweep = UUID()
@@ -610,12 +610,11 @@ final class StreamsViewModel: ObservableObject {
         // (`SourceListCache`) — that list, with no add-on sweep at all.
         let sweep = UUID()
         self.sweep = sweep
-        cachedAt = nil
         if !forceRefresh,
            let (cached, time) = await SourceListCache.shared.list(for: fetchID),
            !cached.isEmpty {
             guard self.sweep == sweep else { return }
-            cachedAt = time
+            foundAt = time
             pool = cached
             finishedAddons = totalAddons
             failedAddons = [:]   // stale "Not working" diagnostics from a previous sweep
@@ -727,6 +726,7 @@ final class StreamsViewModel: ObservableObject {
         }
         guard self.sweep == sweep else { return }
         isLoading = false
+        foundAt = Date()
 
         // Persist for instant re-open — but ONLY a sweep that actually finished.
         // This ran even when `onDisappear` cancelled the task, so backing out at

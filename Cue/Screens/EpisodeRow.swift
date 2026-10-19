@@ -370,6 +370,7 @@ final class EpisodeCardCell: UICollectionViewCell {
         contentView.addSubview(art)
         edge.isUserInteractionEnabled = false
         contentView.addSubview(edge)
+        art.onWaiting = { [weak self] in self?.edge.isHidden = $0 }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -434,14 +435,24 @@ final class EpisodeArtView: UIView {
     private let image = UIImageView()
     private let foot = CAGradientLayer()
     private let state = EpisodeStateView()
+    /// The still on its way: the placeholder's look, no foot.
+    private let loadingCard = FixedFocusPlaceholder()
+    /// It waits (true) or is in: the card's edge waits with it.
+    var onWaiting: (Bool) -> Void = { _ in }
+    var isWaiting: Bool { loadingCard.isWaiting }
+    /// No still at all.
+    private static let empty = UIColor(white: 0.12, alpha: 1)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
         image.contentMode = .scaleAspectFill
         image.clipsToBounds = true
-        image.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        image.backgroundColor = Self.empty
         addSubview(image)
+        loadingCard.isHidden = true
+        loadingCard.layer.cornerRadius = 0
+        addSubview(loadingCard)
         // Continue Watching's dark foot.
         foot.colors = [UIColor.clear.cgColor,
                        UIColor.black.withAlphaComponent(Spotlight.continueFootOpacity).cgColor]
@@ -456,6 +467,7 @@ final class EpisodeArtView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         image.frame = bounds
+        loadingCard.frame = bounds
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         foot.frame = bounds
@@ -468,7 +480,14 @@ final class EpisodeArtView: UIView {
     }
 
     func show(_ episode: EpisodeRowItem) {
-        FixedFocusImages.load(episode.image, into: image, maxDimension: FixedFocusMetrics.boxWidth)
+        FixedFocusImages.load(episode.image, into: image, maxDimension: FixedFocusMetrics.boxWidth,
+                              waiting: { [weak self] waiting in
+            guard let self else { return }
+            self.loadingCard.follow(waiting: waiting)
+            self.image.backgroundColor = waiting ? nil : Self.empty
+            self.foot.isHidden = waiting
+            self.onWaiting(waiting)
+        })
         state.show(episode.state)
     }
 }
@@ -598,9 +617,9 @@ final class EpisodeBoxView: UIView {
         clip.clipsToBounds = true
         clip.layer.cornerRadius = Spotlight.cornerRadius
         clip.layer.cornerCurve = .continuous
-        clip.backgroundColor = UIColor(white: 0.12, alpha: 1)
         addSubview(clip)
         clip.addSubview(page)
+        follow(page)
         // The cards' edge (Home's, Render Lab → Card edge) — no shadow: the
         // card right under the box casts it.
         edge.isUserInteractionEnabled = false
@@ -658,6 +677,14 @@ final class EpisodeBoxView: UIView {
         info.show(episode)
     }
 
+    /// The current page's still on its way: no edge (the placeholder's look).
+    private func follow(_ page: EpisodeArtView) {
+        page.onWaiting = { [weak self, weak page] waiting in
+            guard let self, page === self.page else { return }
+            self.edge.isHidden = waiting
+        }
+    }
+
     /// `direction`: +1 moving right (the new content comes from the right).
     func show(_ episode: EpisodeRowItem, animated: Bool, direction: CGFloat = 1) {
         guard episode.id != shownID else { return }
@@ -671,11 +698,13 @@ final class EpisodeBoxView: UIView {
         // little in the direction of travel, the old ones fade out shifting on.
         let dx = direction * 30
         let incoming = EpisodeArtView(frame: bounds.offsetBy(dx: dx, dy: 0))
+        follow(incoming)
         incoming.show(episode)
         incoming.alpha = 0
         clip.addSubview(incoming)
         let outgoing = page
         page = incoming
+        edge.isHidden = incoming.isWaiting
         let infoIn = Info(frame: infoFrame.offsetBy(dx: dx, dy: 0))
         infoIn.show(episode)
         infoIn.alpha = 0

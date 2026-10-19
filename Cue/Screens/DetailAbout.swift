@@ -33,7 +33,7 @@ struct DetailAbout: View {
     @FocusState private var focused: Chip?
 
     /// TMDB's genres (else the catalog's, where TMDB knows the name).
-    private var genres: [TMDBService.Genre] {
+    var genres: [TMDBService.Genre] {
         if let genres = about?.genres, !genres.isEmpty { return genres }
         return (meta.genres ?? []).compactMap { TMDBService.genre(named: $0, isMovie: !meta.isSeries) }
     }
@@ -90,7 +90,8 @@ struct DetailAbout: View {
     // MARK: Boxes
 
     /// The summary, whole, under its name (as the other columns' parts).
-    private var summaryBox: some View {
+    /// (Also in Details' Summary panel.)
+    var summaryBox: some View {
         Group {
             if let text = meta.description, !text.isEmpty {
                 labelled("Summary") {
@@ -106,8 +107,8 @@ struct DetailAbout: View {
     }
 
     /// The facts two to a line (an empty one leaves no gap), then every
-    /// rating.
-    private var factsBox: some View {
+    /// rating. (Also beside the summary in Details' Summary panel.)
+    var factsBox: some View {
         let all = factLines.flatMap { $0 }
         let rows = stride(from: 0, to: all.count, by: 2).map { Array(all[$0 ..< min($0 + 2, all.count)]) }
         let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating)
@@ -295,10 +296,15 @@ private struct AboutChipStyle: ButtonStyle {
 }
 
 /// Details' Info: the summary in full, in a glass panel over the page (it
-/// floats — glass). Select or Back closes it.
-struct DetailSummaryPanel: View {
+/// floats — glass), About's facts and ratings under it. Select or Back
+/// closes it.
+struct DetailSummaryPanel<Summary: View, Facts: View>: View {
     let title: String
-    let text: String
+    /// The genres, under the name (a page header's subtitle).
+    let genres: String
+    /// About's own columns — its size, levels and widths.
+    let summary: Summary
+    let facts: Facts
     let onClose: () -> Void
     /// Focus comes to it when it opens (over the UIKit rows: Back must close
     /// it, not the page).
@@ -308,18 +314,30 @@ struct DetailSummaryPanel: View {
         ZStack {
             Color.black.opacity(0.4).ignoresSafeArea()
             Button(action: onClose) {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(title)
-                        .font(.system(size: 38, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                    Text(text)
-                        .font(.system(size: 28))
-                        .lineSpacing(6)
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 28) {
+                    // As a row's name (About's in the rows), the genres
+                    // under it as a page header's subtitle.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(title)
+                            .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !genres.isEmpty {
+                            Text(genres)
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(width: DetailAbout.boxWidth, alignment: .leading)
+                    // One column, About's width: the summary, then the facts
+                    // and ratings, a little further apart than the facts' lines.
+                    VStack(alignment: .leading, spacing: 28) {
+                        summary
+                        facts
+                    }
                 }
                 .padding(56)
-                .frame(maxWidth: 1240, alignment: .leading)
                 .background { Color.clear.liquidGlass(in: RoundedRectangle(cornerRadius: 44, style: .continuous)) }
             }
             .buttonStyle(SummaryPanelStyle())

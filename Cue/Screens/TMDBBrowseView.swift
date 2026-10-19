@@ -21,6 +21,9 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     /// The first titles are in (until then the grid shows placeholders).
     @Published private(set) var loadedOnce = false
     var isReady: Bool { loadedOnce }
+    /// The grid shows placeholders: before the first titles, and while a
+    /// Movies | Series or sort change loads.
+    var showsPlaceholder: Bool { !loadedOnce || isLoading }
     /// Movies (true) and series (false) this page has something for.
     @Published private(set) var types: [Bool] = []
     @Published private(set) var isMovie: Bool
@@ -83,10 +86,6 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
             isMovie = other
             await reload()
         }
-        // The first two lines' posters too: the page swaps in whole.
-        await FixedFocusImages.prefetch(items.prefix(12).map {
-            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
-        }, within: .milliseconds(700))
         loadedOnce = true
     }
 
@@ -109,6 +108,11 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         isLoading = true
         page = 1
         let result = await fetch(page: 1)
+        guard mine == generation else { return }
+        // The first two lines' posters too: the grid swaps in whole.
+        await FixedFocusImages.prefetch(result.items.prefix(12).map {
+            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
+        }, within: .milliseconds(700))
         guard mine == generation else { return }
         items = result.items
         total = result.total
@@ -250,20 +254,24 @@ struct TMDBBrowseView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             DetailsBackdropBackground(url: backdrop)
-            // Until the first titles are in: two lines of empty posters,
-            // out of focus's way (`FolderPosterGrid.placeholder`).
+            // Until the titles are in (the first, or after a Movies | Series
+            // or sort change): two lines of empty posters, out of focus's way
+            // (`FolderPosterGrid.placeholder`).
             FolderPosterGrid(
                 header: AnyView(BrowseHeader(viewModel: viewModel)),
                 headerHeight: BrowseHeader.height(source: viewModel.source),
-                items: viewModel.loadedOnce ? viewModel.items : FolderPosterGrid.placeholderItems,
+                items: viewModel.showsPlaceholder ? FolderPosterGrid.placeholderItems : viewModel.items,
                 subtitles: years,
                 onSelect: onSelect, onOpenDetails: openDetails,
                 onDisplay: { item in Task { await viewModel.loadMore(after: item) } },
-                placeholder: !viewModel.loadedOnce,
+                placeholder: viewModel.showsPlaceholder,
                 back: gridBack)
                 .ignoresSafeArea()
-            if viewModel.loadedOnce, viewModel.isLoading || viewModel.items.isEmpty {
-                status.padding(.top, BrowseHeader.height(source: viewModel.source) + 60)
+            if !viewModel.showsPlaceholder, viewModel.items.isEmpty {
+                CueEmptyState(icon: "film", title: viewModel.title, message: "No titles available.",
+                              holdsFocus: !showsControls)
+                    .frame(width: 1920, height: 420)
+                    .padding(.top, BrowseHeader.height(source: viewModel.source) + 60)
             }
         }
         .task { await viewModel.start() }
@@ -276,17 +284,6 @@ struct TMDBBrowseView: View {
                    uniquingKeysWith: { first, _ in first })
     }
 
-    @ViewBuilder
-    private var status: some View {
-        if viewModel.isLoading {
-            CueLoadingView(label: "Loading titles", holdsFocus: !showsControls)
-                .frame(width: 1920, height: 420)
-        } else {
-            CueEmptyState(icon: "film", title: viewModel.title, message: "No titles available.",
-                          holdsFocus: !showsControls)
-                .frame(width: 1920, height: 420)
-        }
-    }
 }
 
 /// The page's header, scrolling with the grid: what it is, then its controls.
@@ -315,7 +312,7 @@ private struct BrowseHeader: View {
         default: break
         }
         // Below the controls as much room as above them (with the grid's 12).
-        return content + controlsGap + FixedFocusHeaderButton.height + controlsGap - 12
+        return content + controlsGap + ScopePill<Bool>.height + controlsGap - 12
     }
 
     private var showsControls: Bool { !viewModel.types.isEmpty }
@@ -441,12 +438,10 @@ private struct BrowseHeader: View {
 
     private var controls: some View {
         HStack(spacing: 16) {
+            // Search's scope pill: moving along it switches.
             if viewModel.types.count > 1 {
-                ForEach([true, false], id: \.self) { movie in
-                    BrowseButton(label: movie ? "Movies" : "Series", selected: viewModel.isMovie == movie) {
-                        viewModel.choose(isMovie: movie)
-                    }
-                }
+                ScopePill(scopes: [true, false], label: { $0 ? "Movies" : "Series" },
+                          current: viewModel.isMovie) { viewModel.choose(isMovie: $0) }
             }
             // The order, apart from the filters: at the grid's right edge.
             Spacer(minLength: 32)
@@ -468,42 +463,15 @@ private struct CardRim: View {
     }
 }
 
-/// A control of the page: Search's glass pill — the selected one lighter, the
-/// focused one lit (the season buttons' look).
-struct BrowseButton: View {
-    let label: String
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { Face(label: label, selected: selected) }
-            .buttonStyle(BrowseBareStyle())
-    }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var isFocused
-        let label: String
-        let selected: Bool
-
-        var body: some View {
-            FixedFocusHeaderPill(label: label, lit: isFocused, selected: selected)
-                .scaleEffect(isFocused ? FixedFocusHeaderPill.focusScale : 1)
-                .animation(Motion.focus, value: isFocused)
-        }
-    }
-}
-
-/// The order, in one button: its list opens under it (Cue's glass panel, as
-/// the hold menus), the current one checked.
+/// The order, in one button (the scope pill's look, alone): its list opens
+/// under it (Cue's glass panel, as the hold menus), the current one checked.
 private struct BrowseSortButton: View {
     let sort: TMDBService.BrowseSort
     let onChoose: (TMDBService.BrowseSort) -> Void
     @State private var frame = CGRect.zero
-    @State private var open = false
 
     var body: some View {
-        Button { show() } label: { Face(label: sort.label, selected: open) }
-            .buttonStyle(BrowseBareStyle())
+        ScopePillButton(label: sort.label, icon: "arrow.up.arrow.down", chevron: true) { show() }
             .background {
                 GeometryReader { geometry in
                     Color.clear
@@ -517,24 +485,6 @@ private struct BrowseSortButton: View {
         let entries = TMDBService.BrowseSort.allCases.map { option in
             MenuEntry(title: option.label, icon: "", checked: option == sort) { onChoose(option) }
         }
-        HoldMenu.shared.openDropdown(entries, below: frame) { open = $0 }
+        HoldMenu.shared.openDropdown(entries, below: frame)
     }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var isFocused
-        let label: String
-        let selected: Bool
-
-        var body: some View {
-            FixedFocusHeaderPill(label: label, lit: isFocused, selected: selected, chevron: true,
-                                 icon: "arrow.up.arrow.down")
-                .scaleEffect(isFocused ? FixedFocusHeaderPill.focusScale : 1)
-                .animation(Motion.focus, value: isFocused)
-        }
-    }
-}
-
-/// The control draws its own focus.
-private struct BrowseBareStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }

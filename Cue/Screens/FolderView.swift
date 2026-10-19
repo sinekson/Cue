@@ -483,9 +483,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// The header is never reloaded (it updates itself, its focus stays).
     func show(header: AnyView?, headerHeight: CGFloat, items: [MetaItem],
               subtitles: [String: String], placeholder: Bool = false) {
-        let leavingPlaceholder = isPlaceholder && !placeholder
+        let swapping = isPlaceholder != placeholder
         isPlaceholder = placeholder
-        if isViewLoaded { collectionView.isUserInteractionEnabled = !placeholder }
+        // Before the first titles nothing takes focus; later placeholders (a
+        // Movies | Series or sort change) leave the header's controls in
+        // focus — only the cards can't take it (`canFocusItemAt`).
+        if isViewLoaded { collectionView.isUserInteractionEnabled = !(placeholder && !filledOnce) }
         let changed = items.map(\.id) != self.items.map(\.id)
         let heightChanged = headerHeight != self.headerHeight
         self.header = header
@@ -499,14 +502,19 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         // A pill pressed (Search's Movies | Series): reloadData takes focus
         // away from the header (it's in the collection view) to the first
         // title. A section reload leaves it there.
-        if leavingPlaceholder {
-            // The titles take over the placeholders: one fade.
+        let headerFocused = headerHost.map { Self.focus(in: $0.view) } ?? false
+        if swapping {
+            // Placeholders and titles take over from each other: one fade.
             UIView.transition(with: collectionView, duration: Motion.fadeDuration,
                               options: [.transitionCrossDissolve, .allowAnimatedContent]) {
-                self.collectionView.reloadData()
+                if headerFocused {
+                    self.collectionView.reloadSections(IndexSet(integer: 0))
+                } else {
+                    self.collectionView.reloadData()
+                }
                 self.collectionView.layoutIfNeeded()
             }
-        } else if let host = headerHost?.view, Self.focus(in: host) {
+        } else if headerFocused {
             UIView.performWithoutAnimation { collectionView.reloadSections(IndexSet(integer: 0)) }
         } else {
             collectionView.reloadData()
@@ -551,6 +559,10 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                         forItemAt indexPath: IndexPath) {
         guard items.indices.contains(indexPath.item) else { return }
         onDisplay?(items[indexPath.item])
+    }
+
+    func collectionView(_ collectionView: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool {
+        !isPlaceholder
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {

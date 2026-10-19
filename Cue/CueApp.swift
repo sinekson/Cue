@@ -292,17 +292,7 @@ struct RootView: View {
             // like a menu over the app; plays what's picked.
             .overlay {
                 if let request = sourcePicker.request {
-                    ZStack {
-                        // (No dimming behind it — the panel's glass is enough.)
-                        SourcePanel(meta: request.meta, video: request.video, onPlay: { entry, all in
-                            sourcePicker.close()
-                            play(request.meta, request.video, entry, all, fromStart: request.fromStart)
-                        }, onClose: { sourcePicker.close() })
-                        .id(request.id)
-                        .ignoresSafeArea()
-                        .transition(.scale(scale: 0.96, anchor: .trailing).combined(with: .opacity))
-                    }
-                    .transition(.opacity)
+                    sources(request).transition(.opacity)
                 }
             }
             .animation(.easeOut(duration: 0.2), value: sourcePicker.request?.id)
@@ -1701,6 +1691,24 @@ struct RootView: View {
         // last watched, with the full list as failover. Start Over takes the
         // same matched-link path but plays from 0:00.
         homeLikePath.wrappedValue.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
+    }
+
+    /// The source picker's screen: the page dimmed as behind the hold
+    /// menus, the panel popping in on the right.
+    private func sources(_ request: SourcePicker.Request) -> some View {
+        ZStack {
+            Color.black.opacity(HoldMenu.dimming)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            SourcePanel(meta: request.meta, video: request.video,
+                        onPlay: { entry, all in
+                sourcePicker.close()
+                play(request.meta, request.video, entry, all, fromStart: request.fromStart)
+            }, onClose: { sourcePicker.close() })
+            .id(request.id)
+            .ignoresSafeArea()
+            .transition(.scale(scale: 0.96, anchor: .trailing).combined(with: .opacity))
+        }
     }
 
     /// Continue Watching hold → "Choose Source": the source picker, through
