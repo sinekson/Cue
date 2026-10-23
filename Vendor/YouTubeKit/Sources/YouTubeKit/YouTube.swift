@@ -17,10 +17,18 @@ public class YouTube {
 #if swift(>=5.10)
     nonisolated(unsafe) private static var __js: String? // caches js between calls
     nonisolated(unsafe) private static var __jsURL: URL?
+    nonisolated(unsafe) private static var __sessionJSURL: URL?
+    nonisolated(unsafe) private static var __sessionYtCfg: Extraction.YtCfg?
 #else
     private static var __js: String? // caches js between calls
     private static var __jsURL: URL?
+    private static var __sessionJSURL: URL?
+    private static var __sessionYtCfg: Extraction.YtCfg?
 #endif
+    // (Cue) The player script's address and the page's config, from the
+    // session's first readable watch page — the same for every video, so the
+    // next ones skip that page (a request each) and ask only for their
+    // player answers.
     
     private var _videoInfos: [InnerTube.VideoInfo]?
     
@@ -173,11 +181,16 @@ public class YouTube {
             if let cached = _jsURL {
                 return cached
             }
+            if let shared = YouTube.__sessionJSURL {
+                _jsURL = shared
+                return shared
+            }
             
             if try await ageRestricted {
                 _jsURL = try await URL(string: Extraction.jsURL(html: embedHTML))!
             } else {
                 _jsURL = try await URL(string: Extraction.jsURL(html: watchHTML))!
+                YouTube.__sessionJSURL = _jsURL
             }
             return _jsURL!
         }
@@ -220,7 +233,12 @@ public class YouTube {
                 return cached
             }
             
+            if let shared = YouTube.__sessionYtCfg {
+                _ytcfg = shared
+                return shared
+            }
             _ytcfg = try await Extraction.extractYtCfg(from: watchHTML)
+            YouTube.__sessionYtCfg = _ytcfg
             return _ytcfg!
         }
     }
@@ -248,8 +266,11 @@ public class YouTube {
             // unavailable still throws, so a genuinely unplayable video is
             // still reported as one rather than being dragged through a
             // pointless extraction.
+            //
+            // (Cue) With the session's config kept, the page isn't asked for at
+            // all: an unplayable video shows in its player answers.
             do {
-                try await checkAvailability()
+                if YouTube.__sessionYtCfg == nil { try await checkAvailability() }
             } catch YouTubeKitError.regexMatchError {
                 os_log("Couldn't read the watch page for availability — continuing to the extraction methods", log: log, type: .info)
             }
@@ -279,6 +300,7 @@ public class YouTube {
                             _jsURL = nil
                             YouTube.__js = nil
                             YouTube.__jsURL = nil
+                            YouTube.__sessionJSURL = nil
                             try await Extraction.applySignature(streamManifest: &streamManifest, videoInfo: videoInfo, js: js)
                         }
                         
@@ -413,6 +435,11 @@ public class YouTube {
                 videoInfos.append(watchVideoInfo)
             }
             
+            // (Cue) Every answer a sign-in wall without the video: YouTube's
+            // bot check on this address — retrying only makes it worse.
+            if !videoInfos.isEmpty, videoInfos.allSatisfy({ $0.videoDetails == nil && $0.playabilityStatus?.status == "LOGIN_REQUIRED" }) {
+                throw YouTubeKitError.botCheck
+            }
             // remove video infos with incorrect videoID
             for (i, videoInfo) in videoInfos.enumerated() where videoInfo.videoDetails?.videoId != videoID {
                 os_log("Skipping player response from client %{public}i. Got player response for %{public}@ instead of %{public}@", log: log, type: .info, i, videoInfo.videoDetails?.videoId ?? "nil", videoID)

@@ -198,19 +198,26 @@ final class WatchedStore: ObservableObject {
     }
 
     func remove(contentID: String, season: Int?, episode: Int?) {
-        let key = WatchedItem.key(contentID: contentID, season: season, episode: episode)
-        guard let removed = items.removeValue(forKey: key) else { return }
-        tombstones[key] = Date()
-        // Outlives the grace window and the process, so a tracker re-import
-        // can't quietly put the ✓ back (see `removedMarks`).
-        if !suppressChange {
-            removedMarks[key] = Date()
-            saveRemovedMarks()
+        remove(keys: [WatchedItem.key(contentID: contentID, season: season, episode: episode)])
+    }
+
+    /// Several at once (a show's episodes, from Settings → Watched): one save,
+    /// one account delete.
+    func remove(keys: [String]) {
+        let removed = keys.compactMap { items.removeValue(forKey: $0) }
+        guard !removed.isEmpty else { return }
+        let now = Date()
+        for item in removed {
+            tombstones[item.key] = now
+            // Outlives the grace window and the process, so a tracker
+            // re-import can't quietly put the ✓ back (see `removedMarks`).
+            if !suppressChange { removedMarks[item.key] = now }
         }
+        if !suppressChange { saveRemovedMarks() }
         save()
         if !suppressChange {
-            onRemove?([removed])
-            for hook in onTrackerRemove { hook([removed]) }
+            onRemove?(removed)
+            for hook in onTrackerRemove { hook(removed) }
             onLocalChange?()
         }
     }

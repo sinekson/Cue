@@ -203,6 +203,16 @@ enum TMDBService {
         return URLSession(configuration: config)
     }()
 
+    /// The answers kept on disk, and room for them (Settings → TMDB).
+    static var cacheUsage: (disk: Int, capacity: Int) {
+        let cache = session.configuration.urlCache
+        return (cache?.currentDiskUsage ?? 0, cache?.diskCapacity ?? 0)
+    }
+
+    static func clearCache() {
+        session.configuration.urlCache?.removeAllCachedResponses()
+    }
+
     // Cache TMDB→IMDB id lookups so repeated collection loads stay cheap.
     // Guarded by `cacheLock` — these caches are read/written from many
     // concurrent `Task`s (catalog rows map items in parallel), and a plain
@@ -436,13 +446,18 @@ enum TMDBService {
     /// silently emptying every TMDB-backed row. `/configuration` is the
     /// cheapest authenticated endpoint TMDB has.
     static func validate(apiKey candidate: String) async -> Bool {
+        await check(apiKey: candidate) == true
+    }
+
+    /// Whether TMDB takes the key; nil when TMDB couldn't be reached.
+    static func check(apiKey candidate: String) async -> Bool? {
         let key = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, var comps = URLComponents(string: base + "/configuration")
         else { return false }
         comps.queryItems = [URLQueryItem(name: "api_key", value: key)]
         guard let url = comps.url,
               let (_, response) = try? await session.data(from: url),
-              let http = response as? HTTPURLResponse else { return false }
+              let http = response as? HTTPURLResponse else { return nil }
         return (200..<300).contains(http.statusCode)
     }
 
@@ -673,6 +688,21 @@ enum TMDBService {
             .sorted { ($0.width ?? 0) > ($1.width ?? 0) }
             .first
             .flatMap { imageURL($0.file_path, size: "w500") }
+    }
+
+    /// A title's picture for the billboard and Details: TMDB's main backdrop
+    /// (TMDB's own choice, by votes), the original file. (Tried: one of
+    /// several at random each time — the others too often looked bad, by
+    /// whatever rule: the best by average, by votes, bars on both.) nil:
+    /// none, or not asked (no key, an id TMDB can't map, the request failed).
+    static func backdrop(id: String, type: String) async -> String? {
+        guard hasAPIKey, let (tmdbID, isMovie) = await resolveTMDBID(from: id, type: type) else { return nil }
+        struct Response: Decodable { let backdrop_path: String? }
+        let path = (isMovie ? "/movie/" : "/tv/") + "\(tmdbID)"
+        guard let body: Response = try? await cachedGet(path, query: [:], fresh: { _ in 7 * day }, keep: 60 * day),
+              let file = body.backdrop_path
+        else { return nil }
+        return imageURL(file, size: "original")
     }
 
     static func networkBrand(id: Int) async -> BrandInfo? {
@@ -1739,8 +1769,14 @@ enum TMDBService {
     /// exit in another country, since YouTube restricts trailers by region
     /// like any other upload. TMDB usually lists several, and the ones behind
     /// the first are often not restricted at all.
-    static func trailerKeys(id: String, type: String) async -> [String] {
-        let cacheKey = "\(type):\(id)"
+    ///
+    /// A show's `season` (the one the billboard or Details is about): that
+    /// season's trailers first — "Thousand-Year Blood War", not Bleach's 2004
+    /// one — then the show's. With `aired` (an episode of it), TMDB's season
+    /// is the one airing then: the add-ons number seasons their own way
+    /// (Bleach's TYBW is the add-on's 17, TMDB's 2).
+    static func trailerKeys(id: String, type: String, season: Int? = nil, aired: Date? = nil) async -> [String] {
+        let cacheKey = "\(type):\(id)" + (season.map { "#\($0)" } ?? "")
         if let hit = cachedTrailerKeys(cacheKey) { return hit }
         guard let (tmdbID, isMovie) = await resolveTMDBID(from: id, type: type) else {
             // A failed `/find` is not a miss: caching [] here branded the title
@@ -1756,24 +1792,83 @@ enum TMDBService {
                 let site: String?
                 let type: String?
                 let official: Bool?
+                let name: String?
+                let size: Int?
+                let iso_639_1: String?
+                let published_at: String?
             }
             let results: [Video]?
         }
-        let path = isMovie ? "/movie/\(tmdbID)/videos" : "/tv/\(tmdbID)/videos"
-        let body: VideosResponse? = try? await get(path)
-        let ranked = (body?.results ?? [])
+        let show = isMovie ? "/movie/\(tmdbID)/videos" : "/tv/\(tmdbID)/videos"
+        var tmdbSeason = season
+        if !isMovie, season != nil {
+            struct Seasons: Decodable {
+                struct Season: Decodable { let season_number: Int?; let air_date: String? }
+                let seasons: [Season]?
+            }
+            let day: TimeInterval = 24 * 60 * 60
+            let list: Seasons? = try? await cachedGet("/tv/\(tmdbID)", fresh: { _ in day }, keep: 30 * day)
+            let seasons = (list?.seasons ?? []).filter { ($0.season_number ?? 0) > 0 }
+            if let aired {
+                // The last season to start by then (a day's slack for time zones).
+                tmdbSeason = seasons
+                    .compactMap { s in s.air_date.flatMap(ReleaseDateParser.parse).map { (s.season_number!, $0) } }
+                    .filter { $0.1 <= aired.addingTimeInterval(day) }
+                    .max { $0.1 < $1.1 }?.0
+            } else if !seasons.contains(where: { $0.season_number == season }) {
+                tmdbSeason = nil
+            }
+        }
+        let paths = tmdbSeason.map { ["/tv/\(tmdbID)/season/\($0)/videos", show] } ?? [show]
+        // A `language` alone returns only that language's videos — often none
+        // outside English; ask for it, English and the untagged ones.
+        let language = String(preferredLanguage.prefix(2)).lowercased()
+        let wanted = language == "en" ? "en,null" : "\(language),en,null"
+        var bodies: [VideosResponse?] = []
+        for path in paths {
+            // On disk for a day (refreshed behind): the billboard's titles
+            // are asked at every launch.
+            let day: TimeInterval = 24 * 60 * 60
+            bodies.append(try? await cachedGet(path, query: [
+                "language": preferredLanguage, "include_video_language": wanted,
+            ], fresh: { (_: VideosResponse) in day }, keep: 30 * day))
+        }
+        // Best first: a real trailer (not a recap or a clip under the
+        // Trailer label), in the user's language, then English; a Trailer
+        // over a Teaser; official; "Official / Main / Final Trailer" named;
+        // the larger upload; the newest (the final cut, a cleaner file).
+        let junk = /\b(recap|clips?|scenes?|featurettes?|behind the scenes|reactions?|fan[ -]?made|tv spots?|spots?|reviews?|explained|breakdown)\b/
+        let lead = /\b(official|main|final) trailer\b/
+        func rank(_ v: VideosResponse.Video) -> [Int] {
+            let name = (v.name ?? "").lowercased()
+            let tongue = (v.iso_639_1 ?? "").lowercased()
+            return [
+                name.contains(junk) ? 1 : 0,
+                tongue == language ? 0 : tongue == "en" ? 1 : 2,
+                v.type == "Trailer" ? 0 : 1,
+                (v.official ?? false) ? 0 : 1,
+                name.contains(lead) ? 0 : 1,
+                -(v.size ?? 0),
+            ]
+        }
+        func ranked(_ body: VideosResponse?) -> [String] {
+            (body?.results ?? [])
             .filter {
                 ($0.site?.caseInsensitiveCompare("YouTube") == .orderedSame)
                     && ["Trailer", "Teaser"].contains($0.type ?? "")
             }
+            .map { (video: $0, rank: rank($0)) }
             .sorted { a, b in
-                if (a.official ?? false) != (b.official ?? false) { return (a.official ?? false) }
-                return (a.type == "Trailer" ? 0 : 1) < (b.type == "Trailer" ? 0 : 1)
+                if a.rank != b.rank { return a.rank.lexicographicallyPrecedes(b.rank) }
+                return (a.video.published_at ?? "") > (b.video.published_at ?? "")
             }
-        let keys = ranked.compactMap { $0.key }
+            .compactMap { $0.video.key }
+        }
+        var keys: [String] = []
+        for key in bodies.flatMap(ranked) where !keys.contains(key) { keys.append(key) }
         // A failed REQUEST is not a miss — leave it uncached so a flaky
         // network doesn't brand the title trailer-less for the session.
-        if body != nil { storeTrailerKeys(keys, for: cacheKey) }
+        if !bodies.contains(where: { $0 == nil }) { storeTrailerKeys(keys, for: cacheKey) }
         return keys
     }
 

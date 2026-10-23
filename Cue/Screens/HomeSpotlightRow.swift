@@ -179,15 +179,10 @@ enum Spotlight {
     static let progressTrack = Color.white.opacity(0.3)
     static let progressFill = Color.white
 
-    /// Trailer in the box: starts after resting on a title this long
-    /// (the lookup runs during the wait, so this is usually all you wait).
-    /// Follows the app's own switches: Settings → Layout → hero trailers /
-    /// hero trailer sound, TMDB "Trailers", and Reduce Motion.
-    static let trailerDelay: TimeInterval = 1.0
-    /// Trailers in the regular rows' box. Off: that's where you BROWSE —
-    /// every press would start and cancel a YouTube lookup and a video
-    /// player mid-animation. The billboard (where you rest) keeps its own.
-    static let boxTrailers = false
+    /// The billboard's / Details' trailer starts after resting on a title
+    /// this long (`StageTrailer`; Settings → Home & Details → Trailers,
+    /// and not under Reduce Motion).
+    static let trailerDelay: TimeInterval = 2.0
 
     // Info under the box
 
@@ -411,6 +406,19 @@ struct BillboardDots: View {
 enum BillboardAutoPage {
     static let key = "cue.home.billboardAutoPage"
     static let interval: Double = 5
+}
+
+/// Settings → Home & Details → Hide watched titles: Home's catalog rows
+/// leave out watched films and shows with every aired episode watched
+/// (Continue Watching, Saved for Later and the collections keep theirs).
+enum HomeHideWatched {
+    static let key = "cue.home.hideWatched"
+}
+
+/// Settings → Home & Details → Hide spoilers: Details' episodes not yet
+/// watched or started show their still blurred.
+enum DetailHideSpoilers {
+    static let key = "cue.details.hideSpoilers"
 }
 
 // MARK: - Place memory

@@ -71,6 +71,11 @@ final class StagePictureView: UIView {
             // The whole picture, edge to edge (on the screen's part only,
             // the strip past it showed as a bright line on a sliding edge).
             shade.frame = bounds
+            // The trailer on the picture (`attachTrailer`): the screen's part.
+            for case let video as TrailerSurface in subviews {
+                video.frame = CGRect(x: StagePictureView.drift, y: 0,
+                                     width: StagePictureView.pictureSize.width, height: bounds.height)
+            }
             // The text in screen points (the screen's part of the picture).
             textHost?.view.frame = CGRect(x: StagePictureView.drift, y: 0,
                                           width: StagePictureView.pictureSize.width, height: bounds.height)
@@ -110,6 +115,14 @@ final class StagePictureView: UIView {
         copy.isUserInteractionEnabled = false
         page.addSubview(copy)
         page.carried.append(copy)
+    }
+
+    /// The trailer (`StageTrailer`) onto the current card, over its
+    /// picture, under its shade: it goes out with the card.
+    func attachTrailer(_ surface: TrailerSurface) {
+        guard surface.superview !== page else { return }
+        page.insertSubview(surface, aboveSubview: page.picture)
+        page.setNeedsLayout()
     }
 
     /// The current title's text again (its data arriving: a rating, the

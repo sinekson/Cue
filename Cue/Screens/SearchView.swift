@@ -689,54 +689,33 @@ struct ScopePillSurface: View {
     }
 }
 
-/// A button in the scope pill's look, alone in its own pill (the browse
-/// pages' sort): nothing current at rest — the label plain on the pill —
-/// focused, the white capsule in it, as a scope's.
+/// A single button beside the scope pill (the browse pages' sort), as the
+/// Photos app's bar on iOS: a circle the pill's height, its fill (no edge),
+/// the icon muted as a scope not chosen; focused, white, the icon dark.
 struct ScopePillButton: View {
-    let label: String
-    var icon: String? = nil
-    /// A dropdown's: a chevron after the label.
-    var chevron = false
+    let icon: String
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) { Face(label: label, icon: icon, chevron: chevron) }
+        Button(action: action) { Face(icon: icon) }
             .buttonStyle(PlainCardButtonStyle())
     }
 
     private struct Face: View {
         @Environment(\.isFocused) private var focused
-        let label: String
-        let icon: String?
-        let chevron: Bool
+        let icon: String
         private typealias Pill = ScopePill<Int>
-        /// Tighter than a scope's (icon, label and chevron are a lot for one
-        /// pill): the white capsule 24 pt beside them.
-        private static let padding: CGFloat = 18
 
         var body: some View {
-            HStack(spacing: 10) {
-                if let icon {
-                    Image(systemName: icon).font(.system(size: Pill.textSize * 0.8, weight: .semibold))
+            Image(systemName: icon)
+                .font(.system(size: Pill.textSize, weight: .semibold))
+                .frame(width: Pill.height, height: Pill.height)
+                .foregroundStyle(GlassPill.contentColor(current: false, onFocusHighlight: focused))
+                .background {
+                    Circle().fill(focused ? FlatControl.focus : FlatControl.rest)
+                        .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 12, y: 8)
                 }
-                Text(label).font(.system(size: Pill.textSize, weight: .semibold)).lineLimit(1)
-                if chevron {
-                    Image(systemName: "chevron.down").font(.system(size: Pill.textSize * 0.7, weight: .bold))
-                }
-            }
-            .fixedSize()
-            .padding(.horizontal, Self.padding)
-            .frame(height: Pill.itemHeight)
-            .foregroundStyle(GlassPill.contentColor(current: true, onFocusHighlight: focused))
-            .background {
-                Capsule().fill(FlatControl.focus)
-                    .shadow(color: .black.opacity(0.45), radius: 12, y: 8)
-                    .padding(Pill.focusedInset - Pill.inset)
-                    .opacity(focused ? 1 : 0)
-            }
-            .padding(Pill.inset)
-            .background { ScopePillSurface() }
-            .animation(GlassPill.focusChange, value: focused)
+                .animation(GlassPill.focusChange, value: focused)
         }
     }
 }

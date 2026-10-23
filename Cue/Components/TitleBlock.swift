@@ -261,9 +261,6 @@ struct SectionHint: View {
 final class ModeSwap: ObservableObject {
     static let shared = ModeSwap()
 
-    /// Home's top bar is out for the billboard's trailer (see `TrailerMode`).
-    /// It can't take focus then either: Up brings the page back instead.
-    @Published var trailerChromeOut = false
     /// The title Details was opened for from the billboard — only that page
     /// plays its half of the swap (and returns with it).
     var billboardItemID: String?

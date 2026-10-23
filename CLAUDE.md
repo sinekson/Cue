@@ -11,7 +11,8 @@ Server-facing values (`nuvio_tvos_preferences`, `syncSource: "nuvio"`) must not 
 - **Quick iterations; the user verifies on the TV.** For look and feel: make the
   change, one Debug build as the compile check, install on the sim, hand over
   with a short note. No screenshot rounds, no "let me verify" loops.
-- Verify yourself only for behaviour or focus bugs, or when asked.
+- Verify yourself only for behaviour or focus bugs, or when asked — not
+  while a design is still being iterated (focus is made proper after).
   Tool: `Tools/RemoteDriver/remote.sh "<keys>" [launch args]` presses real
   Siri Remote keys on the sim (`up/down/left/right/select/menu`, `hold`,
   `wait:<s>`, `shot:<name>`, `focus`, `<key>*<n>`; ~20 s per run).
@@ -59,7 +60,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the press) at the end.
 - `Cue/Screens/StagePicture.swift`: billboard/Details picture (`StagePictureView`),
   `StageArt.shade(for:)`.
-- `Cue/Screens/EpisodeRow.swift`: Details' UIKit episode row.
+- `Cue/Screens/EpisodeRow.swift`: Details' episode model (the row itself is
+  Home's cards), `BlurredBackdrop`, `SeasonProgressMap`.
 - `Cue/CueApp.swift`: navigation, `LaunchPreloader`, `TitlePreloader`.
 - `Cue/Components/TitleBlock.swift` (`ModeSwap`, shared title parts),
   `Components.swift` (glass, `GlassPill`, flat controls).
@@ -82,7 +84,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the system's thin material, dark, a 1 pt edge brighter along the top —
   read too see-through over bright pictures, kept in the code for now:
   `actionFaceGlass` false; a flat white 16 % lacked contrast; tried: a
-  thicker frost, dark and light; the scope pill's flat look), content in
+  thicker frost, dark and light; the scope pill's flat look; on the
+  billboard, flat raised fills — light grey read as light mode, black
+  40 % with an edge and shadow — glass is the look over pictures), content in
   the text's colour; focused: a white capsule (the one pure white), dark content,
   5 % larger, soft shadow; in quick (0.15 s), out 0.35 s; pressed: shrinks to 90 % (0.1 s, at least that long for a quick tap), back on a no-bounce spring (0.3 s) (`DetailActionButton.pressScale`; 97 % went unnoticed) — over a
   resting pill the capsule fades into it (same size: shrunk, two pills
@@ -134,7 +138,94 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Going it fades out in 0.08 s (`captionFadeOut`; it rode the move's
   own duration a long way), coming back in as its mirror: over the
   same share of the way (the spring's first 0.08 s covers ~40 %), at its
-  end (`captionFadeIn`; tried: the last 0.12 s — too late).
+  end (`captionFadeIn`; tried: the last 0.12 s — too late). The poster
+  going under the box or coming out (its caption travels the box's width
+  and more): the first and last 30 % of the way only
+  (`grownFadeShare`; with the other captions' fades — ~40 % — it showed
+  too much movement beside the box's barely drifting info; tried: 10 %
+  — too little; 25 %).
+  The box's content changes as one movement with the row: on its spring,
+  the captions' timing (`FixedFocusBoxView.show`). The info drifts with the
+  picture (~14 pt sideways, 8 up/down), crossfading over the whole move
+  on the row's spring — the crossfade matters most. (Tried: 30 pt, the
+  last commit's — much better than on the captions' timing; as a caption, on the captions' timing — moving a poster's
+  step, `pitch`; on the path of the caption going under the box, ~750 pt
+  — much better, maybe too far; 500 pt; 180 pt — half the captions'
+  speed; with the picture, ~14 pt.) A caption sits under its poster wherever that is in its cell
+  (under the box the cell is box-wide, the poster centred), so the one
+  going under the box or coming out moves with its poster. (Tried: held
+  back to travel 180 pt — detached from the poster, lining up only at
+  the end; at the cell's left edge — off its poster while the cell
+  narrowed.) The picture and logo drift a share
+  of that on the same curve, old and new alike, inside the room the
+  picture's zoom leaves (always 4 % larger than the box, `driftZoom`,
+  `zoomRect`; the grown cell's landscape too, so they match): ~14 pt
+  sideways, 8 up/down. The new picture fades in with the captions over the
+  old, which stays opaque until covered (both fading at once, the posters
+  passing under the box showed through). (Tried: the page itself shifted
+  30 pt — the old picture showed in a strip at the edge; the new picture
+  starting 4 % larger, settling back; the info 14–30 pt, on springs of
+  its own, 0.45 s — every part its own pace and distance, disconnected;
+  everything crossfading in place — the drift was missed.)
+  The box's edge stays on meanwhile (waiting for the new picture, it flickered
+  in); a new picture still on its way waits unseen over the old one —
+  no placeholder fill, no shade or logo shown early (they flashed the
+  box brighter, then dim) — and fades in when it's there (0.25 s); still
+  on its way at the move's end: the placeholder, the old one fading
+  (0.25 s), the edge with it. The next titles' pictures (±1, +2) are
+  decoded ahead at the box's own size as focus moves
+  (`FixedFocusBoxView.warm` — the preloader's are at the stage's size, a
+  different key: the box decoded from disk on every move, a few frames
+  late; with the placeholders that showed as a flash).
+  While Left/Right drifts it, the box's place is cut out of the row (a
+  mask, only while the move runs — `FixedFocusRowCell.cutOut`): the
+  posters sliding under it showed at its rounded corners and beside its
+  edges. Posters have rounded corners of their own (the one sliding out
+  from under the box was square beside it), centred in their cell — under
+  the box a box-wide gap — so they come out and go in on both sides alike
+  (anchored left, the one leaving appeared at once at the box's left
+  edge while the one coming in slid all the way across).
+  Up/Down opening, the card is ONE shape: both pictures fill the growing
+  card (centre cropped), on the move's spring (`FixedFocusPosterCell.reshape`;
+  each at its own fixed size, the picture switched at once while the edge
+  still grew around it), the landscape crossfading over the poster from
+  the press (the code asks 25–75 % of the way, but nested in the spring it
+  takes the spring's timing — and looks right). Closing: the landscape
+  at the left, cropped as the card narrows, the edge on it; the poster stretched to fill the card
+  (a 2:3 picture can't fill 16:9 without zooming or stretching — zooming
+  looked bad — the best so far), crossfading in over it from 50 to 90 %
+  of the way (`closeStretch`; 25–75 % — the stretch showed too much),
+  less stretched as the card closes, its own shape at
+  the end (`FixedFocusPosterCell.close`; good enough for now, not
+  perfect). (Tried: at the press the card the poster, at its own size at
+  the card's left edge (or centred), the landscape fading away beside it
+  in 0.3 s outside the edge; the poster fading in at 95 % in 0.15 s, stretched a
+  few percent; at its own width at 90 % — the edge showed apart from it;
+  only once the card was its width, within 1 pt — too late, the spring's
+  tail; that swap blurring through — both pictures blurred over it, the
+  poster sharpening — looked terrible.) (Tried for closing: a blurred
+  copy of the poster filling the shrinking card around the sharp one, both
+  fading in on the move's spring — not good; a closing window — the landscape at its own size, centred,
+  cropped by the shrinking card, the poster fading in over it; as before — each
+  picture at its own size, the poster back at once, the edge shrinking
+  around it, apart from the picture; Netflix's way —
+  the poster at its end size at the press, the landscape fading off it in
+  0.2–0.3 s — too snappy; the opening's reverse — the landscape shrinking
+  with the card, the poster crossfading in at 90 % of the way, filling the
+  card (~1.2×, settling through the spring's tail) or at its own size; the
+  poster filling the shrinking card from the press — centred, its foot
+  cut off and the logo dropping to the edge; foot-pinned, it zoomed and
+  slid against the row's own move, a wobble. Talked over, not built:
+  paging as the billboard's.)
+  (Tried and dropped: Left/Right as Up/Down — the box stepping aside,
+  the card under it shrinking to a poster, the next growing into it:
+  nice, but tiring on the eyes, and no longer a fixed box.)
+  Landscape cards' and the box's logos (the add-on's `logo`, over a
+  bottom shade) as the billboard's: trimmed of their transparent edges,
+  sized by area (40 % of their room — 55 % × 28 % of the card), at its
+  bottom left (`FixedFocusLogo`; fitted into the room, wide transparent
+  ones sat centred, too far right). (Tried: no logo on the box — it
+  never matches the one printed on the poster; brought back.)
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
   The focused row stays at its fixed spot near the top (not centred). The
   row below always starts the same gap (`peekGap`) below what the focused
@@ -166,11 +257,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   themselves come in with the new one (focus staying on its button) —
   sliding inside their own place, which only moves up and down (one
   layer for both: the rows' updates restarted the slide, detached).
-  In the slide's first 75 %, Left/Right page again from any button and
-  focus goes to the side it went (right: Next, left: Details); later a
+  In the slide's first 75 %, a press the way it goes pages again from
+  any button and focus goes to that side (right: Next, left: Details);
+  the other way moves along the buttons, as at rest (tried: paging back
+  too, reversing the slide — a quick Right, Left paged back); later a
   press moves along the buttons (when that's possible
-  again is easy to tell). Back to the card still going out: the slide
-  reverses (the front card returns where it came from), no new card
+  again is easy to tell). Back to the card still going out (Left from
+  Details): the slide reverses (the front card returns where it came from), no new card
   stacked on the moving pair. A reverse starts the cards from where they are,
   at rest (blended into the running slide, they left the buttons). A
   leaving card in front hides the buttons behind it (a mask moving with
@@ -211,6 +304,54 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   paging by itself. (Tried and dropped: no buttons; Select on the
   billboard opening Details; the text standing lower; a Play button
   first, the episode under it; wrapping round to the first.)
+- **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): resting on the
+  billboard's buttons (Home) or Details' (focus on them, no panel, search
+  or player — `TrailerGate`) for `Spotlight.trailerDelay` (2 s), the title's trailer (TMDB's keys → `TrailerResolver.backdropItem`; ranked in `trailerKeys`: names like recap / clip / TV spot last, the user's language, then English, Trailer over Teaser, official, "Official / Main / Final Trailer", the larger upload, the newest — in the app's language (TMDB's language setting; English for now, anime too, no subtitles); played from YouTube's HLS playlist, rewritten before the player sees it (`TrailerPlaylist`): only H.264 (hardware-decoded), nothing below 720p, so it adapts between 720p and 1080p and doesn't stall (tried: the 1080p video and audio files merged at play time — two whole downloads, it stalled; that pair stays as the fallback when a playlist fails); up to 5 tried, any below 720p skipped — none good enough, the still stays; not on Apple TV HD; a show's season first — the billboard's new episode / season pick's, Details' row's season, matched to TMDB's by its air date (the add-ons number seasons their own way: Bleach's TYBW is 17, TMDB's 2) — then the show's). Resolved ahead and kept: the billboard's first 3 titles' trailers from launch (under the curtain, not holding it), 4 s apart (`TrailerResolver.warm`, `warmCount`), the rest as they're rested on (tried: every title, again every 2 hours — with up to 5 keys each, 100+ requests a launch: YouTube flagged the TV's address). Gentle on YouTube: its watch page asked for once a session (the player script's address and config kept — `__sessionYtCfg`, YouTubeKit), then only the player answers; refused (its bot check, "Sign in to confirm you're not a bot", or a page that isn't the video's) — no remote extractor (it asks from the same address); a bot check or 3 keys in a row not resolving: no lookups for 30 min, kept across launches (`holdOff`, `cue.trailers.heldOffUntil` — asking on kept the flag on); on disk (`CueCache/trailers.json`) a key's URLs until googlevideo's expiry, a key that won't do (age restricted — not tried remotely, ~10 s lost; below 720p; nothing playable) for 30 days; TMDB's video and season lists a day. Loaded hidden at the rest's start (resolved, buffering), shown when the delay is up; a dead URL resolved again once
+  fades in over its picture, in its place: on Home on the current card,
+  under its shade and text (`StagePictureView.attachTrailer`); on Details
+  over `rowsBackdrop`'s picture. The whole trailer (not a cut). Moving
+  between the buttons: it plays on (tried: fading out on any move —
+  annoying). Paging, leaving the buttons: fades out to the still (0.35 s);
+  resting again it goes on where it was. At its end: the still, and the
+  billboard moves on (if it pages by itself) — that title's trailer not
+  again this visit. The billboard doesn't page by itself while one plays
+  (nor its dots' timer). While it's on the picture, the peek (the first row's name and cards —
+  only hidden, still focusable; `FixedFocusRows.peekHidden`) and the
+  dots fade out with it (0.6 s) and back with its fade out (0.35 s)
+  (`StageTrailer.shown`); the info block and buttons stay, as the Apple
+  TV app's. (Tried: everything but the buttons fading too — really
+  clean, but the information went; a setting with both and nothing.)
+  Trying: moving the peek and the dots out the bottom instead, together
+  (Settings → Appearance → "Trailers: move the row out",
+  `StageTrailer.peekMovesOut`, local, off — out as the fade (0.6 s), back
+  as the billboard pages (0.7 s, the system's no-bounce spring), starting at the page press with the slide (the
+  trailer's stop came a few frames later, through SwiftUI —
+  `onPeekBack`, `letPeekBack`) (tried: the fade's 0.35 s — too quick;
+  the paging's spring, 0.7 and 0.6 s, from the trailer's stop; 0.6 s from the press; 0.6 s
+  eased in and out, from the trailer's stop — slow to get going; eased
+  out, from the press) — drawn only, `sublayerTransform`;
+  the focus engine counts it as off the screen, so a guide where the peek
+  rests takes Down in, `peekGuide`).
+  Details alike: its episodes' peek fades with the trailer; come in
+  carrying Home's trailer, it never shows. No trailer behind the profile
+  gate or the welcome (`TrailerGate.coverUp`); after the gate, focus
+  lands on the billboard's Details (not the top bar), the 2 s from there. Sound off by default. The top bar isn't touched
+  (it follows Hide the top bar). Not under Reduce Motion.
+  Details pressed while it plays: the same player goes on into Details,
+  not restarted — Home hands it over (`StageTrailer.handOver`), the
+  transition's picture comes over Home with it on top
+  (`DetailTransitionOverlay.video`), Home not dimmed (the video kept at
+  full brightness, only Home's text and buttons fading), Details takes it
+  as it opens (`adopt`), at full opacity, no delay. Back
+  out to Home the same the other way: Home's billboard takes it on (if
+  it's on that title; else let go within 1 s).
+  Details' Trailer button: that same player full screen
+  (`TrailerFullScreen`, the system's `AVPlayerViewController` — pause,
+  scrubbing), where it was, with sound; none on the picture (not yet
+  played, ended, trailers off): the title's from its start, the same
+  resolving (HLS, 720p floor). Back: on the picture again, playing on,
+  with the setting's sound. (Was: a separate player resolving the
+  trailer again from its start — `TrailerPlayerView`, removed.)
 - **Details** uses the billboard's text and shade. Four buttons: Play,
   Library, Trailer, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
@@ -283,12 +424,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   scope pill (`ScopePill`; only where both exist; a genre maps to the
   other side's id) — moving along it switches — and one sort button
   (Popular / Top rated / Newest / A–Z; all but Popular also filter:
-  votes ≥ 200 / out, ≥ 10 / ≥ 50) in the pill's look, alone in its own
-  pill (`ScopePillButton`; nothing current at rest, the white capsule
-  focused): a sort icon before its label, a chevron after, at the grid's
-  right edge; a press opens its list under it in Cue's glass menu panel
+  votes ≥ 200 / out, ≥ 10 / ≥ 50) as a single button beside it — no
+  pill of its own (`ScopePillButton`; tried: alone in its own pill, too
+  like the scopes), as the Photos app's bar on iOS: a circle the pill's
+  height and fill (no edge), only the sort icon, muted (60 %, a scope not
+  chosen); focused, white (tried: icon + label + chevron; a 60 pt
+  capsule, a focused scope's; the content 85 %), at the grid's right
+  edge; a press opens its list under it in Cue's glass menu panel
   (`HoldMenu.openDropdown`), the current one checked; TMDB's A–Z order
-  kept. (Tried: the season buttons' glass pills.)
+  kept. (Tried: the season buttons' glass pills; the system's `Menu`,
+  growing out of the button.)
   Then the folder pages' grid itself (`FolderPosterGrid`, hosting Home's
   `FixedFocusDestinationCell`; six across). The header and its controls
   are one view in the grid's top inset and scroll with it (a header *cell*
@@ -309,21 +454,60 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Into Details** (`DetailTransition`, Core Animation overlay):
   - Fade everywhere: Home dims, the cover zooms (0.55 s), info fades in at 85 %. ~0.8 s.
   - The billboard uses the SAME transition as any card (Home dims, its
-    picture zooms to Details', Details comes in; Back: fade + shrink).
+    picture zooms to Details' — `ModeSwap.depthScale`, 106 % — Details
+    comes in; Back: a fade).
+  - A trailer never zooms: always the screen's size, as on Home (1920 ×
+    1080, not the picture's drift-wide strip — that was 1.7 % larger),
+    in the transition, in Details (outside the picture's depth scale)
+    and on Back; the still zooms under it, unseen (other footage, so a
+    fade between them shows no change of size). It plays on through
+    every step. (Tried: no zoom for any title — the zoom looked better;
+    a Details at 100 % when entered with a trailer.)
     Tried and dropped (2026-10-11): an in-place transition from the
     billboard (Home's parts moving out, Details' rising in, reversed on
     Back) — every version needed workarounds (seams, doubled pictures).
-  - Back: fade + shrink to 98 %.
-  - Lessons: two identical layers crossfading dip (flicker); never draw text
+  - Details from Home, Movies, Series (their root, not a folder): a layer
+    over the page (`detailLayers` in `CueApp`, its own NavigationStack for
+    the pages opened from it) — Home stays in the window, laid out,
+    hidden (opacity 0, inactive: its rows hidden, out of the focus
+    engine). Back: one fade of Details off the live Home (0.35 s, ease
+    out — `layerOut`, `layerCurve`; `closeLayer`), nothing rebuilt; focus
+    back on the card it left (`returnRow`: the system picks the first
+    card on screen, we move it on). (Pushed, Home left the window and
+    was rebuilt on Back — the cause of the flicker. Tried, pushed: a
+    crossfade into Home's still, the live Home taking over; from the
+    billboard: text out first, the picture settling 106 % → Home's
+    size, through the background picture 0.3 + 0.3 s and 0.4 + 0.6 s —
+    every part twice or not gentle.)
+  - Elsewhere (Search, Library, folders, the deep link) Details is still
+    pushed. Back: one crossfade from the press (0.6 s, `exitCurve`):
+    Details into the page's still from the opening's press (`PageFade`,
+    see "Other pages in and out"); the live page, rebuilt under it,
+    takes over as soon as it's drawn, the still fading off it in 0.2 s
+    (`exitHandOver`). (Tried: 0.25 s fade + shrink after the rebuild —
+    delayed, then rushed; a quick fade into Home dimmed, then
+    brightening; shrinking — the dimmed Home a black border; growing to
+    102 %.)
+  - Lessons: a UIView animation nested in the moves' spring
+    (`springDuration:`) takes the spring's timing, whatever its options —
+    its own timing needs Core Animation; two identical layers crossfading
+    dip (flicker); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.
+- **Other pages in and out** (folders, browse pages — from Home,
+  Search or Details): the same crossfade both ways, no system slide
+  (`PageFade`; Details' way in stays its zoom). In: a still of the page
+  below fades off the new one once it's drawn (0.6 s, `exitCurve`).
+  Back: as Details' — into that still at once, the live page taking
+  over (`pageBack`, set per route; the pages call it, not `dismiss()`).
+  Stills kept for the last 8 pages.
 - **Background**: one still picture, Projector — recreated from tvOS's own
   dark backdrop (Photos, the TV app; the system doesn't hand it to apps:
   with nothing drawn, an app shows flat grey): a dark warm grey, lighter
   across the top, a cool shadow bottom left, a brown one bottom right,
   a mauve warmth low in the middle (`ProjectorPicture.render`: Core Image
   gradients, blur, grain added going 16 → 8 bit — no banding), on every
-  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → "Background follows the title" (off by
+  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → "Colours from the title" (off by
   default): Home, Movies, Series follow the focused title
   (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
   only the tab in front sets it), the collection panels take its colour;
@@ -339,6 +523,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture more — enough for a mean luma of 0.18, `StageArt.dimBelow(for:)`;
   the pages opened from Details alike; the shade and the vignette there
   were dropped; tried: darkening bright pictures everywhere).
+- **Where pictures come from**: posters and the fixed box: the add-ons'
+  (they may draw on them — ratings, genre, trending; taken as they come).
+  The billboard and Details: TMDB's main backdrop (`TMDBService.backdrop`,
+  the original file; without one, the add-on's), decoded as focus settles
+  on the title (`TitlePictures`, `TitlePreloader.focused`), so the press
+  finds it in. (Tried: one of several at random each time Details opens —
+  by average, by votes, bars on both, 5 / 3 / 2 at most: the others too
+  often looked bad.) Not in within 0.5 s of the press
+  (`DetailPreparer.choiceWait`): Details opens on the page's background
+  (`ATVBackground`) and the picture fades in when it's there — the one
+  late arrival allowed. (Logos: next, TMDB's in the user's language.)
 - **Portrait posters** (Search, Saved for Later, Details' collection and
   More Like This, the folder and browse grids, the fixed-focus rows — not
   Cast & Crew's portraits): ONE size, six across the content's width
@@ -357,7 +552,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `FixedFocusRing`), a soft shadow outside the card (`attachShadow`, the cards' shadow picture),
   moving-focus cards grow 6 %, the fixed box 4 % (`boxScale`: it
   overhangs its spot, its neighbours step aside, its info isn't scaled).
-  Settings → Appearance → Focus edge (on by default) turns the edge off
+  Settings → Appearance → Focus outline (on by default) turns the edge off
   (`FixedFocusRing.edgeOn`; switching relayouts every view — live). The
   fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
   caption reads. (Tried and dropped: the 4 pt white ring; the row's name
@@ -417,6 +612,184 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   links: each one's text as the add-on wrote it (not ours to change),
   Nuvio's badges under it (to become switchable), as tall as their
   lines; text 26 / 24 pt, focused near-black (the second lines 85 %).
+- **Settings** (`ATVSettingsView`, `SettingsKit`): the categories a
+  sidebar 320 wide, 64 left of the settings (`columnGap`; tried: 400
+  wide at the screen's left inset, Home's 84); the
+  settings, 780 wide, centred on the screen (`listWidth`,
+  `columnWidth`; with every page rows only, the full width read too wide;
+  tried: both centred together, 440 + 780 and 480 + 920, 72 apart; across the content's width, the categories a third; 460 and
+  1080, centred — back when pages had tiles) (no icons — tried: each with its symbol in
+  its colour; an account shows a value only when something's
+  missing: "Signed out", "Add key" — all well, its state is in its
+  settings: Nuvio's in its header, "Connected." starting a key's
+  intro line; tried: the email and "Connected" on the left), the focused
+  category's settings the rest, following focus (0.15 s after it settles,
+  a 0.25 s fade). Right or Select goes in (Select: the first row —
+  `SettingsRowsKey`, `settingsRowFocus`); Left or Back back to the
+  category, which keeps the flat "current" fill while focus is beside it;
+  Back on a category: the top bar. Pages a row opens (Watched, Rows,
+  Add-ons) open in the column (`SettingsNav`), the
+  categories staying; Back closes them, focus back on the row; they stay
+  while focus is on their own category. Sign in is full screen (the first
+  launch's). A row's description shows while it's focused, under its pill
+  (24 pt, 60 %, lined up with the row's text), the rows below stepping
+  down to make room, as text under tvOS's posters (`SettingsDescribedKey`:
+  the page opens it in one animation; the pill drawn behind the row's
+  line only, `SettingsPillKey`). (Tried: inside the focused pill, under
+  the name — the pill grew tall.) The categories are a sidebar: the settings' rows and section
+  labels a size smaller, about 80 % (`SettingsMetrics.Sidebar`: 52 pt
+  capsules, 11 apart, 30 pt text 26 pt in, 23 pt labels; tried: 26 pt
+  text with icons, Home's section hints as labels); it starts lower, its
+  first label level with the page's description (baselines;
+  `Sidebar.top` — level with the 57 pt title, the titles clashed); no fill at rest (the
+  shown one `FlatControl.selected` while focus is beside it), the whole
+  column at 50 % while focus is away from it (as the Apple TV app's
+  sidebar); the settings' rows on a faint fill (tried: both columns
+  alike, faint fills — no hierarchy); focused white. The rows
+  as Apple TV's Settings, measured off its screen: 65 pt capsules, 14
+  apart, 38 pt text (name medium, value regular) 33 pt in from the ends,
+  the chevron 38 pt; focused 2 % larger (tried: 4 pt taller each side as
+  well, as measured — too large, and no longer a capsule) (`SettingsMetrics`; the categories share the shape, at their scale).
+  Section labels as Apple TV's too: 29 pt semibold capitals, no extra
+  spacing, 55 % (tried: Home's section hint, small and widely spaced);
+  the sidebar's at its scale (`SettingsSection(sidebar:)`).
+  (Tried: 72 pt rows with the cards' corners, 22; 29 / 27 pt text 22 pt
+  in.) Section labels and headings lined up with what's inside the rows —
+  the settings' text, the categories' names (`labelIndent` = `rowInset`;
+  tried: 5 pt in from the rows' edge, as Home's row names, `textIndent`;
+  on the edge itself). Choices open their options as a page in the column
+  (`SettingsOptionsRow`: the options one row each, the current one
+  checked, Select picks and goes back) — no pop-up menus (tried: the
+  glass dropdown, `HoldMenu.openDropdown`; MDBList's done, the other
+  pages still to move over).
+  Text at the app's levels (names 85 %, values 60 %, labels 55 %). (Tried
+  and dropped: the rows beside an info pane — a box with the category's
+  symbol, the description under it: room wasted, the words far from their
+  row.) Playback, About, Developer still on the old cards (Right goes in,
+  Select not yet) — to be redone one by one.
+  A page's heading stays where it starts, level with the categories; only
+  the rows scroll, under it, fading out over 24 pt at its foot — nothing
+  goes higher (`SettingsScrollingPage`; tried: the whole page scrolling
+  up past where it started).
+  Not everything is a button: what's only to read takes no focus. Every
+  page — a category's own and those opened from it — its title alone,
+  one title on the column, as Apple TV's Settings' (measured: 57 pt
+  semibold, the labels' grey, 55 %; tried: a row's size, 29 then 38 pt
+  semibold, 85 %), the
+  description under it (24 pt medium, 50 %), the page's round buttons
+  at its right end (`SettingsScrollingPage`). (Tried: titled as a row's
+  name, 40 pt, 55 % — it outweighed the categories; the trail over the
+  title, "NUVIO › PROFILES"; a category's own page untitled — a title
+  at times and not at others; the description alone, on the "ACCOUNTS"
+  label's line.) Nuvio, rows only (as MDBList's): "Nuvio", Nuvio's line under it
+  ("Manage synced data across web, mobile, and TV."; tried: "Overview");
+  Account (the email; its page: Sign Out with the email on its right,
+  confirmed — `NuvioAccountPage`), Profiles (the active one) — all profile
+  management lives here, at the Nuvio website's parity: its page
+  (`NuvioProfilesPage`, "N of 5 profiles · …") a row per profile (avatar,
+  name, "Primary · Active", chevron) and Add Profile last (the keyboard
+  for the name, then its page; gone at 5). A profile's page
+  (`ProfileSettingsPage`): Switch to This Profile (not the active one; a
+  locked one asks its PIN), Name (keyboard), Avatar (its page: Use
+  Initials, then the catalog six across under its kinds — Select picks
+  and goes back), Colour (options with swatches), PIN (Set; or Change —
+  the current one, then the new — and Remove), Collections (the active
+  profile only: a collection's page, shown or not, then its folders);
+  Shared from Primary: Use Primary's Add-ons (not Primary); Copy Settings
+  (`ProfileCopyPage`, the website's `sync_copy_profile_setup`: Copy From,
+  TV / Mobile / Desktop settings and API Keys toggles, Replace its keys
+  when keys are on, Copy Settings confirmed — syncs first); Delete
+  Profile (not Primary, confirmed). No plugins switch (no plugins), no
+  picture links as avatars. The top bar's avatar and the launch gate
+  (`ProfileGateView`) only switch. (Tried: switching from the Profiles
+  page itself; the full-screen editor and Add / Edit tiles on the gate.)
+  Then Sync: Sync Now, its value the last sync ("Today at
+  22:34" / "Syncing…" / "Failed"), and a row per kind synced, its count
+  as the value — every one a button with a chevron — Add-ons and
+  Watched open their pages, Watch progress, Library, Collections nothing
+  yet, until they get one (tried: those only to read, no fill or focus). (Tried: ACCOUNT / ACTIVE PROFILE / LAST SYNC in outlined
+  boxes, round Sync now and Sign out beside them, the counts in tiles, the
+  profiles in tiles to read; before that: the website's tiles, rows under
+  them, the info tiles pressable — actions hidden behind a label.)
+  Watched (`WatchedSettingsPage`): "Watched", "N records · M titles"
+  under it, a round Clear all at the heading's end (`SettingsPage`'s
+  `accessory`; confirmed); a title to a row, newest first, simply
+  scrolling (no paging): the rows' look, a small poster (64 × 96), the
+  name over what was watched last and when — "Last watched" (sentence
+  case, medium, 85 %) then "S2:E4 on 14 Oct 2026, 23:15" (60 %; tried: " · ", " – "); a film
+  "Watched" and the date, a show's chevron at the end
+  (tried: "41 episodes" with the date at the row's end)
+  (tried: posters four across with captions — they hid the order). A show: Select opens
+  its episodes (`WatchedTitlePage`: name, "N episodes · S seasons", a
+  round Remove all; a section per season, in the show's order (not watch order), tiles two
+  across (tried: three — names cut short) in the
+  count tiles' look, "E3 · name" and when watched; Select: Remove in the
+  dropdown; empty, it closes). A film: Select, Remove in the dropdown.
+  Hold any title: Remove from Watched (a show asks first). Names,
+  posters, episode names from the add-on's meta on disk (only the rest
+  fetched, else TMDB). No Details from here, no summaries.
+  TMDB (`TMDBServicePage`): "TMDB", "Powers search and everything Cue
+  shows about a title." (descriptions short; tried: a list of everything
+  it feeds); then rows, as MDBList's: API Key (its page, below), Language
+  (TMDB's; moved from Home & Content — an options page), then TMDB's
+  attribution line at the end (text only, no logo yet). No feature
+  switches: a key means on. A Cache section: Stored ("42 MB of 128 MB" —
+  its `URLCache` on disk, to read) and Clear Cache. No request counts:
+  TMDB has no quota and reports none (a soft per-second limit only). (Tried: STATUS and API KEY in outlined boxes
+  with round buttons beside them — Type key, Send from phone, Remove key;
+  no key: the QR on the page itself; Language as a tile under Status,
+  `SettingsChoiceTile`, label over value.)
+  MDBList (`MDBListServicePage`): "Ratings from IMDb, Rotten Tomatoes,
+  Letterboxd and more."; only wide rows — no round buttons, no outlined
+  boxes, no Status (the way the rest of Settings goes, one page at a
+  time; what's only to read: Apple's way, a row's text and value with
+  no fill or focus). API Key (`ServiceKeyRow`: the key masked, "Not
+  added", or "Not working" — checked as the page opens) opens its page
+  (`ServiceKeyDetailPage`): with a key, Remove Key with the key on its
+  right, confirmed in the system's alert; without, Type Key and Send from
+  Phone (the full-screen QR), the how-to under the name — a key saved or
+  removed, back. No replacing in place: remove, then add. (Tried: the
+  TMDB page's Status and API key boxes, round buttons beside them, the
+  QR on the page without a key.) Then Usage, to read, from `/user`'s
+  body (asked with the key's check as the page opens; `MDBListUsage`):
+  Account (username · plan), Requests Today ("312 of 1,000"), Resets
+  (local time), Paused only while a 429 holds requests back (moved off
+  the Developer page). Then a Ratings section of wide rows,
+  the value on the right: Show
+  ratings (Everywhere / Details only / Off — Off hides the catalog's IMDb
+  score too; `MDBListSettings.place`); Order, showing the first three,
+  opening its page in the column (`RatingOrderPage`: "The first three
+  show on titles; the rest stand in when one is missing." under its
+  name; the sources one row each — Move, a switch, the rows' usual gap) —
+  the chips on the billboard, Details and About, the same order for
+  every title (MAL in it shows only where a title has one: anime); On
+  Home's rows (1 / 2 / 3 ratings, `rowCount`, 1): how many of the same
+  order the fixed box shows (`FixedFocusChipsView`). (Tried: the box's
+  own rule — a source picked in a dropdown, "MyAnimeList for anime" as a
+  tick after the sources; an Anime row — MyAnimeList first / Your order —
+  for the chips and the box alike; a Rating priority tile opening its own page; the
+  sources as tiles four across and the choices as tiles — looked
+  terrible; the sources on the MDBList page itself — with "Shown first" /
+  "Fallback" labels, a line after the third, a preview of a film's and an
+  anime's chips on placeholder cards; a numbered list, one focus to a
+  row, Select lifting it, hold to hide, an Off section — looked horrible.)
+  Appearance: switches in one list, no section labels (an untitled
+  `SettingsSection` draws none), one-line descriptions — Colours from the
+  title, Focus outline, Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
+  Navigation sections, long descriptions). Home & Details (was Home &
+  Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
+  Rows, Continue Watching order, Billboard moves on by itself (moved from
+  Appearance: behaviour, not looks), Hide watched titles (off; Home's
+  catalog rows without watched films and shows with every aired episode
+  watched — of the 20 shows Next Up looks at, `finishedShows`; Continue
+  Watching, Saved for Later, collections untouched; `HomeHideWatched`),
+  Hide spoilers (off; Details' episodes not watched or started: the still
+  blurred, `BlurredBackdrop`, `FixedFocusCardState.blurred`; titles kept —
+  the row shows no synopsis; `DetailHideSpoilers`), Trailers and Trailer sound
+  (Nuvio's synced tvOS prefs, `heroTrailersEnabled` / `heroTrailerSound`
+  — the old preview's switches, reused), one list.
+  Continue Watching and Library aren't repeated in Settings, and no row
+  sends you elsewhere in the app.
 - **App icon and Top Shelf images**: generated, never hand-edited —
   `swift Tools/AppIcon/render.swift` writes them into the asset catalog.
   One play drawn like the note on Apple's Musik icon (grey-white, slightly
@@ -615,5 +988,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Animations that block input; flat vs glass consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
-- Trailers on billboard/Details: add on/off and sound toggles when built.
+- Trailers: the full-screen trailer's controls to move to the playback
+  refactor's player (now the system's); a setting "foreign titles in original audio"
+  (anime: Japanese with English subtitles — burned in, or YouTube's
+  captions added to the playlist).
+- A collection editor (create and edit Cue's collections) — wanted back,
+  in the new Settings look; the old one (`CollectionsSettingsDetail`,
+  old cards) is no longer reachable.
 - Player rework (resume / Start Over still use the old StreamsView).

@@ -38,6 +38,7 @@ struct PlaybackSettingsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: PlayerSettingsStore
     @EnvironmentObject private var layout: HomeCatalogSettingsStore
+    @EnvironmentObject private var nav: SettingsNav
     /// nil: the Playback page (its sub-pages listed); else that sub-page.
     var section: PlaybackSection? = nil
     @State private var showAudioLanguages = false
@@ -63,7 +64,10 @@ struct PlaybackSettingsDetail: View {
             DetailScaffold(title: SettingsCategory.playback.title, subtitle: SettingsCategory.playback.subtitle) {
                 SettingsGroupCard(title: "") {
                     ForEach(PlaybackSection.allCases) { section in
-                        NavigationLink(value: section) {
+                        Button {
+                            nav.push(PlaybackSettingsDetail(section: section)
+                                .padding(.top, SettingsMetrics.top - CueSpacing.lg))
+                        } label: {
                             SettingsActionRow(title: section.title, subtitle: section.subtitle,
                                               leadingIcon: section.icon)
                         }

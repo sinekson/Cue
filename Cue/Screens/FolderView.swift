@@ -14,6 +14,7 @@ import UIKit
 struct FolderView: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
+    @Environment(\.pageBack) private var pageBack
     @Environment(\.dismiss) private var dismiss
     let collection: CueCollection
     let folder: CueCollectionFolder
@@ -107,7 +108,7 @@ struct FolderView: View {
             if rowsDepth.depth > 0 {
                 rowsCommand = FixedFocusRowsCommand(action: .focusBillboard)
             } else if !gridBack.handle() {
-                dismiss()
+                if let pageBack { pageBack() } else { dismiss() }
             }
         }
         .onAppear {

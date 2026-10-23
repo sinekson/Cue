@@ -12,7 +12,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .tmdb: return "TMDB"
         case .mdblist: return "MDBList"
         case .appearance: return "Appearance"
-        case .homeContent: return "Home & Content"
+        case .homeContent: return "Home & Details"
         case .playback: return "Playback"
         case .about: return "About"
         case .developer: return "Developer"
@@ -24,8 +24,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .account: return "Your Nuvio account: syncing with your other devices, and your watch history."
         case .tmdb: return ServiceKey.tmdb.about
         case .mdblist: return ServiceKey.mdblist.about
-        case .appearance: return "Background colour and the top bar"
-        case .homeContent: return "Add-ons, Home's rows, Continue Watching and the Details page"
+        case .appearance: return "Colours, the focus outline and the top bar."
+        case .homeContent: return "Home's rows, Continue Watching and the billboard."
         case .playback: return "Player, audio and subtitles, sources"
         case .about: return "App information, updates, and legal links"
         case .developer: return "Render Lab, frame rate and performance switches"
@@ -34,37 +34,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     /// The accounts and keys, in their own section up top.
     static let accounts: [SettingsCategory] = [.account, .tmdb, .mdblist]
-
-    /// Its pages' place, for the settings box (see `SettingsPlace`).
-    var place: SettingsPlace { SettingsPlace(icon: icon, name: title, tint: tint) }
-
-    /// Its symbol's colour (Apple's Settings give each its own), soft.
-    var tint: Color {
-        switch self {
-        case .account: return Color(red: 0.35, green: 0.82, blue: 0.5)
-        case .tmdb: return Color(red: 0.25, green: 0.8, blue: 0.85)
-        case .mdblist: return Color(red: 1, green: 0.72, blue: 0.3)
-        case .appearance: return Color(red: 0.75, green: 0.55, blue: 1)
-        case .homeContent: return Color(red: 0.4, green: 0.65, blue: 1)
-        case .playback: return Color(red: 1, green: 0.45, blue: 0.45)
-        case .about: return Color(white: 0.8)
-        case .developer: return Color(red: 0.55, green: 0.6, blue: 1)
-        }
-    }
-
-    // SF Symbols matched to the APK's Material icons.
-    var icon: String {
-        switch self {
-        case .account: return "person.crop.circle.fill"
-        case .tmdb: return "film.stack"
-        case .mdblist: return "star.circle.fill"
-        case .appearance: return "paintpalette.fill"
-        case .homeContent: return "square.grid.2x2.fill"
-        case .playback: return "play.fill"
-        case .about: return "info.circle.fill"
-        case .developer: return "gauge.with.dots.needle.67percent"
-        }
-    }
 }
 
 struct SettingsCategoryPane: View {
@@ -106,9 +75,6 @@ struct DeveloperSettingsDetail: View {
                 }
                 .buttonStyle(PlainCardButtonStyle())
             }
-            SettingsGroupCard(title: "MDBList", subtitle: "Its daily request limit, as its last answer reported it") {
-                MDBListUsageLine(usage: MDBListUsage.shared)
-            }
             // What account sync did recently — for when it misbehaves.
             SettingsGroupCard(title: "Sync log", subtitle: "Recent account sync events, newest first") {
                 if syncLog.isEmpty {
@@ -129,34 +95,6 @@ struct DeveloperSettingsDetail: View {
                 .environmentObject(theme)
                 .environmentObject(addonManager)
         }
-    }
-}
-
-/// "412 of 1,000 left today · resets in 6 h · seen 2 min ago".
-private struct MDBListUsageLine: View {
-    @ObservedObject var usage: MDBListUsage
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            Text(text(now: context.date))
-                .font(.system(size: 21))
-                .foregroundStyle(Color.white.opacity(0.6))
-        }
-    }
-
-    private func text(now: Date) -> String {
-        guard let snapshot = usage.snapshot else {
-            return "Nothing seen yet — shows after Cue's next MDBList request."
-        }
-        let relative = RelativeDateTimeFormatter()
-        relative.unitsStyle = .short
-        var parts = ["\(snapshot.remaining.formatted()) of \(snapshot.limit.formatted()) requests left"]
-        if let resetsAt = snapshot.resetsAt {
-            parts.append(resetsAt > now ? "resets \(relative.localizedString(for: resetsAt, relativeTo: now))"
-                                        : "reset since")
-        }
-        parts.append("seen \(relative.localizedString(for: snapshot.seenAt, relativeTo: now))")
-        return parts.joined(separator: " · ")
     }
 }
 

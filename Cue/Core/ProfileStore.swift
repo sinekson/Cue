@@ -122,13 +122,28 @@ struct UserProfile: Codable, Identifiable, Hashable {
 }
 
 /// A selectable avatar image from the backend catalog.
-struct AvatarCatalogItem: Identifiable, Hashable {
+struct AvatarCatalogItem: Identifiable, Hashable, Codable {
     let id: String
     let displayName: String
     let imageURL: String
     let category: String
     let sortOrder: Int
     let bgColor: String?
+}
+
+/// What Copy settings copies, from one profile to another — the website's
+/// choices: each app's settings, and the API keys (replacing ones the
+/// target already has, or not).
+struct ProfileSetupCopy {
+    var source: Int
+    var target: Int
+    var tv = true
+    var mobile = true
+    var desktop = true
+    var keys = false
+    var replaceKeys = false
+
+    var isEmpty: Bool { !tv && !mobile && !desktop && !keys }
 }
 
 struct PinVerifyOutcome {
@@ -149,11 +164,17 @@ enum PinSetOutcome: Equatable {
 final class ProfileStore: ObservableObject {
     @Published private(set) var profiles: [UserProfile] = []
     @Published private(set) var activeProfileID: Int = 1
-    @Published private(set) var avatarCatalog: [AvatarCatalogItem] = []
+    /// Kept on disk: a profile stores only its avatar's id, so without the
+    /// catalog every avatar showed its initial until Profiles was opened.
+    @Published private(set) var avatarCatalog: [AvatarCatalogItem] = ProfileStore.savedCatalog()
     /// True while a Nuvio account is signed in (set by NuvioSyncManager). The
     /// profile UI uses it to explain why PIN/avatar features are unavailable
-    /// instead of failing silently.
-    @Published var accountAvailable = false
+    /// instead of failing silently. Signed in, the catalog is refreshed.
+    @Published var accountAvailable = false {
+        didSet { if accountAvailable, !oldValue { Task { await loadAvatarCatalog() } } }
+    }
+    /// The catalog was fetched this launch (the saved one may be stale).
+    private var catalogFetched = false
 
     /// Fired when the profile list changes locally (add/rename/delete/color).
     var onLocalChange: (() -> Void)?
@@ -166,6 +187,8 @@ final class ProfileStore: ObservableObject {
     var pinVerifier: ((Int, String) async -> PinVerifyOutcome)?
     var pinSetter: ((Int, String, String?) async -> PinSetOutcome)?
     var pinClearer: ((Int, String?) async -> Bool)?
+    /// Copy settings (`ProfileSetupCopy`): nil on success, else the reason.
+    var setupCopier: ((ProfileSetupCopy) async -> String?)?
 
     private var suppressChange = false
 
@@ -176,6 +199,12 @@ final class ProfileStore: ObservableObject {
 
     private static let listKey = "cue.profiles.v1"
     private static let activeKey = "cue.profiles.active"
+    private static let catalogKey = "cue.profiles.avatarCatalog"
+
+    private static func savedCatalog() -> [AvatarCatalogItem] {
+        guard let data = UserDefaults.standard.data(forKey: catalogKey) else { return [] }
+        return (try? JSONDecoder().decode([AvatarCatalogItem].self, from: data)) ?? []
+    }
 
     init() {
         load()
@@ -212,6 +241,24 @@ final class ProfileStore: ObservableObject {
     }
 
     var canAddProfile: Bool { profiles.count < Self.maxProfiles }
+
+    /// "Primary · Active", what applies.
+    func notes(for profile: UserProfile) -> String {
+        [profile.id == 1 ? "Primary" : nil, profile.id == activeProfileID ? "Active" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The avatar's name, or "Initials".
+    func avatarName(for profile: UserProfile) -> String {
+        guard let id = profile.avatarID else { return "Initials" }
+        return avatarCatalog.first { $0.id == id }?.displayName ?? "Image"
+    }
+
+    /// A profile colour's name (`avatarColors`).
+    static func colourName(_ hex: String) -> String {
+        ["#1E88E5": "Blue", "#E53935": "Red", "#8E24AA": "Purple", "#43A047": "Green",
+         "#FB8C00": "Orange", "#D81B60": "Pink", "#00ACC1": "Teal"][hex.uppercased()] ?? hex
+    }
 
     // MARK: - Mutations
 
@@ -451,9 +498,15 @@ final class ProfileStore: ObservableObject {
     // MARK: - Authed operations (delegated to the sync layer)
 
     func loadAvatarCatalog() async {
-        guard avatarCatalog.isEmpty, let loader = avatarCatalogLoader else { return }
+        guard !catalogFetched, let loader = avatarCatalogLoader else { return }
         let items = await loader()
-        if !items.isEmpty { avatarCatalog = items.sorted { $0.sortOrder < $1.sortOrder } }
+        guard !items.isEmpty, !catalogFetched else { return }
+        catalogFetched = true
+        let sorted = items.sorted { $0.sortOrder < $1.sortOrder }
+        if sorted != avatarCatalog { avatarCatalog = sorted }
+        if let data = try? JSONEncoder().encode(sorted) {
+            UserDefaults.standard.set(data, forKey: Self.catalogKey)
+        }
     }
 
     func verifyPin(id: Int, pin: String) async -> PinVerifyOutcome {
@@ -497,6 +550,11 @@ final class ProfileStore: ObservableObject {
             cachePinHash(id: id, pin: nil)
         }
         return ok
+    }
+
+    func copySetup(_ copy: ProfileSetupCopy) async -> String? {
+        guard accountAvailable, let copier = setupCopier else { return "Sign in to Nuvio to copy settings." }
+        return await copier(copy)
     }
 
     private func cachePinHash(id: Int, pin: String?) {

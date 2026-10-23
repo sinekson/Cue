@@ -111,7 +111,8 @@ struct DetailAbout: View {
     var factsBox: some View {
         let all = factLines.flatMap { $0 }
         let rows = stride(from: 0, to: all.count, by: 2).map { Array(all[$0 ..< min($0 + 2, all.count)]) }
-        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating)
+        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating,
+                                                 onDetails: true)
         return VStack(alignment: .leading, spacing: 18) {
             ForEach(rows.indices, id: \.self) { r in
                 HStack(alignment: .top, spacing: Self.columnGap) {

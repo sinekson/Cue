@@ -169,7 +169,30 @@ enum BillboardPicks {
             }
         }
         for pick in fallback { add(pick) }
-        return picks
+        return await withTMDBPictures(picks)
+    }
+
+    /// Each pick's picture TMDB's (`TitlePictures` — Details opened from
+    /// here keeps it); the add-on's where TMDB has none.
+    private static func withTMDBPictures(_ picks: [BillboardPick]) async -> [BillboardPick] {
+        let chosen = await withTaskGroup(of: (String, String?).self) { group in
+            for pick in picks {
+                group.addTask { (pick.id, await TitlePictures.shared.picture(for: pick.item)) }
+            }
+            var all: [String: String] = [:]
+            for await (id, url) in group { if let url { all[id] = url } }
+            return all
+        }
+        return picks.map { pick in
+            guard let url = chosen[pick.id] else { return pick }
+            let item = pick.item
+            return BillboardPick(item: MetaItem(id: item.id, type: item.type, name: item.name, poster: item.poster,
+                                                background: url, logo: item.logo,
+                                                description: item.description, releaseInfo: item.releaseInfo,
+                                                imdbRating: item.imdbRating, runtime: item.runtime, genres: item.genres,
+                                                cast: item.cast, videos: item.videos),
+                                 reason: pick.reason)
+        }
     }
 
     /// A title's name for a reason line — nil when all we have is its id.

@@ -18,6 +18,10 @@ struct MDBListSettings: Codable, Equatable {
     /// The sources' order (raw values): ratings show in it, and the billboard
     /// shows the first three.
     var order: [String] = MDBListSettings.defaultOrder.map(\.rawValue)
+    /// Where ratings show at all (the catalog's IMDb fallback too).
+    var place: RatingsPlace = .everywhere
+    /// How many ratings Home's rows show (the fixed box), 1–3, in the order.
+    var rowCount = 1
 
     /// IMDb first; MyAnimeList second — only anime have one, so it shows for
     /// them and everything else falls through to the next.
@@ -30,6 +34,7 @@ struct MDBListSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case enabled, apiKey, showTrakt, showImdb, showTmdb, showLetterboxd
         case showTomatoes, showAudience, showMetacritic, showMyAnimeList, order
+        case place, rowCount
     }
 
     /// Tolerant per-field decode, exactly like `PlayerSettingsStore`: adding a
@@ -50,6 +55,8 @@ struct MDBListSettings: Codable, Equatable {
         showMetacritic = (try? c.decode(Bool.self, forKey: .showMetacritic)) ?? d.showMetacritic
         showMyAnimeList = (try? c.decode(Bool.self, forKey: .showMyAnimeList)) ?? d.showMyAnimeList
         order = (try? c.decode([String].self, forKey: .order)) ?? d.order
+        place = (try? c.decode(RatingsPlace.self, forKey: .place)) ?? d.place
+        rowCount = (try? c.decode(Int.self, forKey: .rowCount)) ?? d.rowCount
     }
 
     static let `default` = MDBListSettings()
@@ -62,6 +69,12 @@ struct MDBListSettings: Codable, Equatable {
     var orderedProviders: [MDBListProvider] {
         let listed = order.compactMap(MDBListProvider.init(rawValue:))
         return listed + MDBListProvider.allCases.filter { !listed.contains($0) }
+    }
+
+    /// Ratings on this page: Details (and its About), or elsewhere (the
+    /// billboard, the rows).
+    func showsRatings(onDetails: Bool) -> Bool {
+        place == .everywhere || (place == .details && onDetails)
     }
 
     /// The sources that show, in order.
@@ -103,14 +116,32 @@ struct MDBListSettings: Codable, Equatable {
     }
 }
 
+/// Where ratings show (Settings → MDBList → Show ratings).
+enum RatingsPlace: String, Codable, CaseIterable {
+    case everywhere, details, off
+
+    var label: String {
+        switch self {
+        case .everywhere: return "Everywhere"
+        case .details: return "Details only"
+        case .off: return "Off"
+        }
+    }
+}
+
 @MainActor
 final class MDBListSettingsStore: ObservableObject {
     @Published var settings: MDBListSettings {
         didSet {
+            Self.current = settings
             guard settings != oldValue else { return }
             save()
         }
     }
+
+    /// The settings as last set, for UIKit views without the environment
+    /// (the fixed box's chips).
+    private(set) static var current = MDBListSettings.default
 
     private static let key = "cue.mdblist.settings.v1"
 
@@ -121,6 +152,7 @@ final class MDBListSettingsStore: ObservableObject {
         } else {
             settings = .default
         }
+        Self.current = settings
     }
 
     private func save() {
@@ -227,9 +259,10 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
 
 // MARK: - Usage
 
-/// MDBList's daily request limit as its last answer reported it (every
-/// answer carries it in its headers — knowing it costs no request). Shown on
-/// Settings → Developer.
+/// MDBList's daily request limit as its last answer reported it (most
+/// answers carry it in their headers; `/user`, asked as Settings → MDBList
+/// opens, in its body), and the account the key belongs to. Shown on
+/// Settings → MDBList.
 @MainActor
 final class MDBListUsage: ObservableObject {
     static let shared = MDBListUsage()
@@ -241,12 +274,48 @@ final class MDBListUsage: ObservableObject {
         var seenAt: Date
     }
 
+    struct Account: Codable, Equatable {
+        var username: String
+        var plan: String
+    }
+
     @Published private(set) var snapshot: Snapshot?
+    @Published private(set) var account: Account?
+    /// MDBList said "too many requests": Cue asks nothing until then.
+    @Published fileprivate(set) var pausedUntil: Date?
     private static let key = "cue.mdblist.usage"
+    private static let accountKey = "cue.mdblist.account"
 
     private init() {
         snapshot = UserDefaults.standard.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode(Snapshot.self, from: $0) }
+        account = UserDefaults.standard.data(forKey: Self.accountKey)
+            .flatMap { try? JSONDecoder().decode(Account.self, from: $0) }
+    }
+
+    private func store(_ snapshot: Snapshot) {
+        self.snapshot = snapshot
+        if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: Self.key) }
+    }
+
+    /// `/user`'s answer: the account, and the day's requests.
+    nonisolated static func note(user data: Data) {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        func int(_ key: String) -> Int? { (json[key] as? NSNumber)?.intValue }
+        let account = (json["username"] as? String).map {
+            Account(username: $0, plan: (json["plan"] as? String) ?? "")
+        }
+        var snapshot: Snapshot?
+        if let limit = int("rate_limit"), let remaining = int("rate_limit_remaining") {
+            snapshot = Snapshot(limit: limit, remaining: remaining,
+                                resetsAt: int("rate_limit_reset").map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                                seenAt: Date())
+        }
+        Task { @MainActor in
+            if let snapshot { shared.store(snapshot) }
+            shared.account = account
+            if let data = try? JSONEncoder().encode(account) { UserDefaults.standard.set(data, forKey: accountKey) }
+        }
     }
 
     nonisolated static func note(_ response: HTTPURLResponse) {
@@ -259,10 +328,7 @@ final class MDBListUsage: ObservableObject {
             value > 1_000_000_000 ? Date(timeIntervalSince1970: value) : Date().addingTimeInterval(value)
         }
         let snapshot = Snapshot(limit: Int(limit), remaining: Int(remaining), resetsAt: resetsAt, seenAt: Date())
-        Task { @MainActor in
-            shared.snapshot = snapshot
-            if let data = try? JSONEncoder().encode(snapshot) { UserDefaults.standard.set(data, forKey: key) }
-        }
+        Task { @MainActor in shared.store(snapshot) }
     }
 }
 
@@ -297,8 +363,10 @@ enum MDBListService {
     }
     private static func markLimited(_ response: HTTPURLResponse) {
         let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+        let until = Date().addingTimeInterval(retryAfter ?? backoff)
         cacheLock.lock(); defer { cacheLock.unlock() }
-        limitedUntil = Date().addingTimeInterval(retryAfter ?? backoff)
+        limitedUntil = until
+        Task { @MainActor in MDBListUsage.shared.pausedUntil = until }
     }
     private static var cache: [String: CacheEntry] = [:]
     /// Ratings for a day, in memory and on disk: they don't need to change
@@ -383,15 +451,22 @@ enum MDBListService {
 
     /// Validate an API key via `GET /user`.
     static func validate(apiKey: String) async -> Bool {
+        await check(apiKey: apiKey) == true
+    }
+
+    /// Whether MDBList takes the key; nil when it couldn't be reached.
+    static func check(apiKey: String) async -> Bool? {
         let key = apiKey.trimmingCharacters(in: .whitespaces)
         guard !key.isEmpty,
               var comps = URLComponents(string: base + "/user") else { return false }
         comps.queryItems = [URLQueryItem(name: "apikey", value: key)]
         guard let url = comps.url else { return false }
-        guard let (_, response) = try? await session.data(from: url),
-              let http = response as? HTTPURLResponse else { return false }
+        guard let (data, response) = try? await session.data(from: url),
+              let http = response as? HTTPURLResponse else { return nil }
         MDBListUsage.note(http)
-        return (200..<300).contains(http.statusCode)
+        let works = (200..<300).contains(http.statusCode)
+        if works { MDBListUsage.note(user: data) }
+        return works
     }
 
     /// Ratings for any title: its imdb id directly, or resolved through
@@ -408,6 +483,14 @@ enum MDBListService {
         }
         guard let imdbID else { return nil }
         return await ratings(imdbID: imdbID, type: meta.type, settings: settings)
+    }
+
+    /// A title's ratings if they're in memory already (`.some(nil)`: known
+    /// to have none) — for a view that draws at once.
+    static func cachedRatings(for meta: MetaItem) -> MDBListRatings?? {
+        guard meta.id.hasPrefix("tt"),
+              let hit = cachedEntry(cacheKey(meta.id, mediaType(meta.type))) else { return nil }
+        return .some(hit.ratings.isEmpty ? nil : hit.ratings)
     }
 
     /// A title's ratings, every source. Needs an imdb `tt…` id.

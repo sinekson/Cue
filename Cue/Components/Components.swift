@@ -1940,15 +1940,16 @@ struct RatingBadge: View {
 /// score, the outline in the brand colour too — colour here is information
 /// (which source), the one place the app uses brand colour.
 struct MDBListRatingsRow: View {
-    @EnvironmentObject private var theme: ThemeManager
     let entries: [MDBListRatingEntry]
     /// Chips onto further lines when they don't fit (About), not cut.
     var wraps = false
 
-    /// The row's entries: MDBList's, or — when it has none (off, no key,
+    /// The row's entries: MDBList's, or — when it has none (no key,
     /// nothing yet) — the catalog's own IMDb score, so a rating still shows.
+    /// None where Settings turned ratings off (`onDetails`: on Details).
     static func entries(_ ratings: MDBListRatings?, settings: MDBListSettings,
-                        imdbFallback: String?) -> [MDBListRatingEntry] {
+                        imdbFallback: String?, onDetails: Bool) -> [MDBListRatingEntry] {
+        guard settings.showsRatings(onDetails: onDetails) else { return [] }
         let entries = ratings?.entries(settings: settings) ?? []
         if entries.isEmpty, let imdb = imdbFallback, !imdb.isEmpty {
             return [MDBListRatingEntry(provider: .imdb, text: imdb)]

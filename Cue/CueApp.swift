@@ -125,6 +125,12 @@ extension Route {
     }
 }
 
+/// Details as a layer over a home-like tab (`detailLayers`).
+struct DetailLayer {
+    var item: MetaItem
+    var path = NavigationPath()
+}
+
 enum Route: Hashable {
     case detail(MetaItem)
     case streams(MetaItem, MetaVideo?)
@@ -173,9 +179,14 @@ struct RootView: View {
     @State private var homePath = NavigationPath()
     @State private var searchPath = NavigationPath()
     @State private var libraryPath = NavigationPath()
-    @State private var settingsPath = NavigationPath()
     @State private var moviesPath = NavigationPath()
     @State private var seriesPath = NavigationPath()
+    /// Details over Home, Movies or Series (by tab): a layer over the tab's
+    /// stack, not a page in it — the page under it never leaves the window,
+    /// so Back is one fade over it as it is (a pushed page's below is taken
+    /// out of the window and put back: laid out and drawn again, ~120 ms).
+    /// The layer has its own stack for the pages opened from Details.
+    @State private var detailLayers: [Int: DetailLayer] = [:]
 
     /// The navigation stack of the Home-like tab in front (Home, Movies,
     /// Series): plays and sources opened from its rows are pushed there.
@@ -455,17 +466,9 @@ struct RootView: View {
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
                     if args.contains("-settingsTabDemo") { selectedTab = 3 }
-                    // A Settings page, opened the real way (Back returns to
-                    // Settings): -accountDemo, or -settingsPage <category>.
-                    if args.contains("-accountDemo") {
-                        selectedTab = 3
-                        settingsPath.append(SettingsCategory.account)
-                    }
-                    if let flag = args.firstIndex(of: "-settingsPage"), flag + 1 < args.count,
-                       let category = SettingsCategory(rawValue: args[flag + 1]) {
-                        selectedTab = 3
-                        settingsPath.append(category)
-                    }
+                    // Settings showing a category (ATVSettingsView reads which):
+                    // -accountDemo, or -settingsPage <category>.
+                    if args.contains("-accountDemo") || args.contains("-settingsPage") { selectedTab = 3 }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
                     if args.contains("-moviesDemo") { selectedTab = AppTab.movies.rawValue }
@@ -477,7 +480,8 @@ struct RootView: View {
                             try? await Task.sleep(for: .seconds(2))
                             let shelves = collections.collections.filter { !$0.folders.isEmpty }
                             if shelves.indices.contains(n), let folder = shelves[n].folders.first {
-                                homePath.append(Route.folder(shelves[n], folder))
+                                let route = Route.folder(shelves[n], folder)
+                                PageFade.shared.push(key: route) { homePath.append(route) }
                             }
                         }
                     }
@@ -497,7 +501,7 @@ struct RootView: View {
                         if let route {
                             Task { @MainActor in
                                 try? await Task.sleep(for: .seconds(2))
-                                homePath.append(route)
+                                PageFade.shared.push(key: route) { homePath.append(route) }
                             }
                         }
                     }
@@ -615,14 +619,14 @@ struct RootView: View {
                 }
                 .environmentObject(theme)
             }
-            .fullScreenCover(isPresented: $showProfileGate) {
+            .fullScreenCover(isPresented: $showProfileGate, onDismiss: deferSidebarAfterProfileGate) {
                 // Choosing a profile — and, opened from the top bar's avatar,
                 // editing them (its Edit tile). The Nuvio account lives in
                 // Settings → Account.
                 ProfileGateView(
-                    onSelected: { showProfileGate = false; deferSidebarAfterProfileGate() },
+                    onSelected: { showProfileGate = false },
                     onCancel: profileGateCancellable
-                        ? { showProfileGate = false; deferSidebarAfterProfileGate() }
+                        ? { showProfileGate = false }
                         : nil
                 )
                 .environmentObject(theme)
@@ -781,6 +785,9 @@ struct RootView: View {
         }
         // App-wide toast (Fusion): Added to Library / Marked Watched / etc.
         .overlay { FusionToastHost() }
+        // Playing: no billboard trailer under it.
+        .onChange(of: playback == nil) { _, none in TrailerGate.shared.playerUp = !none }
+        .onChange(of: showProfileGate || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
         .fullScreenCover(item: $playback, onDismiss: {
             // Pop the auto-played source page ONLY after the cover has fully
             // torn down. Mutating the NavigationStack path in the same runloop
@@ -827,11 +834,11 @@ struct RootView: View {
     /// full-bleed.
     private var atTabRoot: Bool {
         switch selectedTab {
-        case 0: return homePath.isEmpty
+        case 0: return homePath.isEmpty && detailLayers[0] == nil
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
-        case 4: return moviesPath.isEmpty
-        case 5: return seriesPath.isEmpty
+        case 4: return moviesPath.isEmpty && detailLayers[4] == nil
+        case 5: return seriesPath.isEmpty && detailLayers[5] == nil
         default: return true   // Settings keeps the rail
         }
     }
@@ -867,12 +874,6 @@ struct RootView: View {
     /// the content (after a tab switch, leaving the bar, a pop): as short as
     /// focus needs to settle — every Up in it is lost.
     private static let railSettle: Double = 0.25
-
-    /// The top bar is out for the billboard's trailer — Home's tab only
-    /// (another tab's bar is never part of it).
-    private var homeChromeOut: Bool {
-        modeSwap.trailerChromeOut && onHomeLikeTab
-    }
 
     private var showSidebar: Bool {
         guard atTabRoot else { return false }
@@ -985,7 +986,7 @@ struct RootView: View {
             // Always there: hidden, it moves out the top (and back in) — one
             // motion app-wide (`GlassSidebar.hidden`).
             do {
-                let barHidden = !showSidebar || homeChromeOut
+                let barHidden = !showSidebar
                 GlassSidebar(selected: $selectedTab, focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
@@ -1126,9 +1127,8 @@ struct RootView: View {
                     .navigationDestination(for: Route.self) { destination(for: $0, path: $libraryPath) }
             }
         case .settings:
-            NavigationStack(path: $settingsPath) {
-                ATVSettingsView()
-                    .onExitCommand { focusSidebar(3) }
+            NavigationStack {
+                ATVSettingsView { focusSidebar(3) }
                     .probeScreen("Settings")
             }
         case .movies:
@@ -1142,8 +1142,61 @@ struct RootView: View {
 
     /// Home, or its filtered twins Movies / Series: each in its own stack.
     private func homeLikeStack(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+        let layer = detailLayers[tab.rawValue]
+        return ZStack {
+            // Under Details: still in the window and laid out — only not
+            // shown and out of the focus engine's way (inactive: its rows
+            // hidden, as a tab behind — `.disabled` alone let focus slip
+            // onto its first card, and Back landed there).
+            homeStack(tab, path: path, active: active && layer == nil)
+                .opacity(layer == nil ? 1 : 0)
+                .disabled(layer != nil)
+            if let layer {
+                let layerPath = detailLayerPath(tab)
+                NavigationStack(path: layerPath) {
+                    detailView(layer.item, path: layerPath) { closeDetailLayer(tab, item: layer.item) }
+                        .probeScreen(Route.detail(layer.item).probeName) { Route.detail(layer.item).probeDetail }
+                        .navigationDestination(for: Route.self) { destination(for: $0, path: layerPath) }
+                }
+                .id(layer.item.id)
+            }
+        }
+    }
+
+    /// Opens Details over a home-like tab: on its root, as its layer
+    /// (`detailLayers`); deeper (a folder), pushed.
+    private func openFromHome(_ route: Route, tab: AppTab, path: Binding<NavigationPath>) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if case .detail(let item) = route, path.wrappedValue.isEmpty {
+                detailLayers[tab.rawValue] = DetailLayer(item: item)
+            } else {
+                path.wrappedValue.append(route)
+            }
+        }
+    }
+
+    private func detailLayerPath(_ tab: AppTab) -> Binding<NavigationPath> {
+        Binding(get: { detailLayers[tab.rawValue]?.path ?? NavigationPath() },
+                set: { detailLayers[tab.rawValue]?.path = $0 })
+    }
+
+    /// Back from the layer's Details: it fades off the page under it.
+    private func closeDetailLayer(_ tab: AppTab, item: MetaItem) {
+        DetailTransition.shared.closeLayer(itemID: item.id) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { detailLayers[tab.rawValue] = nil }
+            // As after a pop: focus lands on the page, not the rail.
+            lastHomePopAt = Date()
+            setSidebarEnabled(false, reenableAfter: Self.railSettle)
+        }
+    }
+
+    private func homeStack(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
         NavigationStack(path: path) {
-            homeRoot(filter: tab.typeFilter, path: path, active: active)
+            homeRoot(tab, path: path, active: active)
                 .onExitCommand {
                     // Handing over to Details: this Back is Details' (it
                     // takes the swap straight back).
@@ -1327,28 +1380,25 @@ struct RootView: View {
     }
 
     /// The rail's cold-launch fallback timer keeps running while the profile
-    /// gate covers the screen, so once the gate dismisses the focus engine
-    /// would land on the rail and pop it open. Briefly disable it again so
-    /// focus goes to Home's content first.
+    /// gate covers the screen, so once the gate is gone the focus engine
+    /// would land on the rail. Disable it again and send focus to Home's
+    /// billboard (its first button).
     private func deferSidebarAfterProfileGate() {
         setSidebarEnabled(false, reenableAfter: Self.railSettle)
+        if selectedTab == 0 { HomeBack.shared.toBillboard?() }
     }
 
     // MARK: - Tab roots
 
-    private func homeRoot(filter: String?, path: Binding<NavigationPath>, active: Bool) -> some View {
-        HomeView(
+    private func homeRoot(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+        let filter = tab.typeFilter
+        return HomeView(
             viewModel: homeViewModel,
             typeFilter: filter,
             active: active,
-            onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-            // From the billboard: no slide. It already looks like the Detail
-            // page's top, so the page just takes over in place.
-            onSelectFeatured: { item in
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
-            },
+            onSelect: { openDetail($0) { openFromHome($0, tab: tab, path: path) } },
+            // From the billboard (`DetailTransition` already running).
+            onSelectFeatured: { openFromHome(Route.detail($0), tab: tab, path: path) },
             onResume: { resume($0) },
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
@@ -1358,7 +1408,7 @@ struct RootView: View {
                                              await FolderView.catalogs(of: folder, type: filter,
                                                                        addonManager: addonManager, tmdb: tmdbSettings)
                                          }) {
-                    path.wrappedValue.append(Route.folder(collection, folder, type: filter))
+                    pushPage(Route.folder(collection, folder, type: filter), path)
                 }
             },
             onContentReady: {
@@ -1403,12 +1453,12 @@ struct RootView: View {
             },
             onOpenPerson: { id, name in
                 TMDBBrowseViewModel.open(.person(id), title: name) {
-                    searchPath.append(Route.person(id: id, name: name))
+                    pushPage(Route.person(id: id, name: name), $searchPath)
                 }
             },
             onOpenStudio: { id, name in
                 TMDBBrowseViewModel.open(.company(id), title: name) {
-                    searchPath.append(Route.tmdbCompany(id: id, name: name))
+                    pushPage(Route.tmdbCompany(id: id, name: name), $searchPath)
                 }
             }
         )
@@ -1430,7 +1480,17 @@ struct RootView: View {
     /// reachable, with no second place to remember.
     private func destination(for route: Route, path: Binding<NavigationPath>) -> some View {
         destinationBody(for: route, path: path)
+            .environment(\.pageBack) {
+                PageFade.shared.back(key: route) {
+                    if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
+                }
+            }
             .probeScreen(route.probeName) { route.probeDetail }
+    }
+
+    /// A page (folder, browse page) in: `PageFade`'s crossfade, no slide.
+    private func pushPage(_ route: Route, _ path: Binding<NavigationPath>) {
+        PageFade.shared.push(key: route) { path.wrappedValue.append(route) }
     }
 
     /// A collection's folder.
@@ -1445,50 +1505,55 @@ struct RootView: View {
                    })
     }
 
+    /// Details, its pages pushed on `path`.
+    private func detailView(_ item: MetaItem, path: Binding<NavigationPath>,
+                            onBack: @escaping () -> Void) -> some View {
+        DetailView(
+            item: item,
+            onSelectItem: { openDetail($0) { path.wrappedValue.append($0) } },
+            onSelectPerson: { id, name, backdrop in
+                TMDBBrowseViewModel.open(.person(id), title: name) {
+                    pushPage(Route.person(id: id, name: name, backdrop: backdrop), path)
+                }
+            },
+            onSelectCompany: { company, backdrop in
+                TMDBBrowseViewModel.open(company.isNetwork ? .network(company.id) : .company(company.id),
+                                         title: company.name) {
+                    pushPage(Route.tmdbCompany(id: company.id, name: company.name,
+                                               network: company.isNetwork, backdrop: backdrop), path)
+                }
+            },
+            onSelectGenre: { genre, isMovie, backdrop in
+                TMDBBrowseViewModel.open(.genre(id: genre.id, name: genre.name, isMovie: isMovie),
+                                         title: genre.name) {
+                    pushPage(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie,
+                                         backdrop: backdrop), path)
+                }
+            },
+            onSelectKeyword: { keyword, isMovie, backdrop in
+                TMDBBrowseViewModel.open(.keyword(id: keyword.id, isMovie: isMovie), title: keyword.name) {
+                    pushPage(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie,
+                                           backdrop: backdrop), path)
+                }
+            },
+            onReturnToBillboard: onBack
+        )
+    }
+
     @ViewBuilder
     private func destinationBody(for route: Route, path: Binding<NavigationPath>) -> some View {
         switch route {
         case .detail(let item):
-            DetailView(
-                    item: item,
-                    onSelectItem: { openDetail($0) { path.wrappedValue.append($0) } },
-                    onSelectPerson: { id, name, backdrop in
-                        TMDBBrowseViewModel.open(.person(id), title: name) {
-                            path.wrappedValue.append(Route.person(id: id, name: name, backdrop: backdrop))
-                        }
-                    },
-                    onSelectCompany: { company, backdrop in
-                        TMDBBrowseViewModel.open(company.isNetwork ? .network(company.id) : .company(company.id),
-                                                 title: company.name) {
-                            path.wrappedValue.append(Route.tmdbCompany(id: company.id, name: company.name,
-                                                                       network: company.isNetwork, backdrop: backdrop))
-                        }
-                    },
-                    onSelectGenre: { genre, isMovie, backdrop in
-                        TMDBBrowseViewModel.open(.genre(id: genre.id, name: genre.name, isMovie: isMovie),
-                                                 title: genre.name) {
-                            path.wrappedValue.append(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie,
-                                                                 backdrop: backdrop))
-                        }
-                    },
-                    onSelectKeyword: { keyword, isMovie, backdrop in
-                        TMDBBrowseViewModel.open(.keyword(id: keyword.id, isMovie: isMovie), title: keyword.name) {
-                            path.wrappedValue.append(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie,
-                                                                   backdrop: backdrop))
-                        }
-                    },
-                    // Back: `DetailTransition` (the billboard's way backwards,
-                    // else the simple exit) — no system slide.
-                    onReturnToBillboard: {
-                        DetailTransition.shared.close(itemID: item.id) {
-                            var transaction = Transaction()
-                            transaction.disablesAnimations = true
-                            withTransaction(transaction) {
-                                if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
-                            }
-                        }
+            // Back: `DetailTransition` (the simple exit) — no system slide.
+            detailView(item, path: path) {
+                DetailTransition.shared.close(itemID: item.id) {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if !path.wrappedValue.isEmpty { path.wrappedValue.removeLast() }
                     }
-            )
+                }
+            }
         case .folder(let collection, let folder, let type):
             folderView(collection, folder, type: type, path: path)
         case .person(let id, let name, let backdrop):
@@ -2320,6 +2385,7 @@ final class TitlePreloader {
         settleTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.settle))
             guard !Task.isCancelled, let self else { return }
+            TitlePictures.shared.focused(item)
             self.plan(rows: rows, row: row, index: index)
         }
         if Self.wanted(item) {

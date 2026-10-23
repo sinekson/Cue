@@ -143,13 +143,16 @@ final class DetailViewModel: ObservableObject {
         meta = item
     }
 
-    /// The picture Home showed for this title (the card's / the billboard's)
-    /// — Details keeps it; the meta add-on's record often has another.
-    var shownPicture: String?
+    /// The picture this opening shows (`DetailPreparer`: TMDB's, chosen
+    /// for it; from the billboard, the billboard's).
+    @Published private(set) var shownPicture: String?
     /// …and its logo (the add-on's record often has another one too).
     var shownLogo: String?
-    /// The page's picture: Home's, else the record's.
-    var backdropURL: String? { shownPicture ?? meta.background ?? meta.poster }
+    /// The chosen picture wasn't in when the page opened: the page's
+    /// background until it is, then it fades in.
+    @Published private(set) var pictureLate = false
+    /// The page's picture: the chosen one, else the record's.
+    var backdropURL: String? { pictureLate ? nil : shownPicture ?? meta.background ?? meta.poster }
 
     /// Prepared since the press (`DetailPreparer`): the page is BUILT with
     /// it — what's here doesn't land later as a row of updates.
@@ -160,6 +163,16 @@ final class DetailViewModel: ObservableObject {
         useEpisodeExtras = tmdb.useEpisodes
         shownPicture = prepared.picture
         shownLogo = prepared.logo
+        if prepared.pictureLate, !prepared.pictureChosen, let choice = prepared.pictureChoice {
+            pictureLate = true
+            Task { @MainActor [weak self] in
+                await choice.value
+                guard let self, let url = prepared.picture else { self?.pictureLate = false; return }
+                _ = await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+                self.shownPicture = url
+                self.pictureLate = false
+            }
+        }
         if let full = prepared.meta {
             meta = full
             metaIsFull = true
@@ -437,6 +450,7 @@ struct DetailView: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var layout: HomeCatalogSettingsStore
+    @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var profiles: ProfileStore
     @StateObject private var viewModel: DetailViewModel
@@ -463,7 +477,13 @@ struct DetailView: View {
     var onSelectGenre: (TMDBService.Genre, Bool, String?) -> Void = { _, _, _ in }
     /// A tag in About: the titles with that keyword (films or shows, as this one).
     var onSelectKeyword: (TMDBService.Keyword, Bool, String?) -> Void = { _, _, _ in }
-    @State private var activeTrailer: TMDBService.Trailer?
+    /// The trailer over the picture while focus rests on the buttons (as
+    /// Home's billboard — Settings → Home & Details → Trailers).
+    @StateObject private var trailer = StageTrailer()
+    @ObservedObject private var trailerGate = TrailerGate.shared
+    @Environment(\.scenePhase) private var detailScenePhase
+    /// On screen (not under a page opened from it).
+    @State private var pageShown = false
     /// The series' size and status, once loaded (see `FixedFocusShowInfo`).
     @State private var showInfo: TMDBService.ShowSize?
     /// The billboard's one line under the logo (TMDB's tagline; the name
@@ -664,13 +684,22 @@ struct DetailView: View {
             }
             backToBillboard()
         }
-        .fullScreenCover(item: $activeTrailer) { trailer in
-            // The alternates come along so a first pick that this connection
-            // can't reach falls through to the next one instead of landing on
-            // "Trailer unavailable".
-            TrailerPlayerView(trailer: trailer,
-                              alternates: viewModel.trailers.map(\.youtubeKey))
-                .environmentObject(theme)
+        // THE TRAILER: resting on the buttons, it plays over the picture;
+        // leaving them, a panel, a search, the player: back to the still.
+        // The billboard's trailer, playing on (`DetailTransition.open(trailer:)`).
+        .onAppear { pageShown = true; trailer.adopt(viewModel.meta); restTrailer() }
+        .onDisappear { pageShown = false; trailer.stop() }
+        .onChange(of: summaryShown) { _, _ in restTrailer() }
+        .onChange(of: launcher.searching) { _, _ in restTrailer() }
+        .onChange(of: trailerGate.playerUp) { _, _ in restTrailer() }
+        .onChange(of: detailScenePhase) { _, _ in restTrailer() }
+        .onChange(of: layout.heroTrailersEnabled) { _, _ in restTrailer() }
+        .onChange(of: layout.heroTrailerSound) { _, _ in restTrailer() }
+        // The Trailer button: the trailer on the picture full screen (from
+        // its start if none is on), playing on behind once closed.
+        .fullScreenCover(isPresented: Binding(get: { trailer.full }, set: { if !$0 { closeFullTrailer() } }),
+                         onDismiss: closeFullTrailer) {
+            TrailerFullScreen(trailer: trailer, close: closeFullTrailer)
         }
     }
 
@@ -750,6 +779,9 @@ struct DetailView: View {
                            // (No name: the page is one title's — what peeks is
                            // more of it, whatever the row. Home names its rows.)
                            rigidPeek: Self.episodesPeek,
+                           // Out with the trailer, back as it goes — and in
+                           // from Home's playing trailer, never shown before it.
+                           peekHidden: trailer.shown || (!pageShown && StageTrailer.carries(viewModel.meta.id)),
                            hidesBillboardPicture: true,
                            // The season's progress: between the season
                            // buttons and the episodes.
@@ -821,7 +853,7 @@ struct DetailView: View {
         let drift = StagePictureView.drift
         return ZStack {
             TitleTintBackground(tint: tint, second: tintSecond)
-                .task(id: viewModel.meta.id) {
+                .task(id: url ?? "") {
                     guard let url, let colors = await FixedFocusTint.colors(for: url)
                     else { return }
                     tint = colors.first
@@ -829,22 +861,30 @@ struct DetailView: View {
                 }
             // EXACTLY where Home's billboard left it (the swap): its size, a
             // little wider than the screen, leaned in by the step-in zoom.
+            // Its picture not in yet: the page's background until it is.
+            if viewModel.pictureLate { ATVBackground() }
+            RemoteImage(url: url, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
+                .frame(width: 1920 + 2 * drift, height: 1080)
+                .scaleEffect(ModeSwap.depthScale(depth))
+                .frame(width: 1920, height: 1080)
+                .clipped()
+            // The trailer never leans in: the screen, as on Home, whatever
+            // the picture's depth (it's other footage — the still's zoom
+            // under it never shows).
+            StageTrailerView(trailer: trailer)
+                .frame(width: 1920, height: 1080)
             ZStack {
-                RemoteImage(url: url, maxDimension: StagePictureView.pictureSize.width)
-                    .frame(width: 1920 + 2 * drift, height: 1080)
-                ZStack {
-                    if let blurredBackdrop {
-                        Image(uiImage: blurredBackdrop)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 1920 + 2 * drift, height: 1080)
-                    }
+                if let blurredBackdrop {
+                    Image(uiImage: blurredBackdrop)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 1920 + 2 * drift, height: 1080)
                 }
-                .opacity(below ? 1 : 0)
             }
             .scaleEffect(ModeSwap.depthScale(depth))
             .frame(width: 1920, height: 1080)
             .clipped()
+            .opacity(below ? 1 : 0)
             // Below: the dim, more for a bright picture.
             Color.black.opacity(below ? StageArt.dimBelow(for: url) : 0)
             // The billboard's shade, exactly Home's (`StageArt.shade`).
@@ -1107,14 +1147,48 @@ struct DetailView: View {
         }
     }
 
+    /// Resting on the buttons, nothing over the page: the trailer may
+    /// play (after the rest's delay); else back to the still.
+    private func restTrailer() {
+        guard !trailer.full else { return }
+        let resting = pageShown && actionBridge.current != nil && !summaryShown
+            && launcher.searching == nil && !trailerGate.playerUp
+            && detailScenePhase == .active && layout.heroTrailersEnabled
+        if resting {
+            let about = trailerSeason
+            trailer.rest(on: viewModel.meta, season: about.season, aired: about.aired,
+                         sound: layout.heroTrailerSound)
+        } else {
+            trailer.pause()
+        }
+    }
+
+    /// A show: the row's season (where Play goes) — its first episode's
+    /// date too: TMDB numbers seasons its own way.
+    private var trailerSeason: (season: Int?, aired: Date?) {
+        let season = viewModel.meta.type == "movie" ? nil : rowSeason
+        let aired = season.flatMap { season in
+            viewModel.meta.videos?.filter { $0.season == season }.compactMap(\.airedDate).min()
+        }
+        return (season, aired)
+    }
+
+    private func closeFullTrailer() {
+        trailer.leaveFull(resting: layout.heroTrailersEnabled && detailScenePhase == .active,
+                          sound: layout.heroTrailerSound)
+        restTrailer()
+    }
+
     private func backToBillboard() {
+        // Out to Home: its billboard takes the trailer on (`adopt`).
+        if onReturnToBillboard != nil { trailer.handOver(within: 1) }
         onReturnToBillboard?()
     }
 
     /// The title block's ratings row (nil = none).
     private var ratingsBadges: AnyView? {
         FixedFocusBillboardText.ratingsChips(viewModel.mdbRatings, settings: mdblist.settings,
-                                             item: viewModel.meta)
+                                             item: viewModel.meta, onDetails: true)
     }
 
     /// Play/Resume (+ Start Over) + circular add / watched / rate / trailer.
@@ -1169,8 +1243,12 @@ struct DetailView: View {
                         icon: "play.rectangle.fill", title: "Trailer",
                         isPrimary: false, lit: litAction == .trailer, bare: true,
                         action: {
-                            if let trailer = viewModel.trailers.first { activeTrailer = trailer }
-                            else { ToastCenter.shared.show("No trailer for this title", icon: "film") }
+                            if viewModel.trailers.isEmpty {
+                                ToastCenter.shared.show("No trailer for this title", icon: "film")
+                            } else {
+                                let about = trailerSeason
+                                trailer.playFull(on: viewModel.meta, season: about.season, aired: about.aired)
+                            }
                         }
                     )
                     .focused(focus, equals: .trailer)
@@ -1216,6 +1294,8 @@ struct DetailView: View {
     ///   while the row previously held NOTHING gets moved to Play. Moves
     ///   WITHIN the row (old != nil) are left alone.
     private func actionFocusChanged(from old: ActionControl?, to new: ActionControl?) {
+        // The trailer plays on between the buttons; leaving them, it fades out.
+        restTrailer()
         // (Back from Info's panel: on Info, as asked — once.)
         if new == .info, returningToInfo { returningToInfo = false; return }
         if old == nil, let new, new != .play {
@@ -1253,7 +1333,8 @@ struct DetailView: View {
     /// seconds, and every focus move in the row rebuilt it.)
     private var rowData: DetailRowData {
         let key = DetailRowData.Key(meta: viewModel.metaRevision, extras: viewModel.extrasRevision,
-                                    progress: progressStore.revision, watched: watched.revision)
+                                    progress: progressStore.revision, watched: watched.revision,
+                                    hideSpoilers: hideSpoilers)
         if let memo = viewModel.rowMemo, memo.key == key { return memo }
         let regular = viewModel.allEpisodesInPlayOrder
         let specials = regular.contains { $0.season == 0 } ? [] : viewModel.episodes(season: 0)
@@ -1272,7 +1353,9 @@ struct DetailView: View {
                                                   progress: progressStore, watched: watched),
             cardStates: Dictionary(items.map { item in
                 (item.id, FixedFocusCardState(label: item.state.label, fraction: item.state.progress,
-                                              right: item.state.remaining.map { "\($0) left" } ?? item.state.status))
+                                              right: item.state.remaining.map { "\($0) left" } ?? item.state.status,
+                                              // Hide spoilers: not watched or started — its still blurred.
+                                              blurred: hideSpoilers && !item.state.watched && item.state.progress == nil))
             }, uniquingKeysWith: { a, _ in a }),
             rowItems: ordered.map { MetaItem(id: $0.id, type: "episode", name: $0.title, background: $0.image) },
             subtitles: Dictionary(ordered.map { ($0.id, $0.facts) }, uniquingKeysWith: { a, _ in a }))
@@ -1306,7 +1389,6 @@ struct DetailView: View {
                 title: episode.title.flatMap { $0.isEmpty ? nil : $0 }
                     ?? episode.episode.map { "Episode \($0)" } ?? "Episode",
                 facts: facts,
-                synopsis: episode.overview.flatMap { $0.isEmpty ? nil : $0 },
                 image: image,
                 state: state)
         }
@@ -1680,7 +1762,7 @@ private struct DetailPressStyle: ButtonStyle {
 /// one of the inputs in `key` changes.
 struct DetailRowData {
     struct Key: Equatable {
-        var meta: Int, extras: Int, progress: Int, watched: Int
+        var meta: Int, extras: Int, progress: Int, watched: Int, hideSpoilers: Bool
     }
     let key: Key
     /// Specials first, then every regular episode in play order.
@@ -1716,6 +1798,47 @@ enum DetailOpenProbe {
     }
 }
 
+/// The picture Details and the billboard show: the title's TMDB backdrop
+/// (`TMDBService.backdrop`), decoded as focus settles on the title, so the
+/// press finds it in. Posters and the fixed box keep the add-ons' pictures.
+@MainActor
+final class TitlePictures {
+    static let shared = TitlePictures()
+
+    /// Asked once a launch ("": TMDB has none).
+    private var pictures: [String: String] = [:]
+    /// Each title's next opening's picture, being decoded / decoded.
+    private var decoded: [String: Task<String?, Never>] = [:]
+
+    /// The title's picture (nil: TMDB has none).
+    func picture(for item: MetaItem) async -> String? {
+        if let url = pictures[item.id] { return url.isEmpty ? nil : url }
+        let url = await TMDBService.backdrop(id: item.id, type: item.type)
+        pictures[item.id] = url ?? ""
+        return url
+    }
+
+    /// Focus settled on `item`: its picture, decoded.
+    func focused(_ item: MetaItem) {
+        guard TMDBService.hasAPIKey, item.type == "movie" || item.type == "series" else { return }
+        if decoded[item.id] == nil { decoded[item.id] = decode(item) }
+    }
+
+    /// The picture for this opening (nil: TMDB has none — the card's then).
+    func forOpening(_ item: MetaItem) -> Task<String?, Never> {
+        decoded.removeValue(forKey: item.id) ?? decode(item)
+    }
+
+    private func decode(_ item: MetaItem) -> Task<String?, Never> {
+        Task { @MainActor in
+            guard let url = await self.picture(for: item),
+                  await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+            else { return nil }
+            return url
+        }
+    }
+}
+
 /// From the press until Details is built (the swap's ~0.45 s): what the page
 /// needs, from memory / disk (the background queue put it there —
 /// `TitlePreloader`) — handed to the page as it's created, so it opens
@@ -1743,9 +1866,17 @@ final class DetailPreparer {
         var rowNameReady = false
         /// Details, ratings, the collection: all asked.
         var dataDone = false
-        /// The picture Details shows: Home's for it (TMDB's original file),
-        /// else — once it's in — the record's.
+        /// The picture Details shows: the one chosen for this opening
+        /// (`TitlePictures`; from the billboard, the billboard's), else —
+        /// once it's in — the record's.
         var picture: String?
+        /// Choosing TMDB's picture (done: `picture` set — TMDB's or, without
+        /// one, the card's / the record's).
+        var pictureChoice: Task<Void, Never>?
+        var pictureChosen = false
+        /// Not chosen and decoded by the time the transition needed it:
+        /// Details opens on the page's background, the picture fades in.
+        var pictureLate = false
         /// The logo Home showed (else the record's).
         var logo: String?
         init(id: String, tmdb: TMDBSettings) { self.id = id; self.tmdb = tmdb }
@@ -1754,10 +1885,21 @@ final class DetailPreparer {
     private var current: Prepared?
     private var startedAt: CFTimeInterval = 0
 
-    func start(_ item: MetaItem) {
+    func start(_ item: MetaItem, keepsPicture: Bool = false) {
         guard let context = TitlePreloader.shared.context, !item.id.hasPrefix("tmdb:") else { return }
         let prepared = Prepared(id: item.id, tmdb: context.tmdb)
-        prepared.picture = Self.homePicture(item)
+        if keepsPicture || !TMDBService.hasAPIKey {
+            prepared.picture = Self.homePicture(item)
+            prepared.pictureChosen = true
+        } else {
+            let choice = TitlePictures.shared.forOpening(item)
+            prepared.pictureChoice = Task { @MainActor in
+                let url = await choice.value
+                prepared.picture = url ?? Self.homePicture(item)
+                    ?? prepared.meta.flatMap { $0.background ?? $0.poster }
+                prepared.pictureChosen = true
+            }
+        }
         prepared.logo = item.logo
         current = prepared
         startedAt = CACurrentMediaTime()
@@ -1798,7 +1940,7 @@ final class DetailPreparer {
             }
             // (The episode list last of the three: the page takes meta and
             // its extras together.)
-            if prepared.picture == nil { prepared.picture = meta.background ?? meta.poster }
+            if prepared.picture == nil, prepared.pictureChosen { prepared.picture = meta.background ?? meta.poster }
             if prepared.logo == nil { prepared.logo = meta.logo }
             prepared.meta = meta
             prepared.detail = await detail
@@ -1819,10 +1961,26 @@ final class DetailPreparer {
         }
     }
 
+    /// How long the transition waits for TMDB's picture to be chosen and
+    /// decoded (focus usually did it already).
+    static let choiceWait: Double = 0.5
+
     /// Details' picture (its record's), once it's decoded at the size
     /// Details draws it — nil if that took longer than `within`.
     func picture(for item: MetaItem, within: Double) async -> String? {
         guard let prepared = current, prepared.id == item.id else { return nil }
+        // TMDB's picture, chosen at focus (decoded then): a short wait at
+        // most — not in by then, Details opens on the page's background and
+        // the picture fades in when it's there.
+        let short = CACurrentMediaTime() + Self.choiceWait
+        while !prepared.pictureChosen, CACurrentMediaTime() < short {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        guard prepared.pictureChosen else {
+            prepared.pictureLate = true
+            DetailOpenProbe.note("picture late")
+            return nil
+        }
         let deadline = CACurrentMediaTime() + within
         while prepared.picture == nil, prepared.meta == nil, CACurrentMediaTime() < deadline {
             try? await Task.sleep(for: .milliseconds(5))
@@ -1858,7 +2016,7 @@ final class DetailPreparer {
         }
         guard let meta = prepared.meta else { return }
         let logo = prepared.logo ?? meta.logo
-        let picture = prepared.picture
+        let picture = prepared.pictureLate ? nil : prepared.picture
         await withTaskGroup(of: Void.self) { group in
             if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) } }
             if let picture {
@@ -1881,8 +2039,8 @@ final class DetailPreparer {
         DetailOpenProbe.note("ready")
     }
 
-    /// The picture Home shows for `item` (the billboard's and the cards'
-    /// backdrop: TMDB's original file).
+    /// The picture Home shows for `item` (the billboard's: TMDB's, chosen
+    /// with the picks; a card's: its add-on's — TMDB's original file).
     static func homePicture(_ item: MetaItem) -> String? {
         TMDBService.originalSize(item.background) ?? item.background
     }

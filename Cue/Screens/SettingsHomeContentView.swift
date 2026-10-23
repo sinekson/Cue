@@ -1,56 +1,69 @@
 import SwiftUI
 
-// MARK: - Home & Content
+// MARK: - Home & Details
 
-/// Settings → Home & Content: Home's rows (their order, names, which show),
-/// Continue Watching's order, TMDB's language, and the add-ons.
+/// Settings → Home & Details: Home's rows (their order, names, which
+/// show), Continue Watching's order, the billboard paging by itself,
+/// hiding watched titles and spoilers.
+/// (The add-ons are Nuvio's, synced: under Nuvio → Sync.)
 struct HomeContentSettingsDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
-    @EnvironmentObject private var tmdb: TMDBSettingsStore
+    @AppStorage(BillboardAutoPage.key) private var billboardAutoPage = true
+    @AppStorage(HomeHideWatched.key) private var hideWatched = false
+    @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
 
     var body: some View {
         let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
         let hidden = rows.filter { !$0.isShown(settings: settings) }.count
-        SettingsPage(place: SettingsCategory.homeContent.place, subtitle: SettingsCategory.homeContent.subtitle) {
-            SettingsSection(title: "Home") {
+        SettingsPage(title: SettingsCategory.homeContent.title, subtitle: SettingsCategory.homeContent.subtitle) {
+            SettingsSection {
                 SettingsLinkRow(
                     title: "Rows",
-                    description: "Home's rows: their order, their names, and which ones show.",
+                    description: "Their order, their names, and which ones show.",
                     value: hidden > 0 ? "\(rows.count) · \(hidden) hidden" : "\(rows.count)"
                 ) { HomeRowsPage() }
 
                 // Two options: Select switches between them in place.
                 SettingsButtonRow(
                     title: "Continue Watching order",
-                    description: "Recently watched: the title you played last comes first.\n\n"
-                        + "Streaming style: titles you're in the middle of come first, newest first; "
-                        + "ones you've barely started follow.",
+                    description: "Recently watched: the last played first. Streaming style: titles in progress first.",
                     value: settings.continueWatchingSortMode.displayName
                 ) {
                     settings.continueWatchingSortMode =
                         settings.continueWatchingSortMode == .recentlyWatched ? .streamingStyle : .recentlyWatched
                 }
-            }
 
-            SettingsSection(title: "Content") {
-                SettingsChoiceRow(
-                    title: "Language",
-                    description: "The language of titles, summaries and artwork from TMDB.",
-                    options: TMDBLanguages.options.map { SettingsOption(id: $0, label: TMDBLanguages.displayName($0)) },
-                    selection: tmdb.settings.language
-                ) { tmdb.settings.language = $0 }
-            }
+                SettingsToggleRow(
+                    title: "Billboard moves on by itself",
+                    description: "The next title every \(Int(BillboardAutoPage.interval)) seconds, up to the last. Off: only Left and Right.",
+                    isOn: $billboardAutoPage
+                )
 
-            SettingsSection(title: "Add-ons") {
-                SettingsLinkRow(
-                    title: "Add-ons",
-                    description: "Where Home's rows, the sources and subtitles come from: add one, and their order, names and settings.",
-                    value: "\(addonManager.addons.count)"
-                ) { AddonsPage() }
+                SettingsToggleRow(
+                    title: "Trailers",
+                    description: "Resting on a title, its trailer plays over the picture, on the billboard and Details.",
+                    isOn: $settings.heroTrailersEnabled
+                )
 
+                SettingsToggleRow(
+                    title: "Trailer sound",
+                    description: "Off: trailers play silently.",
+                    isOn: $settings.heroTrailerSound
+                )
+
+                SettingsToggleRow(
+                    title: "Hide watched titles",
+                    description: "Home's rows leave out films you've watched and shows you've finished.",
+                    isOn: $hideWatched
+                )
+
+                SettingsToggleRow(
+                    title: "Hide spoilers",
+                    description: "Episodes you haven't watched yet show their picture blurred.",
+                    isOn: $hideSpoilers
+                )
             }
         }
     }
@@ -122,7 +135,7 @@ private struct HomeRowEntry: Identifiable {
     }
 }
 
-/// Settings → Home & Content → Rows: Home's rows in order, each one line —
+/// Settings → Home & Details → Rows: Home's rows in order, each one line —
 /// Rename (the keyboard at once), Move, and a switch for showing it.
 private struct HomeRowsPage: View {
     @EnvironmentObject private var addonManager: AddonManager
@@ -179,10 +192,10 @@ private struct HomeRowsPage: View {
 
 // MARK: - Add-ons
 
-/// Settings → Home & Content → Add-ons: a round + by the heading (adding,
+/// Settings → Nuvio → Add-ons: a round + by the heading (adding,
 /// from your phone), then the add-ons in order, each one line — Configure
 /// (when it has settings), Rename, Move, a switch for on / off, Remove.
-private struct AddonsPage: View {
+struct AddonsPage: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @State private var moving: String?

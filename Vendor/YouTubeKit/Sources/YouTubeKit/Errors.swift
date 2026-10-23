@@ -19,6 +19,8 @@ public enum YouTubeKitError: String, Error {
     case recordingUnavailable
     case membersOnly
     case videoRegionBlocked
+    /// "Sign in to confirm you're not a bot": YouTube refusing this address for now (Cue).
+    case botCheck
 }
 
 extension YouTubeKitError: LocalizedError {

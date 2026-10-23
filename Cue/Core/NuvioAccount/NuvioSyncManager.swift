@@ -510,6 +510,9 @@ final class NuvioSyncManager: ObservableObject {
         static let pullHomeCatalogSettings = "sync_pull_home_catalog_settings"
         static let pushProfileSettingsBlob = "sync_push_profile_settings_blob"
         static let pullProfileSettingsBlob = "sync_pull_profile_settings_blob"
+        /// The website's Copy settings: one profile's synced settings onto
+        /// another, once, on the server.
+        static let copyProfileSetup = "sync_copy_profile_setup"
     }
 
     /// Platform tag the Android TV app uses for the profile-settings blob —
@@ -628,6 +631,9 @@ final class NuvioSyncManager: ObservableObject {
         }
         profileStore.pinClearer = { [weak self] id, current in
             (try? await self?.clearProfilePin(id: id, currentPin: current)) ?? false
+        }
+        profileStore.setupCopier = { [weak self] copy in
+            await self?.copyProfileSetup(copy) ?? "Not signed in."
         }
 
         // Scope local stores to the persisted active profile at startup (no-op
@@ -3156,6 +3162,38 @@ final class NuvioSyncManager: ObservableObject {
         if let currentPin, !currentPin.isEmpty { body["p_current_pin"] = currentPin }
         _ = try await authedPost(RPC.url(RPC.clearProfilePin), body: body)
         return true
+    }
+
+    /// Copies one profile's synced settings onto another, as the website
+    /// does (`sync_copy_profile_setup`). Synced first, so the server copies
+    /// what this TV has; the active profile pulls the result after. Nil on
+    /// success, else what went wrong.
+    private func copyProfileSetup(_ copy: ProfileSetupCopy) async -> String? {
+        await syncNow()
+        let body: [String: Any] = [
+            "p_source_profile_id": copy.source,
+            "p_target_profile_id": copy.target,
+            "p_copy_tv": copy.tv,
+            "p_copy_mobile": copy.mobile,
+            "p_copy_desktop": copy.desktop,
+            "p_copy_provider_credentials": copy.keys,
+            "p_replace_provider_credentials": copy.keys && copy.replaceKeys,
+            "p_origin_client_id": clientID,
+        ]
+        guard let data = try? await authedPost(RPC.url(RPC.copyProfileSetup), body: body) else {
+            return "Couldn't copy the settings."
+        }
+        // One object (or a one-row array): a status per part asked for.
+        let json = try? JSONSerialization.jsonObject(with: data)
+        let result = (json as? [String: Any]) ?? (json as? [[String: Any]])?.first ?? [:]
+        let statuses = ["tv_status", "mobile_status", "desktop_status", "provider_credentials_status"]
+            .compactMap { (result[$0] as? String)?.lowercased() }
+            .filter { $0 != "not_selected" }
+        if !statuses.isEmpty, statuses.allSatisfy({ $0 == "source_missing" || $0 == "invalid_source" }) {
+            return "Nothing synced to copy yet."
+        }
+        if copy.target == pid { await syncNow() }
+        return nil
     }
 
     // MARK: - Networking

@@ -193,6 +193,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
 /// and its controls scrolling with it.
 struct TMDBBrowseView: View {
     @StateObject private var viewModel: TMDBBrowseViewModel
+    @Environment(\.pageBack) private var pageBack
     @Environment(\.dismiss) private var dismiss
     /// Back: below the grid's first line, up to the top first.
     @State private var gridBack = GridBack()
@@ -275,7 +276,9 @@ struct TMDBBrowseView: View {
             }
         }
         .task { await viewModel.start() }
-        .onExitCommand { if !gridBack.handle() { dismiss() } }
+        .onExitCommand {
+            if !gridBack.handle() { if let pageBack { pageBack() } else { dismiss() } }
+        }
     }
 
     /// The year under each title.
@@ -463,7 +466,7 @@ private struct CardRim: View {
     }
 }
 
-/// The order, in one button (the scope pill's look, alone): its list opens
+/// The order, in one round icon button beside the scope pill: its list opens
 /// under it (Cue's glass panel, as the hold menus), the current one checked.
 private struct BrowseSortButton: View {
     let sort: TMDBService.BrowseSort
@@ -471,7 +474,7 @@ private struct BrowseSortButton: View {
     @State private var frame = CGRect.zero
 
     var body: some View {
-        ScopePillButton(label: sort.label, icon: "arrow.up.arrow.down", chevron: true) { show() }
+        ScopePillButton(icon: "arrow.up.arrow.down") { show() }
             .background {
                 GeometryReader { geometry in
                     Color.clear
