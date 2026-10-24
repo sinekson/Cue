@@ -9554,30 +9554,9 @@ final class FixedFocusChipsView: UIView {
     /// room above its chips (`chipsGap`): a plain step left them crowded.
     static let y: CGFloat = 36 + FixedFocusMetrics.factsOffset + FixedFocusBillboardText.chipsGap
 
-    private final class Chip: UIView {
-        let label = UILabel()
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            layer.cornerRadius = 7
-            layer.cornerCurve = .continuous
-            layer.borderWidth = 1.25
-            addSubview(label)
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-
-        func set(_ text: NSAttributedString, border: UIColor) {
-            label.attributedText = text
-            layer.borderColor = border.cgColor
-            label.sizeToFit()
-            // The badge's box: 10 pt at the sides, 21 + 2 × 4 pt tall.
-            bounds.size = CGSize(width: label.bounds.width + 20, height: 29)
-            label.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        }
-    }
-
-    private let status = Chip()
+    /// The status badge (`TitleBadge`) and the ratings, drawn from the
+    /// same views as the billboard's, once per text.
+    private let status = UIImageView()
     /// The ratings: the first ones in Settings' order, as many as On Home's
     /// rows says (the catalog's IMDb score without MDBList) — the
     /// billboard's chips, drawn once per set.
@@ -9594,24 +9573,12 @@ final class FixedFocusChipsView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func text(_ parts: [(String, UIColor)]) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        for (string, color) in parts {
-            result.append(NSAttributedString(string: string, attributes: [
-                .font: UIFont.systemFont(ofSize: 17, weight: .semibold), .kern: 0.5, .foregroundColor: color,
-            ]))
-        }
-        return result
-    }
-
     func show(_ item: MetaItem) {
-        let white = UIColor.white.withAlphaComponent(0.85)
-        if let known = FixedFocusShowInfo.status(item) {
-            status.set(Self.text([(known, white)]), border: UIColor.white.withAlphaComponent(0.4))
-            status.isHidden = false
-        } else {
-            status.isHidden = true
+        status.image = FixedFocusShowInfo.status(item).flatMap {
+            Self.drawn("status:" + $0, TitleBadge(text: $0).padding(1))
         }
+        status.isHidden = status.image == nil
+        status.sizeToFit()
         ratingTask?.cancel()
         let settings = MDBListSettingsStore.current
         if let known = MDBListService.cachedRatings(for: item) {
@@ -9630,16 +9597,17 @@ final class FixedFocusChipsView: UIView {
     private func showRating(_ ratings: MDBListRatings?, item: MetaItem, settings: MDBListSettings) {
         let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating,
                                                 onDetails: false).prefix(settings.rowCount)
-        rating.image = entries.isEmpty ? nil : Self.chipsImage(Array(entries))
+        rating.image = entries.isEmpty ? nil : Self.drawn(
+            entries.map { $0.provider.rawValue + ":" + $0.text }.joined(separator: " "),
+            MDBListRatingsRow(entries: Array(entries)).padding(1))
         rating.isHidden = rating.image == nil
         rating.sizeToFit()
         setNeedsLayout()
     }
 
-    private static func chipsImage(_ entries: [MDBListRatingEntry]) -> UIImage? {
-        let key = entries.map { $0.provider.rawValue + ":" + $0.text }.joined(separator: " ")
+    private static func drawn(_ key: String, _ content: some View) -> UIImage? {
         if let drawn = chipImages[key] { return drawn }
-        let renderer = ImageRenderer(content: MDBListRatingsRow(entries: entries).padding(1))
+        let renderer = ImageRenderer(content: content)
         renderer.scale = UIScreen.main.scale
         let image = renderer.uiImage
         chipImages[key] = image
@@ -9648,10 +9616,11 @@ final class FixedFocusChipsView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        var x: CGFloat = 0
+        // (Each image has 1 pt round its chip: the first chip's edge at 0.)
+        var x: CGFloat = -1
         for chip in [status as UIView, rating] where !chip.isHidden {
             chip.frame.origin = CGPoint(x: x, y: (bounds.height - chip.bounds.height) / 2)
-            x = chip.frame.maxX + 10
+            x = chip.frame.maxX + 8
         }
     }
 }
