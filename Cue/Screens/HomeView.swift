@@ -7155,6 +7155,14 @@ final class DetailTransition {
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
 
+    /// A Details taken off the trail under the page on screen
+    /// (`RootView.trail`): as if closed.
+    func dropped(itemID: String) {
+        forget(itemID)
+        PageFade.shared.drop(itemID)
+        DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
+    }
+
     private func forget(_ itemID: String?) {
         guard let itemID else { return }
         textViews[itemID] = nil
@@ -7405,6 +7413,14 @@ final class PageFade {
 
     /// A still no longer needed.
     func drop(_ key: AnyHashable) { _ = take(key) }
+
+    /// `key`'s page now right above `from`'s page's below (the trail moved
+    /// on): it takes that still — nil, none.
+    func reroot(_ key: AnyHashable, from: AnyHashable?) {
+        let still = take(from)
+        _ = take(key)
+        if let still { keep(still, for: key) }
+    }
 
     /// A layer's Back: a still of the screen over it, `close` (the layer
     /// gone, the page under it shown — it never left the window), the still

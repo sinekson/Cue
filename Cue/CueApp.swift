@@ -125,10 +125,31 @@ extension Route {
     }
 }
 
-/// Details as a layer over a home-like tab (`detailLayers`).
+/// Details as a layer over a home-like tab (`detailLayers`). Its root is
+/// the first page of the trail above the tab — Details, or a page opened
+/// from it once the trail moved on (`detailLayerPath`).
 struct DetailLayer {
-    var item: MetaItem
-    var path = NavigationPath()
+    var root: Route
+    var path: [Route] = []
+    let id = UUID()
+}
+
+extension Route {
+    /// A page of the trail above where you started (`RootView.trail`):
+    /// Details, a browse page — not a folder (where you started) or a
+    /// source list.
+    var isTrailPage: Bool {
+        switch self {
+        case .detail, .person, .tmdbCompany, .genre, .keyword: return true
+        default: return false
+        }
+    }
+
+    /// Its key for `PageFade`'s stills (Details: its title's id).
+    var fadeKey: AnyHashable {
+        if case .detail(let item) = self { return item.id }
+        return self
+    }
 }
 
 enum Route: Hashable {
@@ -176,11 +197,11 @@ struct RootView: View {
     // One navigation stack per tab (tvOS expects TabView at the top level with
     // an independent NavigationStack inside each tab; a shared stack under one
     // NavigationStack makes the tab bar hard to reach and focus feel stuck).
-    @State private var homePath = NavigationPath()
-    @State private var searchPath = NavigationPath()
-    @State private var libraryPath = NavigationPath()
-    @State private var moviesPath = NavigationPath()
-    @State private var seriesPath = NavigationPath()
+    @State private var homePath: [Route] = []
+    @State private var searchPath: [Route] = []
+    @State private var libraryPath: [Route] = []
+    @State private var moviesPath: [Route] = []
+    @State private var seriesPath: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -190,7 +211,7 @@ struct RootView: View {
 
     /// The navigation stack of the Home-like tab in front (Home, Movies,
     /// Series): plays and sources opened from its rows are pushed there.
-    private var homeLikePath: Binding<NavigationPath> {
+    private var homeLikePath: Binding<[Route]> {
         switch selectedTab {
         case AppTab.movies.rawValue: return $moviesPath
         case AppTab.series.rawValue: return $seriesPath
@@ -1115,7 +1136,7 @@ struct RootView: View {
                         if SearchBack.shared.anchor?.backToKeyboard() == true { return }
                         focusSidebar(1)
                     }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: $searchPath) }
+                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($searchPath)) }
             }
             // Apple's search field and keyboard (UISearchController) ignore
             // the safe-area inset, and sat under the bar — a plain one here.
@@ -1124,7 +1145,7 @@ struct RootView: View {
             NavigationStack(path: $libraryPath) {
                 libraryRoot
                     .onExitCommand { focusSidebar(2) }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: $libraryPath) }
+                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($libraryPath)) }
             }
         case .settings:
             NavigationStack {
@@ -1141,7 +1162,7 @@ struct RootView: View {
     }
 
     /// Home, or its filtered twins Movies / Series: each in its own stack.
-    private func homeLikeStack(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+    private func homeLikeStack(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
         let layer = detailLayers[tab.rawValue]
         return ZStack {
             // Under Details: still in the window and laid out — only not
@@ -1154,37 +1175,65 @@ struct RootView: View {
             if let layer {
                 let layerPath = detailLayerPath(tab)
                 NavigationStack(path: layerPath) {
-                    detailView(layer.item, path: layerPath) { closeDetailLayer(tab, item: layer.item) }
-                        .probeScreen(Route.detail(layer.item).probeName) { Route.detail(layer.item).probeDetail }
+                    layerRoot(layer.root, tab: tab, path: layerPath)
+                        // A page the trail moves down here is a new view
+                        // (else the old root's state stays on screen).
+                        .id(layer.root)
+                        .probeScreen(layer.root.probeName) { layer.root.probeDetail }
                         .navigationDestination(for: Route.self) { destination(for: $0, path: layerPath) }
                 }
-                .id(layer.item.id)
+                .id(layer.id)
             }
         }
     }
 
     /// Opens Details over a home-like tab: on its root, as its layer
     /// (`detailLayers`); deeper (a folder), pushed.
-    private func openFromHome(_ route: Route, tab: AppTab, path: Binding<NavigationPath>) {
+    private func openFromHome(_ route: Route, tab: AppTab, path: Binding<[Route]>) {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if case .detail(let item) = route, path.wrappedValue.isEmpty {
-                detailLayers[tab.rawValue] = DetailLayer(item: item)
+                detailLayers[tab.rawValue] = DetailLayer(root: .detail(item))
             } else {
                 path.wrappedValue.append(route)
             }
         }
     }
 
-    private func detailLayerPath(_ tab: AppTab) -> Binding<NavigationPath> {
-        Binding(get: { detailLayers[tab.rawValue]?.path ?? NavigationPath() },
-                set: { detailLayers[tab.rawValue]?.path = $0 })
+    /// The layer's pages, as `trail`: its root counts as the first page,
+    /// so a page opened from the second makes that one the root.
+    private func detailLayerPath(_ tab: AppTab) -> Binding<[Route]> {
+        Binding(get: { detailLayers[tab.rawValue]?.path ?? [] }, set: { new in
+            guard var layer = detailLayers[tab.rawValue] else { return }
+            let old = layer.path
+            if let added = new.last, added.isTrailPage, new.count == old.count + 1,
+               Array(new.dropLast()) == old, let kept = old.last {
+                Self.leave([layer.root] + old.dropLast(), kept: kept, keepStill: false)
+                layer.root = kept
+                layer.path = [added]
+            } else {
+                layer.path = new
+            }
+            detailLayers[tab.rawValue] = layer
+        })
     }
 
-    /// Back from the layer's Details: it fades off the page under it.
-    private func closeDetailLayer(_ tab: AppTab, item: MetaItem) {
-        DetailTransition.shared.closeLayer(itemID: item.id) {
+    /// The layer's first page: Details, or a browse page the trail left
+    /// there; Back from it fades the layer off the page under it.
+    @ViewBuilder
+    private func layerRoot(_ root: Route, tab: AppTab, path: Binding<[Route]>) -> some View {
+        if case .detail(let item) = root {
+            detailView(item, path: path) { closeDetailLayer(tab) }
+        } else {
+            destinationBody(for: root, path: path)
+                .environment(\.pageBack) { closeDetailLayer(tab) }
+        }
+    }
+
+    /// Back from the layer's first page: it fades off the page under it.
+    private func closeDetailLayer(_ tab: AppTab) {
+        let close = {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { detailLayers[tab.rawValue] = nil }
@@ -1192,9 +1241,49 @@ struct RootView: View {
             lastHomePopAt = Date()
             setSidebarEnabled(false, reenableAfter: Self.railSettle)
         }
+        if case .detail(let item) = detailLayers[tab.rawValue]?.root {
+            DetailTransition.shared.closeLayer(itemID: item.id, close: close)
+        } else {
+            PageFade.shared.fadeOff(close)
+        }
     }
 
-    private func homeStack(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+    /// Back is never more than two presses from where you started (a
+    /// tab's own page, its folders): above it only the page on screen and
+    /// the one it came from — opening another, the older ones go. (Deep
+    /// in Details — a similar title, a voice actor, a genre… — Back took
+    /// as many presses home.)
+    private func trail(_ path: Binding<[Route]>) -> Binding<[Route]> {
+        Binding(get: { path.wrappedValue }, set: { new in
+            let old = path.wrappedValue
+            let base = old.prefix { if case .folder = $0 { return true } else { return false } }
+            let pages = old.dropFirst(base.count)
+            guard let added = new.last, added.isTrailPage, new.count == old.count + 1,
+                  Array(new.dropLast()) == old, pages.count >= 2, let kept = pages.last else {
+                path.wrappedValue = new
+                return
+            }
+            Self.leave(Array(pages.dropLast()), kept: kept, keepStill: true)
+            path.wrappedValue = Array(base) + [kept, added]
+        })
+    }
+
+    /// Pages taken off the trail under the one on screen: gone as if
+    /// closed. `kept`, now first above where you started, takes the first
+    /// one's still — that page (`keepStill`; a layer's root has none: its
+    /// Back fades off the live page).
+    private static func leave(_ dropped: [Route], kept: Route, keepStill: Bool) {
+        PageFade.shared.reroot(kept.fadeKey, from: keepStill ? dropped.first?.fadeKey : nil)
+        for route in dropped {
+            if case .detail(let item) = route {
+                DetailTransition.shared.dropped(itemID: item.id)
+            } else {
+                PageFade.shared.drop(route.fadeKey)
+            }
+        }
+    }
+
+    private func homeStack(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
         NavigationStack(path: path) {
             homeRoot(tab, path: path, active: active)
                 .onExitCommand {
@@ -1220,7 +1309,7 @@ struct RootView: View {
                     // springing open.
                     setSidebarEnabled(false, reenableAfter: Self.railSettle)
                 }
-                .navigationDestination(for: Route.self) { destination(for: $0, path: path) }
+                .navigationDestination(for: Route.self) { destination(for: $0, path: trail(path)) }
         }
     }
 
@@ -1390,7 +1479,7 @@ struct RootView: View {
 
     // MARK: - Tab roots
 
-    private func homeRoot(_ tab: AppTab, path: Binding<NavigationPath>, active: Bool) -> some View {
+    private func homeRoot(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
         let filter = tab.typeFilter
         return HomeView(
             viewModel: homeViewModel,
@@ -1434,7 +1523,7 @@ struct RootView: View {
     }
 
     /// Details pushed without the system's slide (a title's zoom brings it in).
-    private func openInPlace(_ path: Binding<NavigationPath>) -> (MetaItem) -> Void {
+    private func openInPlace(_ path: Binding<[Route]>) -> (MetaItem) -> Void {
         { item in
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -1478,7 +1567,7 @@ struct RootView: View {
     /// Every pushed screen goes through here, so ONE marker covers all of
     /// them — and a route added later is instrumented the moment it is
     /// reachable, with no second place to remember.
-    private func destination(for route: Route, path: Binding<NavigationPath>) -> some View {
+    private func destination(for route: Route, path: Binding<[Route]>) -> some View {
         destinationBody(for: route, path: path)
             .environment(\.pageBack) {
                 PageFade.shared.back(key: route) {
@@ -1486,16 +1575,19 @@ struct RootView: View {
                 }
             }
             .probeScreen(route.probeName) { route.probeDetail }
+            // The trail moves pages down the stack: each keeps its own view
+            // (by place, the page first in line kept the dropped one's).
+            .id(route)
     }
 
     /// A page (folder, browse page) in: `PageFade`'s crossfade, no slide.
-    private func pushPage(_ route: Route, _ path: Binding<NavigationPath>) {
+    private func pushPage(_ route: Route, _ path: Binding<[Route]>) {
         PageFade.shared.push(key: route) { path.wrappedValue.append(route) }
     }
 
     /// A collection's folder.
     private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, type: String?,
-                            path: Binding<NavigationPath>) -> some View {
+                            path: Binding<[Route]>) -> some View {
         FolderView(collection: collection, folder: folder, type: type,
                    onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                    onOpenInPlace: { item in
@@ -1506,7 +1598,7 @@ struct RootView: View {
     }
 
     /// Details, its pages pushed on `path`.
-    private func detailView(_ item: MetaItem, path: Binding<NavigationPath>,
+    private func detailView(_ item: MetaItem, path: Binding<[Route]>,
                             onBack: @escaping () -> Void) -> some View {
         DetailView(
             item: item,
@@ -1541,7 +1633,7 @@ struct RootView: View {
     }
 
     @ViewBuilder
-    private func destinationBody(for route: Route, path: Binding<NavigationPath>) -> some View {
+    private func destinationBody(for route: Route, path: Binding<[Route]>) -> some View {
         switch route {
         case .detail(let item):
             // Back: `DetailTransition` (the simple exit) — no system slide.

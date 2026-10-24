@@ -578,6 +578,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   default they faded in/out in place and ran through each other). Tried
   and dropped: a fade. `HomeBack` (one handler: a nested
   `onExitCommand` took every press), `.focusBillboard`.
+- **The trail** (pages opened from Details — a title, a person, a
+  genre / tag, a studio / network): Back is never more than two pages
+  from where you started (Home, Movies, Series, Search, Library, a
+  folder): above it only the page on screen and the one it came from;
+  opening another, the older ones go (`trail`, `detailLayerPath` in
+  `CueApp`; the layer's root moves up). The page going first takes the
+  first one's still for its Back. A page moved down the stack is a new
+  view (`.id(route)`), so Back to it lands on its billboard, not on the
+  card you left. (Talked over, not built: the full history plus a
+  shortcut home; titles replacing each other.)
 - **Back (folders, browse pages)**: the same — first to the top, then
   out. A folder's rows: below the first row, up to it (one move, the
   header back in view; `.focusBillboard` without a billboard = the first
