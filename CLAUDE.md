@@ -270,7 +270,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   before Details takes its still; a later move drops it; 1 s at most):
   opened mid-move,
   Details took the screen with the box still empty (the grown card has
-  the content until the hand-over). A page opened (`PageFade.push`)
+  the content until the hand-over). A press going down mid-move (a quick
+  hold after Up/Down) alike: the move finishes quickly, then the landed
+  box sinks (`pressWaiting`, `runWaitingPress`; sunk while the grown card
+  still stood in for it, the card's edges showed around it). A page opened (`PageFade.push`)
   while rows on screen move waits for them alike (`FixedFocusRowsController
   .land` — its still taken mid-scroll, Back dissolved into the rows
   landed: Details seemed to scroll); moves into a custom or moving-focus
@@ -709,7 +712,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   beside it: `gap`, 28), level with its top — or, when it doesn't
   fit below that (Search's low row), with its bottom. Behind it the
   screen dims (black 30 %, `HoldMenu.dimming`), the held card
-  cut out (not its shadow); dropdowns don't dim. (Tried: a fixed gap
+  cut out (not its shadow) — the cut-out growing with the card from its
+  pressed size, on its timing (`HoldMenuRequest.from`, `heldDuration`;
+  at the held size at once, a lighter card showed around it); closing,
+  back with it to its focused size (`rest`; kept as it was, a thin
+  lighter ring; shrunk to the pressed size, the dim on the card's
+  edges); dropdowns
+  don't dim. (Tried: a fixed gap
   beside the held card.)
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.

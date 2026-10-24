@@ -3235,6 +3235,8 @@ enum FixedFocusMetrics {
     static let pressScale: CGFloat = 0.97
     /// …and while its hold menu is open: a little larger than focused.
     static let heldGrowth: CGFloat = 0.02
+    /// How long the card takes to grow to that, the dim's hole with it.
+    static let heldDuration: Double = 0.28
     /// The fixed box's own size: the portrait posters' height, its left edge
     /// on the row name's.
     static let boxScale: CGFloat = 1.04
@@ -4108,7 +4110,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         openingRow = nil
         hurried = false
         // Held presses: now, one step at a time.
-        DispatchQueue.main.async { self.runPendingStep(); self.runHeldSelect() }
+        DispatchQueue.main.async { self.runPendingStep(); self.runHeldSelect(); self.runWaitingPress() }
     }
 
     /// Focus in a destination row: the system scrolls it and lifts the card;
@@ -4247,17 +4249,40 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// Select pressed or held on a fixed row's card: the box sinks a little
     /// (as Apple TV's cards do), back on release or when the menu closes.
     func setBoxPressed(_ pressed: Bool) {
+        // Down mid-move (a quick hold after Up/Down): the move finishes
+        // quickly first, as for a held Select, then the settled box sinks
+        // (sunk while the grown card still stood in for it, it came in
+        // shrunk over that card's edges).
+        if pressed, !settled {
+            pressWaiting = true
+            if let opening = openingRow, opening == focusedRow {
+                hurryOpening(opening)
+            } else if movesInFlight > 0 {
+                hurryMoves { self.runWaitingPress() }
+            }
+            return
+        }
+        if !pressed { pressWaiting = false }
         // One state, one move: repeats (began twice, end after cancel) change nothing.
         guard pressed != boxPressed else { return }
         boxPressed = pressed
         applyBoxScale(duration: pressed ? 0.12 : 0.2)
     }
 
+    /// Select went down mid-move and is still down: the box sinks once
+    /// the move has landed.
+    private var pressWaiting = false
+    private func runWaitingPress() {
+        guard settled, pressWaiting else { return }
+        pressWaiting = false
+        setBoxPressed(true)
+    }
+
     /// The box's hold menu open (see `HoldMenuRequest.onHeld`): 102 %.
     private func setBoxHeld(_ held: Bool) {
         guard held != boxHeld else { return }
         boxHeld = held
-        applyBoxScale(duration: 0.28)
+        applyBoxScale(duration: FixedFocusMetrics.heldDuration)
     }
     private var boxHeld = false
 
@@ -7944,8 +7969,11 @@ extension FixedFocusRowsController: HoldMenuProviding {
         let boxRect = view.convert(CGRect(x: box.center.x - box.bounds.width / 2,
                                           y: box.center.y - box.bounds.height / 2,
                                           width: box.bounds.width, height: box.bounds.height), to: nil)
+        let base = FixedFocusMetrics.boxScale
         return HoldMenuRequest(entries: entries,
-                               anchor: held(boxRect, FixedFocusMetrics.boxScale + FixedFocusMetrics.heldGrowth),
+                               anchor: held(boxRect, base + FixedFocusMetrics.heldGrowth),
+                               from: held(boxRect, boxPressed ? base - (1 - FixedFocusMetrics.pressScale) : base),
+                               rest: held(boxRect, base),
                                onHeld: { [weak self] in self?.setBoxHeld($0) })
     }
 }
@@ -8417,8 +8445,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         let lift = FixedFocusMetrics.movingFocusLift
         let scale = lift > 0 && !Self.lift ? 1 + lift + FixedFocusMetrics.heldGrowth : 1
         let card = cardFrame
-        let held = card.insetBy(dx: -card.width * (scale - 1) / 2, dy: -card.height * (scale - 1) / 2)
-        return HoldMenuRequest(entries: entries, anchor: convert(held, to: nil),
+        func sized(_ scale: CGFloat) -> CGRect {
+            convert(card.insetBy(dx: -card.width * (scale - 1) / 2, dy: -card.height * (scale - 1) / 2), to: nil)
+        }
+        let now = scale == 1 ? 1 : 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
+        return HoldMenuRequest(entries: entries, anchor: sized(scale), from: sized(now),
+                               rest: sized(scale == 1 ? 1 : 1 + lift),
                                onHeld: { [weak self] in self?.setHeld($0) })
     }
 
@@ -8530,7 +8562,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     func setHeld(_ held: Bool) {
         guard held != self.held else { return }
         self.held = held
-        UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+        UIView.animate(withDuration: FixedFocusMetrics.heldDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
             self.applyFocus(self.focusedNow)
         }
     }

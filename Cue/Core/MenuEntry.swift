@@ -22,6 +22,14 @@ struct HoldMenuRequest {
     let entries: [MenuEntry]
     /// The card as it is while its menu is open (held size).
     let anchor: CGRect
+    /// The card as it is when the menu opens (pressed, a little smaller):
+    /// the dim's hole grows from it with the card (at the held size at
+    /// once, the page showed undimmed around it).
+    var from: CGRect? = nil
+    /// The card back at its focused size (Select let go by then): the hole
+    /// shrinks to it with the card on closing (kept at the held size, a
+    /// thin undimmed ring showed; shrunk to `from`, dim on its edges).
+    var rest: CGRect? = nil
     /// The card held (true, the menu open) or back (false).
     var onHeld: ((Bool) -> Void)? = nil
     /// No menu: the hold runs the (first) entry at once (Details' Play →
@@ -289,12 +297,8 @@ private final class HoldMenuController: UIViewController {
         guard !closing else { return }
         let size = panel.sizeThatFits(in: CGSize(width: view.bounds.width, height: view.bounds.height))
         let anchor = view.convert(request.anchor, from: nil)
-        let path = UIBezierPath(rect: view.bounds)
-        // (Its corners grown with the card.)
-        let grown = 1 + FixedFocusMetrics.movingFocusLift + FixedFocusMetrics.heldGrowth
-        path.append(UIBezierPath(roundedRect: anchor, cornerRadius: Spotlight.cornerRadius * grown))
         hole.frame = view.bounds
-        hole.path = path.cgPath
+        hole.path = holePath(around: request.anchor)
         // Right of the card (held), level with its top, starting on the
         // next card's left edge; left of it, ending on the one before's
         // right edge, if it doesn't fit. (No cards beside it: `gap` away.)
@@ -326,6 +330,26 @@ private final class HoldMenuController: UIViewController {
         panel.view.center = CGPoint(x: right ? x : x + size.width, y: top ? y : y + size.height)
     }
 
+    /// The dim with the card cut out (window rect), its corners grown with it.
+    private func holePath(around card: CGRect) -> CGPath {
+        let path = UIBezierPath(rect: view.bounds)
+        let grown = 1 + FixedFocusMetrics.movingFocusLift + FixedFocusMetrics.heldGrowth
+        path.append(UIBezierPath(roundedRect: view.convert(card, from: nil),
+                                 cornerRadius: Spotlight.cornerRadius * grown))
+        return path.cgPath
+    }
+
+    /// The hole following the card to `card`, on the card's own timing.
+    private func moveHole(to card: CGRect, from start: CGRect) {
+        let move = CABasicAnimation(keyPath: "path")
+        move.fromValue = holePath(around: start)
+        move.toValue = holePath(around: card)
+        move.duration = FixedFocusMetrics.heldDuration
+        move.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        hole.path = holePath(around: card)
+        hole.add(move, forKey: "path")
+    }
+
     /// Unfolding out of the card (the Apple TV app's way): from this size,
     /// at its corner facing the card, on the present spring; the glass
     /// shows at once, the entries a moment later (`HoldMenuPanel`).
@@ -340,6 +364,7 @@ private final class HoldMenuController: UIViewController {
         panel.view.alpha = 0
         panel.view.transform = CGAffineTransform(scaleX: Self.openScale, y: Self.openScale)
         request.onHeld?(true)
+        if let from = request.from { moveHole(to: request.anchor, from: from) }
         UIView.animate(springDuration: Motion.presentDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.allowUserInteraction]) {
             self.panel.view.transform = .identity
@@ -366,6 +391,7 @@ private final class HoldMenuController: UIViewController {
         guard !closing else { return }
         closing = true
         request.onHeld?(false)
+        if let rest = request.rest { moveHole(to: rest, from: request.anchor) }
         UIView.animate(withDuration: Self.closeDuration, delay: 0, options: [.curveEaseIn]) {
             self.panel.view.alpha = 0
             self.panel.view.transform = CGAffineTransform(scaleX: Self.closeScale, y: Self.closeScale)
