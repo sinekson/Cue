@@ -127,6 +127,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 ## Decided mechanisms
 
+- **Tabs**: every tab stays alive once built; the top bar's are built
+  ahead, hidden, one every 1.5 s after the launch lifts
+  (`buildTabsAhead`), so a first visit is no build. A switch is a
+  dissolve, 0.25 s: the page coming in is there at once, whole, under
+  the one going out, which fades off it from the first frame drawn
+  switched (`switchTab`, `crossfade`, `fadeOut`; Search and Library get
+  the background so they cover too). The switch's own update is never
+  animated (the bar's focus move carries one: the page coming in faded
+  in as well — a dip). (Tried: a cut — abrupt; a dip through the
+  background, out 0.1 s then in 0.2 s — the empty in-between looked
+  weird; both pages fading at once — a dip, flickery.) An inactive
+  Home-like tab's rows stay on screen, only out of the focus engine
+  (`FixedFocusRowsController.setActive`; hidden, they vanished from the
+  page going out and came on a few frames late on the one coming in).
 - **Home rows are UIKit**: native focus, scrolling off; we move rows with Core
   Animation in `didUpdateFocus`. Fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus (the

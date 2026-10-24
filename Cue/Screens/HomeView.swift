@@ -3108,12 +3108,10 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.ringOnlyWithFocus = ringOnlyWithFocus
         controller.startsOverOnChange = startsOverOnChange
         controller.featuredRowID = featuredRowID
-        // Hidden while another tab is in front: not in the focus engine's
-        // way (a transparent SwiftUI layer alone doesn't guarantee that).
-        if controller.isViewLoaded {
-            if !active, !controller.view.isHidden { controller.returnRow = controller.focusedRow }
-            controller.view.isHidden = !active
-        }
+        // Another tab in front: out of the focus engine's way (a
+        // transparent SwiftUI layer alone doesn't guarantee that) —
+        // `setActive`.
+        if controller.isViewLoaded { controller.setActive(active) }
         controller.progress = progress
         if controller.isPlaceholder, !placeholder, controller.isViewLoaded {
             // The content takes over the placeholders: one fade, the page.
@@ -3463,7 +3461,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // search brings as many results; a setting changes the art — except
         // while focus may be in the rows: a background refresh of Home must
         // not reload them under your focus (count changes only, then).
-        let strict = startsOverOnChange || (isViewLoaded && view.isHidden)
+        let strict = startsOverOnChange || (isViewLoaded && !view.isUserInteractionEnabled)
         let changed = rows.map(\.id) != self.rows.map(\.id)
             || zip(rows, self.rows).contains {
                 strict ? $0.contentKey != $1.contentKey : $0.items.count != $1.items.count
@@ -3540,6 +3538,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// front): coming back, focus returns there — not to the first card
     /// on screen.
     var returnRow: Int?
+
+    /// Another tab or Details in front: out of the focus engine (no
+    /// interaction), still on screen — the page's own opacity hides it.
+    /// (Hidden, the tabs' crossfade lost them: they vanished from the page
+    /// going out, and came on a few frames late on the one coming in.)
+    func setActive(_ active: Bool) {
+        guard view.isUserInteractionEnabled != active else { return }
+        if !active { returnRow = focusedRow }
+        view.isUserInteractionEnabled = active
+    }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
         if let cell = pendingFocusCell {

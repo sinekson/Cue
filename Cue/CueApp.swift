@@ -935,31 +935,9 @@ struct RootView: View {
         ZStack(alignment: .top) {
             selectedContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Tab changes CUT. No fade, in either direction.
-                //
-                // There were two attempts at fading before this, and each one
-                // exposed something it shouldn't:
-                //
-                // 1. `insertion: .opacity, removal: .identity`. `.identity`
-                //    does not mean "leaves the tree at once" — it means no
-                //    visual transform is applied, so the outgoing page stayed
-                //    FULLY OPAQUE for the whole 0.22s while the new one faded
-                //    in on top of it. Home's hero art showed straight through
-                //    the half-faded page arriving over it.
-                // 2. Removing the outgoing page over ~0 seconds fixed that,
-                //    and then the fade-in had nothing in front of the app
-                //    background — so `ATVBackground`'s accent bloom flashed
-                //    through the half-transparent page instead.
-                //
-                // Both are the same root cause: a page that is partially
-                // transparent shows whatever is behind it, and on this screen
-                // there is always something behind it worth not seeing. A cut
-                // has no transparent frame at all, which is also what the
-                // system tvOS apps do when moving between tabs.
-                //
-                // (No `.id(selectedTab)` any more: it tore each tab down and
-                // rebuilt it on every switch — below 10 fps, and every page
-                // started over. Tabs now stay alive; see `selectedContent`.)
+                // Tab changes crossfade (`crossfade`).
+                // (No `.id(selectedTab)`: it rebuilt each tab on every
+                // switch — below 10 fps. Tabs stay alive; `selectedContent`.)
                 .animation(nil, value: selectedTab)
                 .focusSection()
                 // Summon a hidden bar — but ONLY from the top edge. A
@@ -1008,7 +986,11 @@ struct RootView: View {
             // motion app-wide (`GlassSidebar.hidden`).
             do {
                 let barHidden = !showSidebar
-                GlassSidebar(selected: $selectedTab, focusBinding: $sidebarFocus,
+                // (Focus moving along it switches: the fade set up in the
+                // same update — `crossfade`.)
+                GlassSidebar(selected: Binding(get: { selectedTab },
+                                               set: { switchTab(to: $0) }),
+                             focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: barHidden)
@@ -1113,17 +1095,79 @@ struct RootView: View {
                     // sliding under the glass.
                     .safeAreaPadding(.top, !tab.isHomeLike && tab != .search && (showSidebar || !active)
                                      ? GlassSidebar.topBarClearance : 0)
-                    .opacity(active ? 1 : 0)
+                    // Search and Library draw no background of their own:
+                    // the one going out covers the one coming in.
+                    .background { if tab == .search || tab == .library { ATVBackground() } }
+                    .opacity(active ? 1 : tabLeaving[tab.rawValue]?.opacity ?? 0)
                     .disabled(!active)
                     .accessibilityHidden(!active)
-                    .zIndex(active ? 1 : 0)
+                    .zIndex(active ? 1 : tabLeaving[tab.rawValue].map { 2 + $0.order } ?? 0)
             }
         }
-        .onChange(of: selectedTab) { _, tab in visitedTabs.insert(tab) }
+        .onChange(of: selectedTab) { old, tab in
+            visitedTabs.insert(tab)
+            // (Switched elsewhere than the top bar.)
+            if tabLeaving[old] == nil { crossfade(from: old, to: tab) }
+            // The switch drawn (a frame on screen — in the same update the
+            // fade was a cut): now the one going out fades.
+            Task { @MainActor in
+                let watch = FrameWatch()
+                await watch.quiet(frames: 1, within: 0.1)
+                watch.end()
+                fadeOut(old)
+            }
+        }
+        .task { await buildTabsAhead() }
     }
 
     /// Tabs opened so far (kept alive — see above).
     @State private var visitedTabs: Set<Int> = [AppTab.home.rawValue]
+    /// Tabs going out, fading over the one coming in (`crossfade`); the
+    /// last to go on top.
+    @State private var tabLeaving: [Int: (opacity: Double, order: Double)] = [:]
+    @State private var tabLeavingCount = 0.0
+
+    /// A switch crossfades: the page coming in is there at once, whole,
+    /// under the one going out, which fades off it once the switch is
+    /// drawn (`fadeOut`; the switch's own update isn't animated). (Both
+    /// fading, the background showed between them — a dip; and the one
+    /// coming in showed its UIKit parts a frame before its SwiftUI ones.)
+    private func crossfade(from old: Int, to new: Int) {
+        tabLeaving[new] = nil
+        guard perf.motionOn, old != new else { return }
+        tabLeavingCount += 1
+        tabLeaving[old] = (1, tabLeavingCount)
+    }
+
+    /// The switch: not animated (the focus move carries an animation —
+    /// the page coming in faded in too, a dip), the fade set up with it
+    /// (from `onChange` the pages had already changed places).
+    private func switchTab(to new: Int) {
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            crossfade(from: selectedTab, to: new)
+            selectedTab = new
+        }
+    }
+
+    private func fadeOut(_ tab: Int) {
+        guard let order = tabLeaving[tab]?.order, tabLeaving[tab]?.opacity == 1 else { return }
+        withAnimation(.easeInOut(duration: Motion.fadeDuration)) { tabLeaving[tab]?.opacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.fadeDuration) {
+            if tabLeaving[tab]?.order == order { tabLeaving[tab] = nil }
+        }
+    }
+
+    /// Every tab built, hidden, once the launch is over — one at a time, so
+    /// the first visit is a switch like any other, not a build.
+    private func buildTabsAhead() async {
+        await LaunchPreloader.shared.lifted()
+        for tab in AppTab.topBarOrder where !visitedTabs.contains(tab.rawValue) {
+            try? await Task.sleep(for: .seconds(1.5))
+            visitedTabs.insert(tab.rawValue)
+        }
+    }
 
     @ViewBuilder
     private func tabContent(_ tab: AppTab, active: Bool) -> some View {
@@ -1367,7 +1411,7 @@ struct RootView: View {
         AppProbe.nav("tab \(Self.tabName(selectedTab)) → \(Self.tabName(newTab))"
                      + (enteringHomeFresh ? "  (Home rebuilds; rail waits on content)" : ""))
         AppProbe.tab = Self.tabName(newTab)
-        selectedTab = newTab
+        switchTab(to: newTab)
         if homeCatalogSettings.autoHideSidebar { sidebarRevealed = false }
         sidebarFocus = nil
         // Through the owner, so a pending re-enable (a rail exit moments ago)
