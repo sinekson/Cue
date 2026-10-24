@@ -1271,7 +1271,8 @@ enum AppGlass {
     static let textMuted = Color.white.opacity(FixedFocusText.secondary)
     static let textOnFocus = Color.black.opacity(0.85)
     /// THE glass: every Liquid Glass surface in the app is this one —
-    /// `.regular`, darkened by this tint (text stays crisp over bright art).
+    /// `.regular`, darkened by this tint (text stays crisp over bright art;
+    /// tried: untinted, Apple's as it is).
     /// Only floating things are glass (docs/UI-DESIGN.md §1).
     static let surfaceTint = Color.black.opacity(0.3)
 

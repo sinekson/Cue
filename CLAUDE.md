@@ -77,6 +77,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   view tree, disabled while hidden.
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
+  One glass everywhere: Apple's `.regular`, tinted black 30 %
+  (`AppGlass.surfaceTint`; tried: untinted — everywhere, and the panels
+  alone), the panels (hold menus, sources, About) too (tried for them: a
+  smoked flat panel, near-black 90 %, a light top edge, a shadow; the
+  scope pill's flat fill, see-through and solid).
   Everything in the page is flat (`FlatControl`). Details' and the
   billboard's buttons (`DetailActionButton`) and Details' season buttons
   (`FixedFocusSeasonFace`) share one face (`ActionFace`): at rest a
@@ -700,7 +705,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   interactive and the search controller's own choice (its keyboard) takes
   focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
-  next press). Glass panel beside the card; pressed −3 %, open +2 %.
+  next press; tried again as a Render Lab switch — ours kept). Glass
+  panel beside the card, sized as tvOS's context menu (measured): rows
+  66 tall, no gaps, 28 pt medium, the icon in front; focused a white
+  capsule (round ends — 30 pt corners read rectangular), 2 % larger;
+  the panel 16 pt around them. Pressed −3 %, open +2 %.
   It unfolds out of the card, as the Apple TV app's: from 50 % at its
   corner facing the card, on the present spring (0.45 s, no bounce),
   the glass in 0.12 s, the entries a moment later; closing, back into
@@ -711,7 +720,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   edge on the card before's right edge — `neighbourEdges`; no cards
   beside it: `gap`, 28), level with its top — or, when it doesn't
   fit below that (Search's low row), with its bottom. Behind it the
-  screen dims (black 30 %, `HoldMenu.dimming`), the held card
+  screen dims (black 15 %, `HoldMenu.dimming`; 35 % was heavy under the glass), the held card
   cut out (not its shadow) — the cut-out growing with the card from its
   pressed size, on its timing (`HoldMenuRequest.from`, `heldDuration`;
   at the held size at once, a lighter card showed around it); closing,

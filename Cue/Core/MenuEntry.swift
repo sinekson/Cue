@@ -88,7 +88,8 @@ protocol HoldMenuProviding: AnyObject {
 final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
     /// How much the screen dims behind a hold menu (not the held card, not
     /// behind a dropdown) and behind the source panel.
-    static let dimming: CGFloat = 0.35
+    /// (Tried: 35 % — heavy under the glass.)
+    static let dimming: CGFloat = 0.15
 
     static let shared = HoldMenu()
     /// How long Select is held before the menu opens (the system's is about
@@ -406,8 +407,8 @@ private final class HoldMenuController: UIViewController {
 }
 
 /// The menu's glass panel: one row per entry — nothing at rest, the white
-/// highlight when focused (as the source picker's rows). An entry with a
-/// confirmation asks first, in place.
+/// capsule when focused — sized as tvOS's own context menu (measured off
+/// its screen). An entry with a confirmation asks first, in place.
 private struct HoldMenuPanel: View {
     let entries: [MenuEntry]
     let onPick: (MenuEntry) -> Void
@@ -418,7 +419,7 @@ private struct HoldMenuPanel: View {
     @State private var shown = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             if let index = confirming, let question = entries[index].confirm {
                 row(question, icon: entries[index].icon, destructive: true, id: 0) { onPick(entries[index]) }
                 row("Cancel", icon: "xmark", destructive: false, id: 1) { confirming = nil; focused = index }
@@ -441,7 +442,7 @@ private struct HoldMenuPanel: View {
         .opacity(shown ? 1 : 0)
         .onAppear { withAnimation(.easeOut(duration: 0.2).delay(0.08)) { shown = true } }
         .padding(HoldMenuRowStyle.inset)
-        .liquidGlass(in: RoundedRectangle(cornerRadius: HoldMenuRowStyle.corner + HoldMenuRowStyle.inset,
+        .liquidGlass(in: RoundedRectangle(cornerRadius: HoldMenuRowStyle.height / 2 + HoldMenuRowStyle.inset,
                                           style: .continuous))
         .defaultFocus($focused, 0)
         .onExitCommand {
@@ -456,7 +457,7 @@ private struct HoldMenuPanel: View {
     private func row(_ title: String, icon: String, destructive: Bool, id: Int, checked: Bool = false,
                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 18) {
+            HStack(spacing: 16) {
                 if reservesCheck {
                     Image(systemName: "checkmark")
                         .font(.system(size: 22, weight: .bold))
@@ -465,26 +466,28 @@ private struct HoldMenuPanel: View {
                 }
                 if !icon.isEmpty {
                     Image(systemName: icon)
-                        .font(.system(size: 24, weight: .semibold))
-                        .frame(width: 32)
+                        .font(.system(size: 26, weight: .medium))
+                        .frame(width: 34)
                 }
                 Text(title)
-                    .font(.system(size: 26, weight: .medium))
+                    .font(.system(size: 28, weight: .medium))
                     .lineLimit(1)
             }
-            .padding(.leading, 24)
-            .padding(.trailing, 32)
-            .frame(maxWidth: .infinity, minHeight: 68, maxHeight: 68, alignment: .leading)
+            .padding(.leading, 18)
+            .padding(.trailing, 36)
+            .frame(maxWidth: .infinity, minHeight: HoldMenuRowStyle.height, maxHeight: HoldMenuRowStyle.height,
+                   alignment: .leading)
         }
         .buttonStyle(HoldMenuRowStyle(destructive: destructive))
         .focused($focused, equals: id)
     }
 }
 
-/// A menu row: nothing at rest, the white highlight when focused.
+/// A menu row: nothing at rest, focused a white capsule, a touch larger
+/// (tvOS's: round ends, as Settings' rows — tried: 30 pt corners on 68).
 private struct HoldMenuRowStyle: ButtonStyle {
-    static let corner: CGFloat = 30
-    static let inset: CGFloat = 14
+    static let height: CGFloat = 66
+    static let inset: CGFloat = 16
     let destructive: Bool
 
     func makeBody(configuration: Configuration) -> some View { Platter(configuration: configuration, destructive: destructive) }
@@ -498,9 +501,9 @@ private struct HoldMenuRowStyle: ButtonStyle {
             configuration.label
                 .foregroundStyle(destructive ? Color(red: 1, green: 0.27, blue: 0.23)
                                  : isFocused ? AppGlass.textOnFocus : AppGlass.text)
-                .background(RoundedRectangle(cornerRadius: HoldMenuRowStyle.corner, style: .continuous)
-                    .fill(isFocused ? FlatControl.focus : Color.clear))
-                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .background(Capsule().fill(isFocused ? FlatControl.focus : Color.clear))
+                .scaleEffect(configuration.isPressed ? 0.97 : isFocused ? 1.02 : 1)
+                .shadow(color: .black.opacity(isFocused ? 0.25 : 0), radius: 12, y: 6)
                 .animation(.easeOut(duration: 0.12), value: isFocused)
         }
     }
