@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Settings → Appearance: four switches, one list, no sections.
+/// Settings → Appearance: one list, no sections — switches and Card outlines' levels.
 struct AppearanceSettingsDetail: View {
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
-    @AppStorage(FixedFocusRing.edgeKey) private var focusEdge = true
+    @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
     @AppStorage(StageTrailer.peekMovesKey) private var peekMovesOut = false
 
     var body: some View {
@@ -15,12 +15,13 @@ struct AppearanceSettingsDetail: View {
                     description: "Home, Movies and Series take on the colours of the title in focus.",
                     isOn: $followsTitle
                 )
-                SettingsToggleRow(
-                    title: "Focus outline",
-                    description: "A bright edge around the card in focus, easier to spot.",
-                    isOn: $focusEdge
-                )
-                .onChange(of: focusEdge) { _, _ in FixedFocusRing.refreshAll() }
+                SettingsOptionsRow(
+                    title: "Card outlines",
+                    description: "High: thin edges, a bright one in focus. Low: thin edges only.",
+                    options: FixedFocusRing.Outlines.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
+                    selection: outlines
+                ) { outlines = $0 }
+                .onChange(of: outlines) { _, _ in FixedFocusRing.refreshAll() }
                 SettingsToggleRow(
                     title: "Hide the top bar",
                     description: "Out of sight until you press Up at the top of a page, or Back.",

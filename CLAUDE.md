@@ -559,8 +559,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `FixedFocusRing`), a soft shadow outside the card (`attachShadow`, the cards' shadow picture),
   moving-focus cards grow 6 %, the fixed box 4 % (`boxScale`: it
   overhangs its spot, its neighbours step aside, its info isn't scaled).
-  Settings → Appearance → Focus outline (on by default) turns the edge off
-  (`FixedFocusRing.edgeOn`; switching relayouts every view — live). The
+  Settings → Appearance → Card outlines, three levels (`FixedFocusRing.outlines`;
+  switching relayouts every view — live): High (default) the rim and the
+  bright focus edge, Low the rim only, Off neither (was the Focus outline
+  switch — its off reads as Low). The
   fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
   caption reads. (Tried and dropped: the 4 pt white ring; the row's name
   moving up as the focused card grows, as the captions step down — weird.)
@@ -782,7 +784,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   row, Select lifting it, hold to hide, an Off section — looked horrible.)
   Appearance: switches in one list, no section labels (an untitled
   `SettingsSection` draws none), one-line descriptions — Colours from the
-  title, Focus outline, Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
+  title, Card outlines (High / Low / Off, an options page), Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
   Navigation sections, long descriptions). Home & Details (was Home &
   Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
   Rows, Continue Watching order, Billboard moves on by itself (moved from

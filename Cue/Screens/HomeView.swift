@@ -2405,16 +2405,35 @@ enum FixedFocusText {
 /// lift (`FixedFocusMetrics.movingFocusLift`).
 @MainActor
 enum FixedFocusRing {
-    /// Settings → Appearance → Focus edge (on by default): off, focus is the
-    /// shadow and the grow alone.
-    static let edgeKey = "cue.appearance.focusEdge"
-    static var edgeOn: Bool { UserDefaults.standard.object(forKey: edgeKey) as? Bool ?? true }
-    /// The edge: the rim's own width, bright.
-    static var width: CGFloat { edgeOn ? 2 : 0 }
+    /// Settings → Appearance → Card outlines, by how much they show: high —
+    /// every card's thin rim and the bright edge on the one in focus; low —
+    /// the rim only (focus is the shadow and the grow); off — neither.
+    enum Outlines: String, CaseIterable {
+        case high, low, off
+        var label: String {
+            switch self {
+            case .high: "High"
+            case .low: "Low"
+            case .off: "Off"
+            }
+        }
+    }
+    static let outlinesKey = "cue.appearance.cardOutlines"
+    static var outlines: Outlines {
+        if let raw = UserDefaults.standard.string(forKey: outlinesKey), let chosen = Outlines(rawValue: raw) {
+            return chosen
+        }
+        // The old Focus outline switch, off: the rim only.
+        return UserDefaults.standard.object(forKey: "cue.appearance.focusEdge") as? Bool == false ? .low : .high
+    }
+    /// The focus edge: the rim's own width, bright.
+    static var width: CGFloat { outlines == .high ? 2 : 0 }
     static let color = UIColor.white.withAlphaComponent(0.75)
 
     /// The setting changed: every card lays itself out again (each applies
-    /// the edge there) — at once, in every tab and page, no restart.
+    /// the edge there) — at once, in every tab and page, no restart. The
+    /// cards (`follow`) too when off screen: a tab not shown (Home, behind
+    /// Settings) or a recycled cell kept the old look until laid out again.
     static func refreshAll() {
         func relayout(_ view: UIView) {
             view.setNeedsLayout()
@@ -2423,7 +2442,11 @@ enum FixedFocusRing {
         for scene in UIApplication.shared.connectedScenes {
             (scene as? UIWindowScene)?.windows.forEach(relayout)
         }
+        cards.allObjects.forEach(relayout)
     }
+    /// A card with outlines: laid out again when Card outlines changes.
+    static func follow(_ card: UIView) { cards.add(card) }
+    private static let cards = NSHashTable<UIView>.weakObjects()
 
     /// The shadow under a focus outline `view` (its card's rect): the
     /// cards' shadow picture (`FixedFocusCardEdge.shadowImage`, only outside
@@ -2779,7 +2802,8 @@ enum FixedFocusCardEdge {
 
     /// The rim over the card: an even 2 pt line inside the corner, there
     /// on dark artwork, quiet on light.
-    @MainActor static var rim: UIImage { art.rim }
+    /// None with Card outlines off.
+    @MainActor static var rim: UIImage? { FixedFocusRing.outlines == .off ? nil : art.rim }
 
     /// How far the shadow reaches beyond the card.
     static let shadowPad: CGFloat = 70
@@ -5311,6 +5335,7 @@ final class FixedFocusBoxView: UIView {
 
         override init(frame: CGRect) {
             super.init(frame: frame)
+            FixedFocusRing.follow(self)
             backdrop.contentMode = .scaleAspectFill
             backdrop.clipsToBounds = true
             backdrop.layer.contentsRect = FixedFocusBoxView.zoomRect
@@ -7685,6 +7710,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        FixedFocusRing.follow(self)
         shadow.image = FixedFocusCardEdge.shadowImage
         shadow.alpha = 0
         contentView.addSubview(shadow)
@@ -7977,6 +8003,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        FixedFocusRing.follow(self)
         picture.adjustsImageWhenAncestorFocused = Self.lift
         picture.contentMode = .scaleAspectFill
         if !Self.lift {
@@ -8347,6 +8374,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        FixedFocusRing.follow(self)
         clipsToBounds = false
         contentView.clipsToBounds = true
         contentView.layer.cornerRadius = Spotlight.cornerRadius
