@@ -1959,15 +1959,16 @@ struct MDBListRatingsRow: View {
     }
 
     private func chip(_ entry: MDBListRatingEntry) -> some View {
-        let brand = entry.provider.badgeStyle(score: Double(entry.text)).fill
+        let style = entry.provider.badgeStyle
+        let brand = style.fill
         let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         return HStack(spacing: 6) {
             if let stacked = entry.provider.stackedLabel {
                 // Two small lines in the height of one: a long name stays
                 // readable without widening the chip.
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(stacked.top).foregroundStyle(brand)
-                    Text(stacked.bottom).foregroundStyle(stacked.bottomFill ?? brand)
+                    stacked.top
+                    stacked.bottom
                 }
                 .font(.system(size: 9, weight: .heavy))
                 .tracking(0.4)
@@ -1975,7 +1976,7 @@ struct MDBListRatingsRow: View {
                 Text(entry.provider.label)
                     .font(.system(size: 18, weight: .semibold))
                     .tracking(0.5)
-                    .foregroundStyle(brand)
+                    .foregroundStyle(style.name.map(AnyShapeStyle.init) ?? brand)
             }
             Text(entry.text)
                 .font(.system(size: 18, weight: .semibold))
@@ -2003,20 +2004,22 @@ struct MDBListRatingsRow: View {
     }
 }
 
-/// A rating source's badge colours, after its own branding.
+/// A rating source's badge colours, after its own branding: the outline
+/// (and the name, unless it has its own).
 struct RatingBadgeStyle {
     let fill: AnyShapeStyle
-    let text: Color
+    var name: Color? = nil
 }
 
 extension MDBListProvider {
     /// Rotten Tomatoes' two scores, named in two small lines on a chip
     /// (their short labels — "RT", "RT🍿" — don't sit well next to the
-    /// others).
-    /// Each source is recreated from its own COLOURS (no drawings): the
-    /// bottom line can carry a second one — the tomato's leaf green, the
-    /// popcorn bucket's red and white stripes.
-    var stackedLabel: (top: String, bottom: String, bottomFill: AnyShapeStyle?)? {
+    /// others), each recreated from its own COLOURS (no drawings): the
+    /// tomato's red over its leaf green; the popcorn bucket's white over its
+    /// red — one colour a line (tried: red over white; stripes across the word under a
+    /// yellow line, and red and white letter by letter — both unreadable at
+    /// this size).
+    var stackedLabel: (top: Text, bottom: Text)? {
         func rgb(_ hex: UInt32) -> Color {
             Color(red: Double((hex >> 16) & 0xFF) / 255,
                   green: Double((hex >> 8) & 0xFF) / 255,
@@ -2024,22 +2027,17 @@ extension MDBListProvider {
         }
         switch self {
         case .tomatoes:
-            return ("ROTTEN", "TOMATOES", AnyShapeStyle(rgb(0x3FB34F)))
+            return (Text("ROTTEN").foregroundStyle(rgb(0xFA320A)),
+                    Text("TOMATOES").foregroundStyle(rgb(0x3FB34F)))
         case .audience:
-            // Hard-edged stripes across the word, like the bucket.
-            let red = rgb(0xE8392B), white = Color.white, stripes = 8
-            let stops = (0..<stripes).flatMap { i -> [Gradient.Stop] in
-                let color = i.isMultiple(of: 2) ? red : white
-                return [.init(color: color, location: Double(i) / Double(stripes)),
-                        .init(color: color, location: Double(i + 1) / Double(stripes))]
-            }
-            return ("POPCORN", "METER", AnyShapeStyle(LinearGradient(
-                stops: stops, startPoint: .leading, endPoint: .trailing)))
+            // (The bucket's red is the tomato's.)
+            return (Text("POPCORN").foregroundStyle(Color.white.opacity(0.85)),
+                    Text("METER").foregroundStyle(rgb(0xFA320A)))
         default: return nil
         }
     }
 
-    func badgeStyle(score: Double?) -> RatingBadgeStyle {
+    var badgeStyle: RatingBadgeStyle {
         func rgb(_ hex: UInt32) -> Color {
             Color(red: Double((hex >> 16) & 0xFF) / 255,
                   green: Double((hex >> 8) & 0xFF) / 255,
@@ -2047,34 +2045,33 @@ extension MDBListProvider {
         }
         switch self {
         case .imdb:
-            return .init(fill: AnyShapeStyle(CuePrimitives.imdb), text: .black)
+            return .init(fill: AnyShapeStyle(CuePrimitives.imdb))
         case .trakt:
-            return .init(fill: AnyShapeStyle(rgb(0xED1C24)), text: .white)
+            return .init(fill: AnyShapeStyle(rgb(0xED1C24)))
         case .tmdb:
-            // TMDB's green-to-blue gradient, its navy for the text.
+            // TMDB's green-to-blue gradient.
             return .init(fill: AnyShapeStyle(LinearGradient(
                 colors: [rgb(0x90CEA1), rgb(0x01B4E4)],
-                startPoint: .leading, endPoint: .trailing)), text: rgb(0x0D253F))
+                startPoint: .leading, endPoint: .trailing)))
         case .letterboxd:
             // Letterboxd's orange → green → blue.
             return .init(fill: AnyShapeStyle(LinearGradient(
                 colors: [rgb(0xFF8000), rgb(0x00E054), rgb(0x40BCF4)],
-                startPoint: .leading, endPoint: .trailing)), text: .black)
+                startPoint: .leading, endPoint: .trailing)))
         case .tomatoes:
-            return .init(fill: AnyShapeStyle(rgb(0xFA320A)), text: .white)
+            return .init(fill: AnyShapeStyle(rgb(0xFA320A)))
         case .audience:
-            return .init(fill: AnyShapeStyle(rgb(0xFFB600)), text: .black)
+            // The popcorn's yellow (its icon's; was #FFB600, too orange).
+            return .init(fill: AnyShapeStyle(rgb(0xFED500)))
         case .myanimelist:
-            // MyAnimeList's blue, white text.
-            return .init(fill: AnyShapeStyle(rgb(0x2E51A2)), text: .white)
+            // MyAnimeList's blue, lightened to read on dark pictures (its
+            // own #2E51A2 nearly vanished).
+            return .init(fill: AnyShapeStyle(rgb(0x6E8FE0)))
         case .metacritic:
-            // Metacritic's own scale: green 61+, yellow 40–60, red below.
-            let colour: Color = switch score ?? 0 {
-            case 61...: rgb(0x66CC33)
-            case 40..<61: rgb(0xFFCC33)
-            default: rgb(0xFF0000)
-            }
-            return .init(fill: AnyShapeStyle(colour), text: .black)
+            // As its logo: white on black in a yellow ring — the name white
+            // (85 %, as the score), the outline yellow (tried: its score
+            // scale, green 61+ / yellow / red — not its look).
+            return .init(fill: AnyShapeStyle(rgb(0xFFCC34)), name: Color.white.opacity(0.85))
         }
     }
 }
