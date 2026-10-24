@@ -557,13 +557,63 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         syncHeaderHost()
         if heightChanged, isViewLoaded { collectionView.collectionViewLayout.invalidateLayout() }
         guard changed else { return }
-        self.items = items
-        self.subtitles = subtitles
-        guard isViewLoaded else { return }
+        guard isViewLoaded else {
+            self.items = items
+            self.subtitles = subtitles
+            return
+        }
         // A pill pressed (Search's Movies | Series): reloadData takes focus
         // away from the header (it's in the collection view) to the first
         // title. A section reload leaves it there.
         let headerFocused = headerHost.map { Self.focus(in: $0.view) } ?? false
+        reloadGeneration += 1
+        // The page still scrolling up to the header (Up onto the pill, then
+        // a quick Right): that scroll finishes quickly first (0.1 s), then the
+        // titles swap, on a settled page (swapped mid-scroll, they jumped).
+        let top = -collectionView.contentInset.top
+        if headerFocused, collectionView.contentOffset.y > top + 0.5 {
+            let generation = reloadGeneration
+            // (Stops the focus scroll where it is drawn.)
+            collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+            UIView.animate(withDuration: Self.hurryDuration, delay: 0,
+                           options: [.beginFromCurrentState, .curveEaseOut]) {
+                self.collectionView.contentOffset = CGPoint(x: 0, y: top)
+            } completion: { _ in
+                guard generation == self.reloadGeneration else { return }
+                self.reload(items, subtitles, swapping: swapping, headerFocused: true)
+            }
+        } else {
+            reload(items, subtitles, swapping: swapping, headerFocused: headerFocused)
+        }
+        if !filledOnce, !items.isEmpty, !placeholder {
+            filledOnce = true
+            // The first titles in: focus to the first, unless it has moved on
+            // (the loading state, which held focus, goes in the same update).
+            prefersFirstTitle = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.prefersFirstTitle else { return }
+                self.collectionView.layoutIfNeeded()
+                // (From placeholders focus is nowhere yet: the window's.)
+                if let window = self.view.window, let system = UIFocusSystem.focusSystem(for: window) {
+                    system.requestFocusUpdate(to: self)
+                    system.updateFocusIfNeeded()
+                }
+            }
+        }
+    }
+
+    /// A press finishing the scroll up quickly (`show`).
+    private static let hurryDuration: TimeInterval = 0.1
+    /// The latest reload asked for: one waiting for the hurried scroll is
+    /// dropped when a later one came meanwhile.
+    private var reloadGeneration = 0
+
+    /// The titles in with the reload (not before: cells shown meanwhile
+    /// would read them against the old count).
+    private func reload(_ items: [MetaItem], _ subtitles: [String: String],
+                        swapping: Bool, headerFocused: Bool) {
+        self.items = items
+        self.subtitles = subtitles
         if swapping, !PageFade.shared.covering {
             // Placeholders and titles take over from each other: one fade
             // (under the push's still, its fade is the one).
@@ -580,21 +630,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
             UIView.performWithoutAnimation { collectionView.reloadSections(IndexSet(integer: 0)) }
         } else {
             collectionView.reloadData()
-        }
-        if !filledOnce, !items.isEmpty, !placeholder {
-            filledOnce = true
-            // The first titles in: focus to the first, unless it has moved on
-            // (the loading state, which held focus, goes in the same update).
-            prefersFirstTitle = true
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.prefersFirstTitle else { return }
-                self.collectionView.layoutIfNeeded()
-                // (From placeholders focus is nowhere yet: the window's.)
-                if let window = self.view.window, let system = UIFocusSystem.focusSystem(for: window) {
-                    system.requestFocusUpdate(to: self)
-                    system.updateFocusIfNeeded()
-                }
-            }
         }
     }
 

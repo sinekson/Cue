@@ -37,6 +37,9 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     private var started = false
     /// A newer load makes an older one's answer stale.
     private var generation = 0
+    /// Each side's first page, its posters decoded: Movies | Series swaps
+    /// at once, as Search's scopes (no placeholders between).
+    private var firstPages: [Bool: TMDBService.BrowsePage] = [:]
 
     init(source: Source, title: String) {
         self.source = source
@@ -96,12 +99,29 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
             await reload()
         }
         loadedOnce = true
+        // The other side ready before the pill is pressed.
+        if types.count > 1, firstPages[!isMovie] == nil {
+            let side = !isMovie
+            let first = await fetch(page: 1, isMovie: side)
+            await Self.decode(first)
+            firstPages[side] = first
+        }
     }
 
     private func otherSideHasTitles(_ side: Bool) async -> Bool {
         if case .person = source { return true }
         guard types.contains(side) else { return false }
-        return await !fetch(page: 1, isMovie: side).items.isEmpty
+        let first = await fetch(page: 1, isMovie: side)
+        await Self.decode(first)
+        firstPages[side] = first
+        return !first.items.isEmpty
+    }
+
+    /// The first two lines' posters decoded: the grid swaps in whole.
+    private static func decode(_ first: TMDBService.BrowsePage) async {
+        await FixedFocusImages.prefetch(first.items.prefix(12).map {
+            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
+        }, within: .milliseconds(700))
     }
 
     private static func brand(of source: Source) async -> TMDBService.BrandProfile? {
@@ -115,25 +135,33 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     func choose(isMovie newValue: Bool) {
         guard newValue != isMovie else { return }
         isMovie = newValue
-        Task { await reload() }
+        if let first = firstPages[newValue] {
+            generation += 1
+            show(first)
+        } else {
+            Task { await reload() }
+        }
     }
 
     private func reload() async {
         generation += 1
         let mine = generation
+        if let first = firstPages[isMovie] { return show(first) }
         items = []
         isLoading = true
-        page = 1
         let result = await fetch(page: 1)
         guard mine == generation else { return }
-        // The first two lines' posters too: the grid swaps in whole.
-        await FixedFocusImages.prefetch(result.items.prefix(12).map {
-            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
-        }, within: .milliseconds(700))
+        await Self.decode(result)
         guard mine == generation else { return }
-        items = result.items
-        total = result.total
-        hasMore = result.hasMore
+        firstPages[isMovie] = result
+        show(result)
+    }
+
+    private func show(_ first: TMDBService.BrowsePage) {
+        page = 1
+        items = first.items
+        total = first.total
+        hasMore = first.hasMore
         isLoading = false
     }
 

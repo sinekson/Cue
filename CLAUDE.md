@@ -481,7 +481,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   studio/network its logo on a light plate. Movies | Series in Search's
   scope pill (`ScopePill`; only where both have titles — studios and
   tags checked at load; none otherwise, the facts line says which ("128
-  movies"); a genre maps to the other side's id) — moving along it switches. No sort: one order,
+  movies"); a genre maps to the other side's id) — moving along it switches, at
+  once as Search's scopes: both sides' first page (posters decoded) are
+  loaded ahead, no placeholders between; a switch while the page still
+  scrolls up to the pill finishes the scroll first (0.1 s). No sort: one order,
   the best known first — a person's by votes + popularity (`fame`, as
   Search's `bestKnown`), discover pages by votes (TMDB can't sort by a
   blend; its popularity is mostly this week's — it felt random). (Tried
@@ -973,8 +976,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   decoded into memory (`FixedFocusImages.prefetch`, 0.7 s cap after the
   data) — the page swaps in whole, pictures included. Folders (`PageLoad`) and the browse
   pages (their `TMDBBrowseViewModel`, a `PreparedPage`; the grid's
-  `placeholder:` — two lines of empty posters; a Movies | Series / sort
-  change too, focus staying on the control — the cards just can't take it).
+  `placeholder:` — two lines of empty posters).
 - **Search**: SwiftUI `.searchable` (the system's field, keyboard,
   dictation, suggestions). Nothing scrolls but the row, sideways.
   Where it comes from: TMDB, not the add-ons' catalogs: its combined
