@@ -3918,12 +3918,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
                 self.movesInFlight -= 1
                 if !rowChanged, self.movesInFlight == 0 { self.runPendingStep() }
+                self.runHeldSelect()
                 guard !featured, self.focusedRow == rowIndex else { return }
                 self.handOverToBox(rowCell, row: row, rowIndex: rowIndex)
             }
             self.movesInFlight += 1
             if billboardScroll { self.liftNextTitle(down: !featured) }
         }
+        // A Select held for the move before: focus has moved on, it's gone.
+        heldSelect = nil
         move()
         hasFocus = true
         loadShowInfo(for: item, in: row, at: itemIndex)
@@ -3971,6 +3974,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
               let rowCell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
         else { return }
         hurried = true
+        hurryMoves {
+            guard self.focusedRow == rowIndex, self.openingRow == rowIndex else { return }
+            self.handOverToBox(rowCell, row: self.rows[rowIndex], rowIndex: rowIndex)
+        }
+    }
+
+    /// Every animation running in the rows replaced by a short one from
+    /// what's on screen to its end; the moves count as done at once, `then`
+    /// once they've landed.
+    private func hurryMoves(then: @escaping () -> Void) {
         let duration = Self.hurryDuration
         let ease = CAMediaTimingFunction(name: .easeOut)
         func hurry(_ layer: CALayer) {
@@ -3995,15 +4008,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             }
             layer.sublayers?.forEach(hurry)
         }
-        // The opening's own completion is void now (`hurriedMoves`) — set
-        // first: removing its animations calls it.
-        hurriedMoves = movesInFlight
+        // The moves' own completions are void now (`hurriedMoves`) — set
+        // first: removing their animations calls them.
+        hurriedMoves += movesInFlight
         movesInFlight = 0
         hurry(view.layer)
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            guard self.focusedRow == rowIndex, self.openingRow == rowIndex else { return }
-            self.handOverToBox(rowCell, row: self.rows[rowIndex], rowIndex: rowIndex)
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: then)
     }
     /// Completions of moves cut short by a hurry, still to come (ignored).
     private var hurriedMoves = 0
@@ -4046,7 +4056,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         openingRow = nil
         hurried = false
         // Held presses: now, one step at a time.
-        DispatchQueue.main.async { self.runPendingStep() }
+        DispatchQueue.main.async { self.runPendingStep(); self.runHeldSelect() }
     }
 
     /// Focus in a destination row: the system scrolls it and lifts the card;
@@ -4200,8 +4210,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let scale = boxHeld ? base + FixedFocusMetrics.heldGrowth
             : boxPressed ? base - (1 - FixedFocusMetrics.pressScale) : base
         let covered = currentCard(row: focusedRow).first as? FixedFocusPosterCell
-        // (Below its own size the card under it — as large — shows.)
-        if scale < base { covered?.setUnderPressedBox(true) }
+        // (Below its own size the card under it — as large — shows. Not
+        // while an opening's card still carries the box's look, the box
+        // unseen: hidden, the card vanished at the press.)
+        if scale < base, box.alpha == 1 { covered?.setUnderPressedBox(true) }
         UIView.animate(withDuration: duration, delay: 0,
                        options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
             self.box.applyScale(scale, base: base)
@@ -4914,7 +4926,53 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return false
     }
 
+    /// Nothing moving in the rows, the box holding its row (an opening's
+    /// card handed over).
+    private var settled: Bool { movesInFlight == 0 && openingRow != focusedRow }
+    /// A Select during a move: held, run as the move lands (opened mid-move,
+    /// Details took the screen with the box still empty — the grown card
+    /// had its content until the hand-over). The move finishes quickly
+    /// first, as for a held Left/Right (`hurryOpening`, `hurryMoves`).
+    private var heldSelect: (() -> Void)?
+    /// At the latest (a move whose end never came).
+    static let heldSelectLimit: Double = 1
+
+    private func runHeldSelect() {
+        guard settled, let run = heldSelect else { return }
+        heldSelect = nil
+        // The landed rows drawn first (the box just took the card over):
+        // Details starts from a still of the screen as last drawn.
+        CATransaction.flush()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.drawnDelay, execute: run)
+    }
+    /// Two frames.
+    static let drawnDelay: Double = 2.0 / 60
+
+    private var heldSelectToken = 0
+
     func select(_ item: MetaItem, rowIndex: Int) {
+        guard settled || ModeSwap.shared.handingOver else {
+            heldSelectToken += 1
+            let token = heldSelectToken
+            heldSelect = { [weak self] in self?.perform(item, rowIndex: rowIndex) }
+            // The move finishing quickly, as for a held Left/Right.
+            if let opening = openingRow, opening == focusedRow {
+                hurryOpening(opening)
+            } else if movesInFlight > 0 {
+                hurryMoves { self.runHeldSelect() }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.heldSelectLimit) { [weak self] in
+                guard let self, self.heldSelectToken == token, let held = self.heldSelect else { return }
+                self.heldSelect = nil
+                held()
+            }
+            return
+        }
+        heldSelect = nil
+        perform(item, rowIndex: rowIndex)
+    }
+
+    private func perform(_ item: MetaItem, rowIndex: Int) {
         if let onSelectInRow, rows.indices.contains(rowIndex), onSelectInRow(item, rows[rowIndex].id) { return }
         // Handing over to Details: this Select is Play there.
         if ModeSwap.shared.handingOver {

@@ -247,6 +247,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   bottom left (`FixedFocusLogo`; fitted into the room, wide transparent
   ones sat centred, too far right). (Tried: no logo on the box — it
   never matches the one printed on the poster; brought back.)
+  A Select during a move is held and runs as it lands (`heldSelect`;
+  any running move finishes quickly first (0.1 s), as for a held
+  Left/Right — `hurryOpening`, `hurryMoves` — then two frames drawn
+  before Details takes its still; a later move drops it; 1 s at most):
+  opened mid-move,
+  Details took the screen with the box still empty (the grown card has
+  the content until the hand-over). Presses are held, never blocked (a
+  press that does nothing reads as missed).
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
   The focused row stays at its fixed spot near the top (not centred). The
   row below always starts the same gap (`peekGap`) below what the focused
@@ -1064,7 +1072,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Collection (films; built — above More Like This), Cast & Crew (built),
   About (built).
   Styles decided one row at a time.
-- Animations that block input; flat vs glass consistency pass.
+- Presses during animations: held until they land — Home's rows done;
+  the rest as glitches are found. Flat vs glass consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - Trailers: the full-screen trailer's controls to move to the playback
