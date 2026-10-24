@@ -185,11 +185,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the box a box-wide gap — so they come out and go in on both sides alike
   (anchored left, the one leaving appeared at once at the box's left
   edge while the one coming in slid all the way across).
-  After Up/Down the box takes over from the grown cell only once its
-  picture and logo are in at its size (`FixedFocusBoxView.onPictureIn`;
-  on revisits often back from disk — its placeholder fading off over the
-  picture flashed it lighter, the logo popped in late); until then the
-  cell shows the title.
+  After Up/Down the box takes over from the grown cell at once, with the
+  cell's own picture and logo (`FixedFocusPosterCell.pictures(for:)` —
+  the same files at the same size; the box's copy, often evicted from
+  memory by a revisit, came back from disk late: its placeholder flashed
+  the cell's poster, the logo popped in). (Tried: the box waiting for
+  its own copy — Left/Right meanwhile left the cells carrying the step,
+  growing into place; forcing it in then flickered.)
   Up/Down opening, the card is ONE shape: both pictures fill the growing
   card (centre cropped), on the move's spring (`FixedFocusPosterCell.reshape`;
   each at its own fixed size, the picture switched at once while the edge

@@ -4003,20 +4003,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard movesInFlight == 0 else { return }
         if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
             let now = row.items[current]
-            box.show(now, animated: false)
-            // Its picture or logo not in yet (decoded at the box's size —
-            // on a revisit, often back from disk): the cell keeps showing
-            // the title until they are. (The box's see-through placeholder
-            // over the cell's poster flashed the poster between two
-            // landscapes; the logo popped in late.)
-            let take = { [weak self, weak rowCell] in
-                guard let self, let rowCell, self.box.alpha < 1, self.focusedRow == rowIndex,
-                      self.movesInFlight == 0, self.selected[row.id] == current else { return }
-                self.box.alpha = 1
-                rowCell.contentHidden = true
-            }
-            box.onPictureIn = nil
-            if box.isWaiting { box.onPictureIn = take } else { take() }
+            // The grown cell's picture and logo, as they are: the box's own
+            // copy (the same decode) is often gone from memory by a revisit
+            // — back from disk a few frames late, its see-through
+            // placeholder flashed the cell's poster, the logo popped in.
+            let cell = rowCell.posterCell(at: current) as? FixedFocusPosterCell
+            box.show(now, animated: false, pictures: cell?.pictures(for: now))
+            box.alpha = 1
+            rowCell.contentHidden = true
         }
         openingRow = nil
         hurried = false
@@ -5329,13 +5323,11 @@ final class FixedFocusBoxView: UIView {
         let logo = FixedFocusLogo()
         /// The backdrop on its way: the placeholder's look, nothing over it.
         let loadingCard = FixedFocusPlaceholder()
-        /// Its picture waits (true) or is in, or its logo changed: the box's
-        /// edge waits with the picture, the box's hand-over with both.
+        /// It waits (true) or is in: the box's edge waits with it.
         var onWaiting: (Bool) -> Void = { _ in }
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            FixedFocusRing.follow(self)
             backdrop.contentMode = .scaleAspectFill
             backdrop.clipsToBounds = true
             backdrop.layer.contentsRect = FixedFocusBoxView.zoomRect
@@ -5359,15 +5351,17 @@ final class FixedFocusBoxView: UIView {
                                width: bounds.width * 0.55, height: bounds.height * 0.28)
         }
 
-        func show(_ item: MetaItem) {
+        /// `pictures`: the picture and logo a grown cell shows for it (same
+        /// files, same size) — taken as they are, nothing to wait for.
+        func show(_ item: MetaItem, pictures: FixedFocusPosterCell.Pictures? = nil) {
             // A folder's cover is its own picture, name and all: no shade.
             shade.isHidden = item.type == "collection"
             // (At the box's size — larger for a side-info row.)
             let width = max(bounds.width, FixedFocusMetrics.boxWidth)
             let shaded = item.type != "collection"
             self.shaded = shaded
-            FixedFocusImages.load(item.background ?? item.poster, into: backdrop, maxDimension: width,
-                                  waiting: { [weak self] waiting in
+            let backdropURL = item.background ?? item.poster
+            let pictureIn: (Bool) -> Void = { [weak self] waiting in
                 guard let self else { return }
                 self.waiting = waiting
                 if self.overPicture {
@@ -5386,19 +5380,21 @@ final class FixedFocusBoxView: UIView {
                     self.showWaiting(waiting)
                 }
                 self.onWaiting(waiting)
-            })
-            FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55,
-                                  waiting: { [weak self] waiting in
-                guard let self else { return }
-                self.logoWaiting = waiting
-                self.onWaiting(self.waiting)
-            })
+            }
+            if let picture = pictures?.backdrop {
+                FixedFocusImages.adopt(picture, url: backdropURL, into: backdrop)
+                pictureIn(false)
+            } else {
+                FixedFocusImages.load(backdropURL, into: backdrop, maxDimension: width, waiting: pictureIn)
+            }
+            if let logoPicture = pictures?.logo {
+                FixedFocusImages.adopt(logoPicture, url: item.logo, into: logo)
+            } else {
+                FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55)
+            }
         }
 
         private var shaded = true
-        /// Its logo not there yet (no placeholder: the box waits for it
-        /// before taking over — `onPictureIn`).
-        private(set) var logoWaiting = false
         /// Its picture isn't there yet.
         private(set) var waiting = false
         /// Coming in over the old picture (the box's change): a wait shows
@@ -5479,6 +5475,7 @@ final class FixedFocusBoxView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        FixedFocusRing.follow(self)
         clipsToBounds = false
         clip.clipsToBounds = true
         clip.layer.cornerRadius = Spotlight.cornerRadius
@@ -5557,16 +5554,8 @@ final class FixedFocusBoxView: UIView {
         page.onWaiting = { [weak self, weak page] waiting in
             guard let self, page === self.page else { return }
             self.syncEdge()
-            if !self.isWaiting, let pictureIn = self.onPictureIn {
-                self.onPictureIn = nil
-                pictureIn()
-            }
         }
     }
-    /// The current page's picture or logo still on its way.
-    var isWaiting: Bool { page.waiting || page.logoWaiting }
-    /// Once, when the current page's picture and logo are in.
-    var onPictureIn: (() -> Void)?
     /// The edge waits with the current page's picture — except while it
     /// comes in over the old picture (a picture under it — hidden for the
     /// first frames, it flickered in). Set from the state, not from the
@@ -5602,13 +5591,15 @@ final class FixedFocusBoxView: UIView {
     }()
     /// `direction`: +1 moving right (new content comes from the right),
     /// −1 moving left; `vertical`: an Up/Down move (its longer spring).
+    /// `pictures` (not animated): a grown cell's, for the hand-over.
     func show(_ item: MetaItem, animated: Bool,
-              direction: CGFloat = 1, vertical: Bool = false) {
+              direction: CGFloat = 1, vertical: Bool = false,
+              pictures: FixedFocusPosterCell.Pictures? = nil) {
         guard item.id != shownID else { syncEdge(); return }
         shownID = item.id
         applyOutlineStyle()
         guard animated else {
-            page.show(item)
+            page.show(item, pictures: pictures)
             infoPage.show(item)
             syncEdge()
             return
@@ -5860,6 +5851,14 @@ enum FixedFocusImages {
     @MainActor
     private static func trimmedIfLogo(_ image: UIImage, in view: UIImageView, key: String) -> UIImage {
         view is FixedFocusLogo ? LogoFit.trimmed(image, key: key) : image
+    }
+
+    /// A picture another view already shows for `url` at this size: in at
+    /// once, any load still running into `view` dropped.
+    @MainActor
+    static func adopt(_ image: UIImage, url: String?, into view: UIImageView) {
+        requested[ObjectIdentifier(view)] = url
+        view.image = image
     }
 
     /// `waiting`: true while the picture is on its way (the card shows the
@@ -8371,6 +8370,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let loadingCard = FixedFocusPlaceholder()
     private var posterWaiting = false
     private var backdropWaiting = false
+    struct Pictures { let backdrop: UIImage?; let logo: UIImage? }
+    /// What it shows grown for `item`, its picture in (nil: none yet).
+    func pictures(for item: MetaItem) -> Pictures? {
+        guard backdropFor == item.id, !backdropWaiting, let picture = backdrop.image else { return nil }
+        return Pictures(backdrop: picture, logo: logo.image)
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
