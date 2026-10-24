@@ -628,6 +628,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        // (Back's scroll up running: dropped, as a move.)
+        guard !backToTop else { return }
         let item = items[indexPath.item]
         if let onOpenDetails {
             onOpenDetails(item)
@@ -684,6 +686,15 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
         backToTop = false
+    }
+
+    /// A move during Back's scroll up (focus still on the card left —
+    /// moved, it fought the scroll): dropped, the scroll going on at its
+    /// own pace (hurried, a page's way in 0.1 s was a jump; held and run
+    /// after it, it came late — an action from the past).
+    override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        guard backToTop, !context.focusHeading.isEmpty else { return super.shouldUpdateFocus(in: context) }
+        return false
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {

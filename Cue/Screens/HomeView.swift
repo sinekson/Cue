@@ -3579,6 +3579,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     override func loadView() {
+        Self.all.add(self)
         let root = UIView()
         let layout = FixedFocusRowsLayout()
         layout.focusedRow = { [weak self] in self?.focusedRow ?? 0 }
@@ -3918,6 +3919,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
                 self.movesInFlight -= 1
                 if !rowChanged, self.movesInFlight == 0 { self.runPendingStep() }
+                if self.movesInFlight == 0 { self.landBack() }
                 self.runHeldSelect()
                 guard !featured, self.focusedRow == rowIndex else { return }
                 self.handOverToBox(rowCell, row: row, rowIndex: rowIndex)
@@ -3955,7 +3957,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
             else { return }
             MainActor.assumeIsolated {
-                guard let self, let opening = self.openingRow,
+                // (Back's scroll drops its presses.)
+                guard let self, !self.backing, let opening = self.openingRow,
                       let from = ctx.previouslyFocusedItem as? FixedFocusPosterCell,
                       from.rowCell?.rowIndex == opening, from.isDescendant(of: self.outer) else { return }
                 if ctx.focusHeading.contains(.left) { self.pendingSteps -= 1 }
@@ -4017,6 +4020,55 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
     /// Completions of moves cut short by a hurry, still to come (ignored).
     private var hurriedMoves = 0
+
+    private static let all = NSHashTable<FixedFocusRowsController>.weakObjects()
+    /// Rows on screen still moving (a page opening now would take its still
+    /// mid-move — Back dissolved into the rows landed: they seemed to scroll).
+    static var moving: Bool { all.allObjects.contains { $0.movesInFlight > 0 && $0.view.window != nil } }
+    /// Every move on screen finished quickly, as for a held press, then
+    /// `run` once the landed rows are drawn.
+    static func land(then run: @escaping () -> Void) {
+        // Back's scroll isn't hurried: its end is waited for.
+        if let rows = all.allObjects.first(where: { $0.backing && $0.view.window != nil }) {
+            rows.afterBack.append { land(then: run) }
+            return
+        }
+        for rows in all.allObjects where rows.movesInFlight > 0 && rows.view.window != nil {
+            if let opening = rows.openingRow, opening == rows.focusedRow {
+                rows.hurryOpening(opening)
+            } else {
+                rows.hurryMoves {}
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + hurryDuration) {
+            CATransaction.flush()
+            DispatchQueue.main.asyncAfter(deadline: .now() + drawnDelay, execute: run)
+        }
+    }
+
+    /// Back's scroll up on screen (a press on the billboard's buttons
+    /// meanwhile is dropped — `DetailActionButton`).
+    static var backScrolling: Bool { all.allObjects.contains { $0.backing && $0.view.window != nil } }
+
+    /// Back's scroll up to the billboard (or the first row) running: it
+    /// goes at its own pace (hurried, a long way in 0.1 s looked wrong);
+    /// a press in its first part is dropped (held and run after it, it
+    /// came late — an action from the past), later it acts as usual.
+    private var backing = false
+    private var backToken = 0
+    /// How long into Back's scroll (0.6 s) presses are dropped: by then
+    /// it's ~95 % of the way.
+    static let backDropTime: Double = 0.35
+    private var afterBack: [() -> Void] = []
+
+    private func landBack() {
+        guard backing else { return }
+        backing = false
+        backToken += 1
+        let waiting = afterBack
+        afterBack = []
+        waiting.forEach { $0() }
+    }
 
     /// One held Left/Right, as a normal step (the box has the row now).
     private func runPendingStep() {
@@ -4117,7 +4169,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 self.outer.collectionViewLayout.invalidateLayout()
                 self.outer.layoutIfNeeded()
                 self.applyPageHeaderPosition()
-            } completion: { _ in }
+            } completion: { _ in
+                if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
+                self.movesInFlight -= 1
+                if self.movesInFlight == 0 { self.landBack() }
+                self.runHeldSelect()
+            }
+            self.movesInFlight += 1
             if fromBillboard { self.liftNextTitle(down: true) }
         }
         move()
@@ -4631,7 +4689,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             requestFocusFar(row: rowIndex)
         case .focusBillboard:
             // (No billboard — a folder's rows: the first row.)
-            requestFocusFar(row: featuredIndex ?? 0)
+            let target = featuredIndex ?? 0
+            if hasFocus, focusedRow != target {
+                backToken += 1
+                let token = backToken
+                backing = true
+                // Presses back once it's nearly there (its tail barely
+                // moves; dropped through it, the button lit but dead).
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.backDropTime) { [weak self] in
+                    guard let self, self.backToken == token else { return }
+                    self.landBack()
+                }
+            }
+            requestFocusFar(row: target)
         case let .page(rowID, index):
             // (After the page's update: its callbacks set the page's state.)
             DispatchQueue.main.async { self.page(rowID: rowID, index: index) }
@@ -4830,6 +4900,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        // BACK'S SCROLL UP: a move meanwhile is dropped — the scroll goes
+        // on at its own pace.
+        if backing, !context.focusHeading.isEmpty { return false }
         // (The rows, not this view: the billboard's overlay is in it too.)
         let previousInside = context.previouslyFocusedView?.isDescendant(of: outer) == true
         // Left/Right DURING the billboard's slide, the way it goes: the title
@@ -4951,6 +5024,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var heldSelectToken = 0
 
     func select(_ item: MetaItem, rowIndex: Int) {
+        // (Back's scroll up running: dropped, as a move.)
+        guard !backing else { return }
         guard settled || ModeSwap.shared.handingOver else {
             heldSelectToken += 1
             let token = heldSelectToken
@@ -7388,6 +7463,7 @@ typealias DetailTransitionOpening = DetailTransition.Opening
 @MainActor
 final class PageFade {
     static let shared = PageFade()
+    private var landing = false
     private let root = UIView()
     /// The page below each open page, as it was at the push (key: the route).
     private var stills: [AnyHashable: UIView] = [:]
@@ -7447,12 +7523,29 @@ final class PageFade {
     /// — nothing moved for ~0.6 s; pushed only after the data's wait —
     /// ~0.8 s; 0.6 s, after two on-time frames.)
     func push(key: AnyHashable, background: AnyView? = nil, _ push: @escaping () -> Void) {
+        // The page below still moving: it lands first (its still is Back's).
+        guard !landing else { return }
+        // (Taken now: it's handed over only during the press's call.)
+        let opening = PagePreparer.shared.takeOpening()
+        if FixedFocusRowsController.moving {
+            landing = true
+            FixedFocusRowsController.land {
+                self.landing = false
+                self.push(key: key, background: background, opening: opening, push)
+            }
+            return
+        }
+        self.push(key: key, background: background, opening: opening, push)
+    }
+
+    private func push(key: AnyHashable, background: AnyView?,
+                      opening: (page: PreparedPage, deadline: ContinuousClock.Instant)?,
+                      _ push: @escaping () -> Void) {
         let instant: () -> Void = {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { push() }
         }
-        let opening = PagePreparer.shared.takeOpening()
         guard !busy, !DetailTransition.shared.busy, let window = Self.window,
               let still = window.snapshotView(afterScreenUpdates: false) else { instant(); return }
         busy = true

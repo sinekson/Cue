@@ -101,9 +101,22 @@ struct ATVSettingsView: View {
                 turning = false
             }
         }
-        .onChange(of: focused) { _, category in
+        .onChange(of: focused) { old, category in
+            let pending = showTask != nil && old != nil && old != shown ? old : nil
             showTask?.cancel()
-            guard let category else { return }
+            showTask = nil
+            guard let category else {
+                // Right before its settings showed: they show now, at once,
+                // focus on their first row (it landed in the old ones).
+                guard let pending else { return }
+                DispatchQueue.main.async {
+                    guard row != nil else { return }
+                    nav.clear()
+                    shown = pending
+                    DispatchQueue.main.async { row = rows.first }
+                }
+                return
+            }
             // (Its own category: a page opened over its settings stays.)
             guard category != shown else { return }
             showTask = Task { @MainActor in

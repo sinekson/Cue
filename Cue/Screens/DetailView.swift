@@ -1573,7 +1573,8 @@ struct DetailActionButton: View {
     var body: some View {
         // (Not when its hold menu just opened: the release still reached
         // the button — Details opened under the menu.)
-        Button(action: { if !held { action() } }) {
+        // (Back's scroll up to these buttons running: dropped.)
+        Button(action: { if !held, !FixedFocusRowsController.backScrolling { action() } }) {
             HStack(spacing: 10) {
                 // A labelled button: its name alone — while it works, a
                 // spinner in its place, the name's width kept (the row never

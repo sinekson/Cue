@@ -122,6 +122,23 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   70 %, the small labels 50 %; the Summary panel's text 85 %.
 - Motion tokens (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s
   (no-bounce springs), fade 0.25 s. One press, one movement.
+- **A press mid-animation**: hurry motion, never waiting. Motion (its
+  end already known — a scroll, a card growing, a focus move, a
+  sidebar's settings about to show): the press finishes it quickly
+  (0.1 s) and then acts, on a settled screen — held, never blocked (a
+  press that does nothing reads as missed). Waiting (a cover over a
+  load — pages, Details): presses are dropped until the page is whole,
+  then focus goes in. Applied place by place, not one mechanism (Core
+  Animation, UIView and SwiftUI each their own). Kept as they are: the
+  billboard's paging (its own rule), hold menus and the source panel (a
+  pick mid-unfold closes from where it is).
+  Except a long journey — Back's scroll up to the billboard, the first
+  row, a grid's top: it goes at its own pace (hurried, a whole screen
+  in 0.1 s looked wrong) and a press in its first part is dropped, then
+  acts as usual once it's nearly there (tried: hurrying it; holding the
+  press and running it on landing — it came late, an action from the
+  past; dropping it to the very end — the button lit but dead through
+  the tail).
 - Animate transforms and opacity only. Never alpha 0 on a focusable list
   (tvOS skips transparent views); hide cell contents or mask instead.
 
@@ -253,7 +270,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   before Details takes its still; a later move drops it; 1 s at most):
   opened mid-move,
   Details took the screen with the box still empty (the grown card has
-  the content until the hand-over). Presses are held, never blocked (a
+  the content until the hand-over). A page opened (`PageFade.push`)
+  while rows on screen move waits for them alike (`FixedFocusRowsController
+  .land` — its still taken mid-scroll, Back dissolved into the rows
+  landed: Details seemed to scroll); moves into a custom or moving-focus
+  row count too. Presses are held, never blocked (a
   press that does nothing reads as missed).
   SwiftUI scroll versions were rejected (main-thread animation, lost targets).
   The focused row stays at its fixed spot near the top (not centred). The
@@ -633,7 +654,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   it first (Details: focus on Play; a source search or the summary panel
   first closes) (its title as it is, the rows keeping their places); on the
   billboard, Back goes to the top bar (Details: out, `DetailTransition`);
-  there, the system's (out of the app). One scroll, the billboard's own (0.6 s), however deep. Rows coming
+  there, the system's (out of the app). One scroll, the billboard's own (0.6 s), however deep. A press
+  in its first 0.35 s (~95 % of the way, `backDropTime`) is dropped —
+  moves, Select on a card or on the billboard's buttons (`backing`,
+  `backScrolling`, `DetailActionButton`); after that it acts at once
+  (the focus is already there, lit). A page pushed meanwhile waits for
+  it (`land`). (A grid's scroll up moves focus only at its end, so its
+  presses are dropped to the end.) Rows coming
   on screen in a move start from their old place, rows leaving go on to
   their new one (`FixedFocusRowsLayout` appearing/disappearing — by
   default they faded in/out in place and ran through each other). Tried
@@ -655,7 +682,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   row). A grid (one-catalog folder, browse pages): below its first line,
   up to the top (focus on the first title); on the first line, out. With
   Movies | Series: from any line, the first too, to the pill; from the
-  pill, out. The
+  pill, out. A press during that scroll up (focus still on the card left
+  — moved, it fought the scroll): dropped, the scroll at its own pace. The
   page's `onExitCommand` decides (`GridBack`): a press the grid took
   itself still reached the navigation, which left.
 - **Back (Search)**: from the scopes or the row, Back goes to the keyboard
@@ -708,7 +736,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   settings: Nuvio's in its header, "Connected." starting a key's
   intro line; tried: the email and "Connected" on the left), the focused
   category's settings the rest, following focus (0.15 s after it settles,
-  a 0.25 s fade). Right or Select goes in (Select: the first row —
+  a 0.25 s fade; Right before they show: they show at once, focus on
+  their first row — it landed in the old ones). Right or Select goes in (Select: the first row —
   `SettingsRowsKey`, `settingsRowFocus`); Left or Back back to the
   category, which keeps the flat "current" fill while focus is beside it;
   Back on a category: the top bar. Pages a row opens (Watched, Rows,
@@ -1072,8 +1101,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Collection (films; built — above More Like This), Cast & Crew (built),
   About (built).
   Styles decided one row at a time.
-- Presses during animations: held until they land — Home's rows done;
-  the rest as glitches are found. Flat vs glass consistency pass.
+- Presses mid-animation (the rule under Design rules): rows, pages,
+  Settings' sidebar done; the rest as glitches are found. Flat vs glass
+  consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - Trailers: the full-screen trailer's controls to move to the playback
