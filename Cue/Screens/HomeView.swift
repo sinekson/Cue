@@ -3842,11 +3842,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // `preferredFocusEnvironments`).
             // (To these rows, not the window: from there, Home's top bar
             // was the default.)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let system = UIFocusSystem.focusSystem(for: self.view) else { return }
-                system.requestFocusUpdate(to: self)
-                system.updateFocusIfNeeded()
-            }
+            focusBillboardOutside()
         }
         // This Left/Right's cut-out (`FixedFocusRowCell.cutOut`), gone once
         // it settles unless a later one took over.
@@ -4874,6 +4870,22 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         FixedFocusTint.prepare([index + 1, index - 1, index + 2]
             .filter { row.items.indices.contains($0) }
             .compactMap { row.items[$0].background ?? row.items[$0].poster })
+    }
+
+    /// Focus to the billboard's buttons (`preferredFocusEnvironments`).
+    /// The first time after launch the request finds nothing to focus and
+    /// focus stays on the hidden card — unlit, though Select still acted:
+    /// asked again a moment later (50 ms), it takes. A few tries at most.
+    private func focusBillboardOutside(tries: Int = 4, after delay: TimeInterval = 0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.billboardFocusOutside,
+                  let system = UIFocusSystem.focusSystem(for: self.view) else { return }
+            system.requestFocusUpdate(to: self)
+            system.updateFocusIfNeeded()
+            if tries > 1, (system.focusedItem as? UIView)?.isDescendant(of: self.outer) == true {
+                self.focusBillboardOutside(tries: tries - 1, after: 0.05)
+            }
+        }
     }
 
     /// Focus to one view in the rows, through this controller's preferred
