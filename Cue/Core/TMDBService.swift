@@ -1993,20 +1993,6 @@ enum TMDBService {
 
     // MARK: Browse pages (genre, tag, studio, network, person)
 
-    /// How a browse page orders its titles.
-    enum BrowseSort: String, CaseIterable, Sendable {
-        case popular, topRated, newest, alphabetical
-
-        var label: String {
-            switch self {
-            case .popular: return "Popular"
-            case .topRated: return "Top rated"
-            case .newest: return "Newest"
-            case .alphabetical: return "A–Z"
-            }
-        }
-    }
-
     /// One page of a browse list (twenty titles): the total TMDB knows of,
     /// and whether more follow.
     struct BrowsePage: Sendable {
@@ -2018,28 +2004,13 @@ enum TMDBService {
     private static let browsePageSize = 20
 
     /// A page of titles by a discover filter (`with_genres`, `with_keywords`,
-    /// `with_companies`, `with_networks`), movies or shows, in `sort`'s order.
-    static func browse(filter: [String: String], isMovie: Bool, sort: BrowseSort, page: Int,
+    /// `with_companies`, `with_networks`), movies or shows, the best known
+    /// first: by votes — lasting fame (TMDB's popularity is mostly this
+    /// week's; it can't sort by a blend), as `studioBestKnown`.
+    static func browse(filter: [String: String], isMovie: Bool, page: Int,
                        language: String = preferredLanguage) async -> BrowsePage {
         var query = filter
-        let today = Date().formatted(.iso8601.year().month().day())
-        let dateKey = isMovie ? "primary_release_date" : "first_air_date"
-        switch sort {
-        case .popular:
-            query["sort_by"] = "popularity.desc"
-        case .topRated:
-            // (A few votes on a hidden gem is no ranking.)
-            query["sort_by"] = "vote_average.desc"
-            query["vote_count.gte"] = "200"
-        case .newest:
-            query["sort_by"] = "\(dateKey).desc"
-            query["\(dateKey).lte"] = today
-            query["vote_count.gte"] = "10"
-        case .alphabetical:
-            // (Else it opens on "!", "#" and digits: tiny unknown entries.)
-            query["sort_by"] = isMovie ? "title.asc" : "name.asc"
-            query["vote_count.gte"] = "50"
-        }
+        query["sort_by"] = "vote_count.desc"
         query["page"] = String(page)
         let result = await discoverPage(path: isMovie ? "/discover/movie" : "/discover/tv", with: query,
                                         isMovie: isMovie, language: language)
@@ -2193,30 +2164,20 @@ enum TMDBService {
     /// played (voice roles too) or directed, by votes and popularity (log
     /// scale) — Search's Top Results after the person.
     static func bestKnown(_ credits: PersonCredits, limit: Int) async -> [MetaItem] {
-        let ranked = credits.entries.sorted {
-            log1p(Double($0.votes)) + log1p($0.popularity) > log1p(Double($1.votes)) + log1p($1.popularity)
-        }
+        let ranked = credits.entries.sorted { fame($0) > fame($1) }
         return Array(await mapToMetaItems(ranked.prefix(limit * 2).map(\.raw))
             .filter { $0.id.hasPrefix("tt") }.prefix(limit))
     }
 
-    /// A page of a person's movies or shows in `sort`'s order.
-    static func credits(_ credits: PersonCredits, isMovie: Bool, sort: BrowseSort, page: Int) async -> BrowsePage {
-        let today = Date().formatted(.iso8601.year().month().day())
-        var list = credits.entries.filter { $0.raw.isMovie == isMovie }
+    /// A credit's fame: its votes (lasting) and popularity (now).
+    private static func fame(_ entry: PersonCredits.Entry) -> Double {
+        log1p(Double(entry.votes)) + log1p(entry.popularity)
+    }
+
+    /// A page of a person's movies or shows, the best known first (`fame`).
+    static func credits(_ credits: PersonCredits, isMovie: Bool, page: Int) async -> BrowsePage {
+        let list = credits.entries.filter { $0.raw.isMovie == isMovie }.sorted { fame($0) > fame($1) }
         let total = list.count
-        switch sort {
-        case .popular:
-            list.sort { $0.popularity > $1.popularity }
-        case .topRated:
-            list = list.filter { $0.votes >= 50 }
-            list.sort { ($0.raw.rating ?? 0) > ($1.raw.rating ?? 0) }
-        case .newest:
-            list = list.filter { !$0.date.isEmpty && $0.date <= today }
-            list.sort { $0.date > $1.date }
-        case .alphabetical:
-            list.sort { $0.raw.name.localizedStandardCompare($1.raw.name) == .orderedAscending }
-        }
         let start = (page - 1) * browsePageSize
         guard start < list.count else { return BrowsePage(items: [], total: total, hasMore: false) }
         let end = min(start + browsePageSize, list.count)

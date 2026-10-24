@@ -444,23 +444,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   studio/network its logo on a light plate. Movies | Series in Search's
   scope pill (`ScopePill`; only where both have titles — studios and
   tags checked at load; none otherwise, the facts line says which ("128
-  movies"); a genre maps to the other side's id) — moving along it switches — and one sort button
-  (Popular / Top rated / Newest / A–Z; all but Popular also filter:
-  votes ≥ 200 / out, ≥ 10 / ≥ 50) as a single button beside it — no
-  pill of its own (`ScopePillButton`; tried: alone in its own pill, too
-  like the scopes), as the Photos app's bar on iOS: a circle the pill's
-  height and fill (no edge), only the sort icon, muted (60 %, a scope not
-  chosen); focused, white (tried: icon + label + chevron; a 60 pt
-  capsule, a focused scope's; the content 85 %), at the grid's right
-  edge; a press opens its list under it in Cue's glass menu panel
-  (`HoldMenu.openDropdown`), the current one checked; TMDB's A–Z order
-  kept. (Tried: the season buttons' glass pills; the system's `Menu`,
-  growing out of the button.)
+  movies"); a genre maps to the other side's id) — moving along it switches. No sort: one order,
+  the best known first — a person's by votes + popularity (`fame`, as
+  Search's `bestKnown`), discover pages by votes (TMDB can't sort by a
+  blend; its popularity is mostly this week's — it felt random). (Tried
+  and dropped: a sort button beside the pill — Popular / Top rated /
+  Newest / A–Z, a round `ScopePillButton`, its list in the glass
+  dropdown: with the pill switching on focus it was only reached through
+  Series, and nothing else in the app sorts.)
   Then the folder pages' grid itself (`FolderPosterGrid`, hosting Home's
   `FixedFocusDestinationCell`; six across). The header and its controls
   are one view in the grid's top inset and scroll with it (a header *cell*
   is recycled once scrolled off, its controls with it). Its height is fixed
-  from the first frame (room for the controls kept). We choose where focus
+  from the first frame (room for the controls kept while loading; none
+  without the pill). We choose where focus
   scrolls (`scrollViewWillEndDragging`): first line or controls → the page
   at its top, header whole; any other line only when it would come within
   60 pt of the screen's edge, then just enough to show it. Six posters to a

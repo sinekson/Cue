@@ -689,37 +689,6 @@ struct ScopePillSurface: View {
     }
 }
 
-/// A single button beside the scope pill (the browse pages' sort), as the
-/// Photos app's bar on iOS: a circle the pill's height, its fill (no edge),
-/// the icon muted as a scope not chosen; focused, white, the icon dark.
-struct ScopePillButton: View {
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { Face(icon: icon) }
-            .buttonStyle(PlainCardButtonStyle())
-    }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var focused
-        let icon: String
-        private typealias Pill = ScopePill<Int>
-
-        var body: some View {
-            Image(systemName: icon)
-                .font(.system(size: Pill.textSize, weight: .semibold))
-                .frame(width: Pill.height, height: Pill.height)
-                .foregroundStyle(GlassPill.contentColor(current: false, onFocusHighlight: focused))
-                .background {
-                    Circle().fill(focused ? FlatControl.focus : FlatControl.rest)
-                        .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: 12, y: 8)
-                }
-                .animation(GlassPill.focusChange, value: focused)
-        }
-    }
-}
-
 /// THE ROW: Saved for Later's cards (`FixedFocusDestinationCell` — moving
 /// focus, the focused card grown, name and year under each), one shape for
 /// every kind — 2:3 like a poster: a title's poster, a person's portrait,

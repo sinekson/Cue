@@ -22,12 +22,11 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     @Published private(set) var loadedOnce = false
     var isReady: Bool { loadedOnce }
     /// The grid shows placeholders: before the first titles, and while a
-    /// Movies | Series or sort change loads.
+    /// Movies | Series change loads.
     var showsPlaceholder: Bool { !loadedOnce || isLoading }
     /// Movies (true) and series (false) this page has something for.
     @Published private(set) var types: [Bool] = []
     @Published private(set) var isMovie: Bool
-    @Published private(set) var sort: TMDBService.BrowseSort = .popular
     @Published private(set) var person: TMDBService.PersonProfile?
     @Published private(set) var brand: TMDBService.BrandProfile?
 
@@ -119,12 +118,6 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         Task { await reload() }
     }
 
-    func choose(sort newValue: TMDBService.BrowseSort) {
-        guard newValue != sort else { return }
-        sort = newValue
-        Task { await reload() }
-    }
-
     private func reload() async {
         generation += 1
         let mine = generation
@@ -181,7 +174,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         let filter: [String: String]
         switch source {
         case .person:
-            return await TMDBService.credits(credits, isMovie: isMovie, sort: sort, page: page)
+            return await TMDBService.credits(credits, isMovie: isMovie, page: page)
         case let .genre(id, name, from):
             guard let genre = Self.genreID(id: id, name: name, from: from, to: isMovie) else {
                 return TMDBService.BrowsePage(items: [], total: 0, hasMore: false)
@@ -191,7 +184,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         case let .company(id): filter = ["with_companies": String(id)]
         case let .network(id): filter = ["with_networks": String(id)]
         }
-        return await TMDBService.browse(filter: filter, isMovie: isMovie, sort: sort, page: page)
+        return await TMDBService.browse(filter: filter, isMovie: isMovie, page: page)
     }
 
     /// TMDB numbers a genre differently for movies and for shows, and a few
@@ -269,7 +262,7 @@ struct TMDBBrowseView: View {
         self.backdrop = backdrop
     }
 
-    private var showsControls: Bool { !viewModel.types.isEmpty }
+    private var showsControls: Bool { viewModel.types.count > 1 }
 
     /// Titles open Details through `DetailTransition`.
     private var openDetails: ((MetaItem) -> Void)? {
@@ -282,11 +275,11 @@ struct TMDBBrowseView: View {
         ZStack(alignment: .topLeading) {
             DetailsBackdropBackground(url: backdrop)
             // Until the titles are in (the first, or after a Movies | Series
-            // or sort change): two lines of empty posters, out of focus's way
+            // change): two lines of empty posters, out of focus's way
             // (`FolderPosterGrid.placeholder`).
             FolderPosterGrid(
                 header: AnyView(BrowseHeader(viewModel: viewModel)),
-                headerHeight: BrowseHeader.height(source: viewModel.source),
+                headerHeight: BrowseHeader.height(viewModel),
                 items: viewModel.showsPlaceholder ? FolderPosterGrid.placeholderItems : viewModel.items,
                 subtitles: years,
                 onSelect: onSelect, onOpenDetails: openDetails,
@@ -299,7 +292,7 @@ struct TMDBBrowseView: View {
                 CueEmptyState(icon: "film", title: viewModel.title, message: "No titles available.",
                               holdsFocus: !showsControls)
                     .frame(width: 1920, height: 420)
-                    .padding(.top, BrowseHeader.height(source: viewModel.source) + 60)
+                    .padding(.top, BrowseHeader.height(viewModel) + 60)
             }
         }
         .task { await viewModel.start() }
@@ -331,9 +324,11 @@ private struct BrowseHeader: View {
     private static let controlsGap: CGFloat = 36
     private static let portrait = CGSize(width: 200, height: 300)
 
-    /// The controls' room is kept from the first frame (they come with the
-    /// first page), so the header's height never changes.
-    static func height(source: TMDBBrowseViewModel.Source) -> CGFloat {
+    /// The controls' room is kept while the page loads (a person's or a
+    /// studio's sides are known only then — still under the page's cover);
+    /// without both sides, no controls and no room for them.
+    static func height(_ viewModel: TMDBBrowseViewModel) -> CGFloat {
+        let source = viewModel.source
         let text = kind + gap + name + gap + facts
         var content = text
         switch source {
@@ -341,6 +336,7 @@ private struct BrowseHeader: View {
         case .company, .network: content = max(FixedFocusMetrics.logoCard.height, text)
         default: break
         }
+        guard !viewModel.loadedOnce || viewModel.types.count > 1 else { return content + controlsGap - 12 }
         // Below the controls as much room as above them (with the grid's 12).
         return content + controlsGap + ScopePill<Bool>.height + controlsGap - 12
     }
@@ -349,7 +345,7 @@ private struct BrowseHeader: View {
     /// the picture, the lines of text, the controls (the page swaps in
     /// whole).
     private var placeholder: Bool { !viewModel.loadedOnce }
-    private var showsControls: Bool { placeholder || !viewModel.types.isEmpty }
+    private var showsControls: Bool { placeholder || viewModel.types.count > 1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -508,22 +504,13 @@ private struct BrowseHeader: View {
 
     // MARK: Controls
 
+    /// Search's scope pill: moving along it switches. (Loading: its shape,
+    /// both scopes — a person's are known only then.)
     private var controls: some View {
-        HStack(spacing: 16) {
-            // Search's scope pill: moving along it switches. (Loading: its
-            // shape, both scopes — a person's are known only then.)
-            if placeholder || viewModel.types.count > 1 {
-                ScopePill(scopes: [true, false], label: { $0 ? "Movies" : "Series" },
-                          current: viewModel.isMovie) { viewModel.choose(isMovie: $0) }
-                    .placeholderShape(placeholder, Capsule())
-            }
-            // The order, apart from the filters: at the grid's right edge.
-            Spacer(minLength: 32)
-            BrowseSortButton(sort: viewModel.sort) { viewModel.choose(sort: $0) }
-                .placeholderShape(placeholder, Circle())
-        }
-        .padding(.trailing, FixedFocusMetrics.inset)
-        .focusSection()
+        ScopePill(scopes: [true, false], label: { $0 ? "Movies" : "Series" },
+                  current: viewModel.isMovie) { viewModel.choose(isMovie: $0) }
+            .placeholderShape(placeholder, Capsule())
+            .focusSection()
     }
 }
 
@@ -554,28 +541,3 @@ private struct CardRim: View {
     }
 }
 
-/// The order, in one round icon button beside the scope pill: its list opens
-/// under it (Cue's glass panel, as the hold menus), the current one checked.
-private struct BrowseSortButton: View {
-    let sort: TMDBService.BrowseSort
-    let onChoose: (TMDBService.BrowseSort) -> Void
-    @State private var frame = CGRect.zero
-
-    var body: some View {
-        ScopePillButton(icon: "arrow.up.arrow.down") { show() }
-            .background {
-                GeometryReader { geometry in
-                    Color.clear
-                        .onAppear { frame = geometry.frame(in: .global) }
-                        .onChange(of: geometry.frame(in: .global)) { _, rect in frame = rect }
-                }
-            }
-    }
-
-    private func show() {
-        let entries = TMDBService.BrowseSort.allCases.map { option in
-            MenuEntry(title: option.label, icon: "", checked: option == sort) { onChoose(option) }
-        }
-        HoldMenu.shared.openDropdown(entries, below: frame)
-    }
-}
