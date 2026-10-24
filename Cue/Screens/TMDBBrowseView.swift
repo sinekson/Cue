@@ -351,6 +351,8 @@ private struct BrowseHeader: View {
     private static let gap: CGFloat = 12
     private static let controlsGap: CGFloat = 36
     private static let portrait = CGSize(width: 200, height: 300)
+    /// A studio's or network's logo plate: a poster's width, as the grid under it.
+    private static let logoPlate = CGSize(width: FixedFocusMetrics.posterCard.width, height: 140)
 
     /// The controls' room is kept while the page loads (a person's or a
     /// studio's sides are known only then — still under the page's cover);
@@ -361,7 +363,7 @@ private struct BrowseHeader: View {
         var content = text
         switch source {
         case .person: content = max(portrait.height, text + 8 + bio)
-        case .company, .network: content = max(FixedFocusMetrics.logoCard.height, text)
+        case .company, .network: content = max(Self.logoPlate.height, text)
         default: break
         }
         guard !viewModel.loadedOnce || viewModel.types.count > 1 else { return content + controlsGap - 12 }
@@ -456,7 +458,7 @@ private struct BrowseHeader: View {
                 .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
         case .company where placeholder, .network where placeholder:
             PlaceholderShimmer()
-                .frame(width: FixedFocusMetrics.logoCard.width, height: FixedFocusMetrics.logoCard.height)
+                .frame(width: Self.logoPlate.width, height: Self.logoPlate.height)
                 .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
         case .person:
             ZStack {
@@ -476,7 +478,7 @@ private struct BrowseHeader: View {
             .overlay { CardRim() }
         case .company, .network:
             if let url = viewModel.brand?.logoURL {
-                let size = FixedFocusMetrics.logoCard
+                let size = Self.logoPlate
                 RemoteImage(url: url, contentMode: .fit, maxDimension: size.width)
                     .padding(24)
                     .frame(width: size.width, height: size.height)

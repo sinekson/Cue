@@ -3192,19 +3192,28 @@ enum FixedFocusMetrics {
     static let portraitCard = posters(across: 7)
     /// 2:3 cards, `count` across the content's width with the rows' gaps.
     private static func posters(across count: Int) -> CGSize {
+        let width = cardWidth(across: count)
+        return CGSize(width: width, height: (width * 1.5).rounded())
+    }
+    /// A moving-focus card's width, `count` across the content's width
+    /// with the rows' gaps.
+    private static func cardWidth(across count: Int) -> CGFloat {
         let n = CGFloat(count)
         var width = (bannerWidth / n).rounded(.down)
         while width > 100, n * width + (n - 1) * (gap + width * movingFocusLift / 2).rounded() > bannerWidth {
             width -= 1
         }
-        return CGSize(width: width, height: (width * 1.5).rounded())
+        return width
     }
     /// A short custom row in focus ends this far above the screen's bottom
     /// (see `FixedFocusCustomRow.contentHeight`).
     static let customBottomGap: CGFloat = 60
-    /// A logo row's cards (Details' network & studios): the portrait
-    /// posters' width, so they line up with the rows above.
-    static let logoCard = CGSize(width: posterCard.width, height: 140)
+    /// A logo row's cards (Details' network & studios): 16:9, five across —
+    /// room for wide logos (a poster's width, 140 tall, was a thin strip).
+    static let logoCard: CGSize = {
+        let width = cardWidth(across: 5)
+        return CGSize(width: width, height: (width * 9 / 16).rounded())
+    }()
     /// …collections: landscape tiles (doors).
     static let destinationTileHeight: CGFloat = 300
     /// Continue Watching's cards: the landscape tiles' size (more of them

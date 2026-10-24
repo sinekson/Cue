@@ -650,8 +650,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Cast & Crew's portraits): ONE size, six across the content's width
   with the rows' gaps (`FixedFocusMetrics.posterCard`, 265 × 398). The
   fixed rows are that tall (`Spotlight.rowHeight` = its height; was 420),
-  the box 16:9 at it (~707 × 398), growing the same 4 %. The studios' logo plates
-  the same width (265 × 140, `logoCard`), lined up with them. (Tried: Saved for Later
+  the box 16:9 at it (~707 × 398), growing the same 4 %. Details' studio and
+  network logo plates 16:9, five across (~320 × 180, `logoCard`; tried:
+  the posters' width, 265 × 140 — a thin strip; four across — too
+  large; logos white on dark cards — looked like placeholders, TMDB's
+  logos are the brands' own, often dark); the browse page header's
+  plate stays 265 × 140. (Tried: Saved for Later
   at Home's row height, Details' rows smaller, 330 tall.)
 - **Card corners**: 22 pt, continuous (`Spotlight.cornerRadius`; the Apple
   TV app's size). (Tried: 16; 18 continuous; 22 circular, as measured in
