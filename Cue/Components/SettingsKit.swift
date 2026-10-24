@@ -291,6 +291,8 @@ struct SettingsRowLabel: View {
     var description: String? = nil
     /// Before the name (a profile's avatar).
     var leading: AnyView? = nil
+    /// In the value's place (the ratings' order: their chips).
+    var trailing: AnyView? = nil
 
     private var describes: Bool {
         guard let description, !description.isEmpty else { return false }
@@ -314,6 +316,7 @@ struct SettingsRowLabel: View {
                                                    : SettingsMetrics.secondaryText)
                         .lineLimit(1)
                 }
+                trailing
                 if checked {
                     Image(systemName: "checkmark")
                         .font(.system(size: 32, weight: .semibold))
@@ -531,11 +534,13 @@ struct SettingsLinkRow<Destination: View>: View {
     let title: String
     var description: String? = nil
     var value: String? = nil
+    var trailing: AnyView? = nil
     @ViewBuilder let destination: Destination
 
     var body: some View {
         Button { nav.push(destination) } label: {
-            SettingsRowLabel(title: title, value: value, chevron: true, description: description)
+            SettingsRowLabel(title: title, value: value, chevron: true, description: description,
+                             trailing: trailing)
         }
         .settingsRow(id: title)
     }

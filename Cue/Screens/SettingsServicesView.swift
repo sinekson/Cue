@@ -178,9 +178,12 @@ struct MDBListServicePage: View {
                 options: RatingsPlace.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                 selection: mdblist.settings.place.rawValue
             ) { mdblist.settings.place = RatingsPlace(rawValue: $0) ?? .everywhere }
-            SettingsLinkRow(title: "Order",
-                            value: mdblist.settings.shownProviders.prefix(FixedFocusBillboardText.ratingsShown)
-                                .map(\.label).joined(separator: ", ")) {
+            // The first three as their chips, without scores.
+            SettingsLinkRow(title: "Order", trailing: AnyView(HStack(spacing: 10) {
+                ForEach(Array(mdblist.settings.shownProviders.prefix(FixedFocusBillboardText.ratingsShown))) {
+                    RatingChip(provider: $0)
+                }
+            })) {
                 RatingOrderPage()
             }
             // How many of them under Home's fixed box.

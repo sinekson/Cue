@@ -1959,36 +1959,7 @@ struct MDBListRatingsRow: View {
     }
 
     private func chip(_ entry: MDBListRatingEntry) -> some View {
-        let style = entry.provider.badgeStyle
-        let brand = style.fill
-        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
-        return HStack(spacing: 6) {
-            if let stacked = entry.provider.stackedLabel {
-                // Two small lines in the height of one: a long name stays
-                // readable without widening the chip.
-                VStack(alignment: .leading, spacing: 0) {
-                    stacked.top
-                    stacked.bottom
-                }
-                .font(.system(size: 9, weight: .heavy))
-                .tracking(0.4)
-            } else {
-                Text(entry.provider.label)
-                    .font(.system(size: 18, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(style.name.map(AnyShapeStyle.init) ?? brand)
-            }
-            Text(entry.text)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.85))
-        }
-        // (One height for every chip, stacked name or not.)
-        .frame(height: 22)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        // The source's own colour, solid (see-through, a bright picture
-        // tinted it).
-        .overlay { shape.stroke(brand, lineWidth: 1.75) }
+        RatingChip(provider: entry.provider, score: entry.text)
     }
 
     var body: some View {
@@ -2004,39 +1975,13 @@ struct MDBListRatingsRow: View {
     }
 }
 
-/// A rating source's badge colours, after its own branding: the outline
-/// (and the name, unless it has its own).
+/// A rating source's chip outline, after its own branding (its name is
+/// its mark — `RatingMark`).
 struct RatingBadgeStyle {
     let fill: AnyShapeStyle
-    var name: Color? = nil
 }
 
 extension MDBListProvider {
-    /// Rotten Tomatoes' two scores, named in two small lines on a chip
-    /// (their short labels — "RT", "RT🍿" — don't sit well next to the
-    /// others), each recreated from its own COLOURS (no drawings): the
-    /// tomato's red over its leaf green; the popcorn bucket's white over its
-    /// red — one colour a line (tried: red over white; stripes across the word under a
-    /// yellow line, and red and white letter by letter — both unreadable at
-    /// this size).
-    var stackedLabel: (top: Text, bottom: Text)? {
-        func rgb(_ hex: UInt32) -> Color {
-            Color(red: Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255)
-        }
-        switch self {
-        case .tomatoes:
-            return (Text("ROTTEN").foregroundStyle(rgb(0xFA320A)),
-                    Text("TOMATOES").foregroundStyle(rgb(0x3FB34F)))
-        case .audience:
-            // (The bucket's red is the tomato's.)
-            return (Text("POPCORN").foregroundStyle(Color.white.opacity(0.85)),
-                    Text("METER").foregroundStyle(rgb(0xFA320A)))
-        default: return nil
-        }
-    }
-
     var badgeStyle: RatingBadgeStyle {
         func rgb(_ hex: UInt32) -> Color {
             Color(red: Double((hex >> 16) & 0xFF) / 255,
@@ -2054,25 +1999,191 @@ extension MDBListProvider {
                 colors: [rgb(0x90CEA1), rgb(0x01B4E4)],
                 startPoint: .leading, endPoint: .trailing)))
         case .letterboxd:
-            // Letterboxd's orange → green → blue.
-            return .init(fill: AnyShapeStyle(LinearGradient(
-                colors: [rgb(0xFF8000), rgb(0x00E054), rgb(0x40BCF4)],
-                startPoint: .leading, endPoint: .trailing)))
+            // Its middle dot's green.
+            return .init(fill: AnyShapeStyle(rgb(0x00E054)))
         case .tomatoes:
             return .init(fill: AnyShapeStyle(rgb(0xFA320A)))
         case .audience:
             // The popcorn's yellow (its icon's; was #FFB600, too orange).
             return .init(fill: AnyShapeStyle(rgb(0xFED500)))
         case .myanimelist:
-            // MyAnimeList's blue, lightened to read on dark pictures (its
-            // own #2E51A2 nearly vanished).
-            return .init(fill: AnyShapeStyle(rgb(0x6E8FE0)))
+            // MyAnimeList's blue (#2E51A2) lightened to read as an outline
+            // on dark pictures, still dark enough under the plate's white
+            // letters (tried: #6E8FE0 — the outline, the plate its own blue).
+            return .init(fill: AnyShapeStyle(rgb(0x4F72CC)))
         case .metacritic:
-            // As its logo: white on black in a yellow ring — the name white
-            // (85 %, as the score), the outline yellow (tried: its score
-            // scale, green 61+ / yellow / red — not its look).
-            return .init(fill: AnyShapeStyle(rgb(0xFFCC34)), name: Color.white.opacity(0.85))
+            // Its ring's yellow (tried: its score scale, green 61+ / yellow /
+            // red — not its look).
+            return .init(fill: AnyShapeStyle(rgb(0xFFCC34)))
         }
+    }
+}
+
+/// One rating chip: the source's mark, then its score — without a score
+/// the mark alone (Settings' Order row, a preview of the order).
+struct RatingChip: View {
+    let provider: MDBListProvider
+    var score: String? = nil
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RatingMark(provider: provider)
+            if let score {
+                Text(score)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+            }
+        }
+        // (One height for every chip.)
+        .frame(height: 22)
+        // The mark as far from the left edge as from the top and bottom.
+        .padding(.leading, RatingMark.gap)
+        .padding(.trailing, score == nil ? RatingMark.gap : 10)
+        .padding(.vertical, 4)
+        // The source's own colour, solid, as its mark's (see-through, a
+        // bright picture tinted it; tried: white, as the status badge's).
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(provider.badgeStyle.fill, lineWidth: 1.75)
+        }
+    }
+}
+
+/// A rating source's name on its chip: its logo cut down to a shape or
+/// two, about 14 pt, in its own colours — a wordmark on its plate, the
+/// others their emblem (tried: the names in their colours — "LBXD", "RT",
+/// "MC" meant little; Rotten Tomatoes' two in two small lines).
+private struct RatingMark: View {
+    let provider: MDBListProvider
+    /// Every mark's height: the chip's inner height less the same gap at
+    /// the chip's left as above and below (`gap`).
+    static let size: CGFloat = 18
+    static let gap: CGFloat = (22 - size) / 2 + 4   // the chip's 22 + 4 above and below
+    /// The emblems are drawn on a 14 pt grid, scaled up to `size`.
+    private static func grid(_ frame: CGSize, _ context: inout GraphicsContext) -> CGSize {
+        let k = frame.height / 14
+        context.scaleBy(x: k, y: k)
+        return CGSize(width: frame.width / k, height: 14)
+    }
+
+    private static func rgb(_ hex: UInt32) -> Color {
+        Color(red: Double((hex >> 16) & 0xFF) / 255,
+              green: Double((hex >> 8) & 0xFF) / 255,
+              blue: Double(hex & 0xFF) / 255)
+    }
+    private static let tomatoRed = rgb(0xFA320A)
+
+    var body: some View {
+        switch provider {
+        case .imdb: plate("IMDb", text: .black)
+        case .tmdb: plate("TMDB", text: Self.rgb(0x0D253F))
+        case .myanimelist: plate("MAL", text: .white)
+        case .trakt: trakt
+        case .letterboxd: dots
+        case .tomatoes: tomato
+        case .audience: bucket
+        case .metacritic: metacritic
+        }
+    }
+
+    /// The wordmark, dark on its colour (MAL's white on its blue).
+    /// The plate is the chip's outline colour (`badgeStyle`), so they match.
+    private func plate(_ name: String, text: Color) -> some View {
+        Text(name)
+            .font(.system(size: 14, weight: .heavy))
+            .foregroundStyle(text)
+            .padding(.horizontal, 5)
+            .frame(height: Self.size)
+            .background(provider.badgeStyle.fill, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    /// Trakt: its red disc, a white ring inside.
+    private var trakt: some View {
+        Canvas { context, frame in
+            var context = context
+            let size = Self.grid(frame, &context)
+            let disc = CGRect(origin: .zero, size: size)
+            context.fill(Path(ellipseIn: disc), with: .color(Self.rgb(0xED1C24)))
+            context.stroke(Path(ellipseIn: disc.insetBy(dx: 3.25, dy: 3.25)),
+                           with: .color(.white), lineWidth: 1.5)
+        }
+        .frame(width: Self.size, height: Self.size)
+    }
+
+    /// Letterboxd: its three dots, orange, green, blue, overlapping in its
+    /// dark slate.
+    private var dots: some View {
+        let colours = [Self.rgb(0xFF8000), Self.rgb(0x00E054), Self.rgb(0x40BCF4)]
+        let diameter: CGFloat = 16, step: CGFloat = 14   // the logo's ~88 %
+        return Canvas { context, _ in
+            let dots = (0..<3).map { i in
+                Path(ellipseIn: CGRect(x: CGFloat(i) * step, y: 0, width: diameter, height: diameter))
+            }
+            for (dot, colour) in zip(dots, colours) { context.fill(dot, with: .color(colour)) }
+            for i in 0..<2 {
+                context.fill(dots[i].intersection(dots[i + 1]), with: .color(Self.rgb(0x556678)))
+            }
+        }
+        .frame(width: 2 * step + diameter, height: diameter)
+    }
+
+    /// Rotten Tomatoes: the tomato, a green leaf on top.
+    private var tomato: some View {
+        Canvas { context, frame in
+            var context = context
+            let size = Self.grid(frame, &context)
+            context.fill(Path(ellipseIn: CGRect(x: 0, y: 1.5, width: size.width, height: size.height - 1.5)),
+                         with: .color(Self.tomatoRed))
+            var leaf = Path()
+            leaf.move(to: CGPoint(x: size.width / 2 - 4.5, y: 1.5))
+            leaf.addQuadCurve(to: CGPoint(x: size.width / 2 + 4.5, y: 1.5),
+                              control: CGPoint(x: size.width / 2, y: -1.5))
+            leaf.addQuadCurve(to: CGPoint(x: size.width / 2 - 4.5, y: 1.5),
+                              control: CGPoint(x: size.width / 2, y: 5.5))
+            context.fill(leaf, with: .color(Self.rgb(0x3FB34F)))
+        }
+        .frame(width: Self.size, height: Self.size)
+    }
+
+    /// Popcornmeter: the bucket, red and white stripes, the popcorn's
+    /// yellow over its rim.
+    private var bucket: some View {
+        Canvas { context, frame in
+            var context = context
+            let size = Self.grid(frame, &context)
+            let w = size.width, h = size.height
+            var pail = Path()
+            pail.move(to: CGPoint(x: 0, y: 5.5))
+            pail.addLine(to: CGPoint(x: w, y: 5.5))
+            pail.addLine(to: CGPoint(x: w - 2, y: h))
+            pail.addLine(to: CGPoint(x: 2, y: h))
+            pail.closeSubpath()
+            context.fill(pail, with: .color(Color.white.opacity(0.9)))
+            var stripes = context
+            stripes.clip(to: pail)
+            for x in stride(from: CGFloat(0), to: w, by: 4) {
+                stripes.fill(Path(CGRect(x: x, y: 0, width: 2, height: h)), with: .color(Self.tomatoRed))
+            }
+            for (x, y, d) in [(0.0, 2.0, 5.0), (3.5, 0.0, 5.5), (7.0, 2.0, 5.0)] as [(CGFloat, CGFloat, CGFloat)] {
+                context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: d, height: d)),
+                             with: .color(Self.rgb(0xFED500)))
+            }
+        }
+        .frame(width: 12 * Self.size / 14, height: Self.size)
+    }
+
+    /// Metacritic: its white "m" on black in a yellow ring.
+    private var metacritic: some View {
+        Canvas { context, frame in
+            var context = context
+            let size = Self.grid(frame, &context)
+            let disc = CGRect(origin: .zero, size: size)
+            context.fill(Path(ellipseIn: disc), with: .color(Self.rgb(0xFFCC34)))
+            context.fill(Path(ellipseIn: disc.insetBy(dx: 1.75, dy: 1.75)), with: .color(.black))
+            context.draw(Text("m").font(.system(size: 10, weight: .heavy)).foregroundColor(.white),
+                         at: CGPoint(x: size.width / 2, y: size.height / 2 - 0.5))
+        }
+        .frame(width: Self.size, height: Self.size)
     }
 }
 

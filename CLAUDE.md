@@ -345,7 +345,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   640 × 190 was too large), trimmed of their
   transparent edges first (they start at the text's edge). Chips: solid outlines, 1.75 pt (see-through
   ones took the picture's colour): the status badge off-white (white
-  85 %), a rating its source's colour, like its name. Facts and tagline 26 pt (`textSize`); facts medium, 70 %
+  85 %), a rating its source's colour (`RatingChip`). A rating's name is
+  its mark (`RatingMark`, 18 pt, as far from the chip's left edge as from
+  its top and bottom): IMDb, TMDB, MAL their wordmark on a plate of the
+  outline's colour; Trakt its disc and ring, Letterboxd its three dots,
+  Rotten Tomatoes the tomato, Popcornmeter the striped bucket, Metacritic
+  its ring with the "m". MAL's blue lightened (#4F72CC) to show as an
+  outline. (Tried: the names in their colours — "LBXD", "RT", "MC" meant
+  little; Rotten Tomatoes' two names in two small lines; white outlines
+  for all — colour was better.) Facts and tagline 26 pt (`textSize`); facts medium, 70 %
   (`FixedFocusText.facts`), quieter than the chips. Tagline fallback:
   the name (kept). (Tried and dropped: the tagline as a quote, 28 pt
   italic 85 %.)
@@ -897,7 +905,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the Developer page). Then a Ratings section of wide rows,
   the value on the right: Show
   ratings (Everywhere / Details only / Off — Off hides the catalog's IMDb
-  score too; `MDBListSettings.place`); Order, showing the first three,
+  score too; `MDBListSettings.place`); Order, showing the first three as their chips (marks, no scores),
   opening its page in the column (`RatingOrderPage`: "The first three
   show on titles; the rest stand in when one is missing." under its
   name; the sources one row each — Move, a switch, the rows' usual gap) —

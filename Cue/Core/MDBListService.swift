@@ -213,20 +213,6 @@ enum MDBListProvider: String, CaseIterable, Identifiable {
     case trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic, myanimelist
     var id: String { rawValue }
 
-    /// Short badge label shown next to the score.
-    var label: String {
-        switch self {
-        case .trakt: return "Trakt"
-        case .imdb: return "IMDb"
-        case .tmdb: return "TMDB"
-        case .letterboxd: return "LBXD"
-        case .tomatoes: return "RT"
-        case .audience: return "RT🍿"
-        case .metacritic: return "MC"
-        case .myanimelist: return "MAL"
-        }
-    }
-
     var fullName: String {
         switch self {
         case .trakt: return "Trakt"
