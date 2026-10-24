@@ -105,7 +105,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   icon); searching, a spinner in the name's place, same width — (billboard:
   Details; Details: Play), the rest
   icon-only (billboard: Library, Next — only its chevron, no pill;
-  Details: Library, Trailer, About), their names under them while
+  Details: Library, About), their names under them while
   focused. (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
   at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
@@ -412,15 +412,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   as it opens (`adopt`), at full opacity, no delay. Back
   out to Home the same the other way: Home's billboard takes it on (if
   it's on that title; else let go within 1 s).
-  Details' Trailer button: that same player full screen
+  Details: Up from the buttons (nothing else above them) opens that same
+  player full screen (`openFullTrailer`); over the logo, in the reason's
+  place on Home, a hint says so (tried: at the screen's top, centred) (`DetailTrailerHint`, the `SectionHint`
+  look: a chevron up that bobs every 3.5 s, small capitals, 55 %) —
+  "Watch full screen" while it plays on the picture, else "Watch the
+  trailer"; it stays (tried: a Trailer button — a fourth button, and
+  awkward with the trailer already playing behind it). Only once a
+  trailer is known to play (the row's season's, else the show's —
+  resolved ahead as Details opens, `lookUpTrailer`, kept as the rest's;
+  none: no hint, Up does nothing). Full screen: the system's player
   (`TrailerFullScreen`, the system's `AVPlayerViewController` — pause,
   scrubbing), where it was, with sound; none on the picture (not yet
   played, ended, trailers off): the title's from its start, the same
   resolving (HLS, 720p floor). Back: on the picture again, playing on,
   with the setting's sound. (Was: a separate player resolving the
   trailer again from its start — `TrailerPlayerView`, removed.)
-- **Details** uses the billboard's text and shade. Four buttons: Play,
-  Library, Trailer, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
+- **Details** uses the billboard's text and shade. Three buttons, as
+  Home's billboard: Play, Library, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
   source list. Summary opens the summary in place, in a glass panel
   (`DetailSummaryPanel`): the name as a row's, the genres under it (" · ", a page header's subtitle — 24 pt medium, 50 %), then About's own summary
   and facts and ratings (`summaryBox`, `factsBox` — its size, levels and

@@ -122,7 +122,9 @@ final class DetailViewModel: ObservableObject {
     @Published var companies: [TMDBService.Company] = []
     /// The About section's facts (TMDB's).
     @Published var about: TMDBService.About?
-    @Published var trailers: [TMDBService.Trailer] = []
+    /// A trailer that will play is known (resolved ahead): Up opens it
+    /// full screen, the hint says so (`DetailTrailerHint`).
+    @Published var trailerReady = false
     @Published var mdbRatings: MDBListRatings?
     @Published var crew: [TMDBService.CastMember] = []
     @Published var director: String?
@@ -410,7 +412,6 @@ final class DetailViewModel: ObservableObject {
         if tmdb.useMoreLikeThis { moreLikeThis = detail.moreLikeThis.deduplicatedByID() }
         if tmdb.useProductions { companies = detail.companies }
         if tmdb.useDetails { about = detail.about }
-        if tmdb.useTrailers { trailers = detail.trailers }
         if tmdb.useCollections { collection = detail.collection }
     }
 
@@ -491,7 +492,7 @@ struct DetailView: View {
     @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, library, trailer, info
+        case play, library, info
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -688,6 +689,7 @@ struct DetailView: View {
         // leaving them, a panel, a search, the player: back to the still.
         // The billboard's trailer, playing on (`DetailTransition.open(trailer:)`).
         .onAppear { pageShown = true; trailer.adopt(viewModel.meta); restTrailer() }
+        .task(id: "\(viewModel.meta.id)#\(trailerSeason.season ?? 0)") { await lookUpTrailer() }
         .onDisappear { pageShown = false; trailer.stop() }
         .onChange(of: summaryShown) { _, _ in restTrailer() }
         .onChange(of: launcher.searching) { _, _ in restTrailer() }
@@ -1027,7 +1029,8 @@ struct DetailView: View {
             // its bottom line, the buttons below.
             FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
                                     tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline,
-                                    logo: viewModel.shownLogo)
+                                    logo: viewModel.shownLogo,
+                                    lead: AnyView(DetailTrailerHint(model: viewModel, trailer: trailer)))
                 .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
                 .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
                 .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
@@ -1173,6 +1176,28 @@ struct DetailView: View {
         return (season, aired)
     }
 
+    /// The trailer full screen: the one on the picture, where it is, else
+    /// the title's from its start. Only once one is known to play.
+    private func openFullTrailer() {
+        guard viewModel.trailerReady || trailer.shown else { return }
+        let about = trailerSeason
+        trailer.playFull(on: viewModel.meta, season: about.season, aired: about.aired)
+    }
+
+    /// Whether a trailer will play (the row's season's, else the show's):
+    /// resolved ahead — kept, so it costs nothing when it plays.
+    private func lookUpTrailer() async {
+        let about = trailerSeason
+        let keys = await TMDBService.trailerKeys(id: viewModel.meta.id, type: viewModel.meta.type,
+                                                 season: about.season, aired: about.aired)
+        let found = keys.isEmpty ? nil : await TrailerResolver.prepare(candidates: keys)
+        guard !Task.isCancelled else { return }
+        let ready = found != nil
+        if viewModel.trailerReady != ready {
+            withAnimation(.easeInOut(duration: Motion.fadeDuration)) { viewModel.trailerReady = ready }
+        }
+    }
+
     private func closeFullTrailer() {
         trailer.leaveFull(resting: layout.heroTrailersEnabled && detailScenePhase == .active,
                           sound: layout.heroTrailerSound)
@@ -1191,7 +1216,7 @@ struct DetailView: View {
                                              item: viewModel.meta, onDetails: true)
     }
 
-    /// Play/Resume (+ Start Over) + circular add / watched / rate / trailer.
+    /// Play, Library, About; Up: the trailer full screen (`openFullTrailer`).
     /// Its own focus section so Down/Up move cleanly to/from the rows below
     /// instead of the focus engine skipping a row.
     private func actionRow(_ focus: FocusState<ActionControl?>.Binding) -> some View {
@@ -1237,21 +1262,6 @@ struct DetailView: View {
                         action: { library.toggle(viewModel.meta) }
                     )
                     .focused(focus, equals: .library)
-                    // Always there (the row never changes shape): without a
-                    // trailer it says so.
-                    DetailActionButton(
-                        icon: "play.rectangle.fill", title: "Trailer",
-                        isPrimary: false, lit: litAction == .trailer, bare: true,
-                        action: {
-                            if viewModel.trailers.isEmpty {
-                                ToastCenter.shared.show("No trailer for this title", icon: "film")
-                            } else {
-                                let about = trailerSeason
-                                trailer.playFull(on: viewModel.meta, season: about.season, aired: about.aired)
-                            }
-                        }
-                    )
-                    .focused(focus, equals: .trailer)
                     // About in place, over the page (the billboard
                     // shows only the tagline).
                     DetailActionButton(
@@ -1268,6 +1278,9 @@ struct DetailView: View {
                 Spacer(minLength: 0)
             }
             .padding(.top, CueSpacing.xs)
+            // Up from the buttons (nothing above them): the trailer full
+            // screen — the hint over the logo says so.
+            .onMoveCommand { if $0 == .up { openFullTrailer() } }
             // Full-width focus section: the buttons stay left-aligned, but the
             // section spans the row so pressing Up from a right-scrolled cast
             // card still lands here (a narrow left-only section is missed when
@@ -2096,6 +2109,22 @@ struct DetailsBackdropBackground: View {
             guard blurred == nil else { return }
             let image = await BlurredBackdrop.image(for: url)
             withAnimation(Motion.fade) { blurred = image }
+        }
+    }
+}
+
+/// Over Details' logo, where Home's billboard says why it picked a title:
+/// Up opens the trailer full screen — "Watch full screen" while it plays
+/// on the picture, else "Watch the trailer". Only once one is known to
+/// play; the chevron bobs now and then (`SectionHint`).
+struct DetailTrailerHint: View {
+    @ObservedObject var model: DetailViewModel
+    @ObservedObject var trailer: StageTrailer
+
+    var body: some View {
+        if model.trailerReady || trailer.shown {
+            SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
+                .transition(.opacity)
         }
     }
 }

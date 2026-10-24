@@ -197,7 +197,7 @@ struct SectionHint: View {
     static let size: CGFloat = 21
     static let weight: Font.Weight = .medium
     static let tracking: CGFloat = 2.5
-    static let opacity: Double = 0.55
+    static let opacity: Double = FixedFocusText.secondary
     /// The idle bob: how far, how often.
     static let bob: CGFloat = 5
     static let bobEvery: Duration = .seconds(3.5)
@@ -215,7 +215,6 @@ struct SectionHint: View {
                 .lineLimit(1)
         }
         .foregroundStyle(Color.white.opacity(Self.opacity))
-        .shadow(color: .black.opacity(0.4), radius: 6, y: 2)
         .opacity(hidden ? 0 : 1)
         .animation(.easeInOut(duration: 0.4), value: hidden)
         .task {

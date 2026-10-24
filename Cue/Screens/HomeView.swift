@@ -2040,6 +2040,8 @@ struct FixedFocusBillboardText: View {
     /// The logo to show instead of the item's (Details: the one Home
     /// showed — the record's is often another image).
     var logo: String? = nil
+    /// Details' line in the reason's place (`DetailTrailerHint`).
+    var lead: AnyView? = nil
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     static let logoToChips: CGFloat = 20
@@ -2123,6 +2125,10 @@ struct FixedFocusBillboardText: View {
         VStack(alignment: .leading, spacing: 0) {
             if let reason {
                 BillboardReasonLabel(reason: reason)
+                    .frame(height: 30, alignment: .leading)
+                    .padding(.bottom, Self.gap - Self.reasonInset)
+            } else if let lead {
+                lead
                     .frame(height: 30, alignment: .leading)
                     .padding(.bottom, Self.gap - Self.reasonInset)
             }
