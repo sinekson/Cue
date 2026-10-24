@@ -30,11 +30,11 @@ enum ATVStage {
     static let blend = Color(hex: 0x1E2126)
 }
 
-/// "Background follows the title" (Settings → Appearance): Home, Movies
-/// and Series take on the focused title's colours (`TitleBackground`), a
-/// folder its cover's, a page opened from Details (a genre, a person, a
-/// studio…) that title's blurred picture. Off — and on every other page —
-/// the Projector picture.
+/// Settings → Appearance → Background, Dynamic (true): Home, Movies and
+/// Series take on the focused title's colours (`TitleBackground`), a
+/// folder its cover's. Static — and on every other page — the Projector
+/// picture. (A page opened from Details shows that title's blurred
+/// picture either way — `DetailsBackdropBackground`.)
 enum AppBackground {
     static let followsTitleKey = "cue.appearance.backgroundFollowsTitle"
 
@@ -181,8 +181,8 @@ final class ProjectorPictureStore: ObservableObject {
 }
 
 /// The app's background, behind every screen: the Projector picture — on
-/// Home, Movies, Series and a folder (`titles`) with "Background follows the
-/// title", the title background (`TitleBackground`).
+/// Home, Movies, Series and a folder (`titles`) with Background: Dynamic,
+/// the title background (`TitleBackground`).
 struct ATVBackground: View {
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
     @ObservedObject private var projector = ProjectorPictureStore.shared

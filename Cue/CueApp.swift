@@ -144,7 +144,7 @@ enum Route: Hashable {
     /// Series, only that type (`type`).
     case folder(CueCollection, CueCollectionFolder, type: String? = nil)
     /// From Details: `backdrop`, that title's picture (behind the page,
-    /// blurred, with "Background follows the title").
+    /// blurred).
     case person(id: Int, name: String, backdrop: String? = nil)
     /// A studio's titles — or a network's (`network`), its shows.
     case tmdbCompany(id: Int, name: String, network: Bool = false, backdrop: String? = nil)

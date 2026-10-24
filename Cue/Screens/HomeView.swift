@@ -1692,7 +1692,7 @@ struct HomeUIKitView: View {
     private var tintKey: String { "\(focused?.id ?? "")|\(followsTitle)|\(active)" }
 }
 
-/// THE TITLE BACKGROUND ("Background follows the title"): Home, Movies and
+/// THE TITLE BACKGROUND (Background: Dynamic): Home, Movies and
 /// Series (while in front) set it as focus moves, a folder to its cover,
 /// and they show it (`ATVBackground(titles:)`); every other page shows
 /// the Projector picture. Home's collection panels take its colour
@@ -2419,12 +2419,23 @@ enum FixedFocusRing {
         }
     }
     static let outlinesKey = "cue.appearance.cardOutlines"
+    /// Set: every card follows at once (`refreshAll`) — set from the
+    /// options page, the Appearance page's own `onChange` wasn't there to
+    /// see it: only cards laid out anyway (the fixed rows, on every move)
+    /// followed; Continue Watching, Saved for Later much later.
     static var outlines: Outlines {
-        if let raw = UserDefaults.standard.string(forKey: outlinesKey), let chosen = Outlines(rawValue: raw) {
-            return chosen
+        get {
+            if let raw = UserDefaults.standard.string(forKey: outlinesKey), let chosen = Outlines(rawValue: raw) {
+                return chosen
+            }
+            // The old Focus outline switch, off: the rim only.
+            return UserDefaults.standard.object(forKey: "cue.appearance.focusEdge") as? Bool == false ? .low : .high
         }
-        // The old Focus outline switch, off: the rim only.
-        return UserDefaults.standard.object(forKey: "cue.appearance.focusEdge") as? Bool == false ? .low : .high
+        set {
+            guard newValue != outlines || UserDefaults.standard.string(forKey: outlinesKey) == nil else { return }
+            UserDefaults.standard.set(newValue.rawValue, forKey: outlinesKey)
+            refreshAll()
+        }
     }
     /// The focus edge: the rim's own width, bright.
     static var width: CGFloat { outlines == .high ? 2 : 0 }

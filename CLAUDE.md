@@ -516,16 +516,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   across the top, a cool shadow bottom left, a brown one bottom right,
   a mauve warmth low in the middle (`ProjectorPicture.render`: Core Image
   gradients, blur, grain added going 16 → 8 bit — no banding), on every
-  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → "Colours from the title" (off by
-  default): Home, Movies, Series follow the focused title
+  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → Background, Static (default) / Dynamic
+  (was the "Colours from the title" switch; same key). Dynamic: Home, Movies, Series follow the focused title
   (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
   only the tab in front sets it), the collection panels take its colour;
   a folder keeps the colour its tile set on Home (draws Home's
-  background, so opening it changes nothing); a page opened from
+  background, so opening it changes nothing). Either way, a page opened from
   Details (person, studio/network, genre, tag — `Route…backdrop`) shows
   that title's Details picture as below its billboard: blurred and
-  dimmed (`DetailsBackdropBackground`). Everything else:
-  Projector. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
+  dimmed (`DetailsBackdropBackground`). Everything else, and
+  everything with Static: Projector. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
   Search / Library following the title, neutral pages keeping the last
   title's background, the old solid colours. No vignette anywhere; below
   Details' billboard only blur + one dim (`dimBelow`, 55 %; a bright
@@ -785,8 +785,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   anime's chips on placeholder cards; a numbered list, one focus to a
   row, Select lifting it, hold to hide, an Off section — looked horrible.)
   Appearance: switches in one list, no section labels (an untitled
-  `SettingsSection` draws none), one-line descriptions — Colours from the
-  title, Card outlines (High / Low / Off, an options page), Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
+  `SettingsSection` draws none), one-line descriptions — Background
+  (Static / Dynamic, an options page), Card outlines (High / Low / Off, an options page), Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
   Navigation sections, long descriptions). Home & Details (was Home &
   Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
   Rows, Continue Watching order, Billboard moves on by itself (moved from

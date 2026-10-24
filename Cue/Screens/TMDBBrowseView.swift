@@ -202,7 +202,7 @@ struct TMDBBrowseView: View {
     /// Details pushed without the system's slide (the zoom brings it in).
     var onOpenInPlace: ((MetaItem) -> Void)? = nil
     /// The picture of the title whose page opened this one: blurred behind
-    /// it, as on that page (with "Background follows the title").
+    /// it, as on that page.
     var backdrop: String? = nil
 
     init(companyID: Int, title: String, network: Bool = false, onSelect: @escaping (MetaItem) -> Void,

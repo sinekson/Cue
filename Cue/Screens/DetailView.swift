@@ -2058,12 +2058,11 @@ final class DetailPreparer {
 }
 
 /// Behind a page opened from Details (a person, a studio, a genre, a tag):
-/// with "Background follows the title", that title's page as it is below
-/// the billboard — its picture blurred and dimmed (`DetailView.rowsBackdrop`). Off, or without a picture: the
+/// whatever the Background setting, that title's page as it is below
+/// the billboard — its picture blurred and dimmed (`DetailView.rowsBackdrop`). Without a picture: the
 /// app's background.
 struct DetailsBackdropBackground: View {
     let url: String?
-    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
     /// Details made it: there from the first frame.
     @State private var blurred: UIImage?
 
@@ -2075,7 +2074,7 @@ struct DetailsBackdropBackground: View {
     var body: some View {
         ZStack {
             ATVBackground()
-            if followsTitle, url != nil {
+            if url != nil {
                 ZStack {
                     Color.black
                     if let blurred {
