@@ -132,6 +132,10 @@ struct DetailLayer {
     var root: Route
     var path: [Route] = []
     let id = UUID()
+    /// Back: the page under it shown again at once, the layer itself gone
+    /// only once the fade is over (taken down with the close, the update
+    /// held the main thread ~0.3 s before the fade could start).
+    var leaving = false
 }
 
 extension Route {
@@ -173,6 +177,18 @@ enum Route: Hashable {
     case genre(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
     /// A tag's (TMDB keyword's) titles.
     case keyword(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
+
+    /// What a pushed page draws behind itself, shown at the press
+    /// (`PageFade.push`).
+    var pageBackground: AnyView? {
+        switch self {
+        case .folder: AnyView(ATVBackground(titles: true))
+        case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
+             .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop):
+            AnyView(DetailsBackdropBackground(url: backdrop))
+        default: nil
+        }
+    }
 }
 
 struct RootView: View {
@@ -192,6 +208,7 @@ struct RootView: View {
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
+    @EnvironmentObject private var mdblistSettings: MDBListSettingsStore
     @Environment(\.scenePhase) private var scenePhase
 
     // One navigation stack per tab (tvOS expects TabView at the top level with
@@ -502,7 +519,7 @@ struct RootView: View {
                             let shelves = collections.collections.filter { !$0.folders.isEmpty }
                             if shelves.indices.contains(n), let folder = shelves[n].folders.first {
                                 let route = Route.folder(shelves[n], folder)
-                                PageFade.shared.push(key: route) { homePath.append(route) }
+                                PageFade.shared.push(key: route, background: route.pageBackground) { homePath.append(route) }
                             }
                         }
                     }
@@ -522,7 +539,7 @@ struct RootView: View {
                         if let route {
                             Task { @MainActor in
                                 try? await Task.sleep(for: .seconds(2))
-                                PageFade.shared.push(key: route) { homePath.append(route) }
+                                PageFade.shared.push(key: route, background: route.pageBackground) { homePath.append(route) }
                             }
                         }
                     }
@@ -855,11 +872,11 @@ struct RootView: View {
     /// full-bleed.
     private var atTabRoot: Bool {
         switch selectedTab {
-        case 0: return homePath.isEmpty && detailLayers[0] == nil
+        case 0: return homePath.isEmpty && detailLayers[0]?.leaving != false
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
-        case 4: return moviesPath.isEmpty && detailLayers[4] == nil
-        case 5: return seriesPath.isEmpty && detailLayers[5] == nil
+        case 4: return moviesPath.isEmpty && detailLayers[4]?.leaving != false
+        case 5: return seriesPath.isEmpty && detailLayers[5]?.leaving != false
         default: return true   // Settings keeps the rail
         }
     }
@@ -1208,14 +1225,15 @@ struct RootView: View {
     /// Home, or its filtered twins Movies / Series: each in its own stack.
     private func homeLikeStack(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
         let layer = detailLayers[tab.rawValue]
+        let covered = layer.map { !$0.leaving } ?? false
         return ZStack {
             // Under Details: still in the window and laid out — only not
             // shown and out of the focus engine's way (inactive: its rows
             // hidden, as a tab behind — `.disabled` alone let focus slip
             // onto its first card, and Back landed there).
-            homeStack(tab, path: path, active: active && layer == nil)
-                .opacity(layer == nil ? 1 : 0)
-                .disabled(layer != nil)
+            homeStack(tab, path: path, active: active && !covered)
+                .opacity(covered ? 0 : 1)
+                .disabled(covered)
             if let layer {
                 let layerPath = detailLayerPath(tab)
                 NavigationStack(path: layerPath) {
@@ -1227,6 +1245,8 @@ struct RootView: View {
                         .navigationDestination(for: Route.self) { destination(for: $0, path: layerPath) }
                 }
                 .id(layer.id)
+                .opacity(layer.leaving ? 0 : 1)
+                .disabled(layer.leaving)
             }
         }
     }
@@ -1277,18 +1297,23 @@ struct RootView: View {
 
     /// Back from the layer's first page: it fades off the page under it.
     private func closeDetailLayer(_ tab: AppTab) {
+        guard let id = detailLayers[tab.rawValue]?.id else { return }
+        var instant = Transaction()
+        instant.disablesAnimations = true
         let close = {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { detailLayers[tab.rawValue] = nil }
+            withTransaction(instant) { detailLayers[tab.rawValue]?.leaving = true }
             // As after a pop: focus lands on the page, not the rail.
             lastHomePopAt = Date()
             setSidebarEnabled(false, reenableAfter: Self.railSettle)
         }
+        let gone = {
+            guard detailLayers[tab.rawValue]?.id == id else { return }
+            withTransaction(instant) { detailLayers[tab.rawValue] = nil }
+        }
         if case .detail(let item) = detailLayers[tab.rawValue]?.root {
-            DetailTransition.shared.closeLayer(itemID: item.id, close: close)
+            DetailTransition.shared.closeLayer(itemID: item.id, close: close, gone: gone)
         } else {
-            PageFade.shared.fadeOff(close)
+            PageFade.shared.fadeOff(close, gone: gone)
         }
     }
 
@@ -1536,10 +1561,12 @@ struct RootView: View {
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
             onOpenFolder: { collection, folder in
-                PagePreparer.shared.open(FolderView.loadKey(collection, folder, type: filter),
-                                         fetch: { [addonManager, tmdbSettings] in
-                                             await FolderView.catalogs(of: folder, type: filter,
-                                                                       addonManager: addonManager, tmdb: tmdbSettings)
+                let key = FolderView.loadKey(collection, folder, type: filter)
+                PagePreparer.shared.open(key,
+                                         showing: { [addonManager, tmdbSettings] show in
+                                             await FolderView.catalogs(of: folder, type: filter, key: key,
+                                                                       addonManager: addonManager, tmdb: tmdbSettings,
+                                                                       show: show)
                                          }) {
                     pushPage(Route.folder(collection, folder, type: filter), path)
                 }
@@ -1626,7 +1653,7 @@ struct RootView: View {
 
     /// A page (folder, browse page) in: `PageFade`'s crossfade, no slide.
     private func pushPage(_ route: Route, _ path: Binding<[Route]>) {
-        PageFade.shared.push(key: route) { path.wrappedValue.append(route) }
+        PageFade.shared.push(key: route, background: route.pageBackground) { path.wrappedValue.append(route) }
     }
 
     /// A collection's folder.
@@ -2419,14 +2446,27 @@ protocol PreparedPage: AnyObject {
 @MainActor
 final class PageLoad<Value>: ObservableObject, PreparedPage {
     @Published private(set) var value: Value?
+    /// `value` is all of it (not only the first screen's).
+    private(set) var whole = false
     private var started = false
     var isReady: Bool { value != nil }
 
     /// Starts `fetch` (once).
     func start(_ fetch: @escaping @MainActor () async -> Value) {
+        start { _ in await fetch() }
+    }
+
+    /// Starts `fetch` (once), which may hand over what's on screen first
+    /// (`show`) before the whole (a folder's first rows — the page opens
+    /// with them).
+    func start(_ fetch: @escaping @MainActor (_ show: @escaping @MainActor (Value) -> Void) async -> Value) {
         guard !started else { return }
         started = true
-        Task { @MainActor in value = await fetch() }
+        Task { @MainActor in
+            let all = await fetch { [weak self] in self?.value = $0 }
+            whole = true
+            value = all
+        }
     }
 }
 
@@ -2440,26 +2480,36 @@ final class PagePreparer {
     /// About the transition's own length: cached data is in well before.
     static let wait: Duration = .milliseconds(350)
     private var pages: [String: PreparedPage] = [:]
-    private var waiting = false
+    /// The page just pressed, for the push's still to wait on.
+    private var opening: (page: PreparedPage, deadline: ContinuousClock.Instant)?
 
-    /// `page`, already loading, is kept for the page under `key`.
+    /// `page`, already loading, is kept for the page under `key`; the
+    /// page is pushed at once (it builds under the still while the data
+    /// comes, `PageFade.push`).
     func open(_ key: String, _ page: PreparedPage, push: @escaping () -> Void) {
-        guard !waiting else { return }
-        waiting = true
+        guard !PageFade.shared.busy else { return }
         pages[key] = page
-        Task { @MainActor in
-            let deadline = ContinuousClock.now + Self.wait
-            while !page.isReady, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-            waiting = false
-            push()
-        }
+        opening = (page, ContinuousClock.now + Self.wait)
+        push()
+        opening = nil
+    }
+
+    func takeOpening() -> (page: PreparedPage, deadline: ContinuousClock.Instant)? {
+        defer { opening = nil }
+        return opening
     }
 
     /// A page's data, loading: started now, kept for the page.
-    func open<Value>(_ key: String, fetch: @escaping @MainActor () async -> Value, push: @escaping () -> Void) {
-        guard !waiting else { return }
+    func open<Value>(_ key: String, fetch: @escaping @MainActor () async -> Value,
+                     push: @escaping () -> Void) {
+        open(key, showing: { _ in await fetch() }, push: push)
+    }
+
+    /// The same, `fetch` handing over the first screen ahead of the whole.
+    func open<Value>(_ key: String,
+                     showing fetch: @escaping @MainActor (_ show: @escaping @MainActor (Value) -> Void) async -> Value,
+                     push: @escaping () -> Void) {
+        guard !PageFade.shared.busy else { return }
         let load = PageLoad<Value>()
         load.start(fetch)
         open(key, load, push: push)

@@ -442,8 +442,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `TMDBBrowseView`): a kind label (GENRE / TAG / STUDIO / NETWORK / ACTOR…),
   the name, one facts line; a person has a portrait and a 3-line bio, a
   studio/network its logo on a light plate. Movies | Series in Search's
-  scope pill (`ScopePill`; only where both exist; a genre maps to the
-  other side's id) — moving along it switches — and one sort button
+  scope pill (`ScopePill`; only where both have titles — studios and
+  tags checked at load; none otherwise, the facts line says which ("128
+  movies"); a genre maps to the other side's id) — moving along it switches — and one sort button
   (Popular / Top rated / Newest / A–Z; all but Popular also filter:
   votes ≥ 200 / out, ≥ 10 / ≥ 50) as a single button beside it — no
   pill of its own (`ScopePillButton`; tried: alone in its own pill, too
@@ -466,7 +467,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   line (Collections' grid: seven). A focus guide on the page (not in the
   scroll view — there it was never found), on while the page is at its
   top, takes Up from any column to the controls. Focus goes to the first title once the
-  titles arrive; more pages as focus nears the end. (Tried and dropped:
+  titles arrive — with Movies | Series, to the pill, always on Movies (a
+  genre or tag opened from a show too; `FolderPosterGrid.headerFirst`);
+  more pages as focus nears the end. (Tried and dropped:
   the header fixed above the grid — too much room lost; tvOS's own focus
   scroll plus resetting the page on the first line — it jumped.)
 - **Details' More Like This**: moving focus, posters with a caption (as
@@ -491,8 +494,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     over the page (`detailLayers` in `CueApp`, its own NavigationStack for
     the pages opened from it) — Home stays in the window, laid out,
     hidden (opacity 0, inactive: its rows hidden, out of the focus
-    engine). Back: one fade of Details off the live Home (0.35 s, ease
-    out — `layerOut`, `layerCurve`; `closeLayer`), nothing rebuilt; focus
+    engine). Back: the tabs' dissolve — Home there at once, Details
+    fading off it as soon as that's committed (0.25 s, ease in-out —
+    `backTime`; `closeLayer`, `fadeOff`; tried: 0.35 s ease out from the
+    press); the layer stays, hidden, until the fade is over
+    (`DetailLayer.leaving` — taken down with the close, it held the main
+    thread ~0.3 s before anything moved); nothing rebuilt; focus
     back on the card it left (`returnRow`: the system picks the first
     card on screen, we move it on). (Pushed, Home left the window and
     was rebuilt on Back — the cause of the flicker. Tried, pushed: a
@@ -501,8 +508,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     size, through the background picture 0.3 + 0.3 s and 0.4 + 0.6 s —
     every part twice or not gentle.)
   - Elsewhere (Search, Library, folders, the deep link) Details is still
-    pushed. Back: one crossfade from the press (0.6 s, `exitCurve`):
-    Details into the page's still from the opening's press (`PageFade`,
+    pushed. Back: the tabs' dissolve from the press (0.25 s, ease in-out,
+    `backTime`; tried: 0.6 s, a soft start, a long settle):
+    Details off the page's still from the opening's press (`PageFade`,
     see "Other pages in and out"); the live page, rebuilt under it,
     takes over as soon as it's drawn, the still fading off it in 0.2 s
     (`exitHandOver`). (Tried: 0.25 s fade + shrink after the rebuild —
@@ -514,15 +522,49 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     its own timing needs Core Animation; a bare sublayer (no view) resizes
     and hides on Core Animation's own 0.25 s, behind the views around it —
     make it a view (`FixedFocusShade`); two identical layers crossfading
-    dip (flicker); never draw text
+    dip (flicker); a SwiftUI hosting view's own opacity faded darkens
+    the whole screen mid-fade (~25 % at half way) — fade a plain view
+    holding it (`PageFade`'s cover); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.
 - **Other pages in and out** (folders, browse pages — from Home,
   Search or Details): the same crossfade both ways, no system slide
-  (`PageFade`; Details' way in stays its zoom). In: a still of the page
-  below fades off the new one once it's drawn (0.6 s, `exitCurve`).
-  Back: as Details' — into that still at once, the live page taking
-  over (`pageBack`, set per route; the pages call it, not `dismiss()`).
+  (`PageFade`; Details' way in stays its zoom). In: at the press the new
+  page's background (`Route.pageBackground` — the Projector / title
+  background, or Details' blurred picture) fades in over the page below
+  (0.25 s, ease in-out, `backTime`; Core Animation, so it runs while the
+  page is pushed and built under it) — the background alone, as on the
+  way into Details — and stays until the page is whole (its data in, the
+  first screen's pictures decoded; up to 4 s, `PageFade.coverWait`), then
+  one 0.5 s crossfade off the whole page, header and content together
+  (`handOver`; the dissolve's 0.25 s was abrupt). The cover is never
+  quite opaque (`coverOpacity`, 99.5 %: wholly covered, the page was first
+  drawn as it went — the fade's first frames skipped); the fade flushed
+  before the page's own update. (Tried: the header at once, the titles
+  later — came apart.)
+  A folder doesn't wait for all its catalogs (the slowest add-on, often
+  far below): once its first two rows are settled — every catalog above
+  them in — it opens with those and their pictures (`CollectionResolver
+  .catalogs(firstScreen:)`, `firstScreenRows`, `PageLoad.start` with
+  `show`); the rest are inserted below, the rows on screen and focus
+  untouched (`FixedFocusRowsController.update`); the header's catalog
+  count as last time until all are in (`PageLoad.whole`). (On the sim
+  the data was in ~0.3 s after the press, the fade starting at ~0.45 s;
+  the sim then stalled ~0.8 s drawing the new page, skipping most of
+  the fade.)
+  (Tried: placeholder covers — the background with the page as it
+  opens without its titles: the header, bars for its text, empty cards
+  as the folder had last time — then the same wait and crossfade;
+  removed: the background alone, as into Details, looked calmer.)
+  (Tried with those: the header switching to the real one under the fade —
+  the text drawn twice; the 0.35 s wait — the page's placeholders, then
+  its content: a flicker; only the logo plate a placeholder. Tried before:
+  the still of the page below fading off the new page once it was in —
+  nothing moved for ~0.6 s after the press; pushed only after the data's
+  wait, ~0.8 s; 0.6 s after two on-time frames.)
+  Back: as Details' — the tabs' dissolve off that still at once, the
+  live page taking over (`pageBack`, set per route; the pages call it,
+  not `dismiss()`).
   Stills kept for the last 8 pages.
 - **Background**: one still picture, Projector — recreated from tvOS's own
   dark backdrop (Photos, the TV app; the system doesn't hand it to apps:
@@ -606,7 +648,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   out. A folder's rows: below the first row, up to it (one move, the
   header back in view; `.focusBillboard` without a billboard = the first
   row). A grid (one-catalog folder, browse pages): below its first line,
-  up to the top (focus on the first title); on the first line, out. The
+  up to the top (focus on the first title); on the first line, out. With
+  Movies | Series: from any line, the first too, to the pill; from the
+  pill, out. The
   page's `onExitCommand` decides (`GridBack`): a press the grid took
   itself still reached the navigation, which left.
 - **Back (Search)**: from the scopes or the row, Back goes to the keyboard
@@ -850,14 +894,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Tried and dropped: the pink picture full-screen (too bright), the play
   opening into the app (Home through its growing shape — looked weird).
   Pages whose content loads (`PagePreparer`, `PageLoad`): the data starts
-  at the press, the page opens once it's in or after 0.35 s at the latest —
-  then with placeholders in the exact final layout (rows:
+  at the press, the page pushed at once under its background (above), shown
+  once it's in or after 4 s at the latest — then with placeholders in
+  the exact final layout (rows:
   `FixedFocusRows.placeholderRows` + `placeholder:` — two unnamed rows of
   empty cards, no focus, no outline), the content taking over in one
-  0.25 s fade, focus then going in. Placeholder look (`FixedFocusPlaceholder`):
-  a soft fill over the page (white 9 % → 7 %, no dark base), no card edge, nothing in it and no
-  text bars — the card alone, as the Apple TV app's (tried: an ellipsis
-  glyph in the middle, bars where the text goes); all breathing in step
+  0.25 s fade (none while still covered — `PageFade.covering`),
+  focus then going in. Placeholder look (`FixedFocusPlaceholder`):
+  a soft fill over the page (white 9 % → 7 %, no dark base), no card edge, nothing in it — the
+  card alone, as the Apple TV app's (tried: an ellipsis glyph in the
+  middle); bars where the text goes only on pages shown whole as
+  placeholders (a page still loading after the 4 s, and Search's cards); all breathing in step
   (`FixedFocusPulsing`: opacity 1 ↔ 0.55, 1.2 s each way; still under
   Reduce Motion). The same look for any picture still on its way, everywhere
   (every card, the fixed box, episodes, `RemoteImage`): the card's edge and

@@ -3113,7 +3113,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         // `setActive`.
         if controller.isViewLoaded { controller.setActive(active) }
         controller.progress = progress
-        if controller.isPlaceholder, !placeholder, controller.isViewLoaded {
+        if controller.isPlaceholder, !placeholder, controller.isViewLoaded, !PageFade.shared.covering {
             // The content takes over the placeholders: one fade, the page.
             UIView.transition(with: controller.view, duration: Motion.fadeDuration,
                               options: [.transitionCrossDissolve, .allowAnimatedContent]) {
@@ -3472,6 +3472,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let featuredChanged = featured.map { index in
             self.rows.indices.contains(index) && rows[index].contentKey != self.rows[index].contentKey
         } ?? false
+        let old = self.rows
         self.rows = rows
         // A row's new name (Details: the season scrolled into): in place.
         if !changed, isViewLoaded {
@@ -3491,6 +3492,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
         if focusedRow >= rows.count { focusedRow = max(rows.count - 1, 0) }
         guard isViewLoaded else { return }
+        // Rows joining below the ones shown (a folder's later catalogs):
+        // inserted — the rows on screen, and focus in them, untouched.
+        if !startsOverOnChange, !old.isEmpty, rows.count > old.count,
+           zip(rows, old).allSatisfy({ $0.id == $1.id && $0.contentKey == $1.contentKey }),
+           outer.numberOfItems(inSection: 0) == old.count {
+            UIView.performWithoutAnimation {
+                outer.insertItems(at: (old.count..<rows.count).map { IndexPath(item: $0, section: 0) })
+            }
+            applyDimming()
+            return
+        }
         outer.reloadData()
         outer.collectionViewLayout.invalidateLayout()
         applyDimming()
@@ -5441,10 +5453,17 @@ final class FixedFocusBoxView: UIView {
         let name = UILabel()
         let facts = UILabel()
         let chips = FixedFocusChipsView()
+        /// A placeholder's name and facts still to come.
+        private let nameBar = FixedFocusPlaceholder()
+        private let factsBar = FixedFocusPlaceholder()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             addSubview(chips)
+            for bar in [nameBar, factsBar] {
+                bar.isHidden = true
+                addSubview(bar)
+            }
             name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
             name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.caption)
             facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
@@ -5461,9 +5480,18 @@ final class FixedFocusBoxView: UIView {
             facts.frame = CGRect(x: 0, y: 36, width: bounds.width, height: FixedFocusMetrics.factsHeight)
             chips.frame = CGRect(x: 0, y: FixedFocusChipsView.y, width: bounds.width,
                                  height: FixedFocusMetrics.factsHeight)
+            let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
+            for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
+                bar.layer.cornerRadius = barHeight / 2
+                bar.frame = CGRect(x: 0, y: label.frame.midY - barHeight / 2,
+                                   width: (bounds.width * share).rounded(), height: barHeight)
+            }
         }
 
         func show(_ item: MetaItem) {
+            let placeholder = FixedFocusPlaceholder.isPlaceholder(item)
+            nameBar.isHidden = !placeholder
+            factsBar.isHidden = !placeholder
             chips.show(item)
             name.text = item.name
             facts.text = FixedFocusShowInfo.factsLine(item)
@@ -6123,6 +6151,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
     }
     private let titleHolder = UIView()
+    /// A placeholder row's name still to come (`FixedFocusRows.placeholderRows`).
+    private let titleBar = FixedFocusPlaceholder()
 
     /// The row's name accessory (see `FixedFocusRows.rowTitleAccessories`):
     /// on its own line under the name, shown while the row has focus.
@@ -6376,6 +6406,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
         titleHolder.addSubview(title)
+        titleBar.isHidden = true
+        titleHolder.addSubview(titleBar)
         contentView.addSubview(titleHolder)
         headerStack.axis = .horizontal
         headerStack.spacing = FixedFocusHeaderButton.spacing
@@ -6420,6 +6452,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         titleHolder.center = CGPoint(x: FixedFocusMetrics.titleInset + 850, y: FixedFocusMetrics.titleLine / 2)
         title.bounds = CGRect(x: 0, y: 0, width: 1200, height: FixedFocusMetrics.titleLine)
         title.center = CGPoint(x: 0, y: FixedFocusMetrics.titleLine / 2)
+        let barHeight = (Self.titleFont.pointSize * 0.72).rounded()
+        titleBar.layer.cornerRadius = barHeight / 2
+        titleBar.frame = CGRect(x: 0, y: (FixedFocusMetrics.titleLine - barHeight) / 2, width: 300, height: barHeight)
         placeAccessory()
         customHost?.view.frame = CGRect(x: 0, y: cardsTop, width: bounds.width, height: cardHeight)
         let headerSize = headerStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
@@ -6531,6 +6566,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         self.controller = controller
         title.text = row?.title
         title.isHidden = isFeatured
+        titleBar.isHidden = row?.id.hasPrefix("placeholder-") != true
         setNeedsLayout()
         showAccessory()
         showHeader()
@@ -6928,10 +6964,8 @@ final class DetailTransition {
     static let reveal: Double = 0.28
 
     static let textTime: Double = 0.28
-    /// Back.
-    /// Back (the simple exit): one crossfade from the press, Details into
-    /// the page below as it was at the opening (`exitTime`, `exitCurve`: a
-    /// soft start, a long settle — 0.4 s ease in-out was a bit quick);
+    /// Back (the simple exit): one dissolve from the press, Details off
+    /// the page below as it was at the opening (`backTime`);
     /// the live page takes over from the still once it's drawn — at most
     /// `exitWait` after the press — the still fading off it
     /// (`exitHandOver`) under Details, still mostly there (swapped at the
@@ -6940,18 +6974,19 @@ final class DetailTransition {
     /// delayed, then rushed; the page dimmed and brightening after — two
     /// steps; shrinking — the dimmed page a black border; growing; through
     /// the background picture — two steps.)
-    static let exitTime: Double = 0.6
-    static let exitCurve = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
     static let exitWait: Double = 0.25
     static let exitHandOver: Double = 0.2
-    /// Back from Details as a layer (over Home, Movies, Series): one fade
-    /// off the page under it, live — never out of the window, nothing to
-    /// hand over. (Tried, pushed: a crossfade into a still of the page —
+    /// In and Back, every page's (Details' way in is its zoom) — a layer's (over Home, Movies, Series: the page
+    /// under it live, never out of the window) and a pushed one's (into
+    /// the still of the page below): the tabs' dissolve — the page coming
+    /// back there at once, whole, the one going out fading off it, ease
+    /// in-out. (Tried: 0.6 s, a soft start and a long settle, and 0.35 s
+    /// ease out — slower
+    /// than the tabs'; pushed: a crossfade into a still of the page —
     /// billboard to billboard every part showed twice; Details' text out
     /// first; its picture settling to Home's size; through the background
     /// picture, 0.3 + 0.3 s and 0.4 + 0.6 s — not gentle.)
-    static let layerOut: Double = 0.35
-    static let layerCurve = CAMediaTimingFunction(name: .easeOut)
+    static let backTime: Double = Motion.fadeDuration
     static let ringAfter: Double = 1.5
     static let giveUp: Double = 8
 
@@ -7154,12 +7189,13 @@ final class DetailTransition {
     }
 
     /// Back from Details as a layer: it fades off the live page under it
-    /// (`layerOut`); `close` removes the layer.
-    func closeLayer(itemID: String, close: @escaping () -> Void) {
-        guard !busy else { close(); return }
+    /// (`backTime`); `close` shows the page under it, `gone` removes the
+    /// layer once the fade is over.
+    func closeLayer(itemID: String, close: @escaping () -> Void, gone: @escaping () -> Void) {
+        guard !busy else { close(); gone(); return }
         forget(itemID)
         PageFade.shared.drop(itemID)
-        PageFade.shared.fadeOff(close)
+        PageFade.shared.fadeOff(close, gone: gone)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
 
@@ -7301,6 +7337,15 @@ final class PageFade {
     /// Stills kept at most (~8 MB each).
     private static let kept = 8
     private(set) var busy = false
+    /// A pushed page still under its still: its content comes in without
+    /// a fade of its own (the still's is the one).
+    private(set) var covering = false
+    /// The longest a page's cover waits for it (then the page as it is).
+    private static let coverWait: Duration = .seconds(4)
+    /// The cover fading off the page whole (tried: the dissolve's 0.25 s —
+    /// abrupt beside the other transitions).
+    private static let handOver: Double = 0.5
+    private static let coverOpacity: CGFloat = 0.995
 
     private init() {
         root.isUserInteractionEnabled = false
@@ -7335,31 +7380,82 @@ final class PageFade {
         root.addSubview(view)
     }
 
-    /// In: the page pushed under a still of this one, which fades off it
-    /// once it's drawn.
-    func push(key: AnyHashable, _ push: @escaping () -> Void) {
+    /// In: at the press the new page's background (`background`) fades
+    /// in over this page — something moves at once, run by Core Animation while the page is pushed and built
+    /// under it; once the page is in (`PagePreparer`: ready, or after its
+    /// wait) and drawn, the cover fades off it. The tabs' dissolve both ways
+    /// (`backTime`). Without a background: the still of this page fades
+    /// off the new one. (Tried: the still fading off once the page was in
+    /// — nothing moved for ~0.6 s; pushed only after the data's wait —
+    /// ~0.8 s; 0.6 s, after two on-time frames.)
+    func push(key: AnyHashable, background: AnyView? = nil, _ push: @escaping () -> Void) {
         let instant: () -> Void = {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { push() }
         }
+        let opening = PagePreparer.shared.takeOpening()
         guard !busy, !DetailTransition.shared.busy, let window = Self.window,
               let still = window.snapshotView(afterScreenUpdates: false) else { instant(); return }
         busy = true
+        covering = true
         let k = DetailTransition.length
+        let fade = DetailTransition.backTime * k
         install(in: window)
         add(still)
+        var cover: UIView = still
+        if let background {
+            let host = UIHostingController(rootView: background)
+            host.view.backgroundColor = .clear
+            host.view.frame = root.bounds
+            // Faded in a plain view: the hosting view's own opacity
+            // darkened the whole screen mid-fade (~25 % at half way — a
+            // dip over two identical backgrounds).
+            let box = UIView(frame: root.bounds)
+            box.isUserInteractionEnabled = false
+            box.addSubview(host.view)
+            root.addSubview(box)
+            host.view.layoutIfNeeded()
+            // Never quite opaque: the page under it is drawn meanwhile
+            // (wholly covered, it was first drawn as the cover went —
+            // the fade's first 0.15 s skipped).
+            DetailTransition.animate(box.layer, "opacity", from: 0, to: Self.coverOpacity, fade, DetailTransition.inOut)
+            cover = box
+        }
         CATransaction.flush()
+        let start = ContinuousClock.now
         instant()
         Task { @MainActor in
+            if let opening {
+                // The background stays until the page is whole: one hand-over
+                // (its placeholders showing after it, then its content,
+                // flickered; the header first, the titles later, came apart).
+                let deadline = cover === still ? opening.deadline : start + Self.coverWait
+                while !opening.page.isReady, ContinuousClock.now < deadline {
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
+            // The content's update drawn (a frame for it, one more drawn).
             let watch = FrameWatch()
-            await watch.quiet(frames: 2, within: DetailTransition.exitWait)
+            await watch.quiet(frames: opening == nil ? 1 : 2, within: DetailTransition.exitWait)
             watch.end()
+            // The background all in first.
+            if cover !== still {
+                let left = start + .seconds(fade) - ContinuousClock.now
+                if left > .zero { try? await Task.sleep(for: left) }
+                still.removeFromSuperview()
+            }
+            // Background into the page: slower, the page settling in.
+            let off = cover === still ? fade : Self.handOver * k
             CATransaction.begin()
-            DetailTransition.animate(still.layer, "opacity", from: 1, to: 0,
-                                     DetailTransition.exitTime * k, DetailTransition.exitCurve)
+            DetailTransition.animate(cover.layer, "opacity", from: CGFloat(cover.layer.opacity), to: 0, off, DetailTransition.inOut)
             CATransaction.commit()
-            try? await Task.sleep(for: .seconds(DetailTransition.exitTime * k))
+            // On screen before the page's own update (its focus going in):
+            // committed after it, the fade's first frames were skipped.
+            CATransaction.flush()
+            covering = false
+            try? await Task.sleep(for: .seconds(off))
+            cover.removeFromSuperview()
             still.removeFromSuperview()
             keep(still, for: key)
             root.removeFromSuperview()
@@ -7389,7 +7485,7 @@ final class PageFade {
             add(shot)
             CATransaction.begin()
             DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
-                                     DetailTransition.exitTime * k, DetailTransition.exitCurve,
+                                     DetailTransition.backTime * k, DetailTransition.inOut,
                                      delay: below == nil ? DetailTransition.exitWait * k : 0)
             CATransaction.commit()
             CATransaction.flush()
@@ -7397,7 +7493,7 @@ final class PageFade {
         instant()
         Task { @MainActor in
             let end = CACurrentMediaTime()
-                + (DetailTransition.exitTime + (below == nil ? DetailTransition.exitWait : 0)) * k
+                + (DetailTransition.backTime + (below == nil ? DetailTransition.exitWait : 0)) * k
             // The live page drawn (a frame or two after the pop): the still
             // fades off it — swapped at the end, the two differed (the
             // pressed button, a picture's drift) and it flickered…
@@ -7432,26 +7528,31 @@ final class PageFade {
 
     /// A layer's Back: a still of the screen over it, `close` (the layer
     /// gone, the page under it shown — it never left the window), the still
-    /// fading off at once (`DetailTransition.layerOut`).
-    func fadeOff(_ close: @escaping () -> Void) {
+    /// fading off it as soon as the close is committed (`backTime`; set
+    /// off with the close, the page under it came a frame late — a dip;
+    /// waiting for an on-time frame cost up to 0.1 s more).
+    func fadeOff(_ close: @escaping () -> Void, gone: @escaping () -> Void) {
         guard !busy, let window = Self.window,
               let shot = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
-        else { close(); return }
+        else { close(); gone(); return }
         busy = true
         let k = DetailTransition.length
         install(in: window)
         add(shot)
         CATransaction.flush()
         close()
-        CATransaction.begin()
-        DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
-                                 DetailTransition.layerOut * k, DetailTransition.layerCurve)
-        CATransaction.commit()
+        // The next turn of the run loop: the close committed (drawn on the
+        // next frame), the fade starting a frame after it.
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(DetailTransition.layerOut * k))
+            CATransaction.begin()
+            DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
+                                     DetailTransition.backTime * k, DetailTransition.inOut)
+            CATransaction.commit()
+            try? await Task.sleep(for: .seconds(DetailTransition.backTime * k))
             shot.removeFromSuperview()
             root.removeFromSuperview()
             busy = false
+            gone()
         }
     }
 
@@ -8018,6 +8119,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     func setCaptionShown(_ shown: Bool) {
         name.alpha = shown ? 1 : 0
         detail.alpha = shown ? 1 : 0
+        nameBar.alpha = name.alpha
+        detailBar.alpha = detail.alpha
     }
 
     /// Continue Watching's state (episode, progress, time left), if it is one,
@@ -8031,6 +8134,10 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
+    /// Its caption's two lines still to come, as bars (as tall as the
+    /// text's capitals).
+    private let nameBar = FixedFocusPlaceholder()
+    private let detailBar = FixedFocusPlaceholder()
     private var isPlaceholder = false
     /// Its picture on its way: the placeholder's look over the empty card.
     private let loadingCard = FixedFocusPlaceholder()
@@ -8099,6 +8206,19 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             detail.leadingAnchor.constraint(equalTo: name.leadingAnchor),
             detail.trailingAnchor.constraint(equalTo: name.trailingAnchor),
         ])
+        let barHeight = (FixedFocusMetrics.captionSize * 0.72).rounded()
+        for (bar, label, share) in [(nameBar, name, 0.7), (detailBar, detail, 0.3)] {
+            bar.isHidden = true
+            bar.layer.cornerRadius = barHeight / 2
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+                bar.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+                bar.heightAnchor.constraint(equalToConstant: barHeight),
+                bar.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: share),
+            ])
+        }
         applyFocus(false)
     }
 
@@ -8119,6 +8239,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         loadingCard.frame = picture.bounds
         placeholderCard.frame = card
         placeholderCard.isHidden = !isPlaceholder
+        nameBar.isHidden = !isPlaceholder
+        detailBar.isHidden = !isPlaceholder
         picture.isHidden = isPlaceholder
         dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
@@ -8349,6 +8471,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let info = UIView()
     private let name = UILabel()
     private let facts = UILabel()
+    /// A placeholder's name and facts still to come.
+    private let nameBar = FixedFocusPlaceholder()
+    private let factsBar = FixedFocusPlaceholder()
     /// A poster's caption (not grown): its name and year, as under a
     /// moving-focus card at rest.
     private let caption = UIView()
@@ -8461,6 +8586,10 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         info.addSubview(name)
         info.addSubview(facts)
         info.addSubview(chips)
+        for bar in [nameBar, factsBar] {
+            bar.isHidden = true
+            info.addSubview(bar)
+        }
         info.alpha = 0
         info.isUserInteractionEnabled = false
         addSubview(info)
@@ -8530,6 +8659,13 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                              height: FixedFocusMetrics.factsHeight)
         name.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: 30)
         facts.frame = CGRect(x: 0, y: 36, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
+        let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
+        for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
+            bar.layer.cornerRadius = barHeight / 2
+            bar.frame = CGRect(x: 0, y: label.frame.midY - barHeight / 2,
+                               width: (info.bounds.width * share).rounded(), height: barHeight)
+            bar.isHidden = !placeholder
+        }
         // Under its poster, wherever that sits in the cell (centred: under
         // the box the cell is box-wide), so it moves with it.
         let posterLeft = max(0, (contentView.bounds.width - FixedFocusMetrics.posterWidth) / 2)
@@ -8720,10 +8856,11 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             backdrop.alpha = shows ? 1 : 0
         }
         // A placeholder (`FixedFocusRows.placeholderRows`): the empty card
-        // only — no shade, no outline (nothing has focus yet).
+        // only — no shade, no outline (nothing has focus yet); the wide one
+        // its info's bars.
         if item?.id.hasPrefix("placeholder-") == true {
             shade.isHidden = true
-            info.alpha = 0
+            info.alpha = grown ? 1 : 0
             setOutline(false)
             return
         }

@@ -51,15 +51,49 @@ struct FolderView: View {
     }
 
     @MainActor
-    static func catalogs(of folder: CueCollectionFolder, type: String?, addonManager: AddonManager,
-                         tmdb: TMDBSettingsStore) async -> [CollectionResolver.FolderCatalog] {
+    static func catalogs(of folder: CueCollectionFolder, type: String?, key: String, addonManager: AddonManager,
+                         tmdb: TMDBSettingsStore,
+                         show: @escaping @MainActor ([CollectionResolver.FolderCatalog]) -> Void)
+        async -> [CollectionResolver.FolderCatalog] {
+        // The first rows settled, the page opens with them (their pictures
+        // too); the rest join below, off screen.
         let catalogs = await CollectionResolver.catalogs(
             of: folder, addonManager: addonManager, addons: addonManager.addons,
             providers: CollectionProviders(tmdb: tmdb.isEnabled, trakt: TraktService.isConfigured),
-            tmdbLanguage: tmdb.settings.language, type: type)
+            tmdbLanguage: tmdb.settings.language, type: type,
+            firstScreen: { first in
+                await FixedFocusImages.prefetch(firstScreen(first), within: .milliseconds(700))
+                show(first)
+            })
+        if !catalogs.isEmpty {
+            Shape.remember(Shape(catalogs: catalogs.count, titles: catalogs.first?.items.count ?? 0), for: key)
+        }
         // The first screen's pictures too: the page swaps in whole.
         await FixedFocusImages.prefetch(firstScreen(catalogs), within: .milliseconds(700))
         return catalogs
+    }
+
+    /// What the folder held last time (`cue.folder.shapes`): rows or the
+    /// grid, and its header's subtitle — the page loading shows it as it
+    /// will open. Never opened: rows (most folders are).
+    struct Shape: Codable {
+        var catalogs: Int
+        var titles: Int
+
+        private static let defaultsKey = "cue.folder.shapes"
+        private static var all: [String: Shape] = {
+            guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+                  let all = try? JSONDecoder().decode([String: Shape].self, from: data) else { return [:] }
+            return all
+        }()
+
+        static func of(_ key: String) -> Shape? { all[key] }
+
+        static func remember(_ shape: Shape, for key: String) {
+            guard all[key]?.catalogs != shape.catalogs || all[key]?.titles != shape.titles else { return }
+            all[key] = shape
+            if let data = try? JSONEncoder().encode(all) { UserDefaults.standard.set(data, forKey: defaultsKey) }
+        }
     }
 
     /// The pictures the page shows first, at the sizes its cards ask for:
@@ -113,8 +147,9 @@ struct FolderView: View {
         }
         .onAppear {
             // Opened without a press (a demo): it loads from here.
-            load.start { [folder, type, addonManager, tmdbSettings] in
-                await Self.catalogs(of: folder, type: type, addonManager: addonManager, tmdb: tmdbSettings)
+            load.start { [collection, folder, type, addonManager, tmdbSettings] show in
+                await Self.catalogs(of: folder, type: type, key: Self.loadKey(collection, folder, type: type),
+                                    addonManager: addonManager, tmdb: tmdbSettings, show: show)
             }
         }
         .onAppear {
@@ -124,12 +159,22 @@ struct FolderView: View {
 
     /// The header: the folder's cover, its name, where it is and what's in
     /// it — the same while loading, over the rows and over the grid.
+    /// Loading: as last time (the cover's).
+    /// Only the first rows in: the count as last time (it would change).
     private var header: FolderHeader {
+        let all = load.whole ? catalogs : nil
+        let shape = all == nil ? Shape.of(Self.loadKey(collection, folder, type: type)) : nil
+        return Self.header(collection, folder, catalogs: all?.count ?? shape?.catalogs,
+                           titles: all?.first?.items.count ?? shape?.titles)
+    }
+
+    private static func header(_ collection: CueCollection, _ folder: CueCollectionFolder,
+                               catalogs: Int?, titles: Int?) -> FolderHeader {
         let subtitle: String
-        if let catalogs, catalogs.count > 1 {
-            subtitle = "\(collection.title) · \(catalogs.count) catalogs"
-        } else if let only = catalogs?.first {
-            subtitle = "\(collection.title) · \(Self.count(only.items.count))"
+        if let catalogs, catalogs > 1 {
+            subtitle = "\(collection.title) · \(catalogs) catalogs"
+        } else if catalogs == 1, let titles {
+            subtitle = "\(collection.title) · \(Self.count(titles))"
         } else {
             subtitle = collection.title
         }
@@ -152,15 +197,22 @@ struct FolderView: View {
     }
 
     @ViewBuilder private var content: some View {
-        // Loading: the rows' placeholders (most folders are rows) — the
-        // same view the rows then fill.
-        if catalogs == nil || catalogs!.count > 1 {
-            rows(catalogs)
-        } else if let only = catalogs?.first {
+        // Loading: the placeholders of the shape it had last time (rows
+        // when never opened — most folders are) — the same view the content
+        // then fills.
+        let gridWhileLoading = catalogs == nil
+            && Shape.of(Self.loadKey(collection, folder, type: type))?.catalogs == 1
+        if gridWhileLoading || catalogs?.count == 1 {
+            let items = catalogs?.first?.items
             FolderPosterGrid(header: AnyView(header), headerHeight: FolderGridController.defaultHeaderHeight,
-                             items: only.items, subtitles: Self.years(only.items),
-                             onSelect: onSelect, onOpenDetails: openDetails, back: gridBack)
+                             items: items ?? FolderPosterGrid.placeholderItems,
+                             subtitles: items.map(Self.years) ?? [:],
+                             onSelect: onSelect, onOpenDetails: openDetails,
+                             placeholder: items == nil, back: gridBack)
                 .ignoresSafeArea()
+        } else if catalogs == nil || catalogs!.count > 1 {
+            Self.rows(catalogs, header: header, onSelect: onSelect, openDetails: openDetails,
+                      onDepth: { rowsDepth.depth = $0 }, command: rowsCommand)
         } else {
             // Nothing to show: the header where the rows have it.
             VStack(alignment: .leading, spacing: 0) {
@@ -182,7 +234,9 @@ struct FolderView: View {
 
     /// Each catalog a row, Home's (the box tells the focused title); still
     /// loading (nil), two rows of empty cards, unnamed, out of focus's way.
-    private func rows(_ catalogs: [CollectionResolver.FolderCatalog]?) -> some View {
+    private static func rows(_ catalogs: [CollectionResolver.FolderCatalog]?, header: FolderHeader,
+                             onSelect: @escaping (MetaItem) -> Void, openDetails: ((MetaItem) -> Void)?,
+                             onDepth: @escaping (Int) -> Void, command: FixedFocusRowsCommand?) -> some View {
         FixedFocusRows(rows: catalogs?.map { HomeRow(id: $0.id, title: $0.title, items: $0.items) }
                            ?? FixedFocusRows.placeholderRows,
                        featuredRowID: "", continueRowID: "", active: true, progress: [:],
@@ -192,8 +246,8 @@ struct FolderView: View {
                        onSelect: onSelect, onSelectFeatured: onSelect, onResume: { _ in },
                        onOpenDetails: openDetails,
                        titleMenu: { item, _ in TitleMenu.shared.entries(for: item) },
-                       onDepth: { rowsDepth.depth = $0 },
-                       command: rowsCommand,
+                       onDepth: onDepth,
+                       command: command,
                        pageHeader: AnyView(header
                            .frame(height: Self.headerHeight, alignment: .bottomLeading)
                            .padding(.top, Self.headerTop)
@@ -301,6 +355,9 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
     var placeholder = false
     /// Back's way in (see `GridBack`).
     var back: GridBack? = nil
+    /// Focus lands on the header's controls, not the first title, and Back
+    /// from any line goes up to them (a browse page's Movies | Series).
+    var headerFirst = false
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
@@ -309,6 +366,7 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
         controller.onSelect = onSelect
         controller.onOpenDetails = onOpenDetails
         controller.onDisplay = onDisplay
+        controller.headerFirst = headerFirst
         controller.show(header: header, headerHeight: headerHeight, items: items,
                         subtitles: subtitles, placeholder: placeholder)
     }
@@ -335,6 +393,8 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// The first titles are where focus lands, until it has moved by itself
     /// (controls in the header would take it otherwise).
     private var prefersFirstTitle = false
+    /// `FolderPosterGrid.headerFirst`: the header's controls instead.
+    var headerFirst = false
 
     /// A poster: THE portrait poster (`columns` of them fill the width).
     static var card: CGSize { FixedFocusMetrics.posterCard }
@@ -504,8 +564,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         // away from the header (it's in the collection view) to the first
         // title. A section reload leaves it there.
         let headerFocused = headerHost.map { Self.focus(in: $0.view) } ?? false
-        if swapping {
-            // Placeholders and titles take over from each other: one fade.
+        if swapping, !PageFade.shared.covering {
+            // Placeholders and titles take over from each other: one fade
+            // (under the push's still, its fade is the one).
             UIView.transition(with: collectionView, duration: Motion.fadeDuration,
                               options: [.transitionCrossDissolve, .allowAnimatedContent]) {
                 if headerFocused {
@@ -599,9 +660,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
 
     /// Back below the first line (the page asks — `GridBack`): up to the
     /// top, the header whole, then focus onto the first title. On the first
-    /// line (or the header): false — the page leaves.
+    /// line (or the header): false — the page leaves. `headerFirst`: from
+    /// any line up to the header's controls; on them, the page leaves.
     func backToTopIfDeep() -> Bool {
-        guard firstTitle != nil, let focused = focusedPath, focused.item >= Self.columns else { return false }
+        guard firstTitle != nil, let focused = focusedPath,
+              focused.item >= (headerFirst ? 0 : Self.columns),
+              !(headerHost.map { Self.focus(in: $0.view) } ?? false) else { return false }
         backToTop = true
         let top = CGPoint(x: 0, y: -collectionView.contentInset.top)
         if collectionView.contentOffset.y > top.y {
@@ -623,8 +687,10 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
-        if backToTop || prefersFirstTitle, let first = firstTitle,
-           let cell = collectionView.cellForItem(at: first) { return [cell] }
+        if backToTop || prefersFirstTitle {
+            if headerFirst, let host = headerHost { return [host.view] }
+            if let first = firstTitle, let cell = collectionView.cellForItem(at: first) { return [cell] }
+        }
         return super.preferredFocusEnvironments
     }
 

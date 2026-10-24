@@ -44,11 +44,14 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         self.title = title
         switch source {
         case let .genre(id, name, isMovie):
-            self.isMovie = isMovie
-            types = [isMovie, !isMovie].filter { Self.genreID(id: id, name: name, from: isMovie, to: $0) != nil }
-        case let .keyword(_, isMovie):
-            self.isMovie = isMovie
-            types = [isMovie, !isMovie]
+            let both = [isMovie, !isMovie].filter { Self.genreID(id: id, name: name, from: isMovie, to: $0) != nil }
+            // Both sides: always Movies first (predictable, whatever the
+            // title it was opened from).
+            self.isMovie = both.count > 1 || isMovie
+            types = both
+        case .keyword:
+            isMovie = true
+            types = [true, false]
         case .company:
             isMovie = true
             types = [true, false]
@@ -73,20 +76,41 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
             credits = await all
             types = [true, false].filter { credits.count(isMovie: $0) > 0 }
             if let first = types.first, !types.contains(isMovie) { isMovie = first }
-        case let .company(id):
-            Task { brand = await TMDBService.brandProfile(id: id, isNetwork: false) }
-        case let .network(id):
-            Task { brand = await TMDBService.brandProfile(id: id, isNetwork: true) }
         default:
             break
         }
+        // A studio's or network's logo and country: in with the titles (the
+        // header swaps in whole).
+        async let profile = Self.brand(of: source)
+        // The other side offered only where it has titles too (most studios
+        // make one kind; a person's are known from the credits).
+        let other = !isMovie
+        async let otherHasTitles = otherSideHasTitles(other)
         await reload()
-        // A studio with no films (or the other way round): the other type.
-        if items.isEmpty, let other = types.first(where: { $0 != isMovie }) {
+        brand = await profile
+        if types.count > 1, !(await otherHasTitles) {
+            types = [isMovie]
+        } else if types.count > 1, items.isEmpty {
+            // No films (or the other way round): the other side alone.
             isMovie = other
+            types = [other]
             await reload()
         }
         loadedOnce = true
+    }
+
+    private func otherSideHasTitles(_ side: Bool) async -> Bool {
+        if case .person = source { return true }
+        guard types.contains(side) else { return false }
+        return await !fetch(page: 1, isMovie: side).items.isEmpty
+    }
+
+    private static func brand(of source: Source) async -> TMDBService.BrandProfile? {
+        switch source {
+        case let .company(id): await TMDBService.brandProfile(id: id, isNetwork: false)
+        case let .network(id): await TMDBService.brandProfile(id: id, isNetwork: true)
+        default: nil
+        }
     }
 
     func choose(isMovie newValue: Bool) {
@@ -123,8 +147,8 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     /// The page's model under `source`, kept for the page.
     static func key(_ source: Source) -> String { "browse|\(source)" }
 
-    /// A press: the page's titles start loading; the page opens once
-    /// they're in, or after `PagePreparer.wait`.
+    /// A press: the page's titles start loading and the page opens under
+    /// the still, shown once they're in or after `PagePreparer.wait`.
     static func open(_ source: Source, title: String, push: @escaping () -> Void) {
         let model = TMDBBrowseViewModel(source: source, title: title)
         Task { await model.start() }
@@ -151,7 +175,9 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         items += result.items.filter { !known.contains($0.id) }
     }
 
-    private func fetch(page: Int) async -> TMDBService.BrowsePage {
+    /// A page of `isMovie`'s side (else the one chosen).
+    private func fetch(page: Int, isMovie side: Bool? = nil) async -> TMDBService.BrowsePage {
+        let isMovie = side ?? isMovie
         let filter: [String: String]
         switch source {
         case .person:
@@ -266,7 +292,8 @@ struct TMDBBrowseView: View {
                 onSelect: onSelect, onOpenDetails: openDetails,
                 onDisplay: { item in Task { await viewModel.loadMore(after: item) } },
                 placeholder: viewModel.showsPlaceholder,
-                back: gridBack)
+                back: gridBack,
+                headerFirst: viewModel.types.count > 1)
                 .ignoresSafeArea()
             if !viewModel.showsPlaceholder, viewModel.items.isEmpty {
                 CueEmptyState(icon: "film", title: viewModel.title, message: "No titles available.",
@@ -318,12 +345,52 @@ private struct BrowseHeader: View {
         return content + controlsGap + ScopePill<Bool>.height + controlsGap - 12
     }
 
-    private var showsControls: Bool { !viewModel.types.isEmpty }
+    /// Before the first titles: every part a placeholder in its place —
+    /// the picture, the lines of text, the controls (the page swaps in
+    /// whole).
+    private var placeholder: Bool { !viewModel.loadedOnce }
+    private var showsControls: Bool { placeholder || !viewModel.types.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 48) {
                 emblem
+                if placeholder { textBars } else { text }
+                Spacer(minLength: 0)
+            }
+            if showsControls { controls.padding(.top, Self.controlsGap) }
+        }
+        .padding(.leading, FixedFocusMetrics.titleInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// A line of text still to come: a bar of the placeholder's look, as
+    /// tall as the text's capitals, at its line's place.
+    private static func bar(width: CGFloat, size: CGFloat, line: CGFloat) -> some View {
+        PlaceholderShimmer()
+            .frame(width: width, height: (size * 0.72).rounded())
+            .clipShape(Capsule())
+            .frame(height: line, alignment: .leading)
+    }
+
+    private var textBars: some View {
+        VStack(alignment: .leading, spacing: Self.gap) {
+            Self.bar(width: 130, size: FixedFocusMetrics.textSize, line: Self.kind)
+            Self.bar(width: 420, size: 56, line: Self.name)
+            Self.bar(width: 300, size: FixedFocusMetrics.textSize, line: Self.facts)
+            if case .person = viewModel.source {
+                VStack(alignment: .leading, spacing: 5) {
+                    Self.bar(width: 1100, size: FixedFocusMetrics.textSize, line: 31)
+                    Self.bar(width: 1040, size: FixedFocusMetrics.textSize, line: 31)
+                    Self.bar(width: 640, size: FixedFocusMetrics.textSize, line: 31)
+                }
+                .frame(height: Self.bio, alignment: .topLeading)
+                .padding(.top, -4)
+            }
+        }
+    }
+
+    private var text: some View {
                 VStack(alignment: .leading, spacing: Self.gap) {
                     Text(kindLabel)
                         .font(.system(size: FixedFocusMetrics.textSize, weight: .semibold))
@@ -351,12 +418,6 @@ private struct BrowseHeader: View {
                             .padding(.top, -4)
                     }
                 }
-                Spacer(minLength: 0)
-            }
-            if showsControls { controls.padding(.top, Self.controlsGap) }
-        }
-        .padding(.leading, FixedFocusMetrics.titleInset)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: Emblem
@@ -365,6 +426,14 @@ private struct BrowseHeader: View {
     @ViewBuilder
     private var emblem: some View {
         switch viewModel.source {
+        case .person where placeholder:
+            PlaceholderShimmer()
+                .frame(width: Self.portrait.width, height: Self.portrait.height)
+                .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+        case .company where placeholder, .network where placeholder:
+            PlaceholderShimmer()
+                .frame(width: FixedFocusMetrics.logoCard.width, height: FixedFocusMetrics.logoCard.height)
+                .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
         case .person:
             ZStack {
                 if let url = viewModel.person?.photoURL {
@@ -441,17 +510,33 @@ private struct BrowseHeader: View {
 
     private var controls: some View {
         HStack(spacing: 16) {
-            // Search's scope pill: moving along it switches.
-            if viewModel.types.count > 1 {
+            // Search's scope pill: moving along it switches. (Loading: its
+            // shape, both scopes — a person's are known only then.)
+            if placeholder || viewModel.types.count > 1 {
                 ScopePill(scopes: [true, false], label: { $0 ? "Movies" : "Series" },
                           current: viewModel.isMovie) { viewModel.choose(isMovie: $0) }
+                    .placeholderShape(placeholder, Capsule())
             }
             // The order, apart from the filters: at the grid's right edge.
             Spacer(minLength: 32)
             BrowseSortButton(sort: viewModel.sort) { viewModel.choose(sort: $0) }
+                .placeholderShape(placeholder, Circle())
         }
         .padding(.trailing, FixedFocusMetrics.inset)
         .focusSection()
+    }
+}
+
+private extension View {
+    /// Loading: the control's shape in the placeholder's look, the control
+    /// itself out of sight and out of focus's way.
+    @ViewBuilder
+    func placeholderShape<S: Shape>(_ on: Bool, _ shape: S) -> some View {
+        if on {
+            opacity(0).disabled(true).overlay { PlaceholderShimmer().clipShape(shape) }
+        } else {
+            self
+        }
     }
 }
 

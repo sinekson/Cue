@@ -745,7 +745,7 @@ struct RemoteImage: View {
 /// While an image downloads: the cards' placeholder (`FixedFocusPlaceholder`
 /// — the soft fill, breathing on Core Animation, so many at once cost the
 /// main thread nothing), square: the caller's shape clips it.
-private struct PlaceholderShimmer: UIViewRepresentable {
+struct PlaceholderShimmer: UIViewRepresentable {
     func makeUIView(context: Context) -> FixedFocusPlaceholder {
         let view = FixedFocusPlaceholder()
         view.layer.cornerRadius = 0

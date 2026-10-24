@@ -224,7 +224,8 @@ enum CollectionResolver {
         providers: CollectionProviders,
         tmdbLanguage: String,
         maxTmdbPages: Int = 2,
-        type: String? = nil
+        type: String? = nil,
+        firstScreen: (@MainActor ([FolderCatalog]) async -> Void)? = nil
     ) async -> [FolderCatalog] {
         /// Opened from Movies / Series (`type`): only sources of that kind
         /// (or that don't say), and only titles of that type.
@@ -273,12 +274,6 @@ enum CollectionResolver {
                 (try? await StremioAPI.catalog(addon: entry.addon, catalog: entry.catalog, genre: entry.genre)) ?? []
             }))
         }
-        // Side by side; kept in the folder's order.
-        var results = [[MetaItem]](repeating: [], count: jobs.count)
-        await withTaskGroup(of: (Int, [MetaItem]).self) { group in
-            for (index, job) in jobs.enumerated() { group.addTask { (index, await job.1()) } }
-            for await (index, items) in group { results[index] = items.filter(wanted) }
-        }
         let names = jobs.map(\.0)
         func title(_ index: Int) -> String {
             let own = names[index]
@@ -287,11 +282,37 @@ enum CollectionResolver {
             guard unclear, let id = ids[index], let derived = readableName(id, folder: folder.title) else { return own }
             return derived
         }
-        return jobs.indices.compactMap { index in
-            results[index].isEmpty ? nil
-                : FolderCatalog(id: "\(folder.id)#\(index)", title: title(index), items: results[index])
+        // Side by side; kept in the folder's order.
+        var results = [[MetaItem]](repeating: [], count: jobs.count)
+        var done = [Bool](repeating: false, count: jobs.count)
+        func built(_ indices: Range<Int>) -> [FolderCatalog] {
+            indices.compactMap { index in
+                results[index].isEmpty ? nil
+                    : FolderCatalog(id: "\(folder.id)#\(index)", title: title(index), items: results[index])
+            }
         }
+        var shownFirst = firstScreen == nil
+        await withTaskGroup(of: (Int, [MetaItem]).self) { group in
+            for (index, job) in jobs.enumerated() { group.addTask { (index, await job.1()) } }
+            for await (index, items) in group {
+                results[index] = items.filter(wanted)
+                done[index] = true
+                // The first screen's rows settled (the catalogs before them
+                // all in, so none above can still come): the page needn't
+                // wait for the rest — the slowest add-on, often far below.
+                guard !shownFirst, let firstScreen, done.contains(false) else { continue }
+                let settled = built(0..<(done.firstIndex(of: false) ?? jobs.count))
+                if settled.count >= Self.firstScreenRows {
+                    shownFirst = true
+                    await firstScreen(settled)
+                }
+            }
+        }
+        return built(jobs.indices)
     }
+
+    /// The folder's rows on screen as it opens: the first and the peek.
+    static let firstScreenRows = 2
 
     /// A catalog id as a name: its words, without the pack's prefixes and
     /// the folder's own name ("snoak_latest_netflix_series" in Netflix →
