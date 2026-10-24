@@ -654,7 +654,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   it first (Details: focus on Play; a source search or the summary panel
   first closes) (its title as it is, the rows keeping their places); on the
   billboard, Back goes to the top bar (Details: out, `DetailTransition`);
-  there, the system's (out of the app). One scroll, the billboard's own (0.6 s), however deep. A press
+  there, down to the page (the top bar's own handler — the app is never
+  left by Back). A Back no view takes (focus on a view whose handlers are
+  disabled, or on nothing — a page, the player or a panel coming in)
+  went to the system, which left the app: the window drops it
+  (`BackCatch`). One scroll, the billboard's own (0.6 s), however deep. A press
   in its first 0.35 s (~95 % of the way, `backDropTime`) is dropped —
   moves, Select on a card or on the billboard's buttons (`backing`,
   `backScrolling`, `DetailActionButton`); after that it acts at once
@@ -712,7 +716,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   The panel (`SourcePanel`): a plain pop-up as the hold menus — on the
   right (48 pt in), 1100 × 900, glass, over the page dimmed
   (`HoldMenu.dimming`), in with a slight grow from its right edge
-  (0.2 s). (Tried and dropped: full height, 1000 and 1240 wide; the
+  (0.2 s); focus goes in at once, on Search Again until the first link
+  (left on Details' Play — its own host, not disabled with the page — a
+  Back reached nothing). (Tried and dropped: full height, 1000 and 1240 wide; the
   title's picture alone behind it with its logo left of the panel, or
   with the billboard's shade and the panel in the middle, 0.5 s fade.)
   In it: the name as a row's, a show's episode under

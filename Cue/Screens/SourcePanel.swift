@@ -25,6 +25,8 @@ struct SourcePanel: View {
     @FocusState private var tab: String?
     @State private var problem: String?
     @FocusState private var focused: UUID?
+    /// Search Again: where focus starts, until the first link is in.
+    @FocusState private var again: Bool
 
     /// Wide: an aggregator's long lines on as few lines as can be (1240
     /// was too wide).
@@ -61,6 +63,12 @@ struct SourcePanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             .focusSection()
             .onExitCommand(perform: onClose)
+            // Focus into the panel at once: left where it was (Details' Play,
+            // in its own host, isn't disabled with the page), a Back reached
+            // no handler.
+            .onAppear {
+                DispatchQueue.main.async { if focused == nil, tab == nil { again = true } }
+            }
             .onChange(of: tab) { _, name in
                 if let name { addon = name }
             }
@@ -111,6 +119,7 @@ struct SourcePanel: View {
                         Image(systemName: "arrow.clockwise").fontWeight(.semibold)
                     }
                     .buttonStyle(PillButtonStyle(selected: false))
+                    .focused($again)
                     .accessibilityLabel("Search Again")
                     // A tab shows its add-on's links as focus reaches it.
                     ForEach(model.addonNames, id: \.self) { name in

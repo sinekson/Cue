@@ -1,6 +1,41 @@
 import AVKit
 import SwiftUI
 
+/// The window, the last view-side responder a press reaches: a Back no view
+/// took (focus on a view whose handlers are disabled, or on nothing — a page
+/// or the player coming in, a panel opening) went on to the system and sent
+/// the app to the tvOS home screen. Such a Back now does nothing (every
+/// Back the app means is handled — the top bar's goes down to the page).
+/// (The app delegate isn't in the chain: SwiftUI's adaptor puts its own.)
+enum BackCatch {
+    static func install() {
+        hook(#selector(UIResponder.pressesBegan(_:with:)))
+        hook(#selector(UIResponder.pressesEnded(_:with:)))
+    }
+
+    static func swallows(_ presses: NSSet) -> Bool {
+        presses.contains { ($0 as? UIPress)?.type == .menu }
+    }
+
+    private typealias Press = @convention(c) (AnyObject, Selector, NSSet, UIPressesEvent?) -> Void
+
+    /// UIWindow's method (its own, or the one it inherits) wrapped; the
+    /// original runs under its own selector (UIResponder's passes the press
+    /// on by it).
+    private static func hook(_ selector: Selector) {
+        guard let method = class_getInstanceMethod(UIWindow.self, selector) else { return }
+        let original = unsafeBitCast(method_getImplementation(method), to: Press.self)
+        let wrapped: @convention(block) (AnyObject, NSSet, UIPressesEvent?) -> Void = { window, presses, event in
+            if swallows(presses) { return }
+            original(window, selector, presses, event)
+        }
+        let imp = imp_implementationWithBlock(wrapped)
+        if !class_addMethod(UIWindow.self, selector, imp, method_getTypeEncoding(method)) {
+            method_setImplementation(method, imp)
+        }
+    }
+}
+
 @main
 struct CueApp: App {
     /// Reclaim orphaned player scratch space before anything else runs. A
@@ -49,6 +84,7 @@ struct CueApp: App {
         // appear, so the tail covers launch itself — a cold start that hangs
         // before any view exists is exactly the session with no other witness.
         AppProbe.installLevels()
+        BackCatch.install()
     }
 
     @StateObject private var theme = ThemeManager()
