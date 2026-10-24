@@ -71,7 +71,7 @@ struct NuvioSignInView: View {
                         // code shown separately (the QR's URL embeds it).
                         Text("Scan with your phone, or go to \(Self.displayHost) and enter")
                             .font(.system(size: FixedFocusMetrics.textSize))
-                            .foregroundStyle(Color.white.opacity(0.7))
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                         Text(qr.code)
                             .font(.system(size: 36, weight: .semibold, design: .monospaced))
                             .tracking(4)
@@ -80,7 +80,7 @@ struct NuvioSignInView: View {
                             .minimumScaleFactor(0.5)
                         Text(account.errorMessage ?? qr.statusText)
                             .font(.system(size: 21))
-                            .foregroundStyle(account.errorMessage == nil ? Color.white.opacity(0.5)
+                            .foregroundStyle(account.errorMessage == nil ? Color.white.opacity(FixedFocusText.secondary)
                                                                          : CuePrimitives.red300)
                     }
                 } else if NuvioConfig.isConfigured {
@@ -90,7 +90,7 @@ struct NuvioSignInView: View {
                     // can never complete.
                     Text("Accounts aren't configured in this build.")
                         .font(.system(size: FixedFocusMetrics.textSize))
-                        .foregroundStyle(Color.white.opacity(0.7))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                         .frame(height: 340)
                 }
             }

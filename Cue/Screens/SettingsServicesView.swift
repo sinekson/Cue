@@ -148,7 +148,7 @@ struct TMDBServicePage: View {
             TMDBCacheSection()
             Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
                 .font(.system(size: 24))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                 .padding(.leading, SettingsMetrics.labelIndent)
         }
     }

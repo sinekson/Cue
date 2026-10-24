@@ -1266,8 +1266,8 @@ enum AppGlass {
     /// Glass that is an item itself (the billboard's dots): light enough to
     /// read on any picture, clearly below the focus highlight.
     static let idleTint = Color.white.opacity(0.4)
-    /// (85 %: nothing in the UI is pure white — `FixedFocusText.primary`.)
-    static let text = Color.white.opacity(0.85)
+    /// (Nothing in the UI is pure white — `FixedFocusText.primary`.)
+    static let text = Color.white.opacity(FixedFocusText.primary)
     static let textMuted = Color.white.opacity(FixedFocusText.secondary)
     static let textOnFocus = Color.black.opacity(0.85)
     /// THE glass: every Liquid Glass surface in the app is this one —
@@ -2031,7 +2031,7 @@ struct RatingChip: View {
             if let score {
                 Text(score)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
             }
         }
         // (One height for every chip.)

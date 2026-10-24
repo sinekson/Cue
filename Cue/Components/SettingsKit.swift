@@ -83,10 +83,11 @@ enum SettingsMetrics {
     static let focusedFill = FlatControl.focus
     static let restingFill = FlatControl.restSubtle
     static let focusedText = Color.black
-    /// The app's text levels (`FixedFocusText`): names, values, labels.
+    /// The app's text levels (`FixedFocusText`): names and titles, values
+    /// and descriptions, section labels.
     static let primaryText = Color.white.opacity(FixedFocusText.primary)
     static let secondaryText = Color.white.opacity(FixedFocusText.secondary)
-    static let labelText = Color.white.opacity(FixedFocusText.heading)
+    static let labelText = Color.white.opacity(FixedFocusText.tertiary)
 }
 
 /// The right column's pages: a category's own, or what one of its rows
@@ -664,12 +665,12 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
             VStack(alignment: .leading, spacing: SettingsMetrics.headingSpacing) {
                 Text(title)
                     .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
-                    .foregroundStyle(SettingsMetrics.labelText)
+                    .foregroundStyle(SettingsMetrics.primaryText)
                     .lineLimit(1)
                 if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -756,12 +757,12 @@ struct SettingsEntryRow: View {
             HStack(spacing: 10) {
                 Text(title)
                     .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(dimmed && !isMoving ? 0.45 : FixedFocusText.primary))
+                    .foregroundStyle(Color.white.opacity(dimmed && !isMoving ? FixedFocusText.tertiary : FixedFocusText.primary))
                     .lineLimit(1)
                 if let focusedName {
                     Text("· " + focusedName)
                         .font(.system(size: 23))
-                        .foregroundStyle(Color.white.opacity(0.55))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                         .lineLimit(1)
                         .transition(.opacity)
                 }

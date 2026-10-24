@@ -95,13 +95,13 @@ struct SourcePanel: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(model.meta.name)
                 .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 .lineLimit(1)
             if let video = model.video, !video.seasonEpisodeCode.isEmpty {
                 Text([video.seasonEpisodeCode, video.title].compactMap { $0 }
                         .filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                     .lineLimit(1)
             }
         }
@@ -137,7 +137,7 @@ struct SourcePanel: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 Text(found(at: context.date))
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                     .lineLimit(1)
             }
             .padding(.trailing, 22)
@@ -256,9 +256,10 @@ private struct SourceRow: View {
     let badges: [StreamBadge]
 
     var body: some View {
-        let primary = isFocused ? Color.black : Color.white
-        // Focused, near-black (at 70 % it read grey on the white).
-        let secondary = isFocused ? Color.black.opacity(0.85) : Color.white.opacity(0.72)
+        let primary = isFocused ? Color.black : Color.white.opacity(FixedFocusText.primary)
+        // Focused, near-black (at 70 % it read grey on the white); at rest
+        // text to read.
+        let secondary = isFocused ? Color.black.opacity(0.85) : Color.white.opacity(FixedFocusText.body)
         VStack(alignment: .leading, spacing: 8) {
             Text(entry.displayName)
                 .font(.system(size: 26, weight: .semibold))

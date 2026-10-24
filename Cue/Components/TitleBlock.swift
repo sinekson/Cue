@@ -411,7 +411,7 @@ struct TitleBadge: View {
         Text(text)
             .font(.system(size: 18, weight: .semibold))
             .tracking(0.5)
-            .foregroundStyle(Color.white.opacity(0.85))
+            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
             // (The rating chips' height — see `MDBListRatingsRow`.)
             .frame(height: 22)
             .padding(.horizontal, 10)

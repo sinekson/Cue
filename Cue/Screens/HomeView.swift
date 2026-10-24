@@ -2136,7 +2136,7 @@ struct FixedFocusBillboardText: View {
                 // chips. (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
                     .font(.system(size: Self.textSize, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.facts))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
                     .padding(.top, Self.chipsSpace - Self.lineInset)
@@ -2145,7 +2145,7 @@ struct FixedFocusBillboardText: View {
                 // height, nothing moves).
                 Text(tagline ?? item.name)
                     .font(.system(size: Self.textSize, weight: .regular).italic())
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.tagline))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
                     .padding(.top, Self.gap - 2 * Self.lineInset)
@@ -2378,26 +2378,22 @@ struct BillboardShade: View {
 
 /// Text levels: a hierarchy, mostly off-white.
 enum FixedFocusText {
-    /// THE BRIGHTEST any text gets: nothing in the UI is pure white (the
-    /// logo, a picture, aside). The focused title, the tagline.
-    static let primary: CGFloat = 0.85
-    /// Row names: as dim as tvOS's own heading (white 55 %, measured on
-    /// its empty-page title).
-    static let heading: CGFloat = 0.55
-    /// The info under the cards (the fixed box's, the captions): names
-    /// above the row names (55 % was hard to read); out of focus a little
-    /// dimmer; the second line below them.
-    static let caption: CGFloat = 0.7
-    static let captionResting: CGFloat = 0.6
-    static let captionDetail: CGFloat = 0.5
-    /// Facts and other secondary lines.
-    static let secondary: CGFloat = 0.6
-    /// The billboard's facts line: under the logo and the chips, above
-    /// the tagline.
-    static let facts: CGFloat = 0.7
-    /// The billboard's tagline: quieter than the facts.
-    static let tagline: CGFloat = 0.58
-
+    /// The app's four text levels, used everywhere (nothing brighter: the
+    /// logo, a picture aside, nothing in the UI is pure white). Names and
+    /// titles — row and page names, panels' names, a focused card's name.
+    static let primary: CGFloat = 0.75
+    /// Text to read: summaries, a bio, About's facts, the billboard's facts.
+    static let body: CGFloat = 0.65
+    /// Supporting lines: a focused card's second line, facts lines,
+    /// subtitles, the tagline, Settings' values and descriptions.
+    static let secondary: CGFloat = 0.55
+    /// Small labels (kind labels, "SUMMARY", section labels), what's off.
+    static let tertiary: CGFloat = 0.45
+    /// (Out of focus, a card's caption steps down one level: its name
+    /// secondary, its second line tertiary. Tried: row and page names at
+    /// tvOS's heading grey, 55 %, under captions and About's text at 70 % —
+    /// the names dimmer than what they named; nine levels in all; 85 /
+    /// 75 / 60 / 45 — bright.)
 }
 
 /// The focused card's look: the unfocused cards' edge, bright (no ring
@@ -5635,9 +5631,9 @@ final class FixedFocusBoxView: UIView {
                 addSubview(bar)
             }
             name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.caption)
+            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
             facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionDetail)
+            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
             addSubview(name)
             addSubview(facts)
         }
@@ -6571,7 +6567,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         clipsToBounds = false
         contentView.clipsToBounds = false
         title.font = Self.titleFont
-        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.heading)
+        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
@@ -8062,11 +8058,11 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         name.numberOfLines = 2
         // As on the billboard: the facts bright, the tagline quiet and italic.
         facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .medium)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
         tagline.font = UIFont(descriptor: UIFont.systemFont(ofSize: FixedFocusMetrics.textSize)
             .fontDescriptor.withSymbolicTraits(.traitItalic) ?? UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).fontDescriptor,
                               size: FixedFocusMetrics.textSize)
-        tagline.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tagline)
+        tagline.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         chips.view.backgroundColor = .clear
         chips.safeAreaRegions = []
         for view: UIView in [logo, name, chips.view, facts, tagline] { card.addSubview(view) }
@@ -8379,7 +8375,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         name.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
         name.lineBreakMode = .byTruncatingTail
         detail.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionDetail)
+        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tertiary)
         for label in [name, detail] {
             label.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(label)
@@ -8601,7 +8597,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
-        name.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.caption : FixedFocusText.captionResting)
+        // Out of focus one level down: the name secondary, the line tertiary.
+        name.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : FixedFocusText.secondary)
+        detail.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.secondary : FixedFocusText.tertiary)
         guard !Self.lift else { return }
         // Grown and outlined — the captions step down with it.
         let lift = FixedFocusMetrics.movingFocusLift
@@ -8775,9 +8773,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         addSubview(outline)
         FixedFocusRing.attachShadow(to: outline)
         name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.caption)
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionDetail)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         info.addSubview(name)
         info.addSubview(facts)
         info.addSubview(chips)
@@ -8789,9 +8787,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         info.isUserInteractionEnabled = false
         addSubview(info)
         captionName.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionResting)
+        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         captionYear.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.captionDetail)
+        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tertiary)
         caption.addSubview(captionName)
         caption.addSubview(captionYear)
         caption.isUserInteractionEnabled = false

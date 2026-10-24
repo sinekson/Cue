@@ -98,7 +98,7 @@ struct DetailAbout: View {
                     Text(text)
                         .font(.system(size: 24))
                         .lineSpacing(5)
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.caption))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -169,7 +169,7 @@ struct DetailAbout: View {
             Self.label(label)
             Text(value)
                 .font(.system(size: 24))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.caption))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -178,7 +178,7 @@ struct DetailAbout: View {
         Text(text.uppercased())
             .font(.system(size: 17, weight: .semibold))
             .tracking(1)
-            .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+            .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
     }
 
     // MARK: Facts
@@ -282,7 +282,7 @@ private struct AboutChipStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : Color.white.opacity(FixedFocusText.caption))
+                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : Color.white.opacity(FixedFocusText.body))
                 .lineLimit(1)
                 .frame(height: 21)
                 .padding(.horizontal, 10)
@@ -321,12 +321,12 @@ struct DetailSummaryPanel<Summary: View, Facts: View>: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(title)
                             .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.heading))
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                             .fixedSize(horizontal: false, vertical: true)
                         if !genres.isEmpty {
                             Text(genres)
                                 .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.captionDetail))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

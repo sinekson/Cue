@@ -110,21 +110,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
-- Text levels (dark mode, after tvOS's own grey text): nothing is pure
-  white — primary white 85 % (`FixedFocusText.primary`, theme
-  `textPrimary`, titles), secondary 60 %, tertiary 45 %. The system font
-  (SF Pro). Badges on coloured fills stay white.
-  Row names: 40 pt semibold, white 55 % — as dim as tvOS's own heading
-  (measured on its empty-page title; `FixedFocusText.heading`). (Tried:
-  its size and weight too, 48 pt regular.)
-  The info under the cards (the fixed box's, the captions): names 70 %
-  (out of focus 60 %), the second line 50 % (`FixedFocusText.caption…`;
-  tried: as the row names, 55 / 45 / 40 — hard to read).
-  Folder and browse pages' headers alike: the page's name as the row
-  names (55 %), a person's bio 70 %, the kind label, facts and subtitle
-  50 %.
-  Details' About the same: the summary, the facts and the chips' names
-  70 %, the small labels 50 %; the Summary panel's text 85 %.
+- Text levels: four, everywhere (`FixedFocusText`; the theme's
+  `textPrimary/Secondary/Tertiary` and Settings' levels point at them) —
+  at most 75 % (tried: 85 % — bright). Primary 75 %: names and titles — row names (40 pt
+  semibold), page and panel names, Settings' titles and row names, a
+  focused card's name, the fixed box's name, the billboard's reason.
+  Body 65 %: text to read — summaries (About's, the Summary panel's), a
+  bio, About's facts and genre chips, the billboard's facts, a source
+  link's lines. Secondary 55 %: supporting lines — a focused card's
+  second line, the box's facts, page subtitles and facts lines, the
+  tagline, Settings' values and descriptions, the sources panel's
+  episode. Tertiary 45 %: small labels (kind labels, "SUMMARY", Settings'
+  section labels), what's off. Out of focus a caption steps down one
+  level (name 55, second line 45). The system font (SF Pro). Badges on
+  coloured fills stay white. (Tried: row and page names at tvOS's
+  heading grey, 55 % — dimmer than the captions and About's 70 % under
+  them; nine levels in all; 85 / 75 / 60 / 45 — too bright.)
 - Motion tokens (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s
   (no-bounce springs), fade 0.25 s. One press, one movement.
 - **A press mid-animation**: hurry motion, never waiting. Motion (its
@@ -345,7 +346,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   640 × 190 was too large), trimmed of their
   transparent edges first (they start at the text's edge). Chips: solid outlines, 1.75 pt (see-through
   ones took the picture's colour): the status badge off-white (white
-  85 %), a rating its source's colour (`RatingChip`). A rating's name is
+  75 %, primary), a rating its source's colour (`RatingChip`). A rating's name is
   its mark (`RatingMark`, 18 pt, as far from the chip's left edge as from
   its top and bottom): IMDb, TMDB, MAL their wordmark on a plate of the
   outline's colour; Trakt its disc and ring, Letterboxd its three dots,
@@ -353,8 +354,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   its ring with the "m". MAL's blue lightened (#4F72CC) to show as an
   outline. (Tried: the names in their colours — "LBXD", "RT", "MC" meant
   little; Rotten Tomatoes' two names in two small lines; white outlines
-  for all — colour was better.) Facts and tagline 26 pt (`textSize`); facts medium, 70 %
-  (`FixedFocusText.facts`), quieter than the chips. Tagline fallback:
+  for all — colour was better.) Facts and tagline 26 pt (`textSize`); facts medium, 65 %
+  (body), quieter than the chips; the tagline 55 %. Tagline fallback:
   the name (kept). (Tried and dropped: the tagline as a quote, 28 pt
   italic 85 %.)
   Buttons (Details' look, `BillboardControls`, in their own host over
@@ -799,7 +800,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the chevron 38 pt; focused 2 % larger (tried: 4 pt taller each side as
   well, as measured — too large, and no longer a capsule) (`SettingsMetrics`; the categories share the shape, at their scale).
   Section labels as Apple TV's too: 29 pt semibold capitals, no extra
-  spacing, 55 % (tried: Home's section hint, small and widely spaced);
+  spacing, 45 % (tertiary; was 55 %) (tried: Home's section hint, small and widely spaced);
   the sidebar's at its scale (`SettingsSection(sidebar:)`).
   (Tried: 72 pt rows with the cards' corners, 22; 29 / 27 pt text 22 pt
   in.) Section labels and headings lined up with what's inside the rows —
@@ -810,7 +811,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   checked, Select picks and goes back) — no pop-up menus (tried: the
   glass dropdown, `HoldMenu.openDropdown`; MDBList's done, the other
   pages still to move over).
-  Text at the app's levels (names 85 %, values 60 %, labels 55 %). (Tried
+  Text at the app's levels (names 75 %, values 55 %, labels 45 %). (Tried
   and dropped: the rows beside an info pane — a box with the category's
   symbol, the description under it: room wasted, the words far from their
   row.) Playback, About, Developer still on the old cards (Right goes in,
@@ -822,8 +823,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Not everything is a button: what's only to read takes no focus. Every
   page — a category's own and those opened from it — its title alone,
   one title on the column, as Apple TV's Settings' (measured: 57 pt
-  semibold, the labels' grey, 55 %; tried: a row's size, 29 then 38 pt
-  semibold, 85 %), the
+  semibold, 75 % — the app's primary; tried: the labels' grey, 55 %, as
+  measured; a row's size, 29 then 38 pt semibold), the
   description under it (24 pt medium, 50 %), the page's round buttons
   at its right end (`SettingsScrollingPage`). (Tried: titled as a row's
   name, 40 pt, 55 % — it outweighed the categories; the trail over the
@@ -864,7 +865,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `accessory`; confirmed); a title to a row, newest first, simply
   scrolling (no paging): the rows' look, a small poster (64 × 96), the
   name over what was watched last and when — "Last watched" (sentence
-  case, medium, 85 %) then "S2:E4 on 14 Oct 2026, 23:15" (60 %; tried: " · ", " – "); a film
+  case, medium, 75 %) then "S2:E4 on 14 Oct 2026, 23:15" (55 %; tried: " · ", " – "); a film
   "Watched" and the date, a show's chevron at the end
   (tried: "41 episodes" with the date at the row's end)
   (tried: posters four across with captions — they hid the order). A show: Select opens

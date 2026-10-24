@@ -74,9 +74,10 @@ struct ThemePalette: Identifiable, Equatable {
     // Stored (not computed) so the Apple TV theme's light palette can swap
     // them for dark-on-light text; every palette in CueThemes keeps these
     // defaults.
-    var textPrimary: Color = Color.white.opacity(0.85)
-    var textSecondary: Color = Color.white.opacity(0.6)
-    var textTertiary: Color = Color.white.opacity(0.45)
+    // The app's text levels (`FixedFocusText`).
+    var textPrimary: Color = Color.white.opacity(FixedFocusText.primary)
+    var textSecondary: Color = Color.white.opacity(FixedFocusText.secondary)
+    var textTertiary: Color = Color.white.opacity(FixedFocusText.tertiary)
 
     /// The accent is LIGHT — White, Lavender, Mint. Their own ink
     /// (`onSecondary`) is dark, which is exactly what a translucent tint of
