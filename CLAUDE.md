@@ -185,6 +185,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the box a box-wide gap — so they come out and go in on both sides alike
   (anchored left, the one leaving appeared at once at the box's left
   edge while the one coming in slid all the way across).
+  After Up/Down the box takes over from the grown cell only once its
+  picture and logo are in at its size (`FixedFocusBoxView.onPictureIn`;
+  on revisits often back from disk — its placeholder fading off over the
+  picture flashed it lighter, the logo popped in late); until then the
+  cell shows the title.
   Up/Down opening, the card is ONE shape: both pictures fill the growing
   card (centre cropped), on the move's spring (`FixedFocusPosterCell.reshape`;
   each at its own fixed size, the picture switched at once while the edge
@@ -490,7 +495,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     102 %.)
   - Lessons: a UIView animation nested in the moves' spring
     (`springDuration:`) takes the spring's timing, whatever its options —
-    its own timing needs Core Animation; two identical layers crossfading
+    its own timing needs Core Animation; a bare sublayer (no view) resizes
+    and hides on Core Animation's own 0.25 s, behind the views around it —
+    make it a view (`FixedFocusShade`); two identical layers crossfading
     dip (flicker); never draw text
     twice; one shared shade (`StageArt.shade(for:)`); Details keeps Home's
     picture and logo; `CATransaction.flush()` or CA starts a runloop late.

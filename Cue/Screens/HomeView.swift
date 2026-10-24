@@ -3980,8 +3980,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
             let now = row.items[current]
             box.show(now, animated: false)
-            box.alpha = 1
-            rowCell.contentHidden = true
+            // Its picture or logo not in yet (decoded at the box's size —
+            // on a revisit, often back from disk): the cell keeps showing
+            // the title until they are. (The box's see-through placeholder
+            // over the cell's poster flashed the poster between two
+            // landscapes; the logo popped in late.)
+            let take = { [weak self, weak rowCell] in
+                guard let self, let rowCell, self.box.alpha < 1, self.focusedRow == rowIndex,
+                      self.movesInFlight == 0, self.selected[row.id] == current else { return }
+                self.box.alpha = 1
+                rowCell.contentHidden = true
+            }
+            box.onPictureIn = nil
+            if box.isWaiting { box.onPictureIn = take } else { take() }
         }
         openingRow = nil
         hurried = false
@@ -5290,11 +5301,12 @@ final class FixedFocusBoxView: UIView {
     /// a new page in (the old one out) or crossfades on the current page.
     private final class Page: UIView {
         let backdrop = UIImageView()
-        let shade = CAGradientLayer()
+        let shade = FixedFocusShade()
         let logo = FixedFocusLogo()
         /// The backdrop on its way: the placeholder's look, nothing over it.
         let loadingCard = FixedFocusPlaceholder()
-        /// It waits (true) or is in: the box's edge waits with it.
+        /// Its picture waits (true) or is in, or its logo changed: the box's
+        /// edge waits with the picture, the box's hand-over with both.
         var onWaiting: (Bool) -> Void = { _ in }
 
         override init(frame: CGRect) {
@@ -5303,14 +5315,10 @@ final class FixedFocusBoxView: UIView {
             backdrop.clipsToBounds = true
             backdrop.layer.contentsRect = FixedFocusBoxView.zoomRect
             addSubview(backdrop)
+            addSubview(shade)
             loadingCard.isHidden = true
             loadingCard.layer.cornerRadius = 0
             addSubview(loadingCard)
-            shade.colors = [UIColor.clear.cgColor,
-                            UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
-            shade.startPoint = CGPoint(x: 0.5, y: 0.5)
-            shade.endPoint = CGPoint(x: 0.5, y: 1)
-            layer.addSublayer(shade)
             addSubview(logo)
         }
 
@@ -5321,7 +5329,6 @@ final class FixedFocusBoxView: UIView {
             backdrop.frame = bounds
             loadingCard.frame = bounds
             shade.frame = bounds
-            layer.insertSublayer(shade, above: backdrop.layer)
             logo.room = CGRect(x: Spotlight.logoInset,
                                y: bounds.height - Spotlight.logoInset - bounds.height * 0.28,
                                width: bounds.width * 0.55, height: bounds.height * 0.28)
@@ -5355,10 +5362,18 @@ final class FixedFocusBoxView: UIView {
                 }
                 self.onWaiting(waiting)
             })
-            FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55)
+            FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55,
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                self.logoWaiting = waiting
+                self.onWaiting(self.waiting)
+            })
         }
 
         private var shaded = true
+        /// Its logo not there yet (no placeholder: the box waits for it
+        /// before taking over — `onPictureIn`).
+        private(set) var logoWaiting = false
         /// Its picture isn't there yet.
         private(set) var waiting = false
         /// Coming in over the old picture (the box's change): a wait shows
@@ -5516,14 +5531,30 @@ final class FixedFocusBoxView: UIView {
     private func follow(_ page: Page) {
         page.onWaiting = { [weak self, weak page] waiting in
             guard let self, page === self.page else { return }
-            // Coming in over the old picture: the edge stays (a picture
-            // under it — hidden for the first frames, it flickered in).
-            if waiting, self.covered != nil { return }
-            self.edge.isHidden = waiting
+            self.syncEdge()
+            if !self.isWaiting, let pictureIn = self.onPictureIn {
+                self.onPictureIn = nil
+                pictureIn()
+            }
         }
+    }
+    /// The current page's picture or logo still on its way.
+    var isWaiting: Bool { page.waiting || page.logoWaiting }
+    /// Once, when the current page's picture and logo are in.
+    var onPictureIn: (() -> Void)?
+    /// The edge waits with the current page's picture — except while it
+    /// comes in over the old picture (a picture under it — hidden for the
+    /// first frames, it flickered in). Set from the state, not from the
+    /// callbacks alone: a page that got its picture before it was the
+    /// current one (a quick second move) left the edge off for good.
+    private func syncEdge() {
+        edge.isHidden = page.waiting && covered == nil
     }
     /// The old page under the one coming in, until its move ends.
     private var covered: Page?
+    /// Counts the box's moves: a move's end only clears what a later move
+    /// hasn't taken over.
+    private var moveID = 0
 
     /// The next titles' pictures decoded ahead at the box's size (its
     /// memory key): a title coming in has its picture from the first frame.
@@ -5548,12 +5579,13 @@ final class FixedFocusBoxView: UIView {
     /// −1 moving left; `vertical`: an Up/Down move (its longer spring).
     func show(_ item: MetaItem, animated: Bool,
               direction: CGFloat = 1, vertical: Bool = false) {
-        guard item.id != shownID else { return }
+        guard item.id != shownID else { syncEdge(); return }
         shownID = item.id
         applyOutlineStyle()
         guard animated else {
             page.show(item)
             infoPage.show(item)
+            syncEdge()
             return
         }
         // One movement with the row, on its spring, the captions' timing:
@@ -5580,9 +5612,21 @@ final class FixedFocusBoxView: UIView {
         incoming.show(item)
         incoming.alpha = 0
         clip.addSubview(incoming)
-        let outgoing = page
+        // The page in front still waiting, unseen, over the picture the
+        // last move left: that picture is the one on screen, so it goes out
+        // now (with the waiting page dropped, the old one removed at the
+        // last move's end left the box see-through — a flicker).
+        var outgoing = page
+        let reused = outgoing.isHidden && covered != nil
+        if reused, let under = covered {
+            outgoing.removeFromSuperview()
+            outgoing = under
+        }
         page = incoming
         covered = outgoing
+        moveID += 1
+        let id = moveID
+        syncEdge()
         // Core Animation: a layer's contents don't move in a UIView animation.
         func slide(_ page: Page, from: CGPoint, to: CGPoint) {
             let spring = CASpringAnimation(perceptualDuration: move, bounce: 0)
@@ -5596,7 +5640,7 @@ final class FixedFocusBoxView: UIView {
         }
         let still = CGPoint.zero
         slide(incoming, from: CGPoint(x: -shift.x, y: -shift.y), to: still)
-        slide(outgoing, from: still, to: shift)
+        if !reused { slide(outgoing, from: still, to: shift) }
         incoming.logo.transform = CGAffineTransform(translationX: drift.x, y: drift.y)
         // The info drifts as the picture does, crossfading over the whole
         // move. (Tried: 30 pt, the last commit's; on the captions' timing,
@@ -5626,15 +5670,17 @@ final class FixedFocusBoxView: UIView {
         UIView.animate(withDuration: move - start, delay: start, options: options.union(.curveEaseOut)) {
             incoming.alpha = 1
         } completion: { _ in
+            // The old picture handed on to a later move: that move's.
+            if outgoing === self.covered, id != self.moveID { return }
             if self.covered === outgoing { self.covered = nil }
             // Its move done: from now on it waits as any page (a change
             // without a move shows on it).
             if incoming === self.page, !incoming.waiting { incoming.overPicture = false }
+            self.syncEdge()
             if outgoing !== self.page {
                 // The new picture still on its way: the old one goes now,
                 // the edge with it; the placeholder shows.
                 if incoming === self.page, incoming.waiting {
-                    self.edge.isHidden = true
                     incoming.overPicture = false
                     UIView.animate(withDuration: Motion.fadeDuration) { outgoing.alpha = 0 } completion: { _ in
                         outgoing.removeFromSuperview()
@@ -5696,7 +5742,7 @@ final class FixedFocusPlaceholder: FixedFocusPulsing {
             layer.removeAllAnimations()
             alpha = 1
             isHidden = false
-        } else if !isHidden, window != nil {
+        } else if !isHidden, window != nil, !unseen {
             UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
                            options: [.allowUserInteraction, .beginFromCurrentState]) {
                 self.alpha = 0
@@ -5708,6 +5754,18 @@ final class FixedFocusPlaceholder: FixedFocusPulsing {
         } else {
             isHidden = true
         }
+    }
+
+    /// Nothing of it on screen (a card or the box transparent or hidden):
+    /// it goes at once. (Fading off a box that came in meanwhile, the
+    /// picture showed lighter for a moment.)
+    private var unseen: Bool {
+        var view: UIView? = self
+        while let v = view {
+            if v.isHidden || v.alpha == 0 { return true }
+            view = v.superview
+        }
+        return false
     }
 
     /// While it shows: the picture's not there yet (its edge waits too).
@@ -5816,6 +5874,25 @@ enum FixedFocusImages {
             waiting?(false)
         }
     }
+}
+
+/// The shade under a card's logo: the picture's lower half darkening to
+/// its foot. A view, not a bare layer: it moves and resizes with its
+/// picture in the moves' animations (a bare layer took Core Animation's
+/// own 0.25 s — behind the growing or closing card, the picture showed
+/// undimmed for a moment) and shows or hides at once.
+final class FixedFocusShade: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        let gradient = layer as! CAGradientLayer
+        gradient.colors = [UIColor.clear.cgColor,
+                           UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradient.endPoint = CGPoint(x: 0.5, y: 1)
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 /// A card's logo, as the billboard's: trimmed of its empty edges (many
@@ -8201,7 +8278,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private(set) weak var rowCell: FixedFocusRowCell?
     private let poster = UIImageView()
     private let backdrop = UIImageView()
-    private let shade = CAGradientLayer()
+    private let shade = FixedFocusShade()
     private let logo = FixedFocusLogo()
     /// The grown cell's own outline — fades in as it opens (Up/Down), while
     /// the fixed box is away.
@@ -8287,11 +8364,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         contentView.addSubview(placeholderCard)
         loadingCard.isHidden = true
         contentView.addSubview(loadingCard)
-        shade.colors = [UIColor.clear.cgColor,
-                        UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
-        shade.startPoint = CGPoint(x: 0.5, y: 0.5)
-        shade.endPoint = CGPoint(x: 0.5, y: 1)
-        backdrop.layer.addSublayer(shade)
+        backdrop.addSubview(shade)
         backdrop.addSubview(logo)
         state.alpha = 0
         backdrop.addSubview(state)
