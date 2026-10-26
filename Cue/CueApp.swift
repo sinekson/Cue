@@ -36,6 +36,68 @@ enum BackCatch {
     }
 }
 
+/// The remote held while a movement runs to its end (Details opened in
+/// place from the billboard, and its Back): presses and directional focus
+/// moves are dropped — the screen settling is the sign it takes input
+/// again. Focus moves the app makes itself go through.
+@MainActor
+enum InputHold {
+    private(set) static var on = false
+    /// Presses dropped at their start: their ends are dropped too.
+    private static var dropped: Set<ObjectIdentifier> = []
+
+    static func begin() { on = true }
+    static func end() { on = false }
+
+    static func install() {
+        hookSendEvent()
+        hookShouldUpdateFocus()
+    }
+
+    private typealias Send = @convention(c) (AnyObject, Selector, UIEvent) -> Void
+    private static func hookSendEvent() {
+        let selector = #selector(UIWindow.sendEvent(_:))
+        guard let method = class_getInstanceMethod(UIWindow.self, selector) else { return }
+        let original = unsafeBitCast(method_getImplementation(method), to: Send.self)
+        let wrapped: @convention(block) (AnyObject, UIEvent) -> Void = { window, event in
+            if let presses = (event as? UIPressesEvent)?.allPresses, MainActor.assumeIsolated({ drops(presses) }) { return }
+            original(window, selector, event)
+        }
+        method_setImplementation(method, imp_implementationWithBlock(wrapped))
+    }
+
+    private static func drops(_ presses: Set<UIPress>) -> Bool {
+        var drop = false
+        for press in presses {
+            let id = ObjectIdentifier(press)
+            if dropped.contains(id) {
+                drop = true
+                if press.phase == .ended || press.phase == .cancelled { dropped.remove(id) }
+            } else if on, press.phase == .began {
+                dropped.insert(id)
+                drop = true
+            }
+        }
+        return drop
+    }
+
+    private typealias ShouldUpdate = @convention(c) (AnyObject, Selector, UIFocusUpdateContext) -> Bool
+    /// The window holds every focused view: asked about every move.
+    private static func hookShouldUpdateFocus() {
+        let selector = #selector(UIView.shouldUpdateFocus(in:))
+        guard let method = class_getInstanceMethod(UIWindow.self, selector) else { return }
+        let original = unsafeBitCast(method_getImplementation(method), to: ShouldUpdate.self)
+        let wrapped: @convention(block) (AnyObject, UIFocusUpdateContext) -> Bool = { window, context in
+            if MainActor.assumeIsolated({ on }), !context.focusHeading.isEmpty { return false }
+            return original(window, selector, context)
+        }
+        let imp = imp_implementationWithBlock(wrapped)
+        if !class_addMethod(UIWindow.self, selector, imp, method_getTypeEncoding(method)) {
+            method_setImplementation(method, imp)
+        }
+    }
+}
+
 @main
 struct CueApp: App {
     /// Reclaim orphaned player scratch space before anything else runs. A
@@ -85,6 +147,7 @@ struct CueApp: App {
         // before any view exists is exactly the session with no other witness.
         AppProbe.installLevels()
         BackCatch.install()
+        InputHold.install()
     }
 
     @StateObject private var theme = ThemeManager()
@@ -342,6 +405,8 @@ struct RootView: View {
     @State private var sidebarEnabled = false
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
+    /// Into / out of Details in place: the top bar moves out with Home's parts.
+    @ObservedObject private var billboardOpening = BillboardOpening.shared
 
     @ObservedObject private var launch = LaunchPreloader.shared
 
@@ -950,7 +1015,7 @@ struct RootView: View {
     private static let railSettle: Double = 0.25
 
     private var showSidebar: Bool {
-        guard atTabRoot else { return false }
+        guard atTabRoot, !billboardOpening.opened else { return false }
         return !sidebarAutoHides || sidebarRevealed
     }
 
@@ -1111,7 +1176,8 @@ struct RootView: View {
             }
         }
         .animation(perf.motionOn
-                   ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: showSidebar)
+                   ? billboardOpening.running ? Motion.move : .spring(response: 0.34, dampingFraction: 0.86)
+                   : nil, value: showSidebar)
         .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: sidebarFocus != nil)
         // Focus ARRIVING in the rail counts as engaging it, however it got

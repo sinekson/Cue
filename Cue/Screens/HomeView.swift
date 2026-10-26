@@ -1502,6 +1502,8 @@ struct HomeUIKitView: View {
     @EnvironmentObject private var homeSettings: HomeCatalogSettingsStore
     @ObservedObject private var trailerGate = TrailerGate.shared
     @AppStorage(StageTrailer.peekMovesKey) private var peekMovesOut = false
+    /// Into / out of Details in place: Home's parts become Details'.
+    @ObservedObject private var opening = BillboardOpening.shared
     /// Moves between the billboard's buttons (each fades the trailer out;
     /// resting again brings it back).
     /// Arrivals on the billboard (each starts the paging clock over).
@@ -1626,13 +1628,14 @@ struct HomeUIKitView: View {
                            // The trailer on the picture: the peek fades out
                            // with it (the dots too), back as it goes.
                            peekHidden: trailer.shown,
+                           openingLook: opening.opened,
                            onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
                            billboardControls: billboardControls,
                            billboardControlsHeight: FixedFocusBillboardText.buttonsY + 130,
                            // Its text on its pictures: each title one card.
-                           billboardPageText: { AnyView(billboardText($0)) },
+                           billboardPageText: { AnyView(BillboardPageText(item: $0, make: billboardText)) },
                            // Paging mid-slide: focus to the side it went —
                            // Next going right, Play going left.
                            onBillboardStep: { billboardBridge.request($0 > 0 ? .next : .details) },
@@ -2084,6 +2087,9 @@ struct FixedFocusBillboardText: View {
     /// 260 × 160 (its height cap) near square.
     static let logoArea: CGFloat = 46_000
     static let logoMaxSize = CGSize(width: TitleBlock.logoWidth, height: TitleBlock.logoHeight)
+    /// The reason ⇄ Details' line (into Details in place).
+    static let leadSwap = AnyTransition.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)),
+                                                   removal: .opacity.combined(with: .offset(y: -6)))
     /// The reason's line frame (30 pt) holds this much below its baseline.
     static let reasonInset: CGFloat = 6.5
     /// THE BLOCK'S TEXT (facts, tagline): one size, a little above the
@@ -2123,15 +2129,19 @@ struct FixedFocusBillboardText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let reason {
-                BillboardReasonLabel(reason: reason)
-                    .frame(height: 30, alignment: .leading)
-                    .padding(.bottom, Self.gap - Self.reasonInset)
-            } else if let lead {
-                lead
-                    .frame(height: 30, alignment: .leading)
-                    .padding(.bottom, Self.gap - Self.reasonInset)
+            // One place, the reason or Details' line: swapped, the old one
+            // rising out as it fades, the new one coming up into it.
+            ZStack(alignment: .leading) {
+                if let reason {
+                    BillboardReasonLabel(reason: reason)
+                        .transition(Self.leadSwap)
+                } else if let lead {
+                    lead
+                        .transition(Self.leadSwap)
+                }
             }
+            .frame(height: 30, alignment: .leading)
+            .padding(.bottom, Self.gap - Self.reasonInset)
             logoView
 
             VStack(alignment: .leading, spacing: 0) {
@@ -2641,6 +2651,9 @@ extension HomeUIKitView {
                     .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll),
                                value: depth == 0)
                     .opacity(trailer.shown && !peekMovesOut ? 0 : 1)
+                    // (Into / out of Details in place: moved with the peek
+                    // by the rows — `setOpeningLook`; moved here, on its own
+                    // clock, it left a few frames early or late.)
                     .offset(y: trailer.shown && peekMovesOut
                             ? 1080 - Self.dotsMid(depth: depth) + SectionHint.size + FixedFocusRowsController.peekDropSlack : 0)
                     .animation(trailer.shown ? .easeInOut(duration: StageTrailer.fadeIn)
@@ -2689,13 +2702,12 @@ extension HomeUIKitView {
         billboardCommand = FixedFocusRowsCommand(action: .step(rowID: featuredRowID, by: step))
     }
 
-    /// Details' button: into Details.
+    /// Details' button: into Details — in place (`DetailTransition.openInPlace`):
+    /// Home's billboard becomes Details'.
+    /// A trailer playing goes on into Details (`StageTrailer.handOver`).
     func openBillboardTitle(_ item: MetaItem) {
         guard let onSelectFeatured else { onSelect(item); return }
-        // As from any card (`DetailTransition.open`): Home dims, its picture
-        // zooms to Details', Details comes in.
-        // A trailer playing goes on into Details (`StageTrailer.handOver`).
-        DetailTransition.shared.open(item, keepsPicture: true, trailer: trailer.handOver()) { onSelectFeatured(item) }
+        DetailTransition.shared.openInPlace(item, trailer: trailer.handOver()) { onSelectFeatured(item) }
     }
 
 
@@ -2739,9 +2751,11 @@ extension HomeUIKitView {
     /// bottom line — it grows up — the buttons below it).
     /// (The reason — Details has none — goes with the swap; the rest stays
     /// exactly: Details' text is the billboard's.)
-    private func billboardText(_ item: MetaItem) -> some View {
+    /// Into Details in place (`opened`): the reason goes (Details' hint
+    /// comes in with Details).
+    private func billboardText(_ item: MetaItem, opened: Bool) -> some View {
         FixedFocusBillboardText(item: item, info: billboardInfo[item.id],
-                                reason: billboardReasons[item.id],
+                                reason: opened ? nil : billboardReasons[item.id],
                                 ratings: billboardRatingsRow(item),
                                 tagline: billboardTaglines[item.id])
             .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
@@ -2759,6 +2773,36 @@ extension HomeUIKitView {
 
 enum BillboardControl: Hashable { case details, library, next }
 
+/// A billboard card's text, following `BillboardOpening` (each card's own
+/// host: a new root view wouldn't animate).
+struct BillboardPageText<Content: View>: View {
+    @ObservedObject private var opening = BillboardOpening.shared
+    let item: MetaItem
+    let make: (MetaItem, Bool) -> Content
+    /// `opened` as this card shows it, changed in the card's own
+    /// transaction: the reason out and back on the move (Back, the change
+    /// came with its host's new root view, unanimated — the reason was
+    /// there at once, ahead of the parts moving in).
+    @State private var shown = BillboardOpening.shared.opened
+    init(item: MetaItem, make: @escaping (MetaItem, Bool) -> Content) {
+        self.item = item
+        self.make = make
+    }
+    var body: some View {
+        make(item, shown)
+            .onChange(of: opening.opened) { _, opened in
+                guard opened != shown else { return }
+                if opening.running {
+                    withAnimation(Motion.move) { shown = opened }
+                } else {
+                    var instant = Transaction()
+                    instant.disablesAnimations = true
+                    withTransaction(instant) { shown = opened }
+                }
+            }
+    }
+}
+
 /// Home's billboard buttons — Details' look (`DetailActionButton`):
 /// Details (labelled, first — playing is a heavy step, it's behind
 /// Details), Library, Next. ONE view
@@ -2770,14 +2814,18 @@ struct BillboardControls: View {
     let onDetails: () -> Void
     let onMove: () -> Void
     @EnvironmentObject private var library: LibraryStore
+    /// Into Details in place: Details' buttons (Play, Library, About) — the
+    /// same places, Library as it is.
+    @ObservedObject private var opening = BillboardOpening.shared
 
     var body: some View {
+        let opened = opening.opened
         FocusBridgeHost(bridge: bridge, defaultValue: .details, onChange: { old, new in
             if old != nil, let new, new != .next { onMove() }
         }) { focus in
             HStack(spacing: CueSpacing.md) {
                 DetailActionButton(
-                    icon: "info.circle", title: "Details", isPrimary: true, lit: false,
+                    icon: "info.circle", title: opened ? "Play" : "Details", isPrimary: true, lit: false,
                     action: onDetails)
                     .focused(focus, equals: .details)
                     .onMoveCommand { if $0 == .left { onPage(-1) } }
@@ -2790,8 +2838,9 @@ struct BillboardControls: View {
                         isPrimary: false, lit: false, bare: true,
                         action: { if let item { library.toggle(item) } })
                         .focused(focus, equals: .library)
-                    DetailActionButton(icon: "chevron.right", title: "Next", isPrimary: false, lit: false,
-                                       bare: true, plain: true, action: { onPage(1) })
+                    DetailActionButton(icon: opened ? "text.alignleft" : "chevron.right",
+                                       title: opened ? "About" : "Next", isPrimary: false, lit: false,
+                                       bare: true, plain: !opened, action: { onPage(1) })
                         .focused(focus, equals: .next)
                         .onMoveCommand { if $0 == .right { onPage(1) } }
                 }
@@ -2983,6 +3032,11 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// The peek faded out (Home, while the billboard's trailer is on it) —
     /// the cards' contents and the name; the cards stay focusable.
     var peekHidden = false
+    /// Home's billboard in Details' looks (`BillboardOpening`).
+    var openingLook = false
+    /// Details: its peek follows `BillboardOpening.detailsArriving` itself
+    /// (the page observing it re-rendered whole — a stall mid-move).
+    var followsDetailsArriving = false
     /// Paged with the peek moved out: back in at the press (the controller
     /// moves it; this tells the page, for the dots).
     var onPeekBack: () -> Void = {}
@@ -3053,15 +3107,16 @@ struct FixedFocusRows: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> FixedFocusRowsController {
         let controller = FixedFocusRowsController()
-        apply(to: controller)
+        apply(to: controller, animated: false)
         return controller
     }
 
     func updateUIViewController(_ controller: FixedFocusRowsController, context: Context) {
-        apply(to: controller)
+        apply(to: controller, animated: context.transaction.animation != nil
+              && !context.transaction.disablesAnimations)
     }
 
-    private func apply(to controller: FixedFocusRowsController) {
+    private func apply(to controller: FixedFocusRowsController, animated: Bool) {
         controller.onSelect = onSelect
         controller.onSelectFeatured = onSelectFeatured
         controller.onResume = onResume
@@ -3089,6 +3144,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rigidPeekShowsName = rigidPeekShowsName
         controller.onPeekBack = onPeekBack
         controller.peekHidden = peekHidden
+        controller.followsDetailsArriving = followsDetailsArriving
+        if !followsDetailsArriving { controller.setOpeningLook(openingLook, animated: animated) }
         controller.rigidNameY = rigidNameY
         controller.hidesBillboardPicture = hidesBillboardPicture
         controller.rowTitleAccessories = rowTitleAccessories
@@ -3707,7 +3764,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         cell.faded = peekFaded(indexPath.item)
         cell.drop = peekDrop(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
-        cell.titleLift = 0
+        cell.titleLift = peekNameLift(indexPath.item)
         cell.titleScale = 1
         return cell
     }
@@ -4365,12 +4422,71 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
     var onPeekBack: () -> Void = {}
+    /// Into / out of Details in place (`BillboardOpening`): the peek out
+    /// the bottom, the picture leaning in as Details' — the move spring.
+    private(set) var openingLook = false
+    var followsDetailsArriving = false {
+        didSet {
+            guard followsDetailsArriving != oldValue else { return }
+            arriving = nil
+            guard followsDetailsArriving else { return }
+            setOpeningLook(BillboardOpening.shared.detailsArriving, animated: false)
+            arriving = BillboardOpening.shared.$detailsArriving.dropFirst().sink { [weak self] on in
+                self?.setOpeningLook(on, animated: BillboardOpening.shared.detailsAnimated)
+            }
+        }
+    }
+    private var arriving: AnyCancellable?
+    func setOpeningLook(_ on: Bool, animated: Bool) {
+        guard on != openingLook else { return }
+        openingLook = on
+        guard isViewLoaded else { return }
+        let apply = {
+            for case let cell as FixedFocusRowCell in self.outer.visibleCells {
+                cell.dropSprings = true
+                cell.drop = self.peekDrop(cell.rowIndex)
+                cell.dropSprings = false
+            }
+            // Home's dots (its overlay) go with the peek, the same distance
+            // in the same animation — attached to it.
+            if !self.followsDetailsArriving, let dots = self.overlayHost?.view.layer,
+               let featured = self.featuredIndex {
+                Self.drop(dots, by: on ? self.peekDrop(featured + 1) : 0)
+            }
+        }
+        if animated {
+            UIView.animate(springDuration: Motion.moveDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
+        } else {
+            UIView.performWithoutAnimation(apply)
+        }
+        // Home's picture leans in only at once (Back: under Details' still,
+        // then out with its parts) — opening, Details' picture leans in as
+        // it arrives (`BillboardOpening.leanDetails`), Home's stays still.
+        if !on || !animated { pinnedStage?.lean(on, animated: animated) }
+    }
+    /// As a row cell's `drop` on the spring: drawn only, in the
+    /// surrounding animation's time.
+    private static func drop(_ layer: CALayer, by drop: CGFloat) {
+        let from = layer.presentation()?.sublayerTransform ?? layer.sublayerTransform
+        layer.sublayerTransform = CATransform3DMakeTranslation(0, drop, 0)
+        let duration = UIView.inheritedAnimationDuration
+        guard duration > 0 else { layer.removeAnimation(forKey: "drop"); return }
+        let move = CASpringAnimation(perceptualDuration: duration, bounce: 0)
+        move.duration = move.settlingDuration
+        move.keyPath = "sublayerTransform"
+        move.fromValue = from
+        layer.add(move, forKey: "drop")
+    }
     func peekFaded(_ rowIndex: Int) -> Bool { peekHidden && isNext(rowIndex) && !StageTrailer.peekMovesOut }
     /// Moving out instead: down past the screen's bottom.
     func peekDrop(_ rowIndex: Int) -> CGFloat {
-        guard peekHidden, StageTrailer.peekMovesOut, isNext(rowIndex),
+        guard peekHidden && StageTrailer.peekMovesOut || openingLook, isNext(rowIndex),
               let frame = outer.layoutAttributesForItem(at: IndexPath(item: rowIndex, section: 0))?.frame
         else { return 0 }
+        // Only its cards show (Details): out by what shows, so its whole
+        // move is seen.
+        if let peek = rigidPeek, !rigidPeekShowsName { return peek + Self.peekDropSlack }
         return max(0, view.bounds.height - outer.convert(frame, to: view).minY) + Self.peekDropSlack
     }
     /// Past the edge by the cards' shadow too.
@@ -5132,7 +5248,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             cell.drop = peekDrop(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
-            UIView.performWithoutAnimation { cell.titleLift = 0; cell.titleScale = 1 }
+            UIView.performWithoutAnimation { cell.titleLift = peekNameLift(cell.rowIndex); cell.titleScale = 1 }
             cell.applyAccessory()
             cell.applyHeader()
         }
@@ -5184,6 +5300,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return belowAway ? 1 : 0
     }
 
+    /// A header row peeking with its name (Details' "Episodes"): the name
+    /// just above its cards — not at the header's place, the season
+    /// buttons and their map's room between.
+    private func peekNameLift(_ rowIndex: Int) -> CGFloat {
+        guard rigidPeek != nil, rigidPeekShowsName, isFeatured(focusedRow), isNext(rowIndex),
+              header(rowIndex) != nil else { return 0 }
+        return -titleExtra(rowIndex)
+    }
+
     /// A header row's name, going up with the billboard (`liftNextTitle`):
     /// smaller.
     static let nextNameScale: CGFloat = 0.75
@@ -5228,6 +5353,21 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
         guard header(cell.rowIndex) != nil else { return }
+        // Peeking with its name (Details' "Episodes"): the name stays on its
+        // cards and fades out as the season buttons fade in (Up: back).
+        if rigidPeek != nil, rigidPeekShowsName {
+            let spring = rowMove as? CASpringAnimation
+            let progress = spring.map { Self.springProgress($0) }
+            let samples = progress?.values ?? (0...40).map { CGFloat($0) / 40 }
+            let lift = -titleExtra(cell.rowIndex)
+            cell.moveHeader(fade: samples.map { down ? $0 : 1 - $0 },
+                            lift: samples.map { _ in lift },
+                            titleOpacity: samples.map { Self.peekAlpha * (down ? 1 - min($0, 1) : min($0, 1)) },
+                            scale: 1,
+                            timing: spring == nil ? timing : nil,
+                            duration: progress?.duration ?? duration, entering: down)
+            return
+        }
         // A row with a header (Details' seasons): its name goes up from its
         // spot on the billboard and out past the screen's top (Down) / comes
         // back down from there (Up) — no fade, its brightness kept against
@@ -6285,7 +6425,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             let duration = UIView.inheritedAnimationDuration
             guard duration > 0 else { layer.removeAnimation(forKey: "drop"); return }
             let move: CABasicAnimation
-            if drop == 0 {
+            if drop == 0 || dropSprings {
                 let spring = CASpringAnimation(perceptualDuration: duration, bounce: 0)
                 spring.duration = spring.settlingDuration
                 move = spring
@@ -6299,6 +6439,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             layer.add(move, forKey: "drop")
         }
     }
+    /// Out on the spring too (into Details in place — `BillboardOpening`).
+    var dropSprings = false
     /// The posters' contents hidden (concealed by a line: not them).
     private var postersHidden: Bool { concealed && concealTravel == nil || faded }
 
@@ -7352,6 +7494,106 @@ final class DetailTransition {
     }
 
 
+    /// FROM THE BILLBOARD, IN PLACE, in two phases on the move spring (0.35 s).
+    /// Out (`BillboardOpening`): the top bar, the peek and the dots move
+    /// out, the reason goes, the buttons turn into Details', the picture
+    /// leans in. Then Details, built under a still of that (it looks the
+    /// same), takes over, and in: its peek rises, its trailer hint appears
+    /// (`detailsArriving`). `trailer`: going on into Details
+    /// (`StageTrailer.adopt`).
+    func openInPlace(_ item: MetaItem, trailer: AVPlayer?, push: @escaping () -> Void) {
+        guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
+        busy = true
+        InputHold.begin()
+        BillboardOpening.shared.hideFocus()
+        ModeSwap.shared.handingOver = true
+        DetailOpenProbe.pressed()
+        DetailPreparer.shared.start(item, keepsPicture: true)
+        BillboardOpening.shared.move(to: true)
+        BillboardOpening.shared.opened(item.id)
+        let k = Self.length
+        Task { @MainActor in
+            let start = CACurrentMediaTime()
+            await DetailPreparer.shared.ready(item, within: Self.giveUp)
+            let left = Motion.moveDuration * k - (CACurrentMediaTime() - start)
+            if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            // Home as Details looks, still, over everything; Details built
+            // under it.
+            overlay.install(in: window, page: Self.seeThrough(window.snapshotView(afterScreenUpdates: false)))
+            ModeSwap.shared.billboardItemID = item.id
+            ModeSwap.shared.billboardRatings = nil
+            ModeSwap.shared.billboardFacts = nil
+            ModeSwap.shared.billboardSeriesSize = nil
+            ModeSwap.shared.billboardTint = (nil, nil)
+            appeared = nil
+            DetailsOpen.shared.depth += 1
+            BillboardOpening.shared.moveDetailsParts(out: true, animated: false)
+            BillboardOpening.shared.leanDetails(false, animated: false)
+            push()
+            ModeSwap.shared.handingOver = false
+            let built = CACurrentMediaTime()
+            while appeared != item.id, CACurrentMediaTime() - built < 1 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            let watch = FrameWatch()
+            await watch.quiet(frames: Self.quietFrames, within: Self.quietLimit)
+            watch.end()
+            Self.refocus()
+            overlay.remove()
+            BillboardOpening.shared.moveDetailsParts(out: false)
+            BillboardOpening.shared.leanDetails(true)
+            BillboardOpening.shared.landFocus()
+            try? await Task.sleep(for: .seconds(Motion.moveDuration * k))
+            // Home, hidden under it now, as it was (after: its re-render
+            // stalled the move).
+            BillboardOpening.shared.move(to: false, animated: false)
+            InputHold.end()
+            busy = false
+        }
+    }
+
+    /// Back to the billboard from a Details opened in place: the opening
+    /// reversed — Home shown under a still of Details in Details' looks,
+    /// then its parts back.
+    private func closeInPlace(close: @escaping () -> Void, gone: @escaping () -> Void) {
+        guard let window = Self.window else { close(); gone(); return }
+        busy = true
+        InputHold.begin()
+        BillboardOpening.shared.hideFocus()
+        let k = Self.length
+        BillboardOpening.shared.moveDetailsParts(out: true)
+        Task { @MainActor in
+            // Details' peek and hint out first (nearly: the spring's tail is slow).
+            try? await Task.sleep(for: .seconds(Self.peekOutTime * k))
+            overlay.install(in: window, page: Self.seeThrough(window.snapshotView(afterScreenUpdates: false)))
+            BillboardOpening.shared.move(to: true, animated: false)
+            BillboardOpening.shared.moveDetailsParts(out: false, animated: false)
+            close()
+            let watch = FrameWatch()
+            await watch.quiet(frames: Self.quietFrames, within: Self.quietLimit)
+            watch.end()
+            overlay.remove()
+            BillboardOpening.shared.move(to: false)
+            BillboardOpening.shared.landFocus()
+            try? await Task.sleep(for: .seconds(Motion.moveDuration * k))
+            InputHold.end()
+            gone()
+            busy = false
+        }
+    }
+
+    /// Back: Details' peek is all but out by then.
+    static let peekOutTime = 0.23
+
+    /// A still not quite opaque: the page under it is drawn while covered
+    /// (wholly covered, it was first drawn as the still went — a stall that
+    /// the moves starting then ran through: they popped in at their end).
+    /// As `PageFade`'s cover.
+    private static func seeThrough(_ still: UIView?) -> UIView? {
+        still?.alpha = 0.995
+        return still
+    }
+
     /// 1 — or 4 with the dev slow motion.
     static var length: Double { slowMotion ? 4 : 1 }
     /// Dev: `-transitionSlowMo` — every move 4× longer (to watch / screenshot).
@@ -7376,6 +7618,11 @@ final class DetailTransition {
         guard !busy else { close(); gone(); return }
         forget(itemID)
         PageFade.shared.drop(itemID)
+        if BillboardOpening.shared.closes(itemID) {
+            DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
+            closeInPlace(close: close, gone: gone)
+            return
+        }
         PageFade.shared.fadeOff(close, gone: gone)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
@@ -7502,6 +7749,92 @@ final class DetailTransition {
 }
 
 typealias DetailTransitionOpening = DetailTransition.Opening
+
+/// Into Details from the billboard in place (`DetailTransition.openInPlace`):
+/// Home's billboard in Details' looks — the parts that follow it (the
+/// top bar, the peek, the dots, the text's first line, the buttons, the
+/// picture) read `opened`.
+@MainActor
+final class BillboardOpening: ObservableObject {
+    static let shared = BillboardOpening()
+    @Published private(set) var opened = false
+    /// A move running (the top bar takes its spring).
+    @Published private(set) var running = false
+    /// Details' incoming parts held out — the peek (its first row) below
+    /// the screen, the trailer hint hidden: Details comes in built that
+    /// way, they come in together after the hand-over (the second phase);
+    /// on Back they go first.
+    @Published private(set) var detailsArriving = false
+    /// Details' picture leaned in. Opened in place it comes in at Home's
+    /// size and leans in with its arriving parts — the picture moves with
+    /// what arrives, as on Back (Home's parts, the picture leaning out).
+    @Published private(set) var detailsLeaned = true
+    /// The focused button's highlight away while it runs: focus landing
+    /// (on Play, on Back on Details) says it's over — you can go on. It
+    /// lands with the last move, on its spring (`landing`), ending with it.
+    @Published private(set) var focusHidden = false
+    /// The highlight coming back on the move's spring, not its own.
+    private(set) var landing = false
+    func hideFocus() { focusHidden = true }
+    /// With the last move's start: lands as it does.
+    func landFocus() {
+        landing = true
+        focusHidden = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.moveDuration) { self.landing = false }
+    }
+    /// The last change to it animated.
+    private(set) var detailsAnimated = false
+    /// The Details pages opened this way (their Back reverses it).
+    private var inPlace: Set<String> = []
+    private var moves = 0
+
+    func move(to on: Bool, animated: Bool = true) {
+        guard on != opened else { return }
+        guard animated else {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { opened = on }
+            return
+        }
+        moves += 1
+        let move = moves
+        running = true
+        withAnimation(Motion.move) { opened = on }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Motion.moveDuration * DetailTransition.length))
+            if self.moves == move { self.running = false }
+        }
+    }
+
+    func moveDetailsParts(out: Bool, animated: Bool = true) {
+        guard out != detailsArriving else { return }
+        detailsAnimated = animated
+        guard animated else {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { detailsArriving = out }
+            return
+        }
+        withAnimation(Motion.move) { detailsArriving = out }
+    }
+
+    /// Opening: Details built unleaned (`animated` false), then leaning in
+    /// with its parts. (Back leaves it: Home's picture leans out.)
+    func leanDetails(_ on: Bool, animated: Bool = true) {
+        guard on != detailsLeaned else { return }
+        guard animated else {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { detailsLeaned = on }
+            return
+        }
+        withAnimation(Motion.move) { detailsLeaned = on }
+    }
+
+    func opened(_ itemID: String) { inPlace.insert(itemID) }
+    /// Whether `itemID`'s Details was opened in place (forgotten here).
+    func closes(_ itemID: String) -> Bool { inPlace.remove(itemID) != nil }
+}
 
 /// Every page's way in and Back (Details' way in is its zoom): one
 /// crossfade, no system slide. In: the page below, as a still, fades off
@@ -8554,7 +8887,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         }
     }
 
-    /// The picture (or a logo's plate) waits under the placeholder's look:
+        /// The picture (or a logo's plate) waits under the placeholder's look:
     /// no edge, no plate until it's in.
     private func pictureWaiting(_ waiting: Bool, plate: Bool) {
         loadingCard.follow(waiting: waiting)

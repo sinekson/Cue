@@ -879,6 +879,9 @@ final class StageTrailer: ObservableObject {
 
     private func goFull(_ player: AVPlayer) {
         player.isMuted = false
+        // Loaded just now (nothing on the picture): played at once, it
+        // stalls before its first segment — and, not waiting, never goes on.
+        player.automaticallyWaitsToMinimizeStalling = true
         fullPlayer = player
         // On the picture too, for after.
         show(player)
@@ -1048,7 +1051,7 @@ final class TrailerSurface: UIView {
 }
 
 /// Details' trailer full screen: its player with the system's controls
-/// (pause, scrubbing); Back closes it, the trailer playing on behind.
+/// (pause, scrubbing); Back or Down closes it, the trailer playing on behind.
 struct TrailerFullScreen: View {
     @ObservedObject var trailer: StageTrailer
     let close: () -> Void
@@ -1057,7 +1060,7 @@ struct TrailerFullScreen: View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let player = trailer.fullPlayer {
-                TrailerControls(player: player).ignoresSafeArea()
+                TrailerControls(player: player, close: close).ignoresSafeArea()
             } else if trailer.fullFailed {
                 CueEmptyState(icon: "play.slash.fill", title: "Trailer unavailable",
                               message: "This trailer couldn't be loaded. Press Menu to go back.")
@@ -1065,22 +1068,151 @@ struct TrailerFullScreen: View {
                 CueLoadingView(label: "Loading trailer")
             }
         }
-        .onExitCommand(perform: close)
+        // The player's Back is `TrailerControls`' — taken here too, or it
+        // goes on up and the system closes the cover (on the TV it did,
+        // with the controls up).
+        .onExitCommand { if trailer.fullPlayer == nil { close() } }
+        .interactiveDismissDisabled()
     }
 }
 
+/// The system's player, no info panel. Down (a press or a swipe) closes
+/// it, as Back does — unless focus is on the buttons above the bar (then
+/// it moves down to the bar, the player's own). Back with the controls up
+/// hides them (ours: handed to the player, on the TV it went on and closed
+/// the cover); for `backGrace` after they hide by themselves Back does
+/// nothing (pressed to hide them just as they went).
 private struct TrailerControls: UIViewControllerRepresentable {
     let player: AVPlayer
+    let close: () -> Void
+
+    static let backGrace: TimeInterval = 1
+
+    func makeCoordinator() -> Coordinator { Coordinator(close: close) }
+
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
+        controller.playbackControlsIncludeInfoViews = false
+        let coordinator = context.coordinator
+        let press = UITapGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
+        press.allowedPressTypes = [NSNumber(value: UIPress.PressType.downArrow.rawValue)]
+        let swipe = UISwipeGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
+        swipe.direction = .down
+        let back = UITapGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
+        back.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
+        coordinator.back = back
+        for recognizer in [press, swipe, back] as [UIGestureRecognizer] {
+            recognizer.delegate = coordinator
+            controller.view.addGestureRecognizer(recognizer)
+        }
+        coordinator.watch(controller)
         return controller
     }
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         if controller.player !== player { controller.player = player }
+        context.coordinator.close = close
     }
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) {
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.stop()
         controller.player = nil
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var close: () -> Void
+        weak var back: UIGestureRecognizer?
+        private weak var controller: AVPlayerViewController?
+        private weak var root: UIView?
+        private var timer: Timer?
+        /// When the controls were last seen up.
+        private var upAt: Date?
+        init(close: @escaping () -> Void) { self.close = close }
+
+        /// The Back being handled: hides the controls, or falls in the grace.
+        private var hideBack = false
+        private var dropBack = false
+        /// A Back that hid the controls: the next one goes out at once.
+        private var backHidAt: Date?
+
+        @objc func out(_ recognizer: UIGestureRecognizer) {
+            if recognizer === back {
+                if hideBack { return hideControls() }
+                if dropBack { return }
+            }
+            close()
+        }
+
+        /// No call for it: the controls switched off and on hides them.
+        private func hideControls() {
+            guard let controller else { return }
+            backHidAt = Date()
+            upAt = nil
+            controller.showsPlaybackControls = false
+            DispatchQueue.main.async { controller.showsPlaybackControls = true }
+        }
+
+        /// The controls coming and going: no notice for that, so looked at
+        /// every 0.1 s.
+        func watch(_ controller: AVPlayerViewController) {
+            self.controller = controller
+            root = controller.view
+            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { if let self, self.controlsUp { self.upAt = Date() } }
+            }
+        }
+        func stop() { timer?.invalidate() }
+
+        /// The system's bar (its class isn't public).
+        private var bar: UIView? {
+            func find(in view: UIView) -> UIView? {
+                let name = "\(type(of: view))"
+                if name.contains("TransportBar"), !name.contains("Interstitial") { return view }
+                for sub in view.subviews { if let found = find(in: sub) { return found } }
+                return nil
+            }
+            return root.flatMap(find)
+        }
+        /// Shown: the bar and every view it's in (any of them may be what
+        /// fades).
+        private var controlsUp: Bool {
+            var view = bar
+            while let current = view, current !== root {
+                if current.isHidden || current.alpha < 0.01 { return false }
+                view = current.superview
+            }
+            return view != nil
+        }
+        /// Focus on a button above the bar (with the controls hidden it's
+        /// on the player's own full-screen view).
+        private var focusAbove: Bool {
+            guard controlsUp, let root, let bar,
+                  var view = root.window?.windowScene?.focusSystem?.focusedItem as? UIView,
+                  !view.isDescendant(of: bar) else { return false }
+            while view !== root {
+                if view is UICollectionViewCell || view is UIControl { return true }
+                guard let parent = view.superview else { return false }
+                view = parent
+            }
+            return false
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool {
+            if recognizer === back {
+                // Always ours: handed on, it reached the cover, which closed.
+                hideBack = controlsUp
+                let gone = upAt.map { Date().timeIntervalSince($0) < TrailerControls.backGrace } ?? false
+                let byBack = backHidAt.map { Date().timeIntervalSince($0) < TrailerControls.backGrace } ?? false
+                dropBack = gone && !byBack
+                return true
+            }
+            return !focusAbove
+        }
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            !focusAbove
+        }
+        // Alongside the player's own (they'd take it first).
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 }
 

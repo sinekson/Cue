@@ -42,6 +42,20 @@ struct FocusBridgeHost<Value: Hashable, Content: View>: View {
 }
 
 /// Reads the depth for its content alone: only it updates on a change.
+/// Details' picture leaned in (`ModeSwap.depthScale`) — opened from the
+/// billboard in place, only as its parts arrive (`BillboardOpening
+/// .detailsLeaned`). Its own view: the page doesn't observe the opening.
+struct DetailLean: ViewModifier {
+    @ObservedObject private var opening = BillboardOpening.shared
+    let depth: CGFloat
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(opening.detailsLeaned ? ModeSwap.depthScale(depth) : 1)
+            // (Set from Home's side — no transaction reaches this host.)
+            .animation(Motion.move, value: opening.detailsLeaned)
+    }
+}
+
 struct RowsDepthReader<Content: View>: View {
     let model: DetailRowsDepth
     @ViewBuilder let content: (Int) -> Content
@@ -777,13 +791,17 @@ struct DetailView: View {
                            // peek.
                            rigidRest: HomeUIKitView.rigidRowRest,
                            rigidNameY: FixedFocusRowsLayout.nextNameY,
-                           // The first row's cards peek up the bottom edge.
-                           // (No name: the page is one title's — what peeks is
-                           // more of it, whatever the row. Home names its rows.)
+                           // The first row's cards peek up the bottom edge,
+                           // named as on Home (a show's "Episodes": its season
+                           // buttons take the name's place in the row).
                            rigidPeek: Self.episodesPeek,
+                           rigidPeekShowsName: true,
                            // Out with the trailer, back as it goes — and in
                            // from Home's playing trailer, never shown before it.
                            peekHidden: trailer.shown || (!pageShown && StageTrailer.carries(viewModel.meta.id)),
+                           // Opened in place from Home's billboard: up from
+                           // below after the hand-over, down first on Back.
+                           followsDetailsArriving: true,
                            hidesBillboardPicture: true,
                            // The season's progress: between the season
                            // buttons and the episodes.
@@ -867,7 +885,7 @@ struct DetailView: View {
             if viewModel.pictureLate { ATVBackground() }
             RemoteImage(url: url, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
                 .frame(width: 1920 + 2 * drift, height: 1080)
-                .scaleEffect(ModeSwap.depthScale(depth))
+                .modifier(DetailLean(depth: depth))
                 .frame(width: 1920, height: 1080)
                 .clipped()
             // The trailer never leans in: the screen, as on Home, whatever
@@ -883,7 +901,7 @@ struct DetailView: View {
                         .frame(width: 1920 + 2 * drift, height: 1080)
                 }
             }
-            .scaleEffect(ModeSwap.depthScale(depth))
+            .modifier(DetailLean(depth: depth))
             .frame(width: 1920, height: 1080)
             .clipped()
             .opacity(below ? 1 : 0)
@@ -949,14 +967,6 @@ struct DetailView: View {
     private static let personPrefix = "person:"
     /// About this many people in Cast & Crew.
     private static let castCount = 20
-    /// TMDB's "The Lord of the Rings Collection" as the row's name: "More
-    /// from the Lord of the Rings Collection" (a name not ending in
-    /// "Collection": "More from …").
-    private static func collectionRowName(_ name: String) -> String {
-        guard name.hasSuffix(" Collection") else { return "More from \(name)" }
-        let core = name.hasPrefix("The ") ? String(name.dropFirst(4)) : name
-        return "More from the \(core)"
-    }
     /// Under the billboard: how much of the episodes' cards peeks up.
     private static let episodesPeek: CGFloat = 60
 
@@ -1054,7 +1064,7 @@ struct DetailView: View {
         }
         // A film's series first — its next part is the likeliest next watch.
         if let collection = viewModel.collection, !viewModel.collectionParts.isEmpty {
-            rows.append(HomeRow(id: Self.collectionRowID, title: Self.collectionRowName(collection.name),
+            rows.append(HomeRow(id: Self.collectionRowID, title: collection.name,
                                 items: viewModel.collectionParts))
         }
         if !viewModel.moreLikeThis.isEmpty {
@@ -1535,7 +1545,9 @@ struct DetailActionButton: View {
     /// Play, lit from the first frame).
     @State private var focusLit = false
     @State private var focusKnown = false
-    private var shownLit: Bool { focusKnown ? focusLit : lit }
+    /// Into / out of Details in place: unlit while it runs.
+    @ObservedObject private var opening = BillboardOpening.shared
+    private var shownLit: Bool { (focusKnown ? focusLit : lit) && !opening.focusHidden }
 
     /// Its focus came or went: lit / unlit AT ONCE — the old button and the
     /// new one change together, on one curve (`open`). (A 50 ms wait before
@@ -1559,10 +1571,19 @@ struct DetailActionButton: View {
     /// The content: text and icons one size (the ⓘ larger — its circle
     /// reads small).
     static let textSize: CGFloat = 26
+    /// A name's width at the label's font (the label's width while one
+    /// name crossfades into another).
+    static func labelWidth(_ title: String) -> CGFloat {
+        let font = UIFont.systemFont(ofSize: textSize, weight: .semibold)
+        return ceil((title as NSString).size(withAttributes: [.font: font]).width)
+    }
     static let iconSize: CGFloat = 26
     static let iconBox: CGFloat = 30
     /// Lighting up / the caption coming in / the scale: a no-bounce spring.
-    static let open: Animation = .spring(duration: 0.15, bounce: 0)
+    /// Landing at the end of Details opened in place, the move's spring
+    /// (`BillboardOpening.landing`).
+    static var open: Animation { BillboardOpening.shared.landing ? Motion.move : quickOpen }
+    private static let quickOpen: Animation = .spring(duration: 0.15, bounce: 0)
     /// Focus leaving: the capsule shrinks into the button (to `leaveScale`
     /// of it) as it fades — slower than it came, so it's seen going; the
     /// fade goes evenly with the shrink, from the start (a delayed fade
@@ -1599,15 +1620,28 @@ struct DetailActionButton: View {
                         } else {
                             Image(systemName: icon)
                                 .font(.system(size: iconSize, weight: .bold))
+                                // (Into Details in place: › becomes About's.)
+                                .contentTransition(.opacity)
                         }
                     }
                     .frame(width: Self.iconBox, height: Self.iconBox)
                 } else {
-                    Text(title)
-                        .font(.system(size: Self.textSize, weight: .semibold))
-                        .lineLimit(1)
-                        .fixedSize()
-                        .opacity(busy ? 0 : 1)
+                    // (Into Details in place: Details becomes Play — the
+                    // two names crossfade, centred, as the width goes from
+                    // one to the other; the text's own content transition
+                    // kept the old name left-aligned, cut off.)
+                    ZStack {
+                        Text(title)
+                            .font(.system(size: Self.textSize, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .id(title)
+                            .transition(.opacity)
+                    }
+                    .frame(width: Self.labelWidth(title))
+                    // (Set from another host — no transaction reaches it.)
+                    .animation(Motion.move, value: title)
+                    .opacity(busy ? 0 : 1)
                         .overlay {
                             if busy { ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8) }
                         }
@@ -1700,6 +1734,9 @@ struct ActionFace: ViewModifier {
                                 Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
                             }
                         }
+                        // (Coming in, it grows into the button: into Details
+                        // in place, the billboard's › becoming About.)
+                        .scaleEffect(pill ? 1 : DetailActionButton.leaveScale)
                         .opacity(pill ? 1 : 0)
                     }
                     Capsule().fill(DetailActionButton.focusFill)
@@ -2120,11 +2157,18 @@ struct DetailsBackdropBackground: View {
 struct DetailTrailerHint: View {
     @ObservedObject var model: DetailViewModel
     @ObservedObject var trailer: StageTrailer
+    /// Opened in place from Home's billboard: in with the peek.
+    @ObservedObject private var opening = BillboardOpening.shared
 
     var body: some View {
-        if model.trailerReady || trailer.shown {
-            SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
-                .transition(.opacity)
+        ZStack(alignment: .leading) {
+            if model.trailerReady || trailer.shown, !opening.detailsArriving {
+                SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
+                    .transition(FixedFocusBillboardText.leadSwap)
+            }
         }
+        // Its own (the change comes through another host: the transaction's
+        // animation didn't reach it — it popped in).
+        .animation(Motion.move, value: opening.detailsArriving)
     }
 }

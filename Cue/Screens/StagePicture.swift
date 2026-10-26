@@ -66,7 +66,9 @@ final class StagePictureView: UIView {
         required init?(coder: NSCoder) { fatalError() }
         override func layoutSubviews() {
             super.layoutSubviews()
-            picture.frame = bounds
+            // (Its place, not its frame: it may lean in — `lean`.)
+            picture.bounds = CGRect(origin: .zero, size: bounds.size)
+            picture.center = CGPoint(x: bounds.midX, y: bounds.midY)
             shade.image = StageArt.shade
             // The whole picture, edge to edge (on the screen's part only,
             // the strip past it showed as a bright line on a sliding edge).
@@ -123,6 +125,20 @@ final class StagePictureView: UIView {
         guard surface.superview !== page else { return }
         page.insertSubview(surface, aboveSubview: page.picture)
         page.setNeedsLayout()
+    }
+
+    /// Into Details in place: the picture leans in as Details'
+    /// (`ModeSwap.depthScale`) — the picture only: a trailer never zooms.
+    func lean(_ on: Bool, animated: Bool) {
+        let scale = on ? ModeSwap.depthScale(1) : 1
+        let picture = page.picture
+        let apply = { picture.transform = CGAffineTransform(scaleX: scale, y: scale) }
+        if animated {
+            UIView.animate(springDuration: Motion.moveDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
+        } else {
+            UIView.performWithoutAnimation(apply)
+        }
     }
 
     /// The current title's text again (its data arriving: a rating, the

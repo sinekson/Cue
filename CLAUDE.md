@@ -425,8 +425,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`TrailerFullScreen`, the system's `AVPlayerViewController` — pause,
   scrubbing), where it was, with sound; none on the picture (not yet
   played, ended, trailers off): the title's from its start, the same
-  resolving (HLS, 720p floor). Back: on the picture again, playing on,
-  with the setting's sound. (Was: a separate player resolving the
+  resolving (HLS, 720p floor); it waits for its buffer there (played
+  at once without waiting, it stalled on its first frame for good). No
+  info panel. Down closes it, as Back does — unless focus is on a button
+  above the bar (it moves to the bar). Back with the controls up hides
+  them (ours, `showsPlaybackControls` off and on — handed to the player,
+  on the TV it went on to the cover and closed it; a second Back then
+  goes out); for 1 s after they
+  hide by themselves Back does nothing (`backGrace` — pressed to hide
+  them just as they went, it left the player). Out: on the picture again,
+  playing on, with the setting's sound. (Was: a separate player resolving the
   trailer again from its start — `TrailerPlayerView`, removed.)
 - **Details** uses the billboard's text and shade. Three buttons, as
   Home's billboard: Play, Library, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
@@ -445,7 +453,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   there; Up from any card lands on the row's season); the season progress
   ("Season 2 • 3 of 13 watched", ticks) between the buttons and the cards.
   The season buttons and the map come up with the row, fading in (the
-  Apple TV app's way). Up reverses it. (A shorter Details-only move,
+  Apple TV app's way). Up reverses it. In the peek the row is named
+  "Episodes" (the peek's level, just above its cards — `rigidPeekShowsName`,
+  `peekNameLift`), fading out on Down as the season buttons fade in, in
+  its place on the cards (Up: back) (tried: no name — the peek didn't say
+  what it was). (A shorter Details-only move,
   0.48 s, was tried and dropped: same time as Home's.)
   Tried and dropped: "Episodes ⌄" on the billboard instead of the peek;
   the row's name "‹ Season X ›" as the season control; the full progress
@@ -453,12 +465,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the season buttons (Apple TV app's way); progress inside each season
   button; the map above the buttons; the map under the episodes' captions.
 - **Details' collection** (films; TMDB's collection — not Cue's Collections):
-  the first row below the billboard, above More Like This, named "More from
-  the … Collection". Moving focus, posters with a caption (as Cast &
+  the first row below the billboard, above More Like This, named as TMDB
+  names the collection ("The Lord of the Rings Collection", "The Dollars
+  Trilogy" — it says what the film belongs to; tried: "More from the …
+  Collection" — with More Like This under it, repetitive; talked over:
+  "In This Collection"). Moving focus, posters with a caption (as Cast &
   Crew's; tried: fixed focus); the other parts in release order (the film
   itself left out), starting on the first; upcoming parts kept, parts
-  without a picture left out. Details' peek never shows a row name (one
-  title's page — Apple's rule); Home's does.
+  without a picture left out. Details' peek names its row, as Home's
+  (a show's: "Episodes", below; tried: no name, Apple's rule for one
+  title's page — the peek didn't say what it was).
 - **Details' Cast & Crew**: after More Like This. Moving focus, portraits
   (2:3, smaller than the posters — seven across, `portraitCard`; many
   people; tried: the portrait poster's size), name + role under each; creators /
@@ -542,9 +558,50 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     fade between them shows no change of size). It plays on through
     every step. (Tried: no zoom for any title — the zoom looked better;
     a Details at 100 % when entered with a trailer.)
-    Tried and dropped (2026-10-11): an in-place transition from the
-    billboard (Home's parts moving out, Details' rising in, reversed on
-    Back) — every version needed workarounds (seams, doubled pictures).
+  - From the billboard, on trial: in place, two phases on the move
+    spring, 0.35 s each (`DetailTransition.openInPlace`, `BillboardOpening`;
+    tried: the present spring, 0.45 s — with the hand-over ~1.2 s in all,
+    too slow).
+    Out: the top bar, the peek and the dots move out (as for a trailer),
+    the reason fades, the buttons turn into Details' (Details → Play,
+    › → About); the picture stays. Then Details, built under a still of
+    that (its picture at Home's size), takes over; in: its picture leans
+    to 106 % (the picture only, a trailer never zooms —
+    `BillboardOpening.leanDetails`, `DetailLean`) as its episodes' peek
+    rises and its trailer hint appears, landing together — the picture
+    moves with what arrives, as on Back (tried: the lean in the first
+    phase, with the parts going — the second phase stood still) (`detailsArriving` — Details built with them held out; the
+    peek follows it in its controller, `followsDetailsArriving`, the hint
+    with its own `.animation` — changes from another host get no
+    transaction). The still is 99.5 % opaque (`seeThrough`): wholly
+    covered, Details was first drawn as it went, a stall the second
+    phase's moves ran through — they popped in. Home's own reset waits
+    until the second phase ends (it stalled the move). Presses are
+    dropped from the press until the last move ends (`InputHold`: the
+    window drops them, the focus engine refuses moves) — the moves'
+    end means you can go on. The focused button's highlight goes with
+    the press (its usual way out, 0.35 s) and comes back as focus
+    landing with the last move, on its spring, ending with it (Play,
+    with the peek and hint; on Back, Home's Details with its parts) —
+    the sign it's over (`BillboardOpening.focusHidden`, `landFocus`;
+    lit throughout, the end was unclear; its own 0.15 s after the move
+    — it came late).
+    Back: the reverse — the peek and hint go first (0.23 s,
+    `peekOutTime`), then Home under a still of Details, its parts coming
+    back (the dots moving with the peek both ways — the same distance
+    in the rows' own animation, `setOpeningLook`; tried: faded in in
+    place; their own SwiftUI move — a few frames early or late, a
+    different distance), the reason fading back in with them (each card
+    animates its own copy of `opened` — `BillboardPageText`; the change
+    came with the host's new root view, unanimated: it was there at
+    once, ahead of the rest). The buttons' names crossfade centred while the label's
+    width goes from one to the other (Details ↔ Play, on the move's
+    spring; the text's own content transition kept the old name
+    left-aligned, cut off — choppy). (Tried: one phase, Details' peek rising after the move — it
+    came late. Talked over, not built: Details built first, then one
+    move — a pause at the press.)
+    (Tried and dropped, 2026-10-11: Home's parts moving out, Details'
+    rising in — seams, doubled pictures.)
   - Details from Home, Movies, Series (their root, not a folder): a layer
     over the page (`detailLayers` in `CueApp`, its own NavigationStack for
     the pages opened from it) — Home stays in the window, laid out,
