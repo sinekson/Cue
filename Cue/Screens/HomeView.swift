@@ -1503,7 +1503,7 @@ struct HomeUIKitView: View {
     @ObservedObject private var trailerGate = TrailerGate.shared
     @AppStorage(StageTrailer.peekMovesKey) private var peekMovesOut = false
     /// Into / out of Details in place: Home's parts become Details'.
-    @ObservedObject private var opening = BillboardOpening.shared
+    private var opening = BillboardOpening.shared
     /// Moves between the billboard's buttons (each fades the trailer out;
     /// resting again brings it back).
     /// Arrivals on the billboard (each starts the paging clock over).
@@ -2776,7 +2776,7 @@ enum BillboardControl: Hashable { case details, library, next }
 /// A billboard card's text, following `BillboardOpening` (each card's own
 /// host: a new root view wouldn't animate).
 struct BillboardPageText<Content: View>: View {
-    @ObservedObject private var opening = BillboardOpening.shared
+    private var opening = BillboardOpening.shared
     let item: MetaItem
     let make: (MetaItem, Bool) -> Content
     /// `opened` as this card shows it, changed in the card's own
@@ -2814,19 +2814,20 @@ struct BillboardControls: View {
     let onDetails: () -> Void
     let onMove: () -> Void
     @EnvironmentObject private var library: LibraryStore
-    /// Into Details in place: Details' buttons (Play, Library, About) — the
-    /// same places, Library as it is.
-    @ObservedObject private var opening = BillboardOpening.shared
 
     var body: some View {
-        let opened = opening.opened
+        // (Into Details in place they stay as they are: Details' own
+        // buttons wear them, becoming Play / About as Details arrives; on
+        // Back these wear Details', becoming Home's with its parts —
+        // `DetailActionButton.other`.)
         FocusBridgeHost(bridge: bridge, defaultValue: .details, onChange: { old, new in
             if old != nil, let new, new != .next { onMove() }
         }) { focus in
             HStack(spacing: CueSpacing.md) {
                 DetailActionButton(
-                    icon: "info.circle", title: opened ? "Play" : "Details", isPrimary: true, lit: false,
-                    action: onDetails)
+                    icon: "info.circle", title: "Details", isPrimary: true, lit: false,
+                    billboard: true, action: onDetails,
+                    other: .init(title: "Play", icon: "play.fill"))
                     .focused(focus, equals: .details)
                     .onMoveCommand { if $0 == .left { onPage(-1) } }
                 // (One focus section, as on Details: a move into the row
@@ -2835,12 +2836,12 @@ struct BillboardControls: View {
                     let saved = item.map(library.contains) ?? false
                     DetailActionButton(
                         icon: saved ? "checkmark" : "plus", title: saved ? "In Library" : "Library",
-                        isPrimary: false, lit: false, bare: true,
+                        isPrimary: false, lit: false, bare: true, billboard: true,
                         action: { if let item { library.toggle(item) } })
                         .focused(focus, equals: .library)
-                    DetailActionButton(icon: opened ? "text.alignleft" : "chevron.right",
-                                       title: opened ? "About" : "Next", isPrimary: false, lit: false,
-                                       bare: true, plain: !opened, action: { onPage(1) })
+                    DetailActionButton(icon: "chevron.right", title: "Next", isPrimary: false, lit: false,
+                                       bare: true, plain: true, billboard: true, action: { onPage(1) },
+                                       other: .init(title: "About", icon: "text.alignleft"))
                         .focused(focus, equals: .next)
                         .onMoveCommand { if $0 == .right { onPage(1) } }
                 }
@@ -4428,15 +4429,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var followsDetailsArriving = false {
         didSet {
             guard followsDetailsArriving != oldValue else { return }
-            arriving = nil
+            BillboardOpening.shared.unfollowDetailsArriving(self)
             guard followsDetailsArriving else { return }
             setOpeningLook(BillboardOpening.shared.detailsArriving, animated: false)
-            arriving = BillboardOpening.shared.$detailsArriving.dropFirst().sink { [weak self] on in
+            BillboardOpening.shared.followDetailsArriving(self) { [weak self] on in
                 self?.setOpeningLook(on, animated: BillboardOpening.shared.detailsAnimated)
             }
         }
     }
-    private var arriving: AnyCancellable?
     func setOpeningLook(_ on: Bool, animated: Bool) {
         guard on != openingLook else { return }
         openingLook = on
@@ -7496,16 +7496,18 @@ final class DetailTransition {
 
     /// FROM THE BILLBOARD, IN PLACE, in two phases on the move spring (0.35 s).
     /// Out (`BillboardOpening`): the top bar, the peek and the dots move
-    /// out, the reason goes, the buttons turn into Details', the picture
-    /// leans in. Then Details, built under a still of that (it looks the
-    /// same), takes over, and in: its peek rises, its trailer hint appears
-    /// (`detailsArriving`). `trailer`: going on into Details
+    /// out, the reason goes; the buttons stay, the pressed one dimmed. Then Details, built
+    /// under a still of that (it looks the same — its buttons wearing
+    /// Home's), takes over, and in: its peek rises, its trailer hint
+    /// appears, its buttons become its own (Details → Play, › → About),
+    /// the picture leans in (`detailsArriving`). `trailer`: going on into Details
     /// (`StageTrailer.adopt`).
     func openInPlace(_ item: MetaItem, trailer: AVPlayer?, push: @escaping () -> Void) {
         guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
         busy = true
         InputHold.begin()
-        BillboardOpening.shared.hideFocus()
+        // (Kept off under Details: back with Home's parts on Back.)
+        BillboardOpening.shared.dimFocus(true)
         ModeSwap.shared.handingOver = true
         DetailOpenProbe.pressed()
         DetailPreparer.shared.start(item, keepsPicture: true)
@@ -7542,7 +7544,6 @@ final class DetailTransition {
             overlay.remove()
             BillboardOpening.shared.moveDetailsParts(out: false)
             BillboardOpening.shared.leanDetails(true)
-            BillboardOpening.shared.landFocus()
             try? await Task.sleep(for: .seconds(Motion.moveDuration * k))
             // Home, hidden under it now, as it was (after: its re-render
             // stalled the move).
@@ -7559,7 +7560,7 @@ final class DetailTransition {
         guard let window = Self.window else { close(); gone(); return }
         busy = true
         InputHold.begin()
-        BillboardOpening.shared.hideFocus()
+        BillboardOpening.shared.close(true)
         let k = Self.length
         BillboardOpening.shared.moveDetailsParts(out: true)
         Task { @MainActor in
@@ -7574,8 +7575,9 @@ final class DetailTransition {
             watch.end()
             overlay.remove()
             BillboardOpening.shared.move(to: false)
-            BillboardOpening.shared.landFocus()
+            BillboardOpening.shared.dimFocus(false)
             try? await Task.sleep(for: .seconds(Motion.moveDuration * k))
+            BillboardOpening.shared.close(false)
             InputHold.end()
             gone()
             busy = false
@@ -7623,6 +7625,8 @@ final class DetailTransition {
             closeInPlace(close: close, gone: gone)
             return
         }
+        // (Opened in place and taken off the trail since.)
+        BillboardOpening.shared.dimFocus(false)
         PageFade.shared.fadeOff(close, gone: gone)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
@@ -7755,38 +7759,51 @@ typealias DetailTransitionOpening = DetailTransition.Opening
 /// top bar, the peek, the dots, the text's first line, the buttons, the
 /// picture) read `opened`.
 @MainActor
-final class BillboardOpening: ObservableObject {
+/// Observed per property (`@Observable`): each view updates only for what
+/// it reads — as one `ObservableObject` every change (eight a transition)
+/// re-ran the root's and Home's bodies, mid-move.
+@Observable
+final class BillboardOpening {
     static let shared = BillboardOpening()
-    @Published private(set) var opened = false
-    /// A move running (the top bar takes its spring).
-    @Published private(set) var running = false
+    private(set) var opened = false
+    /// A move running (the top bar takes its spring) — read with `opened`,
+    /// never watched.
+    @ObservationIgnored private(set) var running = false
     /// Details' incoming parts held out — the peek (its first row) below
     /// the screen, the trailer hint hidden: Details comes in built that
     /// way, they come in together after the hand-over (the second phase);
     /// on Back they go first.
-    @Published private(set) var detailsArriving = false
+    private(set) var detailsArriving = false
     /// Details' picture leaned in. Opened in place it comes in at Home's
     /// size and leans in with its arriving parts — the picture moves with
     /// what arrives, as on Back (Home's parts, the picture leaning out).
-    @Published private(set) var detailsLeaned = true
-    /// The focused button's highlight away while it runs: focus landing
-    /// (on Play, on Back on Details) says it's over — you can go on. It
-    /// lands with the last move, on its spring (`landing`), ending with it.
-    @Published private(set) var focusHidden = false
-    /// The highlight coming back on the move's spring, not its own.
-    private(set) var landing = false
-    func hideFocus() { focusHidden = true }
-    /// With the last move's start: lands as it does.
-    func landFocus() {
-        landing = true
-        focusHidden = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.moveDuration) { self.landing = false }
-    }
+    private(set) var detailsLeaned = true
+    /// The billboard buttons' highlight dimmed: from the press into
+    /// Details (Details' own buttons undim as they arrive) until Home's
+    /// parts come back on Back.
+    private(set) var focusDimmed = false
+    func dimFocus(_ on: Bool) { focusDimmed = on }
+    /// Back to the billboard in place running (`closeInPlace`).
+    private(set) var closing = false
+    func close(_ on: Bool) { closing = on }
+    /// Back: Home's billboard buttons in Details' looks (Play, About) until
+    /// its parts come back (`opened` going off, the second phase).
+    var homeWearsDetails: Bool { closing && opened }
     /// The last change to it animated.
-    private(set) var detailsAnimated = false
+    @ObservationIgnored private(set) var detailsAnimated = false
     /// The Details pages opened this way (their Back reverses it).
-    private var inPlace: Set<String> = []
-    private var moves = 0
+    @ObservationIgnored private var inPlace: Set<String> = []
+    @ObservationIgnored private var moves = 0
+    /// Controllers following `detailsArriving` (`followsDetailsArriving`).
+    @ObservationIgnored private var followers: [(owner: () -> AnyObject?, follow: (Bool) -> Void)] = []
+
+    func followDetailsArriving(_ owner: AnyObject, _ follow: @escaping (Bool) -> Void) {
+        followers.append(({ [weak owner] in owner }, follow))
+    }
+
+    func unfollowDetailsArriving(_ owner: AnyObject) {
+        followers.removeAll { $0.owner().map { $0 === owner } ?? true }
+    }
 
     func move(to on: Bool, animated: Bool = true) {
         guard on != opened else { return }
@@ -7809,6 +7826,8 @@ final class BillboardOpening: ObservableObject {
     func moveDetailsParts(out: Bool, animated: Bool = true) {
         guard out != detailsArriving else { return }
         detailsAnimated = animated
+        followers.removeAll { $0.owner() == nil }
+        followers.forEach { $0.follow(out) }
         guard animated else {
             var instant = Transaction()
             instant.disablesAnimations = true

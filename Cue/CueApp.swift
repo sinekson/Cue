@@ -48,6 +48,24 @@ enum InputHold {
 
     static func begin() { on = true }
     static func end() { on = false }
+    /// The last press's start (any button).
+    private static var lastPress: CFTimeInterval = 0
+
+    /// `body` once the remote has been still for `idle` seconds — for
+    /// main-thread work that's out of sight but long enough to delay a
+    /// press (taking down a page's views: ~0.3 s).
+    static func whenIdle(for idle: Double = 1.5, _ body: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            var wait = idle
+            while true {
+                try? await Task.sleep(for: .seconds(wait))
+                let still = CACurrentMediaTime() - lastPress
+                if still >= idle { break }
+                wait = idle - still
+            }
+            body()
+        }
+    }
 
     static func install() {
         hookSendEvent()
@@ -70,6 +88,7 @@ enum InputHold {
         var drop = false
         for press in presses {
             let id = ObjectIdentifier(press)
+            if press.phase == .began { lastPress = CACurrentMediaTime() }
             if dropped.contains(id) {
                 drop = true
                 if press.phase == .ended || press.phase == .cancelled { dropped.remove(id) }
@@ -406,7 +425,7 @@ struct RootView: View {
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
     /// Into / out of Details in place: the top bar moves out with Home's parts.
-    @ObservedObject private var billboardOpening = BillboardOpening.shared
+    private var billboardOpening = BillboardOpening.shared
 
     @ObservedObject private var launch = LaunchPreloader.shared
 
@@ -1339,7 +1358,7 @@ struct RootView: View {
             if let layer {
                 let layerPath = detailLayerPath(tab)
                 NavigationStack(path: layerPath) {
-                    layerRoot(layer.root, tab: tab, path: layerPath)
+                    layerRoot(layer.root, tab: tab, path: layerPath, leaving: layer.leaving)
                         // A page the trail moves down here is a new view
                         // (else the old root's state stays on screen).
                         .id(layer.root)
@@ -1388,9 +1407,9 @@ struct RootView: View {
     /// The layer's first page: Details, or a browse page the trail left
     /// there; Back from it fades the layer off the page under it.
     @ViewBuilder
-    private func layerRoot(_ root: Route, tab: AppTab, path: Binding<[Route]>) -> some View {
+    private func layerRoot(_ root: Route, tab: AppTab, path: Binding<[Route]>, leaving: Bool) -> some View {
         if case .detail(let item) = root {
-            detailView(item, path: path) { closeDetailLayer(tab) }
+            detailView(item, path: path, leaving: leaving) { closeDetailLayer(tab) }
         } else {
             destinationBody(for: root, path: path)
                 .environment(\.pageBack) { closeDetailLayer(tab) }
@@ -1408,9 +1427,14 @@ struct RootView: View {
             lastHomePopAt = Date()
             setSidebarEnabled(false, reenableAfter: Self.railSettle)
         }
+        // Hidden by then; taken down once the remote is still (it holds
+        // the main thread ~0.3 s: done as the move landed, a press just
+        // after it came late). A Details opened meanwhile replaces it.
         let gone = {
-            guard detailLayers[tab.rawValue]?.id == id else { return }
-            withTransaction(instant) { detailLayers[tab.rawValue] = nil }
+            InputHold.whenIdle {
+                guard detailLayers[tab.rawValue]?.id == id else { return }
+                withTransaction(instant) { detailLayers[tab.rawValue] = nil }
+            }
         }
         if case .detail(let item) = detailLayers[tab.rawValue]?.root {
             DetailTransition.shared.closeLayer(itemID: item.id, close: close, gone: gone)
@@ -1771,7 +1795,7 @@ struct RootView: View {
     }
 
     /// Details, its pages pushed on `path`.
-    private func detailView(_ item: MetaItem, path: Binding<[Route]>,
+    private func detailView(_ item: MetaItem, path: Binding<[Route]>, leaving: Bool = false,
                             onBack: @escaping () -> Void) -> some View {
         DetailView(
             item: item,
@@ -1801,7 +1825,8 @@ struct RootView: View {
                                            backdrop: backdrop), path)
                 }
             },
-            onReturnToBillboard: onBack
+            onReturnToBillboard: onBack,
+            takesPrepared: !leaving
         )
     }
 

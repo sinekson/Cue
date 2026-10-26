@@ -106,7 +106,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details; Details: Play), the rest
   icon-only (billboard: Library, Next — only its chevron, no pill;
   Details: Library, About), their names under them while
-  focused. (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
+  focused. (Tried, for later: Library's plus becoming the tick — its strokes
+  morphing, with a quarter turn, the tick drawn from its left end.) (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
   at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
@@ -563,29 +564,46 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     tried: the present spring, 0.45 s — with the hand-over ~1.2 s in all,
     too slow).
     Out: the top bar, the peek and the dots move out (as for a trailer),
-    the reason fades, the buttons turn into Details' (Details → Play,
-    › → About); the picture stays. Then Details, built under a still of
+    the reason fades; the buttons stay as they are (each phase changes
+    only its own page's parts), the pressed one dimmed after its press
+    dip — pressing not possible (`BillboardOpening.focusDimmed`); the
+    picture stays. Then Details, built under a still of
     that (its picture at Home's size), takes over; in: its picture leans
     to 106 % (the picture only, a trailer never zooms —
     `BillboardOpening.leanDetails`, `DetailLean`) as its episodes' peek
-    rises and its trailer hint appears, landing together — the picture
+    rises, its trailer hint appears and its buttons become its own
+    (they come in wearing Home's — `DetailActionButton.arriving`:
+    Details → Play, › → About), landing together — the picture
     moves with what arrives, as on Back (tried: the lean in the first
     phase, with the parts going — the second phase stood still) (`detailsArriving` — Details built with them held out; the
     peek follows it in its controller, `followsDetailsArriving`, the hint
     with its own `.animation` — changes from another host get no
     transaction). The still is 99.5 % opaque (`seeThrough`): wholly
     covered, Details was first drawn as it went, a stall the second
-    phase's moves ran through — they popped in. Home's own reset waits
+    phase's moves ran through — they popped in. `BillboardOpening` is
+    `@Observable`, each view updating only for what it reads (as an
+    `ObservableObject` its eight changes a transition re-ran the root's
+    and Home's bodies mid-move). Home's own reset waits
     until the second phase ends (it stalled the move). Presses are
     dropped from the press until the last move ends (`InputHold`: the
     window drops them, the focus engine refuses moves) — the moves'
-    end means you can go on. The focused button's highlight goes with
-    the press (its usual way out, 0.35 s) and comes back as focus
-    landing with the last move, on its spring, ending with it (Play,
-    with the peek and hint; on Back, Home's Details with its parts) —
-    the sign it's over (`BillboardOpening.focusHidden`, `landFocus`;
-    lit throughout, the end was unclear; its own 0.15 s after the move
-    — it came late).
+    end means you can go on. The pressed button stays shrunk (90 %, no
+    grow back) and its highlight dims to 50 % from the release,
+    the press dip shrunk (0.2 s, eased; tried: from 0.1 s after it, 0.25 s
+    — a gap; `DetailActionButton.dim`,
+    `dimmedHighlight`), and Details' buttons undim as they arrive (dimmed
+    while they wear Home's — `openingDimmed`), growing back to size, on
+    the move's spring; on Back the same minus the shrink and grow (no button pressed —
+    `closing`): Details' dim with Back, Home's come wearing Details'
+    names (`homeWearsDetails`), becoming Home's and undimming with its
+    parts — the sign it's over. (Tried: lit throughout, Details → Play in the
+    second phase — better, the end still unclear; the highlight gone
+    between the phases, back with Play; dimmed after the press had grown
+    back. Tried, with Details → Play in the first phase — too much at once on
+    one button: lit throughout — the end was unclear; the highlight going
+    with the press and landing again with the last move — abrupt, the
+    button going off and on; dimmed to 50 % and back; its own 0.15 s
+    after the move — late; a beat for the press first — delayed.)
     Back: the reverse — the peek and hint go first (0.23 s,
     `peekOutTime`), then Home under a still of Details, its parts coming
     back (the dots moving with the peek both ways — the same distance
@@ -594,7 +612,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     different distance), the reason fading back in with them (each card
     animates its own copy of `opened` — `BillboardPageText`; the change
     came with the host's new root view, unanimated: it was there at
-    once, ahead of the rest). The buttons' names crossfade centred while the label's
+    once, ahead of the rest); Play → Details and About → › with them
+    (tried: with the peek going, the first phase). The buttons' names crossfade centred while the label's
     width goes from one to the other (Details ↔ Play, on the move's
     spring; the text's own content transition kept the old name
     left-aligned, cut off — choppy). (Tried: one phase, Details' peek rising after the move — it
@@ -609,9 +628,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     engine). Back: the tabs' dissolve — Home there at once, Details
     fading off it as soon as that's committed (0.25 s, ease in-out —
     `backTime`; `closeLayer`, `fadeOff`; tried: 0.35 s ease out from the
-    press); the layer stays, hidden, until the fade is over
-    (`DetailLayer.leaving` — taken down with the close, it held the main
-    thread ~0.3 s before anything moved); nothing rebuilt; focus
+    press); the layer stays, hidden, until the fade is over and the
+    remote has been still 1.5 s (`DetailLayer.leaving`,
+    `InputHold.whenIdle` — taken down with the close, it held the main
+    thread ~0.3 s before anything moved; as the move landed, a press
+    just after came late); nothing rebuilt; focus
     back on the card it left (`returnRow`: the system picks the first
     card on screen, we move it on). (Pushed, Home left the window and
     was rebuilt on Back — the cause of the flicker. Tried, pushed: a
@@ -1021,7 +1042,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`FixedFocusShowInfo.status`).
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
-  (no late updates).
+  (no late updates; the episodes' peek stills decoded too — `peekStills`:
+  created just before the rise, the name rose alone, the cards popped in).
   The launch: the system launch screen is the app's background colour
   (`AppBackground` colour set) with the icon's play, 220 pt, centred
   (`LaunchScreen`, from render.swift; tvOS ignores `UIColorName`). The

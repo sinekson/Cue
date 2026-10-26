@@ -46,7 +46,7 @@ struct FocusBridgeHost<Value: Hashable, Content: View>: View {
 /// billboard in place, only as its parts arrive (`BillboardOpening
 /// .detailsLeaned`). Its own view: the page doesn't observe the opening.
 struct DetailLean: ViewModifier {
-    @ObservedObject private var opening = BillboardOpening.shared
+    private var opening = BillboardOpening.shared
     let depth: CGFloat
     func body(content: Content) -> some View {
         content
@@ -575,12 +575,15 @@ struct DetailView: View {
         onSelectCompany: @escaping (TMDBService.Company, String?) -> Void = { _, _ in },
         onSelectGenre: @escaping (TMDBService.Genre, Bool, String?) -> Void = { _, _, _ in },
         onSelectKeyword: @escaping (TMDBService.Keyword, Bool, String?) -> Void = { _, _, _ in },
-        onReturnToBillboard: (() -> Void)? = nil
+        onReturnToBillboard: (() -> Void)? = nil,
+        takesPrepared: Bool = true
     ) {
         let fromBillboard = MainActor.assumeIsolated { ModeSwap.shared.billboardItemID == item.id }
         let model = DetailViewModel(item: item)
         // Got ready under the curtain (`DetailTransition`): built with it.
-        let prepared = MainActor.assumeIsolated { DetailPreparer.shared.take(item.id) }
+        // (Not a Details on its way out: rebuilt as the same title opened
+        // again, it took the new one's record — that one came in bare.)
+        let prepared = takesPrepared ? MainActor.assumeIsolated { DetailPreparer.shared.take(item.id) } : nil
         if let prepared {
             MainActor.assumeIsolated { model.seed(prepared) }
             _showInfo = State(initialValue: prepared.showInfo)
@@ -1253,7 +1256,8 @@ struct DetailView: View {
                     onHold: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .manual }
                         else { openSources(target) }
-                    }
+                    },
+                    other: .init(title: "Details", icon: "info.circle")
                 )
                 .focused(focus, equals: .play)
                 // The other two are one focus section, so a vertical move
@@ -1269,7 +1273,8 @@ struct DetailView: View {
                         title: saved ? "In Library" : "Library",
                         isPrimary: false, lit: litAction == .library, bare: true,
                         // No toast: the button itself says it ("In Library").
-                        action: { library.toggle(viewModel.meta) }
+                        action: { library.toggle(viewModel.meta) },
+                        other: .init(title: saved ? "In Library" : "Library", icon: saved ? "checkmark" : "plus")
                     )
                     .focused(focus, equals: .library)
                     // About in place, over the page (the billboard
@@ -1280,7 +1285,8 @@ struct DetailView: View {
                         action: {
                             if viewModel.meta.description?.isEmpty == false { summaryShown = true }
                             else { ToastCenter.shared.show("No summary for this title", icon: "text.alignleft") }
-                        }
+                        },
+                        other: .init(title: "Next", icon: "chevron.right", plain: true)
                     )
                     .focused(focus, equals: .info)
                 }
@@ -1531,11 +1537,27 @@ struct DetailActionButton: View {
     /// Nothing behind it at rest (the billboard's Next).
     var plain = false
     var iconSize = DetailActionButton.iconSize
+    /// Home's billboard button: dimmed after its press into Details in
+    /// place (`BillboardOpening.focusDimmed`) — pressing it no longer
+    /// possible — back to full with Home's parts on Back.
+    var billboard = false
     let action: () -> Void
     var onHold: (() -> Void)? = nil
     /// Holding Select opens this menu instead (the billboard's Details:
     /// Play, Choose Source).
     var holdEntries: [MenuEntry]? = nil
+    /// Into / out of Details in place: the other page's button in this
+    /// place, worn until the second phase — Details' buttons wear Home's
+    /// while its parts are held out (`detailsArriving`), becoming Details'
+    /// with its peek and hint (Details → Play, › → About); on Back Home's
+    /// wear Details' (`BillboardOpening.homeWearsDetails`), becoming
+    /// Home's with its parts.
+    var other: Other? = nil
+    struct Other {
+        let title: String
+        let icon: String
+        var plain = false
+    }
 
     /// Its hold menu open (Play).
     @State private var held = false
@@ -1545,9 +1567,25 @@ struct DetailActionButton: View {
     /// Play, lit from the first frame).
     @State private var focusLit = false
     @State private var focusKnown = false
-    /// Into / out of Details in place: unlit while it runs.
-    @ObservedObject private var opening = BillboardOpening.shared
-    private var shownLit: Bool { (focusKnown ? focusLit : lit) && !opening.focusHidden }
+    private var opening = BillboardOpening.shared
+    private var shownLit: Bool { focusKnown ? focusLit : lit }
+    /// The other page's button worn (`other`).
+    private var worn: Other? {
+        guard let other else { return nil }
+        let wears = billboard ? opening.homeWearsDetails : opening.detailsArriving && !opening.closing
+        return wears ? other : nil
+    }
+    private var shownTitle: String { worn?.title ?? title }
+    /// In place, dimmed until the second phase ends — pressing not
+    /// possible: Details' while its parts are held out (coming in, and
+    /// from Back's start), Home's from the press until its parts are back.
+    private var openingDimmed: Bool {
+        billboard ? opening.focusDimmed : other != nil && opening.detailsArriving
+    }
+    /// Kept pressed while dimmed — the focused one (the one pressed; the
+    /// others shrank with it), only into Details (Back presses no button).
+    private var keptPressed: Bool { shownLit && openingDimmed && !opening.closing }
+    private var shownIcon: String { worn?.icon ?? icon }
 
     /// Its focus came or went: lit / unlit AT ONCE — the old button and the
     /// new one change together, on one curve (`open`). (A 50 ms wait before
@@ -1580,10 +1618,12 @@ struct DetailActionButton: View {
     static let iconSize: CGFloat = 26
     static let iconBox: CGFloat = 30
     /// Lighting up / the caption coming in / the scale: a no-bounce spring.
-    /// Landing at the end of Details opened in place, the move's spring
-    /// (`BillboardOpening.landing`).
-    static var open: Animation { BillboardOpening.shared.landing ? Motion.move : quickOpen }
-    private static let quickOpen: Animation = .spring(duration: 0.15, bounce: 0)
+    static let open: Animation = .spring(duration: 0.15, bounce: 0)
+    /// Into / out of Details in place (`openingDimmed`): the highlight's
+    /// share — "pressing not possible". In from the release (the press's
+    /// shrink done), out with the second phase's move.
+    static let dimmedHighlight: Double = 0.5
+    static let dim: Animation = .easeInOut(duration: 0.2)
     /// Focus leaving: the capsule shrinks into the button (to `leaveScale`
     /// of it) as it fades — slower than it came, so it's seen going; the
     /// fade goes evenly with the shrink, from the start (a delayed fade
@@ -1618,10 +1658,12 @@ struct DetailActionButton: View {
                         if busy {
                             ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
                         } else {
-                            Image(systemName: icon)
+                            Image(systemName: shownIcon)
                                 .font(.system(size: iconSize, weight: .bold))
-                                // (Into Details in place: › becomes About's.)
+                                // (Into Details in place: › becomes About's;
+                                // set from another host — no transaction.)
                                 .contentTransition(.opacity)
+                                .animation(Motion.move, value: shownIcon)
                         }
                     }
                     .frame(width: Self.iconBox, height: Self.iconBox)
@@ -1631,16 +1673,16 @@ struct DetailActionButton: View {
                     // one to the other; the text's own content transition
                     // kept the old name left-aligned, cut off.)
                     ZStack {
-                        Text(title)
+                        Text(shownTitle)
                             .font(.system(size: Self.textSize, weight: .semibold))
                             .lineLimit(1)
                             .fixedSize()
-                            .id(title)
+                            .id(shownTitle)
                             .transition(.opacity)
                     }
-                    .frame(width: Self.labelWidth(title))
+                    .frame(width: Self.labelWidth(shownTitle))
                     // (Set from another host — no transaction reaches it.)
-                    .animation(Motion.move, value: title)
+                    .animation(Motion.move, value: shownTitle)
                     .opacity(busy ? 0 : 1)
                         .overlay {
                             if busy { ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8) }
@@ -1649,11 +1691,12 @@ struct DetailActionButton: View {
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
             .frame(width: bare ? Self.height : nil, height: Self.height)
-            .modifier(ActionFace(lit: shownLit, pill: !plain))
+            .modifier(ActionFace(lit: shownLit, pill: !(worn?.plain ?? plain), dimmed: openingDimmed))
+            .animation(Motion.move, value: worn?.plain ?? plain)
             // Under it while focused (outside its frame: the row never moves
             // for it): Play's search, the bare button's name.
             .overlay(alignment: .top) {
-                if let text = isPrimary ? caption : bare ? title : nil {
+                if let text = isPrimary ? caption : bare ? shownTitle : nil {
                     Text(text)
                         .font(.system(size: Self.captionSize, weight: .medium))
                         .foregroundStyle(AppGlass.textMuted)
@@ -1661,11 +1704,14 @@ struct DetailActionButton: View {
                         .fixedSize()
                         .opacity(shownLit ? 1 : 0)
                         .animation(litAnimation, value: shownLit)
+                        // (Play's episode comes with Play.)
+                        .opacity(isPrimary && worn != nil ? 0 : 1)
+                        .animation(Motion.move, value: worn != nil)
                         .offset(y: Self.height + Self.captionGap)
                 }
             }
         }
-        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, onFocus: focusChanged))
+        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, dimmed: keptPressed, onFocus: focusChanged))
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
         .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
@@ -1701,6 +1747,9 @@ struct ActionFace: ViewModifier {
     /// The pill as the current one of a set (the row's season): the flat
     /// light grey (`FlatControl.selected`), not the blur.
     var current = false
+    /// Its highlight dimmed (into / out of Details in place) — at
+    /// `DetailActionButton.dimmedHighlight`.
+    var dimmed = false
 
     /// The frosted pill: the picture behind it blurred and darkened (the
     /// system's thin material, dark — not glass), a faint light edge
@@ -1747,6 +1796,8 @@ struct ActionFace: ViewModifier {
                         .scaleEffect(lit || pill ? 1 : DetailActionButton.leaveScale)
                         .opacity(lit ? 1 : 0)
                         .animation(lit ? DetailActionButton.open : DetailActionButton.leaveFade, value: lit)
+                        .opacity(dimmed ? DetailActionButton.dimmedHighlight : 1)
+                        .animation(dimmed ? DetailActionButton.dim : Motion.move, value: dimmed)
                 }
             }
             .animation(lit ? DetailActionButton.open : DetailActionButton.leave, value: lit)
@@ -1758,12 +1809,15 @@ struct ActionFace: ViewModifier {
 private struct DetailPressStyle: ButtonStyle {
     let lit: Bool
     let held: Bool
+    /// Into / out of Details in place: kept pressed while dimmed (the
+    /// press doesn't grow back), growing back with the second phase.
+    var dimmed = false
     /// The button's own focus, as it comes and goes.
     var onFocus: (Bool) -> Void = { _ in }
     static let focusScale = DetailActionButton.focusScale
 
     func makeBody(configuration: Configuration) -> some View {
-        PressBody(configuration: configuration, lit: lit, held: held, onFocus: onFocus)
+        PressBody(configuration: configuration, lit: lit, held: held, dimmed: dimmed, onFocus: onFocus)
     }
 
     private struct PressBody: View {
@@ -1771,6 +1825,7 @@ private struct DetailPressStyle: ButtonStyle {
         let configuration: Configuration
         let lit: Bool
         let held: Bool
+        let dimmed: Bool
         let onFocus: (Bool) -> Void
         /// Shown pressed: from the press on, for at least `pressIn`'s
         /// time (a quick tap still shrinks all the way), then grows back.
@@ -1781,9 +1836,11 @@ private struct DetailPressStyle: ButtonStyle {
         var body: some View {
             let base = lit ? DetailPressStyle.focusScale : 1
             let scale = held ? base + FixedFocusMetrics.heldGrowth
-                : down ? base * DetailActionButton.pressScale : base
+                : down || dimmed ? base * DetailActionButton.pressScale : base
             return configuration.label
                 .scaleEffect(scale)
+                // (Dimmed, as the highlight; undimmed, on the move.)
+                .animation(dimmed ? DetailActionButton.dim : Motion.move, value: dimmed)
                 // A press: quick in, back on a spring; focus: with the
                 // highlight, on its curve.
                 .animation(down ? DetailActionButton.pressIn
@@ -2068,8 +2125,17 @@ final class DetailPreparer {
         guard let meta = prepared.meta else { return }
         let logo = prepared.logo ?? meta.logo
         let picture = prepared.pictureLate ? nil : prepared.picture
+        let stills = peekStills(meta, extras: prepared.extras, fallback: picture)
         await withTaskGroup(of: Void.self) { group in
             if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) } }
+            // The episodes' peek: its first cards' stills (created just
+            // before the rise, they loaded then — the name rose alone and
+            // the cards popped in at its end).
+            if !stills.isEmpty {
+                group.addTask { @MainActor in
+                    await FixedFocusImages.prefetch(stills, within: .seconds(max(0, deadline - CACurrentMediaTime())))
+                }
+            }
             if let picture {
                 group.addTask { await ImageCache.shared.preload(picture, maxDimension: StagePictureView.pictureSize.width) }
                 group.addTask { _ = await BlurredBackdrop.image(for: picture) }
@@ -2080,7 +2146,7 @@ final class DetailPreparer {
                 if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             }
             // All the pictures, or the deadline: whichever first.
-            var pending = (logo != nil ? 1 : 0) + (picture != nil ? 3 : 0)
+            var pending = (logo != nil ? 1 : 0) + (picture != nil ? 3 : 0) + (stills.isEmpty ? 0 : 1)
             while pending > 0, await group.next() != nil {
                 pending -= 1
                 if CACurrentMediaTime() >= deadline { break }
@@ -2088,6 +2154,25 @@ final class DetailPreparer {
             group.cancelAll()
         }
         DetailOpenProbe.note("ready")
+    }
+
+    /// The stills of the episodes' peek — Play's episode and the next few
+    /// in play order (the row opens aimed there) — at the cards' size, as
+    /// `buildEpisodeRowItems` picks them. None while spoilers are hidden
+    /// (those cards draw a blurred picture).
+    private func peekStills(_ meta: MetaItem, extras: [Int: [Int: TMDBService.EpisodeExtra]],
+                            fallback: String?) -> [(url: String?, maxDimension: CGFloat)] {
+        guard meta.isSeries, !UserDefaults.standard.bool(forKey: DetailHideSpoilers.key),
+              let context = TitlePreloader.shared.context else { return [] }
+        let order = SeriesEpisodes.inPlayOrder(meta)
+        let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress,
+                                               watched: context.watched)
+        let start = target.flatMap { t in order.firstIndex { $0.id == t.id } } ?? 0
+        let size = FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight)
+        return order.dropFirst(max(0, start - 1)).prefix(7).map { episode in
+            let extra = episode.episode.flatMap { extras[episode.season ?? 0]?[$0] }
+            return (TMDBService.originalSize(extra?.still) ?? episode.thumbnail ?? fallback, size)
+        }
     }
 
     /// The picture Home shows for `item` (the billboard's: TMDB's, chosen
@@ -2158,7 +2243,7 @@ struct DetailTrailerHint: View {
     @ObservedObject var model: DetailViewModel
     @ObservedObject var trailer: StageTrailer
     /// Opened in place from Home's billboard: in with the peek.
-    @ObservedObject private var opening = BillboardOpening.shared
+    private var opening = BillboardOpening.shared
 
     var body: some View {
         ZStack(alignment: .leading) {
