@@ -5,7 +5,6 @@ struct AppearanceSettingsDetail: View {
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
     @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
-    @AppStorage(StageTrailer.peekMovesKey) private var peekMovesOut = false
 
     var body: some View {
         SettingsPage(title: SettingsCategory.appearance.title, subtitle: SettingsCategory.appearance.subtitle) {
@@ -27,11 +26,6 @@ struct AppearanceSettingsDetail: View {
                     title: "Hide the top bar",
                     description: "Out of sight until you press Up at the top of a page, or Back.",
                     isOn: $settings.autoHideSidebar
-                )
-                SettingsToggleRow(
-                    title: "Trailers: move the row out",
-                    description: "While a trailer plays, the row below and the page dots move out the bottom instead of fading.",
-                    isOn: $peekMovesOut
                 )
             }
         }

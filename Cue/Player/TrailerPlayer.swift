@@ -731,10 +731,6 @@ final class StageTrailer: ObservableObject {
     /// its player, playing, until that page takes it (`adopt`).
     private static var carried: (titleID: String, player: AVPlayer, key: String)?
     static let fadeIn: Double = 0.6
-    /// Settings → Appearance (trying): the peek and the dots move out the
-    /// bottom while a trailer plays, instead of fading.
-    static let peekMovesKey = "cue.trailer.peekMovesOut"
-    static var peekMovesOut: Bool { UserDefaults.standard.bool(forKey: peekMovesKey) }
     static let fadeOut: Double = 0.35
 
     /// Resting on `item` (nil: not resting — out, and forgotten); a show's
@@ -842,6 +838,8 @@ final class StageTrailer: ObservableObject {
 
     /// Home handed over `titleID`'s trailer (Details opening on it takes it).
     static func carries(_ titleID: String) -> Bool { carried?.titleID == titleID }
+    /// One handed over, not yet taken (Back from Details: Home's billboard).
+    static var carrying: Bool { carried != nil }
 
     /// Full screen: the trailer on the picture, if there's one (where it
     /// is), else `item`'s from its start.

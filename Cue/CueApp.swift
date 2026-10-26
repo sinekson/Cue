@@ -1034,7 +1034,8 @@ struct RootView: View {
     private static let railSettle: Double = 0.25
 
     private var showSidebar: Bool {
-        guard atTabRoot, !billboardOpening.opened else { return false }
+        // (Out for the billboard's trailer too, with the peek.)
+        guard atTabRoot, !billboardOpening.opened, !billboardOpening.trailerShown else { return false }
         return !sidebarAutoHides || sidebarRevealed
     }
 
@@ -1088,6 +1089,9 @@ struct RootView: View {
                             as? UIFocusUpdateContext else { return }
                     // The press that reaches for the bar: Up.
                     guard ctx.focusHeading.contains(.up) else { return }
+                    // Out for the billboard's trailer: back first (focus
+                    // leaving the buttons stops the trailer anyway).
+                    if billboardOpening.trailerShown { billboardOpening.trailerShown = false }
                     // Search root with the rail ON SCREEN but inside one of its
                     // short `.disabled` windows (the moments after a tab switch
                     // or a rail exit, kept so the engine seeds focus into the
@@ -1589,6 +1593,7 @@ struct RootView: View {
                        + "  revealed=\(sidebarRevealed.probe) enabled=\(sidebarEnabled.probe)")
         // Menu at a tab root is the other way back to a hidden rail.
         if sidebarAutoHides { sidebarRevealed = true }
+        if billboardOpening.trailerShown { billboardOpening.trailerShown = false }
         sidebarEngagedAt = Date()
         setSidebarEnabled(true)
         DispatchQueue.main.async { sidebarFocus = tab }

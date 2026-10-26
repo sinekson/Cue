@@ -1501,7 +1501,6 @@ struct HomeUIKitView: View {
     @StateObject private var trailer = StageTrailer()
     @EnvironmentObject private var homeSettings: HomeCatalogSettingsStore
     @ObservedObject private var trailerGate = TrailerGate.shared
-    @AppStorage(StageTrailer.peekMovesKey) private var peekMovesOut = false
     /// Into / out of Details in place: Home's parts become Details'.
     private var opening = BillboardOpening.shared
     /// Moves between the billboard's buttons (each fades the trailer out;
@@ -1552,8 +1551,18 @@ struct HomeUIKitView: View {
         }
         // Back: this page's first say while it's in front (`HomeBack`).
         .onAppear { if active { takeBack() } }
-        .onChange(of: active) { _, now in if now { takeBack() } }
+        .onChange(of: active) { _, now in
+            if now { takeBack() }
+            opening.trailerShown = now && trailerOut
+        }
+        // The top bar moves out with the peek while it plays.
+        .onChange(of: trailerOut) { _, out in if active { opening.trailerShown = out } }
     }
+
+    /// The trailer on the picture — or coming back on it from Details
+    /// (handed over, taken on as Home shows): the peek, the dots and the
+    /// top bar stay out (they came back, then went again).
+    private var trailerOut: Bool { trailer.shown || opening.closing && StageTrailer.carrying }
 
     /// Back below the billboard: all the way up to it, in one move (its
     /// title as it is, the rows keeping their places). On it: not ours —
@@ -1625,9 +1634,9 @@ struct HomeUIKitView: View {
                            rigidNameY: FixedFocusRowsLayout.nextNameY,
                            rigidPeek: Self.firstRowPeek,
                            rigidPeekShowsName: true,
-                           // The trailer on the picture: the peek fades out
-                           // with it (the dots too), back as it goes.
-                           peekHidden: trailer.shown,
+                           // The trailer on the picture: the peek moves out
+                           // the bottom (the dots too), back as it goes.
+                           peekHidden: trailerOut,
                            openingLook: opening.opened,
                            onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
@@ -2650,16 +2659,10 @@ extension HomeUIKitView {
                             y: Self.dotsMid(depth: depth) - SectionHint.size * 1.3 / 2)
                     .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll),
                                value: depth == 0)
-                    .opacity(trailer.shown && !peekMovesOut ? 0 : 1)
-                    // (Into / out of Details in place: moved with the peek
-                    // by the rows — `setOpeningLook`; moved here, on its own
-                    // clock, it left a few frames early or late.)
-                    .offset(y: trailer.shown && peekMovesOut
-                            ? 1080 - Self.dotsMid(depth: depth) + SectionHint.size + FixedFocusRowsController.peekDropSlack : 0)
-                    .animation(trailer.shown ? .easeInOut(duration: StageTrailer.fadeIn)
-                               : peekMovesOut ? FixedFocusMotion.animation(duration: StagePictureView.slideDuration)
-                               : .easeInOut(duration: StageTrailer.fadeOut),
-                               value: trailer.shown)
+                    // (With a trailer, and into / out of Details in place:
+                    // moved with the peek by the rows — `movePeek`; moved
+                    // here, on its own clock, it left a few frames early or
+                    // late.)
                 }
             }
         }
@@ -3030,8 +3033,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var rigidPeek: CGFloat? = nil
     /// …and its name stays above its cards (Home); off: hidden (Details).
     var rigidPeekShowsName = false
-    /// The peek faded out (Home, while the billboard's trailer is on it) —
-    /// the cards' contents and the name; the cards stay focusable.
+    /// The peek and the dots out the bottom (while the billboard's trailer
+    /// is on it); the cards stay focusable.
     var peekHidden = false
     /// Home's billboard in Details' looks (`BillboardOpening`).
     var openingLook = false
@@ -3762,7 +3765,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // own alpha from its layout attributes.)
         cell.contentView.alpha = rowAlpha(indexPath.item)
         cell.concealed = rowConcealed(indexPath.item)
-        cell.faded = peekFaded(indexPath.item)
         cell.drop = peekDrop(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
         cell.titleLift = peekNameLift(indexPath.item)
@@ -3782,7 +3784,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                         forItemAt indexPath: IndexPath) {
         cell.contentView.alpha = rowAlpha(indexPath.item)
         (cell as? FixedFocusRowCell)?.concealed = rowConcealed(indexPath.item)
-        (cell as? FixedFocusRowCell)?.faded = peekFaded(indexPath.item)
         (cell as? FixedFocusRowCell)?.drop = peekDrop(indexPath.item)
         (cell as? FixedFocusRowCell)?.titleAlpha = titleAlpha(indexPath.item)
     }
@@ -4405,21 +4406,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var rigidRestSetting: CGFloat?
     var rigidPeek: CGFloat?
     var rigidPeekShowsName = false
-    /// Out with the trailer's fade, back with its fade out — moving, back
-    /// as the billboard pages (`StagePictureView.slideDuration`, its spring).
+    /// The trailer on the picture: the peek and the dots out the bottom,
+    /// back as it goes (the billboard paging: from the press) — as into
+    /// Details in place (`movePeek`).
     var peekHidden = false {
         didSet {
             guard peekHidden != oldValue, isViewLoaded else { return }
-            peekGuide.isEnabled = peekHidden && StageTrailer.peekMovesOut
-            let back = StageTrailer.peekMovesOut ? StagePictureView.slideDuration : StageTrailer.fadeOut
-            UIView.animate(withDuration: peekHidden ? StageTrailer.fadeIn : back, delay: 0,
-                           options: [.beginFromCurrentState, .curveEaseInOut, .allowUserInteraction]) {
-                for case let cell as FixedFocusRowCell in self.outer.visibleCells {
-                    cell.faded = self.peekFaded(cell.rowIndex)
-                    cell.drop = self.peekDrop(cell.rowIndex)
-                    cell.titleAlpha = self.titleAlpha(cell.rowIndex)
-                }
-            }
+            peekGuide.isEnabled = peekHidden
+            movePeek(animated: true)
         }
     }
     var onPeekBack: () -> Void = {}
@@ -4441,17 +4435,23 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard on != openingLook else { return }
         openingLook = on
         guard isViewLoaded else { return }
+        movePeek(animated: animated)
+        // Home's picture leans in only at once (Back: under Details' still,
+        // then out with its parts) — opening, Details' picture leans in as
+        // it arrives (`BillboardOpening.leanDetails`), Home's stays still.
+        if !on || !animated { pinnedStage?.lean(on, animated: animated) }
+    }
+    /// The peek out the bottom or back (`peekDrop`), on the move spring.
+    private func movePeek(animated: Bool) {
         let apply = {
             for case let cell as FixedFocusRowCell in self.outer.visibleCells {
-                cell.dropSprings = true
                 cell.drop = self.peekDrop(cell.rowIndex)
-                cell.dropSprings = false
             }
             // Home's dots (its overlay) go with the peek, the same distance
             // in the same animation — attached to it.
             if !self.followsDetailsArriving, let dots = self.overlayHost?.view.layer,
                let featured = self.featuredIndex {
-                Self.drop(dots, by: on ? self.peekDrop(featured + 1) : 0)
+                Self.drop(dots, by: self.peekDrop(featured + 1))
             }
         }
         if animated {
@@ -4460,10 +4460,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         } else {
             UIView.performWithoutAnimation(apply)
         }
-        // Home's picture leans in only at once (Back: under Details' still,
-        // then out with its parts) — opening, Details' picture leans in as
-        // it arrives (`BillboardOpening.leanDetails`), Home's stays still.
-        if !on || !animated { pinnedStage?.lean(on, animated: animated) }
     }
     /// As a row cell's `drop` on the spring: drawn only, in the
     /// surrounding animation's time.
@@ -4478,10 +4474,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         move.fromValue = from
         layer.add(move, forKey: "drop")
     }
-    func peekFaded(_ rowIndex: Int) -> Bool { peekHidden && isNext(rowIndex) && !StageTrailer.peekMovesOut }
-    /// Moving out instead: down past the screen's bottom.
+    /// Out of the way (a trailer, into Details in place): down past the
+    /// screen's bottom.
     func peekDrop(_ rowIndex: Int) -> CGFloat {
-        guard peekHidden && StageTrailer.peekMovesOut || openingLook, isNext(rowIndex),
+        guard peekHidden || openingLook, isNext(rowIndex),
               let frame = outer.layoutAttributesForItem(at: IndexPath(item: rowIndex, section: 0))?.frame
         else { return 0 }
         // Only its cards show (Details): out by what shows, so its whole
@@ -4987,7 +4983,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         slidingUntil = CACurrentMediaTime() + StagePictureView.slideDuration * Self.pagingShare
         // Moved out for the trailer: back in now, with the slide (its stop
         // reaches here through the page a few frames later).
-        if peekHidden, StageTrailer.peekMovesOut {
+        if peekHidden {
             peekHidden = false
             onPeekBack()
         }
@@ -5244,7 +5240,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 if cell.concealTravel != travel { UIView.performWithoutAnimation { cell.concealTravel = travel } }
             }
             cell.concealed = rowConcealed(cell.rowIndex)
-            cell.faded = peekFaded(cell.rowIndex)
             cell.drop = peekDrop(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
@@ -5293,7 +5288,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (Rigid: the row's own brightness dims it. Peeking: no name.)
         if isNext(rowIndex) {
             if rigidPeek != nil {
-                return rigidPeekShowsName && cardsDarkened(rowIndex) && !peekFaded(rowIndex) ? Self.peekAlpha : 0
+                return rigidPeekShowsName && cardsDarkened(rowIndex) ? Self.peekAlpha : 0
             }
             return rigidRest != nil ? 1 : FixedFocusMetrics.dimmedAlpha
         }
@@ -6406,21 +6401,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         didSet { if concealTravel != oldValue { applyConcealMask() } }
     }
 
-    /// Faded out (the controller's `peekHidden`): as concealed, but a fade
-    /// wherever the row is.
-    var faded = false {
-        didSet {
-            guard faded != oldValue else { return }
-            for case let poster as FixedFocusPosterCell in strip.visibleCells {
-                poster.setConcealed(postersHidden)
-            }
-            applyConcealMask()
-        }
-    }
     /// Moved down (the controller's `peekDrop`) — drawn only: the views
     /// stay where they are, so Down still finds the row. In the surrounding
-    /// animation block's time: out eased in and out, back on the system's
-    /// no-bounce spring (as the billboard's paging).
+    /// animation block's time, on a no-bounce spring.
     var drop: CGFloat = 0 {
         didSet {
             guard drop != oldValue else { return }
@@ -6429,35 +6412,25 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             layer.sublayerTransform = CATransform3DMakeTranslation(0, drop, 0)
             let duration = UIView.inheritedAnimationDuration
             guard duration > 0 else { layer.removeAnimation(forKey: "drop"); return }
-            let move: CABasicAnimation
-            if drop == 0 || dropSprings {
-                let spring = CASpringAnimation(perceptualDuration: duration, bounce: 0)
-                spring.duration = spring.settlingDuration
-                move = spring
-            } else {
-                move = CABasicAnimation()
-                move.duration = duration
-                move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            }
+            let move = CASpringAnimation(perceptualDuration: duration, bounce: 0)
+            move.duration = move.settlingDuration
             move.keyPath = "sublayerTransform"
             move.fromValue = from
             layer.add(move, forKey: "drop")
         }
     }
-    /// Out on the spring too (into Details in place — `BillboardOpening`).
-    var dropSprings = false
     /// The posters' contents hidden (concealed by a line: not them).
-    private var postersHidden: Bool { concealed && concealTravel == nil || faded }
+    private var postersHidden: Bool { concealed && concealTravel == nil }
 
     private func applyConcealMask() {
         let over = FixedFocusStripLayout.overscan
         let base = stripHost.bounds.insetBy(dx: -2 * over, dy: -200)
         guard let travel = concealTravel else {
-            concealMask.alpha = concealed || faded ? 0 : 1
+            concealMask.alpha = concealed ? 0 : 1
             concealMask.frame = base
             return
         }
-        concealMask.alpha = faded ? 0 : 1
+        concealMask.alpha = 1
         // (Stretched to the cards' top, or past them by the travel.)
         let line = cardsTop - stripHost.frame.minY + (concealed ? 0 : travel)
         concealMask.frame = CGRect(x: base.minX, y: base.minY, width: base.width, height: line - base.minY)
@@ -7076,7 +7049,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                            cardHeight: cardHeight)
             cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
             cell.setPast(isPast(indexPath.item))
-            cell.setConcealed(concealed || faded)
+            cell.setConcealed(concealed)
             cell.setCaptionShown(isFocusRow, animated: false)
             UIView.performWithoutAnimation { cell.dim = cardDim }
         }
@@ -7777,6 +7750,9 @@ typealias DetailTransitionOpening = DetailTransition.Opening
 final class BillboardOpening {
     static let shared = BillboardOpening()
     private(set) var opened = false
+    /// The tab in front's billboard trailer on its picture: the top bar
+    /// moves out with the peek and the dots, as into Details (Home sets it).
+    var trailerShown = false
     /// A move running (the top bar takes its spring) — read with `opened`,
     /// never watched.
     @ObservationIgnored private(set) var running = false

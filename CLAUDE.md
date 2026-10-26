@@ -383,28 +383,27 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   resting again it goes on where it was. At its end: the still, and the
   billboard moves on (if it pages by itself) — that title's trailer not
   again this visit. The billboard doesn't page by itself while one plays
-  (nor its dots' timer). While it's on the picture, the peek (the first row's name and cards —
-  only hidden, still focusable; `FixedFocusRows.peekHidden`) and the
-  dots fade out with it (0.6 s) and back with its fade out (0.35 s)
-  (`StageTrailer.shown`); the info block and buttons stay, as the Apple
-  TV app's. (Tried: everything but the buttons fading too — really
-  clean, but the information went; a setting with both and nothing.)
-  Trying: moving the peek and the dots out the bottom instead, together
-  (Settings → Appearance → "Trailers: move the row out",
-  `StageTrailer.peekMovesOut`, local, off — out as the fade (0.6 s), back
-  as the billboard pages (0.7 s, the system's no-bounce spring), starting at the page press with the slide (the
-  trailer's stop came a few frames later, through SwiftUI —
-  `onPeekBack`, `letPeekBack`) (tried: the fade's 0.35 s — too quick;
-  the paging's spring, 0.7 and 0.6 s, from the trailer's stop; 0.6 s from the press; 0.6 s
-  eased in and out, from the trailer's stop — slow to get going; eased
-  out, from the press) — drawn only, `sublayerTransform`;
-  the focus engine counts it as off the screen, so a guide where the peek
-  rests takes Down in, `peekGuide`).
-  Details alike: its episodes' peek fades with the trailer; come in
+  (nor its dots' timer). While it's on the picture, the peek (the first
+  row's name and cards), the dots and the top bar move out — the way
+  into Details in place moves them: the same path and distance, on the
+  move spring (0.35 s), from the trailer's fade in (`StageTrailer.shown`
+  → `FixedFocusRows.peekHidden`, `movePeek`; the bar:
+  `BillboardOpening.trailerShown`); back the same way as it fades out,
+  or from the press when the billboard pages (the trailer's stop comes a
+  few frames later, through SwiftUI — `onPeekBack`, `letPeekBack`). Up
+  or Back brings the bar back (and focus leaving the buttons ends the
+  trailer). The info block and buttons stay, as the Apple TV app's. The
+  peek is drawn moved only (`sublayerTransform`): the focus engine
+  counts it as off the screen, so a guide where it rests takes Down in
+  (`peekGuide`). (Tried: the peek and dots fading in place, 0.6 s out,
+  0.35 s back, the bar untouched; moving out over 0.6 s, back with the
+  paging's 0.7 s spring — a setting on trial, "Trailers: move the row
+  out"; everything but the buttons fading too — really clean, but the
+  information went.)
+  Details alike: its episodes' peek moves out with the trailer; come in
   carrying Home's trailer, it never shows. No trailer behind the profile
   gate or the welcome (`TrailerGate.coverUp`); after the gate, focus
-  lands on the billboard's Details (not the top bar), the 2 s from there. Sound off by default. The top bar isn't touched
-  (it follows Hide the top bar). Not under Reduce Motion.
+  lands on the billboard's Details (not the top bar), the 2 s from there. Sound off by default. Not under Reduce Motion.
   Details pressed while it plays: the same player goes on into Details,
   not restarted — Home hands it over (`StageTrailer.handOver`), the
   transition's picture comes over Home with it on top
@@ -412,7 +411,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   full brightness, only Home's text and buttons fading), Details takes it
   as it opens (`adopt`), at full opacity, no delay. Back
   out to Home the same the other way: Home's billboard takes it on (if
-  it's on that title; else let go within 1 s).
+  it's on that title; else let go within 1 s); the peek, dots and top bar stay
+  out through Back while it's handed over — `trailerOut`; they came back
+  with Home's parts, then moved out again).
   Details: Up from the buttons (nothing else above them) opens that same
   player full screen (`openFullTrailer`); over the logo, in the reason's
   place on Home, a hint says so (tried: at the screen's top, centred) (`DetailTrailerHint`, the `SectionHint`
@@ -1015,7 +1016,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   row, Select lifting it, hold to hide, an Off section — looked horrible.)
   Appearance: switches in one list, no section labels (an untitled
   `SettingsSection` draws none), one-line descriptions — Background
-  (Static / Dynamic, an options page), Card outlines (High / Low / Off, an options page), Hide the top bar, Trailers: move the row out (on trial) (tried: Look / Billboard /
+  (Static / Dynamic, an options page), Card outlines (High / Low / Off, an options page), Hide the top bar (tried: Look / Billboard /
   Navigation sections, long descriptions). Home & Details (was Home &
   Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
   Rows, Continue Watching order, Billboard moves on by itself (moved from
