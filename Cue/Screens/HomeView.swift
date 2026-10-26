@@ -5312,6 +5312,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// A header row's name, going up with the billboard (`liftNextTitle`):
     /// smaller.
     static let nextNameScale: CGFloat = 0.75
+    /// Up to the billboard, the share of the row's move over which the
+    /// season buttons and their map fade out (Down: the whole move).
+    static let headerOutShare: CGFloat = 0.4
     /// The peeking row's brightness under the billboard (see `rigidPeek`).
     static let peekAlpha: CGFloat = 0.45
 
@@ -5360,7 +5363,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let progress = spring.map { Self.springProgress($0) }
             let samples = progress?.values ?? (0...40).map { CGFloat($0) / 40 }
             let lift = -titleExtra(cell.rowIndex)
-            cell.moveHeader(fade: samples.map { down ? $0 : 1 - $0 },
+            // (Up: the season buttons go over the move's first part only —
+            // `headerOutShare` — gone before the name is back.)
+            cell.moveHeader(fade: samples.map { down ? $0 : 1 - min($0 / Self.headerOutShare, 1) },
                             lift: samples.map { _ in lift },
                             titleOpacity: samples.map { Self.peekAlpha * (down ? 1 - min($0, 1) : min($0, 1)) },
                             scale: 1,
@@ -6599,6 +6604,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             revealedSelection = selected
             revealSelected(animated: animated && shown)
         }
+        // (Hidden by Up's `moveHeader`; shown again with the header.)
+        if shown, headerBlock.alpha != 1 { UIView.performWithoutAnimation { headerBlock.alpha = 1 } }
         let trading = shown || headerStack.alpha != 0
         let apply = {
             self.headerStack.alpha = shown ? 1 : 0
@@ -6637,6 +6644,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             return animation
         }
         UIView.performWithoutAnimation {
+            // (The block's own value at its end too: a move hurried —
+            // `hurryMoves` — runs from what's shown to it; left shown, the
+            // map flashed back after Up.)
+            headerBlock.alpha = entering ? 1 : 0
             accessory?.view.alpha = entering ? 1 : 0
             headerStack.alpha = entering ? 1 : 0
             title.alpha = entering ? 0 : titleAlpha

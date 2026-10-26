@@ -454,7 +454,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   there; Up from any card lands on the row's season); the season progress
   ("Season 2 • 3 of 13 watched", ticks) between the buttons and the cards.
   The season buttons and the map come up with the row, fading in (the
-  Apple TV app's way). Up reverses it. In the peek the row is named
+  Apple TV app's way). Up reverses it, the buttons and map gone over the move's first 40 % (`headerOutShare`; over the whole move they lingered beside the returning name; 30 % — too fast, 50 % — slow). In the peek the row is named
   "Episodes" (the peek's level, just above its cards — `rigidPeekShowsName`,
   `peekNameLift`), fading out on Down as the season buttons fade in, in
   its place on the cards (Up: back) (tried: no name — the peek didn't say
