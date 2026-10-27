@@ -62,6 +62,10 @@ struct GlassSidebar: View {
     /// hides, app-wide. On the items themselves — an offset on the whole
     /// full-screen bar view never showed.
     var hidden = false
+    /// Hidden by Hide the top bar (out of sight until called): the same
+    /// move, calmer — `autoHideMotion` (alone on the screen, the move's
+    /// 0.35 s read as a snap). `hidden` moves with the page's parts.
+    var autoHidden = false
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
@@ -132,8 +136,9 @@ struct GlassSidebar: View {
             .animation(.smooth(duration: 0.3), value: navFocused)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .offset(y: hidden ? -Self.hideTravel : 0)
-        .animation(Self.motion, value: hidden)
+        .offset(y: hidden || autoHidden ? -Self.hideTravel : 0)
+        .animation(Motion.move, value: hidden)
+        .animation(Self.autoHideMotion, value: autoHidden)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
@@ -158,9 +163,11 @@ struct GlassSidebar: View {
         }
     }
 
-    /// Hiding: up past the screen's top edge, on the app's move.
+    /// Hiding: up past the screen's top edge.
     static var hideTravel: CGFloat { topBarTop + topBarItemHeight + 30 }
-    static var motion: Animation { Motion.move }
+    /// Hide the top bar's way in and out (tried: the present spring, 0.45 s
+    /// — a little slow).
+    static let autoHideMotion: Animation = .spring(duration: 0.4, bounce: 0)
 
     /// The tab pill: how much it grows while the navigation has focus.
     static let focusedScale: CGFloat = 1.06

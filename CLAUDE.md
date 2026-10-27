@@ -74,7 +74,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   quick motion; a stable 60 fps beats fancy.
 - The top bar hides by moving out the top and shows by moving back in
   (`GlassSidebar.hidden`, `Motion.move`) — everywhere; it is always in the
-  view tree, disabled while hidden.
+  view tree, disabled while hidden. Hide the top bar's hiding and showing:
+  a 0.4 s no-bounce spring (`autoHidden`, `autoHideMotion`; alone on the
+  screen, the move's 0.35 s read as a snap; the present's 0.45 s a little
+  slow); with the page's parts (into Details in
+  place, a trailer) it keeps the move's.
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
   One glass everywhere: Apple's `.regular`, tinted black 30 %

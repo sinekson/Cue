@@ -1033,11 +1033,14 @@ struct RootView: View {
     /// focus needs to settle — every Up in it is lost.
     private static let railSettle: Double = 0.25
 
-    private var showSidebar: Bool {
-        // (Out for the billboard's trailer too, with the peek.)
-        guard atTabRoot, !billboardOpening.opened, !billboardOpening.trailerShown else { return false }
-        return !sidebarAutoHides || sidebarRevealed
+    private var showSidebar: Bool { !sidebarMovedOut && !sidebarAutoHidden }
+    /// Out with the page's parts: off a tab's root, into Details in place,
+    /// for the billboard's trailer (with the peek).
+    private var sidebarMovedOut: Bool {
+        !atTabRoot || billboardOpening.opened || billboardOpening.trailerShown
     }
+    /// Out by Hide the top bar, until called.
+    private var sidebarAutoHidden: Bool { sidebarAutoHides && !sidebarRevealed }
 
     /// Bring a hidden rail back and put focus on it. The reveal has to happen
     /// BEFORE the focus write — the rail isn't in the view tree until
@@ -1124,7 +1127,8 @@ struct RootView: View {
                 }
 
             // Always there: hidden, it moves out the top (and back in) — one
-            // motion app-wide (`GlassSidebar.hidden`).
+            // motion app-wide (`GlassSidebar.hidden`; Hide the top bar's on
+            // its own spring, `autoHidden`).
             do {
                 let barHidden = !showSidebar
                 // (Focus moving along it switches: the fade set up in the
@@ -1134,7 +1138,8 @@ struct RootView: View {
                              focusBinding: $sidebarFocus,
                              onProfileTap: { profileGateCancellable = true; showProfileGate = true },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             hidden: barHidden)
+                             hidden: sidebarMovedOut,
+                             autoHidden: sidebarAutoHidden)
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
