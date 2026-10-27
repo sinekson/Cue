@@ -400,22 +400,39 @@ struct TitleBlockView: View {
     }
 }
 
-/// One badge in the badges row: a small outlined chip.
+/// One badge in the badges row, shaped as a rating chip (`RatingChip`):
+/// the outline off-white (primary), the status on a plate of that colour,
+/// dark, as a rating's wordmark ("ENDED"), then the year as its score
+/// (tried: the whole text in the chip's colour, no plate).
 struct TitleBadge: View {
     let text: String
 
+    private var word: String { text.split(separator: " ").first.map(String.init) ?? text }
+    private var year: String? {
+        let parts = text.split(separator: " ", maxSplits: 1)
+        return parts.count > 1 ? String(parts[1]) : nil
+    }
+    private static let colour = Color(white: FixedFocusText.primary)
+
     var body: some View {
-        // No taller than a line of the text beside it: capitals as high
-        // as that text's lowercase letters, in a box of about 28 pt.
-        Text(text)
-            .font(.system(size: 18, weight: .semibold))
-            .tracking(0.5)
-            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-            // (The rating chips' height — see `MDBListRatingsRow`.)
-            .frame(height: 22)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color(white: FixedFocusText.primary), lineWidth: 1.75))
+        HStack(spacing: 6) {
+            Text(word)
+                .font(.system(size: 14, weight: .heavy))
+                .foregroundStyle(Color.black)
+                .padding(.horizontal, 5)
+                .frame(height: 18)
+                .background(Self.colour, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            if let year {
+                Text(year)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+            }
+        }
+        .frame(height: 22)
+        .padding(.leading, 6)
+        .padding(.trailing, year == nil ? 6 : 10)
+        .padding(.vertical, 4)
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .stroke(Self.colour, lineWidth: 1.75))
     }
 }

@@ -764,8 +764,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   bright focus edge, Low the rim only, Off neither (was the Focus outline
   switch — its off reads as Low). The
   fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
-  caption reads. (Tried and dropped: the 4 pt white ring; the row's name
-  moving up as the focused card grows, as the captions step down — weird.)
+  caption reads. On trial again: the row's name steps up out of the
+  focused card's way as the captions step down — by the card's growth
+  (half of it, above the card): a fixed row's box from Up/Down into the
+  row until leaving it; a moving-focus row's card (collections' too) only
+  while it's under the name, on the card's own timing — the move's spring, inside Up/Down's
+  longer one too (on the row's, the card rose ahead and the gap closed up
+  mid-move) (`applyNameRoom`; tried before — weird).
+  (Tried and dropped: the 4 pt white ring.)
 - **Back (Home, Movies, Series, Details)**: below the billboard, Back goes up to
   it first (Details: focus on Play; a source search or the summary panel
   first closes) (its title as it is, the rows keeping their places); on the
@@ -1044,7 +1050,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   dropped: wordmarks ("CUE" with a ring C, the E in a play), a 3D key, two
   plays, other colours (sRGB was too tame).
 - **Series status chip**: AIRING / RETURNING / ENDED [year]
-  (`FixedFocusShowInfo.status`).
+  (`FixedFocusShowInfo.status`), on trial shaped as a rating chip
+  (`TitleBadge`): the word on an off-white plate, dark (as TMDB's mark),
+  the year beside it as a score, the outline off-white (tried: the whole
+  text off-white in the outline).
 - **Loading**: title record on disk, stale-while-revalidate; launch curtain
   with a time cap; background preload queue; Details built with its data
   (no late updates; the episodes' peek stills decoded too — `peekStills`:
@@ -1246,3 +1255,6 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   in the new Settings look; the old one (`CollectionsSettingsDetail`,
   old cards) is no longer reachable.
 - Player rework (resume / Start Over still use the old StreamsView).
+- Up from a fixed row into a collection row above it: the fixed row's
+  card shrinks differently than when leaving into a fixed row. Left as
+  it is for now — it may be the better animation; look at both later.

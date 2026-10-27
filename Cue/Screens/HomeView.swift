@@ -5246,6 +5246,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             UIView.performWithoutAnimation { cell.titleLift = peekNameLift(cell.rowIndex); cell.titleScale = 1 }
             cell.applyAccessory()
             cell.applyHeader()
+            cell.applyNameRoom()
         }
     }
 
@@ -6452,6 +6453,51 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
     }
     private let titleHolder = UIView()
+    /// The name stepping up out of a focused card's way, as the captions
+    /// step down (inside the holder, apart from its lift).
+    private let titleRoomView = UIView()
+    /// How far the name has stepped up (see `applyNameRoom`).
+    private var nameRoom: CGFloat = 0
+    /// The name makes room for the focused card when that card grows
+    /// under it: a fixed row's box while the row has focus; a moving-focus
+    /// row's card while it's under the name (the row's first cards).
+    /// Inside the surrounding animation (the row's move).
+    func applyNameRoom(focusing index: Int? = nil) {
+        var room: CGFloat = 0
+        if isFocusRow, !isFeatured, controller?.custom(rowIndex) == nil {
+            if let cv = destinationStrip, let controller {
+                let focused = index ?? (UIFocusSystem.focusSystem(for: self)?.focusedItem as? UICollectionViewCell)
+                    .flatMap { $0.superview === cv ? cv.indexPath(for: $0)?.item : nil }
+                if let focused, let frame = cv.layoutAttributesForItem(at: IndexPath(item: focused, section: 0))?.frame {
+                    let card = controller.destinationCard(rowIndex)
+                    let lift = FixedFocusMetrics.movingFocusLift
+                    let centre = frame.midX - cv.contentOffset.x + cv.frame.minX + stripHost.frame.minX
+                    let half = card.width * (1 + lift) / 2
+                    let nameEnd = FixedFocusMetrics.titleInset + title.intrinsicContentSize.width
+                    if centre - half < nameEnd, centre + half > FixedFocusMetrics.titleInset {
+                        room = card.height * lift / 2
+                    }
+                }
+            } else {
+                room = cardHeight * (FixedFocusMetrics.boxScale - 1) / 2
+            }
+        }
+        guard room != nameRoom else { return }
+        nameRoom = room
+        // On the card's own timing (it grows on the move's spring, also
+        // inside Up/Down's longer one): on the row's, the card rose ahead
+        // of the name and the gap between them closed up mid-move.
+        // (Core Animation: a nested UIView animation takes the outer spring.)
+        let layer = titleRoomView.layer
+        let from = layer.presentation()?.transform ?? layer.transform
+        layer.transform = CATransform3DMakeTranslation(0, -room, 0)
+        guard UIView.inheritedAnimationDuration > 0 else { layer.removeAnimation(forKey: "room"); return }
+        let move = CASpringAnimation(perceptualDuration: Motion.moveDuration, bounce: 0)
+        move.duration = move.settlingDuration
+        move.keyPath = "transform"
+        move.fromValue = from
+        layer.add(move, forKey: "room")
+    }
     /// A placeholder row's name still to come (`FixedFocusRows.placeholderRows`).
     private let titleBar = FixedFocusPlaceholder()
 
@@ -6712,9 +6758,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
-        titleHolder.addSubview(title)
+        titleRoomView.addSubview(title)
         titleBar.isHidden = true
-        titleHolder.addSubview(titleBar)
+        titleRoomView.addSubview(titleBar)
+        titleHolder.addSubview(titleRoomView)
         contentView.addSubview(titleHolder)
         headerStack.axis = .horizontal
         headerStack.spacing = FixedFocusHeaderButton.spacing
@@ -6757,6 +6804,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // (Wide: as a control, Up from any card finds it.)
         titleHolder.bounds = CGRect(x: 0, y: 0, width: 1700, height: FixedFocusMetrics.titleLine)
         titleHolder.center = CGPoint(x: FixedFocusMetrics.titleInset + 850, y: FixedFocusMetrics.titleLine / 2)
+        titleRoomView.bounds = titleHolder.bounds
+        titleRoomView.center = CGPoint(x: titleHolder.bounds.midX, y: titleHolder.bounds.midY)
         title.bounds = CGRect(x: 0, y: 0, width: 1200, height: FixedFocusMetrics.titleLine)
         title.center = CGPoint(x: 0, y: FixedFocusMetrics.titleLine / 2)
         let barHeight = (Self.titleFont.pointSize * 0.72).rounded()
@@ -7116,9 +7165,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
               let controller, let row else { return }
         let card = controller.destinationCard(rowIndex)
         let offset = windowOffset(focusing: index, card: card.width, count: row.items.count)
-        guard offset != cv.contentOffset.x else { return }
         FixedFocusMotion.run(duration: Motion.moveDuration) {
-            cv.contentOffset = CGPoint(x: offset, y: 0)
+            if offset != cv.contentOffset.x { cv.contentOffset = CGPoint(x: offset, y: 0) }
+            self.applyNameRoom(focusing: index)
         } completion: { _ in }
     }
 
@@ -10098,6 +10147,7 @@ enum FixedFocusMotion {
         run(duration: Motion.moveDuration, animations: animations, completion: { _ in completion() })
     }
 }
+
 
 
 
