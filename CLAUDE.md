@@ -948,10 +948,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   instead (`ProfileSetup`, a setup assistant; the same on the gate): one
   question a screen in the gate's look, a dot per step under it, Back a
   step back (from the first, out) — the name (the keyboard at once), an
-  avatar (Settings' avatar page, `AvatarChoices`, in the column — Use
-  Initials, then the catalog six across under its kinds, the heading
-  fixed, the rows fading out above the dots; tried: the catalog eight
-  across in a box of its own — it scrolled badly), "Where should
+  avatar (the wizard's look: its heading centred and fixed, no line
+  under it; the initials alone first, then the catalog by kind under
+  Settings' labels, eight across in the gate's round tiles (132 pt) —
+  `SetupAvatars`; the tiles scroll under the heading, fading out above
+  the dots; tried: Settings' avatar page in the column — the title off
+  centre, too narrow; the catalog eight across in a box of its own — it
+  scrolled badly), "Where should
   titles come from?" (Use Primary's Add-ons, focused / Start Empty), "Lock
   this profile?" (Not Now, focused / Set a PIN — twice; signed in only),
   then the avatar large, "You're all set", Start Watching (gate) / Done

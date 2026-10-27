@@ -738,21 +738,24 @@ struct ProfileSetup: View {
         }
     }
 
-    /// The avatar: Settings' avatar page in its column (`AvatarChoices`),
-    /// the rows scrolling under the heading; the dots at the screen's foot.
+    /// The avatar: the wizard's heading, centred and fixed; under it the
+    /// initials, then the catalog by kind in round tiles across the width,
+    /// scrolling under the heading; the dots at the screen's foot.
     private var avatarPage: some View {
         ZStack(alignment: .bottom) {
-            SettingsPage(title: "Pick an avatar", subtitle: "For \(name). Initials use the profile's colour.") {
-                AvatarChoices(initials: initialsPreview, chosen: avatarID) { id in
+            VStack(spacing: 0) {
+                heading("Pick an avatar", nil)
+                    .padding(.top, 110)
+                    .padding(.bottom, 40 - SetupAvatars.edge)
+                SetupAvatars(initials: initialsPreview, chosen: avatarID, focused: $focused) { id in
                     avatarID = id
                     advance()
                 }
+                .defaultFocus($focused, avatarID ?? "initials")
+                // Coming from the keyboard, the engine took the tile nearest it.
+                .onAppear { DispatchQueue.main.async { focused = avatarID ?? "initials" } }
             }
-            .environment(\.settingsRowFocus, $focused)
-            .defaultFocus($focused, avatarID ?? "initials")
-            .frame(width: SettingsMetrics.columnWidth)
-            // The rows end above the dots, fading out on their way to them
-            // (they ran under the dots).
+            // The tiles end above the dots, fading out on their way to them.
             .padding(.bottom, 130)
             .mask {
                 VStack(spacing: 0) {
@@ -761,9 +764,7 @@ struct ProfileSetup: View {
                         .frame(height: 50)
                     Color.clear.frame(height: 80)
                 }
-                .padding(.horizontal, -60)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             dots
                 .padding(.bottom, 48)
         }
@@ -843,6 +844,100 @@ struct ProfileSetup: View {
                 ToastCenter.shared.show("PIN not set — \(message)", icon: "lock.slash")
             }
             onFinish(profiles.profiles.first { $0.id == created.id } ?? profile)
+        }
+    }
+}
+
+/// The setup's avatar step: the initials alone first (the profile's own
+/// colour), then each kind of the catalog under its label, eight across —
+/// the gate's round tiles (its rim, 5 % larger focused, the name stepping
+/// down), the chosen one ticked.
+private struct SetupAvatars: View {
+    @EnvironmentObject private var profiles: ProfileStore
+    let initials: UserProfile
+    let chosen: String?
+    var focused: FocusState<String?>.Binding
+    let pick: (String?) -> Void
+
+    /// The fade under the heading, kept as room above the first tile.
+    static let edge: CGFloat = 24
+    private static let size: CGFloat = 132
+    private static let across = 8
+    private static let gap: CGFloat = 16
+    private static var slot: CGFloat { size + GateSlot.sideRoom }
+    private static var width: CGFloat { CGFloat(across) * slot + CGFloat(across - 1) * gap }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 44) {
+                tile(initials, id: nil, label: "Initials")
+                    .frame(maxWidth: .infinity)
+                ForEach(AvatarChoices.groups(profiles.avatarCatalog), id: \.name) { group in
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text(group.name.uppercased())
+                            .font(.system(size: SettingsMetrics.sectionTextSize, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                            .padding(.leading, GateSlot.sideRoom / 2)
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.slot), spacing: Self.gap), count: Self.across),
+                                  alignment: .leading, spacing: 28) {
+                            ForEach(group.items) { item in
+                                tile(UserProfile(id: -1, name: item.displayName,
+                                                 avatarColorHex: initials.avatarColorHex, avatarID: item.id),
+                                     id: item.id, label: item.displayName)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(width: Self.width)
+            .padding(.top, Self.edge + 16)
+            .padding(.bottom, 60)
+            .frame(maxWidth: .infinity)
+        }
+        // Unclipped at the sides and bottom (focused tiles' shadows), cut
+        // at the top with a short fade.
+        .scrollClipDisabled()
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: Self.edge)
+                Rectangle()
+            }
+            .padding(.bottom, -200)
+        }
+        .task { await profiles.loadAvatarCatalog() }
+    }
+
+    private func tile(_ profile: UserProfile, id: String?, label: String) -> some View {
+        Button { pick(id) } label: {
+            Tile(profile: profile, label: label, chosen: chosen == id, size: Self.size)
+        }
+        .buttonStyle(GateTileStyle())
+        .focused(focused, equals: id ?? "initials")
+    }
+
+    private struct Tile: View {
+        @Environment(\.isFocused) private var isFocused
+        let profile: UserProfile
+        let label: String
+        let chosen: Bool
+        let size: CGFloat
+
+        var body: some View {
+            VStack(spacing: 16) {
+                GateAvatarFace(profile: profile, size: size, lit: isFocused)
+                    .scaleEffect(isFocused ? ProfileGate.focusScale : 1)
+                    .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
+                HStack(spacing: 6) {
+                    Text(label).lineLimit(1)
+                    if chosen { Image(systemName: "checkmark").font(.system(size: 20, weight: .semibold)) }
+                }
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(Color.white.opacity(isFocused || chosen ? FixedFocusText.primary : FixedFocusText.secondary))
+                .offset(y: isFocused ? GateSlot.step(size) : 0)
+                .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
+            }
+            .frame(width: size + GateSlot.sideRoom)
         }
     }
 }

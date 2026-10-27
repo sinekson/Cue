@@ -320,7 +320,7 @@ struct AvatarChoices: View {
                                 .frame(width: 44, height: 44)))
         }
         .settingsRow(id: "initials")
-        ForEach(groups, id: \.name) { group in
+        ForEach(Self.groups(profiles.avatarCatalog), id: \.name) { group in
             SettingsSection(title: group.name) {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: SettingsMetrics.rowGap) {
                     ForEach(group.items) { item in
@@ -336,10 +336,10 @@ struct AvatarChoices: View {
     }
 
     /// The catalog's kinds in its order.
-    private var groups: [(name: String, items: [AvatarCatalogItem])] {
+    static func groups(_ catalog: [AvatarCatalogItem]) -> [(name: String, items: [AvatarCatalogItem])] {
         var order: [String] = []
         var byKind: [String: [AvatarCatalogItem]] = [:]
-        for item in profiles.avatarCatalog {
+        for item in catalog {
             if byKind[item.category] == nil { order.append(item.category) }
             byKind[item.category, default: []].append(item)
         }
