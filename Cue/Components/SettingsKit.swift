@@ -123,6 +123,12 @@ private struct SettingsRowFocusKey: EnvironmentKey {
     static let defaultValue: FocusState<String?>.Binding? = nil
 }
 
+/// While the top bar holds focus: the one row Down goes back to (the others
+/// take no focus, so the engine can't pick one by where it is).
+private struct SettingsOnlyRowKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
 /// Where a row's pill is: its line, without the description under it.
 struct SettingsPillKey: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
@@ -161,16 +167,22 @@ extension EnvironmentValues {
         get { self[SettingsRowFocusKey.self] }
         set { self[SettingsRowFocusKey.self] = newValue }
     }
+    var settingsOnlyRow: String? {
+        get { self[SettingsOnlyRowKey.self] }
+        set { self[SettingsOnlyRowKey.self] = newValue }
+    }
 }
 
 struct SettingsRowEntry: ViewModifier {
     @Environment(\.settingsRowFocus) private var focus
+    @Environment(\.settingsOnlyRow) private var only
     let id: String
 
     func body(content: Content) -> some View {
         Group {
             if let focus { content.focused(focus, equals: id) } else { content }
         }
+        .disabled(only.map { $0 != id } ?? false)
         .preference(key: SettingsRowsKey.self, value: [id])
     }
 }

@@ -1340,7 +1340,7 @@ struct RootView: View {
             }
         case .settings:
             NavigationStack {
-                ATVSettingsView { focusSidebar(3) }
+                ATVSettingsView(barFocused: sidebarFocus != nil) { focusSidebar(3) }
                     .probeScreen("Settings")
             }
         case .movies:

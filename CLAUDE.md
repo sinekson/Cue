@@ -875,10 +875,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   intro line; tried: the email and "Connected" on the left), the focused
   category's settings the rest, following focus (0.15 s after it settles,
   a 0.25 s fade; Right before they show: they show at once, focus on
-  their first row — it landed in the old ones). Right or Select goes in (Select: the first row —
+  their first row — it landed in the old ones). Right or Select goes in (the rows by name —
   `SettingsRowsKey`, `settingsRowFocus`); Left or Back back to the
   category, which keeps the flat "current" fill while focus is beside it;
-  Back on a category: the top bar. Pages a row opens (Watched, Rows,
+  Back on a category: the top bar. Focus never goes by geometry between
+  the columns: only the one holding focus takes it (`ATVSettingsView.Place`),
+  Left from any row lands on the shown category, Right / Select on the
+  page's last focused row (first time: its first); Up from the first
+  category or row: the top bar, and Down from it back to that very spot
+  (first time: the shown category — only it takes focus meanwhile,
+  `settingsOnlyRow`). Playback, About, Developer (old cards) still go by
+  geometry. Pages a row opens (Watched, Rows,
   Add-ons) open in the column (`SettingsNav`), the
   categories staying; Back closes them, focus back on the row; they stay
   while focus is on their own category. Sign in is full screen (the first

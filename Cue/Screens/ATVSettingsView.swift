@@ -1,17 +1,27 @@
 import SwiftUI
+import UIKit
 
 /// The Settings screen: the categories a sidebar on the left; centred,
 /// the focused one's settings, following focus (a
 /// moment after it settles, so passing over a category doesn't redraw the
-/// column). Right or Select goes into the settings; Left or Back comes back
-/// to the category. Pages the settings open stay in the right column
-/// (`SettingsNav`); Back takes them off first.
+/// column). Right or Select goes into the settings, on the row last focused
+/// there (first time: the first); Left or Back comes back to the category.
+/// Pages the settings open stay in the right column (`SettingsNav`); Back
+/// takes them off first. Up from the first category or the first row: the
+/// top bar; Down from it goes back there (first time: the category).
+///
+/// Only the column holding focus takes it (from the top bar, only the spot
+/// it went up from), so the engine never picks a target by where things
+/// sit; Left and Right between the columns are ours (`crossFailed`).
 struct ATVSettingsView: View {
 
     @EnvironmentObject private var account: NuvioAccountManager
     @EnvironmentObject private var tmdb: TMDBSettingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
+    @Environment(\.isEnabled) private var isEnabled
 
+    /// The top bar holds focus.
+    let barFocused: Bool
     /// Back with focus on a category: out (to the top bar).
     let onExit: () -> Void
 
@@ -29,6 +39,18 @@ struct ATVSettingsView: View {
     @State private var turning = false
     /// The rows that opened the pages in the column, to go back to.
     @State private var openedFrom: [String?] = []
+
+    /// Where focus is; `crossing` while we move it between the columns
+    /// (both take focus for that moment).
+    private enum Place { case bar, sidebar, page, crossing }
+    private enum Spot: Equatable { case category(SettingsCategory), row(String) }
+    @State private var place: Place = .bar
+    /// Where Up into the top bar left from.
+    @State private var upFrom: Spot?
+    @State private var lastCategory: SettingsCategory?
+    /// Each page's last focused row (the category's settings by its name,
+    /// a page opened in the column by its id).
+    @State private var lastRow: [String: String] = [:]
 
     /// How long focus rests on a category before its settings show.
     private static let showAfter: Duration = .milliseconds(150)
@@ -83,6 +105,8 @@ struct ATVSettingsView: View {
             .frame(width: SettingsMetrics.columnWidth, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
             .focusSection()
+            .disabled(!legacy && !columnTakesFocus)
+            .environment(\.settingsOnlyRow, place == .bar ? barRow : nil)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Screen coordinates: the same start with or without the top bar.
@@ -101,7 +125,27 @@ struct ATVSettingsView: View {
                 turning = false
             }
         }
+        .onChange(of: barFocused) { _, bar in
+            guard bar else { return }
+            switch place {
+            case .sidebar: upFrom = lastCategory.map(Spot.category)
+            case .page: upFrom = lastRow[pageKey].map(Spot.row)
+            case .bar, .crossing: break
+            }
+            place = .bar
+        }
+        .onChange(of: row) { _, id in
+            guard let id else { return }
+            place = .page
+            lastRow[pageKey] = id
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIFocusSystem.movementDidFailNotification)) { crossFailed($0) }
         .onChange(of: focused) { old, category in
+            if let category {
+                place = .sidebar
+                lastCategory = category
+            }
             let pending = showTask != nil && old != nil && old != shown ? old : nil
             showTask?.cancel()
             showTask = nil
@@ -128,18 +172,96 @@ struct ATVSettingsView: View {
         }
         // One handler for the whole screen (a nested one takes every press).
         .onExitCommand {
-            if focused != nil { onExit() } else if !nav.pop() { focused = shown }
+            if focused != nil { onExit() } else if !nav.pop() { toSidebar() }
         }
+    }
+
+    /// The page in the column: a page opened there, else the category's.
+    private var pageKey: String { nav.stack.last?.id.uuidString ?? shown.rawValue }
+
+    /// Categories on the new rows.
+    private static let rowCategories: Set<SettingsCategory> = [.account, .tmdb, .mdblist, .appearance, .homeContent]
+
+    /// Pages still on the old cards: focus there goes by the engine's
+    /// geometry, as before.
+    private var legacy: Bool { !Self.rowCategories.contains(shown) }
+
+    /// Down from the top bar: back where Up left — a row still on the page,
+    /// a category — else the shown category.
+    private var barTarget: Spot {
+        switch upFrom {
+        case .row(let id) where rows.contains(id): return .row(id)
+        case .category(let category): return .category(category)
+        default: return .category(shown)
+        }
+    }
+
+    private var barRow: String? {
+        if case .row(let id) = barTarget { return id } else { return nil }
+    }
+
+    private var columnTakesFocus: Bool {
+        switch place {
+        case .page, .crossing: return true
+        case .sidebar: return false
+        case .bar: return barRow != nil
+        }
+    }
+
+    private func categoryTakesFocus(_ category: SettingsCategory) -> Bool {
+        if legacy { return focused != nil || category == shown }
+        switch place {
+        case .sidebar, .crossing: return true
+        case .page: return false
+        case .bar: return barTarget == .category(category)
+        }
+    }
+
+    /// Left from the page, Right from a category: with the other column
+    /// off, the engine found nothing — we take it there.
+    private func crossFailed(_ note: Notification) {
+        guard isEnabled, !legacy,
+              let context = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
+        else { return }
+        if place == .sidebar, context.focusHeading.contains(.right) {
+            enterPage()
+        } else if place == .page, context.focusHeading.contains(.left) {
+            toSidebar()
+        }
+    }
+
+    /// Into the focused category's settings, on its last focused row (first
+    /// time: the first).
+    private func enterPage() {
+        showTask?.cancel()
+        showTask = nil
+        let switching = focused.map { $0 != shown } ?? false
+        if switching, let focused {
+            nav.clear()
+            shown = focused
+        }
+        place = .crossing
+        // Once its rows are there (a page just switched: a turn later).
+        DispatchQueue.main.async {
+            let land = {
+                row = lastRow[pageKey].flatMap { rows.contains($0) ? $0 : nil } ?? rows.first
+            }
+            if switching { DispatchQueue.main.async(execute: land) } else { land() }
+        }
+    }
+
+    private func toSidebar() {
+        place = .crossing
+        DispatchQueue.main.async { focused = shown }
     }
 
     /// The category's settings, in the right column. Pages not yet on the
     /// new rows keep their own layout, from the same top.
     @ViewBuilder
     private func column(_ category: SettingsCategory) -> some View {
-        switch category {
-        case .account, .tmdb, .mdblist, .appearance, .homeContent:
+        if Self.rowCategories.contains(category) {
             SettingsCategoryPane(category: category)
-        default:
+        } else {
             SettingsCategoryPane(category: category)
                 .padding(.top, SettingsMetrics.top - CueSpacing.lg)
         }
@@ -157,23 +279,15 @@ struct ATVSettingsView: View {
     }
 
     private func categoryRow(_ category: SettingsCategory, value: String? = nil) -> some View {
-        // Focus in the settings (or the top bar): only the shown category
-        // takes it, so Left — or Down from the top bar — lands there.
         let away = focused == nil
         return Button {
-            showTask?.cancel()
-            if category != shown {
-                nav.clear()
-                shown = category
-            }
-            // Into the settings, on their first row (once they're there).
-            DispatchQueue.main.async { row = rows.first }
+            enterPage()
         } label: {
             SettingsCategoryLabel(category: category, value: value)
         }
         .buttonStyle(SettingsCategoryStyle(current: away && category == shown))
         .focused($focused, equals: category)
-        .disabled(turning || (away && category != shown))
+        .disabled(turning || !categoryTakesFocus(category))
     }
 }
 
