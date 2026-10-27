@@ -889,12 +889,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Add-ons) open in the column (`SettingsNav`), the
   categories staying; Back closes them, focus back on the row; they stay
   while focus is on their own category. Sign in is full screen (the first
-  launch's). A row's description shows while it's focused, under its pill
-  (24 pt, 60 %, lined up with the row's text), the rows below stepping
-  down to make room, as text under tvOS's posters (`SettingsDescribedKey`:
-  the page opens it in one animation; the pill drawn behind the row's
-  line only, `SettingsPillKey`). (Tried: inside the focused pill, under
-  the name — the pill grew tall.) The categories are a sidebar: the settings' rows and section
+  launch's). On trial: the focused row's description in a card right of the
+  rows (`SettingsDescriptionCard`, `SettingsDescribedKey`) — the
+  sidebar's width (320) and as far from the column (64), so the three
+  sit centred together; level with the row's top, following focus
+  (`Motion.focus`), the text crossfading (0.25 s); the rows' faint fill,
+  a 1 pt white 12 % edge, the cards' corners; 24 pt, 55 %; no
+  description: it fades away. The column never moves. (Tried: under the
+  pill, the rows below stepping down to make room, as text under tvOS's
+  posters — a lot of movement; inside the focused pill, under the name —
+  the pill grew tall; opening after 0.4 s of rest, room and text in
+  steps, the rows above moving down to keep the focused one still —
+  horrible; every row's description always showing — not good either.) The categories are a sidebar: the settings' rows and section
   labels a size smaller, about 80 % (`SettingsMetrics.Sidebar`: 52 pt
   capsules, 11 apart, 30 pt text 26 pt in, 23 pt labels; tried: 26 pt
   text with icons, Home's section hints as labels); it starts lower, its

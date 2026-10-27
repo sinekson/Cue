@@ -6,8 +6,8 @@ import SwiftUI
 // comes out again. Pages a row opens (a list to manage, a sign-in) open in
 // that right column, the categories staying beside them (`SettingsNav`).
 // Rows rest on a faint fill and, focused, sit on the top bar's light
-// highlight with their description under the pill — only the focused row
-// says what it does. (Tried: an info pane beside the
+// highlight; the focused row's description shows in a card right of the
+// rows (`SettingsDescriptionCard`), so the column never moves. (Tried: an info pane beside the
 // rows with the category's symbol in a box and the description below it —
 // the box wasted room, the words were far from their row.)
 //
@@ -129,28 +129,18 @@ private struct SettingsOnlyRowKey: EnvironmentKey {
     static let defaultValue: String? = nil
 }
 
-/// Where a row's pill is: its line, without the description under it.
-struct SettingsPillKey: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
-    }
-}
-
-/// The focused row with a description, reported up to its page, which
-/// opens it (`settingsDescribed`) in one animation — so the rows below
-/// step down with it.
+/// The focused row's description and where its pill is, reported up to
+/// its page, which shows it in a card right of the rows
+/// (`SettingsDescriptionCard`).
 struct SettingsDescribedKey: PreferenceKey {
-    static let defaultValue: String? = nil
-    static func reduce(value: inout String?, nextValue: () -> String?) {
+    struct Described {
+        let text: String
+        let pill: Anchor<CGRect>
+    }
+    static let defaultValue: Described? = nil
+    static func reduce(value: inout Described?, nextValue: () -> Described?) {
         value = value ?? nextValue()
     }
-}
-
-private struct SettingsDescribedEnvKey: EnvironmentKey {
-    /// nil outside a page: a row then opens its own on focus. Inside, the
-    /// page's row ("" for none).
-    static let defaultValue: String? = nil
 }
 
 struct SettingsRowsKey: PreferenceKey {
@@ -159,10 +149,6 @@ struct SettingsRowsKey: PreferenceKey {
 }
 
 extension EnvironmentValues {
-    var settingsDescribed: String? {
-        get { self[SettingsDescribedEnvKey.self] }
-        set { self[SettingsDescribedEnvKey.self] = newValue }
-    }
     var settingsRowFocus: FocusState<String?>.Binding? {
         get { self[SettingsRowFocusKey.self] }
         set { self[SettingsRowFocusKey.self] = newValue }
@@ -291,12 +277,12 @@ struct SettingsSection<Content: View>: View {
 // MARK: - Rows
 
 /// A row's content: name left, value (and chevron) right; focused, its
-/// description under the pill, the rows below stepping down to make room
-/// (as text under tvOS's posters). (Tried: the description inside the
-/// pill, under the name — the pill grew tall.)
+/// description goes to the page's card right of the rows, so the column
+/// never moves. (Tried: the description inside the pill, under the name —
+/// the pill grew tall; under the pill, the rows below stepping down to
+/// make room; under every row, always.)
 struct SettingsRowLabel: View {
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.settingsDescribed) private var described
     let title: String
     var value: String? = nil
     var chevron = false
@@ -306,12 +292,6 @@ struct SettingsRowLabel: View {
     var leading: AnyView? = nil
     /// In the value's place (the ratings' order: their chips).
     var trailing: AnyView? = nil
-
-    private var describes: Bool {
-        guard let description, !description.isEmpty else { return false }
-        return described.map { $0 == describedID } ?? isFocused
-    }
-    private var describedID: String { "\(title)\n\(description ?? "")" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -345,24 +325,13 @@ struct SettingsRowLabel: View {
             }
             .frame(height: SettingsMetrics.rowHeight)
             .padding(.horizontal, SettingsMetrics.rowInset)
-            .anchorPreference(key: SettingsPillKey.self, value: .bounds) { $0 }
-            if describes, let description {
-                Text(description)
-                    .font(.system(size: SettingsMetrics.descriptionSize))
-                    .foregroundStyle(SettingsMetrics.secondaryText)
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, SettingsMetrics.rowInset)
-                    .padding(.top, 16)
-                    .padding(.bottom, 8)
-                    .transition(.opacity)
+            .anchorPreference(key: SettingsDescribedKey.self, value: .bounds) { pill in
+                guard isFocused, let description, !description.isEmpty else { return nil }
+                return .init(text: description, pill: pill)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(Motion.focus, value: isFocused)
-        .preference(key: SettingsDescribedKey.self,
-                    value: isFocused && !(description ?? "").isEmpty ? describedID : nil)
     }
 }
 
@@ -408,16 +377,7 @@ struct SettingsRowStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                // The pill behind the row's line only (`SettingsPillKey`;
-                // a description sits under it), else the whole label.
-                .backgroundPreferenceValue(SettingsPillKey.self) { anchor in
-                    GeometryReader { proxy in
-                        let rect = anchor.map { proxy[$0] } ?? CGRect(origin: .zero, size: proxy.size)
-                        pill
-                            .frame(width: rect.width, height: rect.height)
-                            .offset(x: rect.minX, y: rect.minY)
-                    }
-                }
+                .background(pill)
                 .scaleEffect(isFocused ? (configuration.isPressed ? 1.0 : 1.02) : 1, anchor: .top)
                 .animation(.smooth(duration: 0.18), value: isFocused)
                 .animation(.smooth(duration: 0.1), value: configuration.isPressed)
@@ -634,7 +594,6 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
 
     /// The rows' fade under the heading, kept as room above the first row.
     static var edge: CGFloat { 24 }
-    @State private var described = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -646,10 +605,6 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     content
-                        .environment(\.settingsDescribed, described)
-                        .onPreferenceChange(SettingsDescribedKey.self) { row in
-                            withAnimation(Motion.focus) { described = row ?? "" }
-                        }
                         .padding(.top, Self.edge)
                         .padding(.bottom, 80)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -665,6 +620,13 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
                     }
                     .padding(.horizontal, -60)
                     .padding(.bottom, -200)
+                }
+                .overlayPreferenceValue(SettingsDescribedKey.self) { described in
+                    GeometryReader { proxy in
+                        SettingsDescriptionCard(text: described?.text,
+                                                top: described.map { proxy[$0.pill].minY })
+                            .offset(x: proxy.size.width + SettingsMetrics.columnGap)
+                    }
                 }
                 .environment(\.settingsScroll, proxy)
             }
@@ -690,6 +652,45 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             accessory
         }
+    }
+}
+
+/// The focused row's description, right of the rows — as wide as the
+/// categories' sidebar and as far from the column, so the three sit
+/// centred together — level with the row, following focus. A card of its
+/// own (the rows' faint fill, a light edge) so it reads as belonging to
+/// the row, not floating text. No description: the card fades away.
+struct SettingsDescriptionCard: View {
+    let text: String?
+    let top: CGFloat?
+    @State private var lastTop: CGFloat = 0
+    @State private var lastText = ""
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+        Text(lastText)
+            .font(.system(size: SettingsMetrics.descriptionSize))
+            .foregroundStyle(SettingsMetrics.secondaryText)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .id(lastText)
+            .transition(.opacity)
+            .padding(24)
+            .frame(width: SettingsMetrics.listWidth, alignment: .topLeading)
+            .background(shape.fill(SettingsMetrics.restingFill))
+            .overlay(shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+            .opacity(text == nil ? 0 : 1)
+            .offset(y: lastTop)
+            .onChange(of: text, initial: true) { _, new in
+                guard let new else { return }
+                withAnimation(Motion.fade) { lastText = new }
+            }
+            .onChange(of: top, initial: true) { old, new in
+                guard let new else { return }
+                // Coming from no card: there at once, fading in.
+                withAnimation(old == nil ? nil : Motion.focus) { lastTop = new }
+            }
+            .animation(Motion.fade, value: text == nil)
     }
 }
 
