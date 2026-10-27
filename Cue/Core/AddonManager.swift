@@ -314,7 +314,7 @@ final class AddonManager: ObservableObject {
         ensureDefaults()
         // Manifests barely ever change — skip the launch refresh when the last
         // one is under an hour old (faster cold start, less addon traffic).
-        // The manual "Refresh Add-ons" button always forces it.
+        // Settings → Add-ons' Refresh Add-ons always forces it.
         let last = UserDefaults.standard.double(forKey: Self.lastRefreshKey)
         if Date().timeIntervalSince1970 - last > 3600 {
             Task { @MainActor in
@@ -607,68 +607,6 @@ final class AddonManager: ObservableObject {
         return parts.isEmpty ? "No active resources" : parts.joined(separator: " · ")
     }
 
-    /// Re-fetch every installed addon's manifest (the APK's "Refresh Add-ons")
-    /// AND sync with the account: pull addons added on other devices, then push
-    /// the merged list back.
-    /// Result of a user-initiated "Refresh Add-ons", so the UI can say what
-    /// actually happened. Previously this returned nothing and every failure —
-    /// signed out, HTTP error, decode error, empty account — was swallowed by a
-    /// `try?`, while the button unconditionally reported "Add-ons refreshed
-    /// just now". That is why account add-ons appeared not to sync with no
-    /// indication of why.
-    enum RefreshOutcome {
-        case notSignedIn
-        case changed(added: Int, removed: Int)
-        case alreadyUpToDate
-        case failed(String)
-
-        var message: String {
-            switch self {
-            case .notSignedIn:
-                return "Manifests refreshed — sign in to sync add-ons with your account"
-            case .changed(let added, let removed):
-                var parts: [String] = []
-                if added > 0 { parts.append("added \(added)") }
-                if removed > 0 { parts.append("removed \(removed)") }
-                return "Synced with your account — " + parts.joined(separator: ", ")
-            case .alreadyUpToDate:
-                return "Add-ons synced — already up to date"
-            case .failed(let why):
-                return "Couldn't sync with your account: \(why)"
-            }
-        }
-    }
-
-    /// TWO-WAY add-on sync (the "Sync Add-ons" button).
-    ///
-    /// Re-fetches every manifest, then hands off to the sync manager, which
-    /// pushes any pending local change UP first and then pulls the account down
-    /// with reconciliation — so an add-on deleted on another device is deleted
-    /// here too, and one added here survives rather than being reconciled away.
-    @discardableResult
-    func syncWithAccount() async -> RefreshOutcome {
-        await refreshManifests()
-        guard let onSyncRequested else {
-            NSLog("[CueAddonSync] sync: no sync manager attached (signed out)")
-            return .notSignedIn
-        }
-        let before = Set(addons.map(\.manifestURL))
-        do {
-            try await onSyncRequested()
-        } catch {
-            NSLog("[CueAddonSync] sync FAILED: %@", String(describing: error))
-            AppProbe.warn("addon sync", "\(error)")
-            return .failed(Self.shortReason(error))
-        }
-        let after = Set(addons.map(\.manifestURL))
-        let added = after.subtracting(before).count
-        let removed = before.subtracting(after).count
-        NSLog("[CueAddonSync] sync ok: +%d -%d", added, removed)
-        AppProbe.sync("add-ons: +\(added) -\(removed)")
-        return (added + removed) > 0
-            ? .changed(added: added, removed: removed) : .alreadyUpToDate
-    }
-
     nonisolated private static func shortReason(_ error: Error) -> String {
         if let urlError = error as? URLError {
             return urlError.code == .notConnectedToInternet ? "no internet" : "network error"
@@ -678,13 +616,17 @@ final class AddonManager: ObservableObject {
         return text.count > 90 ? String(text.prefix(90)) + "…" : text
     }
 
-    private func refreshManifests() async {
+    /// Settings → Add-ons' Refresh Add-ons: every manifest fetched again,
+    /// past the cache — this device only, nothing pushed to the account (the
+    /// list itself doesn't change). The count of add-ons that didn't answer.
+    @discardableResult
+    func refreshManifests(bypassCache: Bool = false) async -> Int {
         // Snapshot the current list, re-fetch the manifests a few at a time,
         // then reassemble in the original order.
         let current = addons
-        guard !current.isEmpty else { return }
+        guard !current.isEmpty else { return 0 }
         let refreshed = await boundedConcurrentMap(current, limit: AddonSweepLimits.manifests) { addon -> (InstalledAddon, Bool) in
-            guard let manifest = try? await StremioAPI.manifest(url: addon.manifestURL) else {
+            guard let manifest = try? await StremioAPI.manifest(url: addon.manifestURL, bypassCache: bypassCache) else {
                 return (addon, false)
             }
             // A 200 THAT ISN'T A MANIFEST decodes to an EMPTY one: the decoder
@@ -703,7 +645,8 @@ final class AddonManager: ObservableObject {
         }
         // Bail if the installed set changed while we were fetching (e.g. the
         // user added/removed an addon), so we don't clobber their edit.
-        guard addons.map(\.manifestURL) == current.map(\.manifestURL) else { return }
+        let failed = refreshed.filter { !$0.1 }.count
+        guard addons.map(\.manifestURL) == current.map(\.manifestURL) else { return failed }
         addons = refreshed.map { $0.0 }
         save()
         // Only a sweep that actually reached an add-on counts as "done for the
@@ -713,6 +656,7 @@ final class AddonManager: ObservableObject {
         if refreshed.contains(where: { $0.1 }) {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastRefreshKey)
         }
+        return failed
     }
 
     private func load() {

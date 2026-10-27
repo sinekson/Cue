@@ -1,5 +1,5 @@
-// Renders Cue's tvOS app icon layers, Top Shelf images and the launch screen's
-// play into the asset catalog: one play, drawn like the note on Apple's Musik icon — a
+// Renders Cue's tvOS app icon layers, Top Shelf images and the launch screen
+// into the asset catalog: one play, drawn like the note on Apple's Musik icon — a
 // grey-white, slightly see-through glyph with a tight dark rim, on Musik's
 // gradient, a little pinker.
 //   swift Tools/AppIcon/render.swift [preview.png]
@@ -10,9 +10,11 @@
 // same picture flattened: the background, the play at `topShelfPlayShare` of
 // their height.
 // The launch screen (`LaunchScreen`) is the app's background colour (read from
-// the `AppBackground` colour set) full-screen with the play, `launchPlayHeight`
-// tall, centred; the launch curtain (`LaunchStageView`) takes over from it with
-// the same play (`LaunchPlay`, in a `launchFrame` square, centred).
+// the `AppBackground` colour set) full-screen, nothing on it: tvOS flies the
+// icon's front layer onto it and holds it in the middle until the app's first
+// frame. The launch curtain takes over from that with the same play
+// (`LaunchPlay`, `launchPlayHeight` tall in a `launchFrame` square, centred —
+// measured on the system's: the same pixels), held, then fading into the gate.
 // Colours are Display P3 values (as on the TV — sRGB was too tame).
 
 import AppKit
@@ -35,7 +37,7 @@ let playCorner: CGFloat = 0.13          // × height
 let playWidthRatio: CGFloat = 0.9       // width ÷ height
 let opticalNudge: CGFloat = 0.03        // × height, right of the drawn shape's centre
 let topShelfPlayShare: CGFloat = 0.4    // the play's height ÷ a Top Shelf image's height
-let launchPlayHeight: CGFloat = 220     // points on the 1920 × 1080 screen (= LaunchStageView.playHeight)
+let launchPlayHeight: CGFloat = 220     // points on the 1920 × 1080 screen: the system's held play
 let launchFrame: CGFloat = 640          // the play's picture, square, centred
 
 // MARK: - Drawing
@@ -211,12 +213,12 @@ let appBackground: CGColor = {
     return CGColor(srgbRed: v("red"), green: v("green"), blue: v("blue"), alpha: 1)
 }()
 let screen = CGSize(width: 1920, height: 1080), frame = CGSize(width: launchFrame, height: launchFrame)
-imageSet("LaunchScreen", [1, 2].map { ($0, renderPicture(points: screen, scale: CGFloat($0), play: launchPlayHeight,
-                                                        fill: appBackground, [.front])) })
+imageSet("LaunchScreen", [1, 2].map { ($0, renderPicture(points: screen, scale: CGFloat($0), play: playHeight,
+                                                        fill: appBackground, [])) })
 imageSet("LaunchPlay", [1, 2].map { ($0, renderPicture(points: frame, scale: CGFloat($0), play: launchPlayHeight, [.front])) })
 
 if CommandLine.arguments.count > 1 {
     try! render([.back, .middle, .front], pixels: CGSize(width: 800, height: 480))
         .write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
 }
-print("wrote the icon layers, Top Shelf images and the launch play")
+print("wrote the icon layers, Top Shelf images, the launch screen and its play")

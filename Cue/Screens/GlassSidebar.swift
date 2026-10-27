@@ -46,6 +46,13 @@ enum AppTab: Int, CaseIterable, Identifiable {
     }
 }
 
+/// The top bar's avatar on the screen (moved out with the bar, too) — the
+/// gate's picked avatar lands on it.
+@MainActor
+enum TopBarAvatar {
+    static var frame: CGRect?
+}
+
 /// The top navigation: `🔍 Home Library Settings (avatar)`, centred as one
 /// group (see docs/UI-DESIGN.md §3).
 struct GlassSidebar: View {
@@ -117,6 +124,10 @@ struct GlassSidebar: View {
                 Button(action: onProfileTap) {
                     // As large as on the tvOS home screen: nearly the pill's height.
                     ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
+                        // Where the gate's picked avatar flies (`ProfileGate`).
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            TopBarAvatar.frame = $0
+                        }
                         .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
                         .glassPillItem(-1, in: navHighlight)
                 }

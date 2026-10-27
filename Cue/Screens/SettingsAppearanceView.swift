@@ -18,13 +18,12 @@ struct AppearanceSettingsDetail: View {
                 ) { followsTitle = $0 == "dynamic" }
                 SettingsOptionsRow(
                     title: "Card outlines",
-                    description: "High: thin edges, a bright one in focus. Low: thin edges only.",
+                    pageDescription: "A thin edge around every card, and a bright one on the card in focus.",
                     options: FixedFocusRing.Outlines.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                     selection: outlines
                 ) { FixedFocusRing.outlines = FixedFocusRing.Outlines(rawValue: $0) ?? .high }
                 SettingsToggleRow(
-                    title: "Hide the top bar",
-                    description: "Out of sight until you press Up at the top of a page, or Back.",
+                    title: "Auto-hide top bar",
                     isOn: $settings.autoHideSidebar
                 )
             }

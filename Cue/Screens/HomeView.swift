@@ -109,6 +109,18 @@ final class HomeViewModel: ObservableObject {
                                                    tmdb: tmdb, fallback: highlights(max: 20))
     }
 
+    /// The picks are this fetch's (not still the one before — another
+    /// profile's after a switch).
+    var picksCurrent: Bool { loadedAt != nil && picksMadeFor == loadedAt }
+
+    /// Another profile: its rows and picks, fetched again even where its
+    /// add-ons and layout match (the picks follow its history).
+    @Published private(set) var reloadRequest = 0
+    func profileSwitched() {
+        loadedFingerprint = []
+        reloadRequest &+= 1
+    }
+
     /// The billboard for a tab: its picks (of that type on Movies / Series),
     /// filled with the rows' highlights while the picks aren't made yet.
     func billboard(type: String?, max: Int = BillboardPicks.count) -> [BillboardPick] {
@@ -910,6 +922,7 @@ struct HomeView: View {
         // decoding, then profile scoping republishes four settings at once — so
         // a cold start ran the whole catalog sweep two to four times over.
         .onChange(of: addonManager.addons) { _, _ in scheduleReload() }
+        .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
         .onChange(of: collections.collections) { _, _ in scheduleReload() }
         // Collection rows render regardless, but a provider change still
         // reloads Home so anything downstream of the connections is fresh.
@@ -2433,8 +2446,8 @@ enum FixedFocusRing {
         case high, low, off
         var label: String {
             switch self {
-            case .high: "High"
-            case .low: "Low"
+            case .high: "Edges and focus"
+            case .low: "Edges only"
             case .off: "Off"
             }
         }

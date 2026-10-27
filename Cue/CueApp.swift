@@ -167,6 +167,8 @@ struct CueApp: App {
         AppProbe.installLevels()
         BackCatch.install()
         InputHold.install()
+        // The background, in before the gate (it fades in under the play).
+        ProjectorPictureStore.shared.load()
     }
 
     @StateObject private var theme = ThemeManager()
@@ -392,13 +394,9 @@ struct RootView: View {
     @State private var sync: NuvioSyncManager?
     /// Held only by -addonServerProbe; nil in normal runs.
     @State private var devAddonServer: AddonImportServer?
-    @State private var showProfileGate = false
     /// First launch, nobody signed in — the welcome screen sits in front of
     /// everything, including the profile gate.
     @State private var showWelcome = false
-    /// True when the gate was opened from the rail / Settings (Back closes
-    /// it); false for the cold-launch gate, where Back stays a no-op.
-    @State private var profileGateCancellable = false
     @State private var selectedTab = 0
     /// Polls the account every 30s while Home is up so Continue Watching stays
     /// live — removals and additions made on another device (or that failed to
@@ -440,10 +438,9 @@ struct RootView: View {
             .overlay { LaunchCurtain() }
             .animation(.easeOut(duration: 0.35), value: launch.curtain)
             .task { launch.run(home: homeViewModel, addonManager: addonManager) }
-            // The welcome screen or the profile gate up: they cover it — no
-            // curtain on top (the preload carries on behind).
+            // The welcome screen up: it covers it — no curtain on top (the
+            // preload carries on behind). The profile gate is on the curtain.
             .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
-            .onChange(of: showProfileGate) { _, on in if on { launch.skip() } }
             // Play from a card or an episode: finding its source, over the
             // app (Back cancels — see `PlayLauncher`).
             .overlay {
@@ -531,6 +528,8 @@ struct RootView: View {
                         tmdbSettings?.setProfile(id)
                         streamBadges?.setProfile(id)
                         searchViewModel?.setProfile(id)
+                        // Home's rows and billboard picks for this profile.
+                        homeViewModel.profileSwitched()
                         // Every store just re-pointed at another profile's
                         // data; reconcile the new picture everywhere rather
                         // than waiting for a tick.
@@ -595,11 +594,6 @@ struct RootView: View {
                         guard !Task.isCancelled else { return }
                         CommunityCollections.runLaunchMigrations(collections: collections)
                     }
-                    // "Who's watching?" gate on cold launch when 2+ profiles —
-                    // OR whenever the profile about to become active is PIN
-                    // locked. With only the count test, a device with a single
-                    // PIN-locked profile booted straight into it and the lock
-                    // the user had enabled protected nothing.
                     // Everything the browse probe needs that lives in a store
                     // rather than in this view. Weak, so a block registered
                     // here can never be what keeps a store alive, and
@@ -610,8 +604,7 @@ struct RootView: View {
                     AppProbe.life("root appeared — tab=\(Self.tabName(selectedTab))")
                     // Skipped in the demo modes so the screen isn't covered.
                     let args = ProcessInfo.processInfo.arguments
-                    let demoArgs = ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo","-searchDemo", "-libraryDemo", "-discoverDemo", "-accountDemo", "-settingsTabDemo", "-settingsPage"]
-                    let demoMode = demoArgs.contains { args.contains($0) }
+                    let demoMode = Self.demoMode
                     // -welcomeDemo forces it regardless of the completed flag
                     // or an already-restored session, which is the only way to
                     // look at this screen twice on one install.
@@ -619,7 +612,9 @@ struct RootView: View {
                         || args.contains("-welcomeOfferDemo")
                     showWelcome = (forceWelcome || OnboardingState.shouldShow(
                         signedIn: account.authState.isSignedIn)) && !demoMode
-                    showProfileGate = (profiles.profiles.count >= 2 || profiles.active.pinEnabled) && !demoMode
+                    // "Who's watching?" on the launch curtain (`gateNeeded`).
+                    launch.onGateClosed = { picked in afterProfileGate(picked: picked) }
+                    if gateNeeded, !showWelcome, !demoMode { launch.showGate(.launch) } else { launch.noGate() }
                     if args.contains("-settingsDemo") { selectedTab = 3 }
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
@@ -722,8 +717,7 @@ struct RootView: View {
                     // Dev: jump straight to the profile gate.
                     // As opened from the top bar's avatar (with Edit).
                     if args.contains("-profileGateDemo") {
-                        profileGateCancellable = true
-                        showProfileGate = true
+                        launch.showGate(.topBar)
                     }
                     // Dev/recovery: run the account-wide watch-history clear on
                     // launch (same code path as the Settings button) — lets a
@@ -767,37 +761,30 @@ struct RootView: View {
                     }
                 }
             }
-            // Presented AFTER the profile gate's modifier so it layers on
-            // top: on a fresh install both would otherwise want the screen,
-            // and "who's watching" makes no sense before "who are you".
+            // On a fresh install, before the gate: "who's watching" makes no
+            // sense before "who are you" — the gate comes after it, when the
+            // account has profiles to choose from.
             .fullScreenCover(isPresented: $showWelcome) {
                 WelcomeView(account: account, addonManager: addonManager) {
                     OnboardingState.completed = true
                     showWelcome = false
+                    if gateNeeded { launch.showGate(.resume) }
                 }
                 .environmentObject(theme)
-            }
-            .fullScreenCover(isPresented: $showProfileGate, onDismiss: deferSidebarAfterProfileGate) {
-                // Choosing a profile — and, opened from the top bar's avatar,
-                // editing them (its Edit tile). The Nuvio account lives in
-                // Settings → Account.
-                ProfileGateView(
-                    onSelected: { showProfileGate = false },
-                    onCancel: profileGateCancellable
-                        ? { showProfileGate = false }
-                        : nil
-                )
-                .environmentObject(theme)
-                .environmentObject(profiles)
-                .environmentObject(account)
-                .environmentObject(addonManager)
             }
             // Returning to the app pulls the latest Continue Watching so changes
             // made on another device show up without a relaunch (local edits
             // already push immediately on every change).
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase) { old, phase in
                 AppProbe.scene = "\(phase)"
                 AppProbe.life("scene → \(phase)")
+                // Coming back: the held play, then the app — or after hours
+                // away, who's watching, again. From the first phase out of
+                // the background, so the play is there as the app shows.
+                if phase == .background { launch.wentAway() }
+                if old == .background, phase != .background {
+                    launch.cameBack(needed: gateNeeded && playback == nil && !showWelcome)
+                }
                 if phase == .active {
                     // Opening the app syncs the whole account, not just
                     // Continue Watching — add-ons, collections, the layout and
@@ -945,7 +932,7 @@ struct RootView: View {
         .overlay { FusionToastHost() }
         // Playing: no billboard trailer under it.
         .onChange(of: playback == nil) { _, none in TrailerGate.shared.playerUp = !none }
-        .onChange(of: showProfileGate || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
+        .onChange(of: launch.gate != nil || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
         .fullScreenCover(item: $playback, onDismiss: {
             // Pop the auto-played source page ONLY after the cover has fully
             // torn down. Mutating the NavigationStack path in the same runloop
@@ -1057,9 +1044,9 @@ struct RootView: View {
         // gate reaches here too, and revealing there would flip state for a
         // rail that isn't even on screen — it then greets the viewer already
         // open when they come back to the root.
-        guard atTabRoot, playback == nil, !showProfileGate, !showWelcome else {
+        guard atTabRoot, playback == nil, launch.gate == nil, !showWelcome else {
             AppProbe.focus("reveal rail refused — atRoot=\(atTabRoot.probe)"
-                           + " player=\((playback != nil).probe) gate=\(showProfileGate.probe)"
+                           + " player=\((playback != nil).probe) gate=\((launch.gate != nil).probe)"
                            + " welcome=\(showWelcome.probe)")
             return
         }
@@ -1103,10 +1090,10 @@ struct RootView: View {
                     // while Back, which force-enables the rail, still worked.
                     // A deliberate Left now takes Back's path. Search only.
                     if selectedTab == 1, showSidebar, !sidebarEnabled, sidebarFocus == nil,
-                       playback == nil, !showProfileGate, !showWelcome {
+                       playback == nil, launch.gate == nil, !showWelcome {
                         focusSidebar(selectedTab)
                     } else if showSidebar, sidebarFocus == nil, atTabRoot,
-                              playback == nil, !showProfileGate, !showWelcome {
+                              playback == nil, launch.gate == nil, !showWelcome {
                         // TOP BAR, already on screen, and Up found nothing: put
                         // focus in it.
                         //
@@ -1136,7 +1123,7 @@ struct RootView: View {
                 GlassSidebar(selected: Binding(get: { selectedTab },
                                                set: { switchTab(to: $0) }),
                              focusBinding: $sidebarFocus,
-                             onProfileTap: { profileGateCancellable = true; showProfileGate = true },
+                             onProfileTap: { launch.showGate(.topBar) },
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: sidebarMovedOut,
                              autoHidden: sidebarAutoHidden)
@@ -1193,6 +1180,7 @@ struct RootView: View {
                     .task {
                         await LaunchPreloader.shared.lifted()
                         try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        guard !Task.isCancelled else { return }
                         // Cold-launch fallback ONLY. When a tab switch is
                         // deliberately waiting on onContentReady, this timer
                         // used to flip the rail focusable over slow addons
@@ -1312,6 +1300,7 @@ struct RootView: View {
         await LaunchPreloader.shared.lifted()
         for tab in AppTab.topBarOrder where !visitedTabs.contains(tab.rawValue) {
             try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
             visitedTabs.insert(tab.rawValue)
         }
     }
@@ -1673,11 +1662,28 @@ struct RootView: View {
         }
     }
 
-    /// The rail's cold-launch fallback timer keeps running while the profile
-    /// gate covers the screen, so once the gate is gone the focus engine
-    /// would land on the rail. Disable it again and send focus to Home's
-    /// billboard (its first button).
-    private func deferSidebarAfterProfileGate() {
+    /// "Who's watching?" — at launch, after the welcome, after 4 hours away:
+    /// 2+ profiles, or the active one PIN locked (with only the count test, a
+    /// device with a single locked profile booted straight into it).
+    private var gateNeeded: Bool { Self.gateNeeded(profiles) }
+    static func gateNeeded(_ profiles: ProfileStore) -> Bool {
+        profiles.profiles.count >= 2 || profiles.active.pinEnabled
+    }
+    /// Launched into a screen to look at: no gate covering it.
+    static var demoMode: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        return ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo", "-searchDemo", "-libraryDemo",
+                "-discoverDemo", "-accountDemo", "-settingsTabDemo", "-settingsPage"].contains { args.contains($0) }
+    }
+
+    /// The gate gone. A profile picked: focus to Home's billboard (its first
+    /// button), the top bar settling first (it would take the first focus).
+    /// Closed with Back (opened from the top bar): focus back on the avatar.
+    private func afterProfileGate(picked: Bool) {
+        guard picked else {
+            focusSidebar(-1)
+            return
+        }
         setSidebarEnabled(false, reenableAfter: Self.railSettle)
         if selectedTab == 0 { HomeBack.shared.toBillboard?() }
     }
@@ -2229,44 +2235,86 @@ enum FocusTrace {
 
 // MARK: - Launch (docs/LOADING-PLAN.md §4)
 
-/// THE LAUNCH: on a cold start, under the launch curtain (the app's background
-/// and the launch screen's play, growing and shrinking — `LaunchStageView`),
+/// THE LAUNCH: on a cold start, under the launch curtain (the app's background,
+/// as the launch screen — no play, no spinner),
 /// the closest things get ready — Home's rows and billboard from disk, the
 /// billboard's pictures and colours decoded, the first row's posters, the
 /// one-time artwork — and Home is built under it. That ends when it's done (at least `minimum` shown), or at `cap`
 /// — never waiting on the network: what isn't on disk loads as usual
-/// afterwards. Then the play is pushed and the curtain fades into Home; input
+/// afterwards. Then the curtain fades into Home; input
 /// comes back with the fade (`lift`). Every step reports a count and its time
 /// (Render Lab → Launch: show numbers).
+/// With profiles to choose from, "Who's watching?" (`ProfileGate`) is the
+/// curtain from its first frame: the preload runs under it for the last
+/// profile (focus starts there); another one picked, the same steps again for
+/// it (`restart`) while its avatar breathes; ready, the avatar flies to the
+/// top bar as Home dissolves in (`gateLanded`). The same gate after 4 hours
+/// away (`resume`) and from the top bar's avatar (`topBar`, Back closes it).
 @MainActor
 final class LaunchPreloader: ObservableObject {
     static let shared = LaunchPreloader()
 
-    /// Over the app, input off — until the play has been pushed.
+    /// Over the app, input off — until everything's ready (or the gate has
+    /// landed).
     @Published private(set) var curtain = true
-    /// Everything's ready: the curtain pushes the play, then fades.
-    @Published private(set) var opening = false
+    /// The play on the curtain: tvOS holds the icon's play in the middle
+    /// until our first frame (~0.35 s in, mid-zoom — too quick; coming back,
+    /// at once); the curtain carries on with the same play (`LaunchPlay`,
+    /// the system's pixels), still, for `playHold`, then it fades as the
+    /// gate or the app comes in (as the system hands off to Settings).
+    @Published private(set) var playing = true
+    static let playHold: Duration = .seconds(0.6)
+    /// Coming back the system's play goes at once (the app's frame is
+    /// ready): ours holds as long as the two together at a cold start.
+    static let resumeHold: Duration = .seconds(0.95)
     @Published private(set) var lines: [String] = []
+
+    enum GateMode { case launch, resume, topBar }
+    /// "Who's watching?" on the curtain.
+    @Published private(set) var gate: GateMode?
+    /// Home is ready for the active profile (the preload done) — the gate's
+    /// picked avatar flies once it is.
+    @Published private(set) var ready = false
+    /// The gate closed: true when a profile was picked (focus to the
+    /// billboard), false when Back closed it (focus back on the avatar).
+    var onGateClosed: (Bool) -> Void = { _ in }
 
     static let minimum: Double = 0.6
     static let cap: Double = 2.5
+    /// Away this long, the gate asks again.
+    static let awayForGate: TimeInterval = 4 * 60 * 60
 
     private var started = false
     private var finished = false
-    private let launchedAt = CACurrentMediaTime()
-    private var elapsed: Double { CACurrentMediaTime() - launchedAt }
+    private var stepsStarted = CACurrentMediaTime()
+    private var elapsed: Double { CACurrentMediaTime() - stepsStarted }
+    private weak var home: HomeViewModel?
+    private weak var addonManager: AddonManager?
+    private var generation = 0
+    private var wentAwayAt: Date?
 
     func run(home: HomeViewModel, addonManager: AddonManager) {
         guard !started else { return }
         started = true
-        Task { await steps(home: home, addonManager: addonManager) }
+        self.home = home
+        self.addonManager = addonManager
+        start(firstLaunch: true)
+    }
+
+    private func start(firstLaunch: Bool) {
+        generation &+= 1
+        let current = generation
+        finished = false
+        ready = false
+        stepsStarted = CACurrentMediaTime()
+        Task { await steps(firstLaunch: firstLaunch, generation: current) }
         Task {
             try? await Task.sleep(for: .seconds(Self.cap))
-            finish(note: "cap reached")
+            if current == generation { finish(note: "cap reached") }
         }
     }
 
-    /// Covered by the welcome screen or the profile gate: the curtain just goes.
+    /// Covered by the welcome screen: the curtain just goes.
     func skip() {
         finish(note: "covered")
         lift()
@@ -2276,23 +2324,26 @@ final class LaunchPreloader: ObservableObject {
         guard !finished else { return }
         finished = true
         line(String(format: "Total     %.2f s  (%@)", elapsed, note))
-        opening = true
+        ready = true
+        if gate == nil { lift() }
         Task {
             try? await Task.sleep(for: .seconds(Self.numbersLinger))
             numbersShown = false
         }
     }
 
-    /// Returns once the curtain has lifted (at once if it has).
+    /// Returns once the curtain has lifted (at once if it has), or the
+    /// task is cancelled — a cancelled task's sleep returns at once, so the
+    /// loop spun at full speed for as long as the curtain stayed (the gate).
     func lifted() async {
-        while curtain { try? await Task.sleep(for: .milliseconds(50)) }
+        while curtain, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
     }
 
-    /// The play has been pushed (or the curtain was covered): the curtain fades
-    /// into Home and input comes back.
+    /// The curtain fades into Home and input comes back.
     func lift() {
         guard curtain else { return }
         curtain = false
+        playing = false
         // The focus engine doesn't pick a focus by itself — the first press
         // only woke it. Asked to, once the page is enabled.
         Task {
@@ -2301,6 +2352,78 @@ final class LaunchPreloader: ObservableObject {
                 .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
             window?.rootViewController?.setNeedsFocusUpdate()
             window?.rootViewController?.updateFocusIfNeeded()
+        }
+    }
+
+    // MARK: The gate
+
+    /// Until the root has decided (its first appearance), the curtain shows
+    /// the gate it expects — the gate from the first frame, no play before it.
+    @Published private(set) var gateDecided = false
+    func noGate() { gateDecided = true }
+    /// The held play gives way to the gate (it stays until the curtain lifts
+    /// without one).
+    func endPlay() { playing = false }
+
+    /// "Who's watching?" over the app. At launch the preload carries on
+    /// under it; coming back or from the top bar Home is already there.
+    func showGate(_ mode: GateMode) {
+        gateDecided = true
+        guard gate == nil else { return }
+        gate = mode
+        curtain = true
+        playing = false
+        if mode != .launch {
+            ready = true
+        }
+    }
+
+    /// A profile picked at the gate. Another one than before: the stores
+    /// have switched (`setActive`) — its Home gets ready the launch's way,
+    /// counted from the pick.
+    func picked(switched: Bool) {
+        guard switched else { return }
+        line("Switch    profile picked at the gate")
+        start(firstLaunch: false)
+    }
+
+    /// The picked avatar has landed on the top bar: the gate is gone.
+    func gateLanded() {
+        gate = nil
+        lift()
+        onGateClosed(true)
+    }
+
+    /// Back at the gate opened from the top bar.
+    func cancelGate() {
+        guard gate == .topBar else { return }
+        gate = nil
+        lift()
+        onGateClosed(false)
+    }
+
+    /// The app went to the background / came back: after `awayForGate`,
+    /// the gate (if there is one to show — `needed`). The gate on the
+    /// curtain (due, or left up): the play first, held as at launch (the
+    /// system's play goes at once — the app's frame is ready), the gate
+    /// fading in after. Back to the page: the page as it was.
+    func wentAway() { wentAwayAt = Date() }
+    func cameBack(needed: Bool) {
+        defer { wentAwayAt = nil }
+        // Still held (the launch's play, a resume's): nothing more.
+        guard let away = wentAwayAt, !playing else { return }
+        let gateDue = needed && gate == nil && !curtain
+            && Date().timeIntervalSince(away) >= Self.awayForGate
+        guard gateDue || gate != nil else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if gateDue { showGate(.resume) }
+            playing = true
+        }
+        Task {
+            try? await Task.sleep(for: Self.resumeHold)
+            if curtain { playing = false }
         }
     }
 
@@ -2313,17 +2436,26 @@ final class LaunchPreloader: ObservableObject {
     static let numbersLinger: Double = 6
     @Published private(set) var numbersShown = true
 
-    private func steps(home: HomeViewModel, addonManager: AddonManager) async {
+    private func steps(firstLaunch: Bool, generation current: Int) async {
+        guard let home, let addonManager else { return }
         // ① From disk: Home's rows and billboard picks (Home reads its cache
         // as it's built under the curtain) — and the titles to open first.
         var t = CACurrentMediaTime()
+        // After a switch at the gate: the new profile's reload (`profileSwitched`)
+        // — its rows and picks replace the old profile's.
+        let loadedBefore = firstLaunch ? nil : home.loadedAt
+        if !firstLaunch {
+            while home.loadedAt == loadedBefore, elapsed < 2.0 { try? await Task.sleep(for: .milliseconds(25)) }
+        }
         while home.entries.isEmpty, elapsed < 1.0 { try? await Task.sleep(for: .milliseconds(25)) }
         // The billboard's own picks (made once the catalogs are in): waited
         // for — they replaced the rows' highlights a moment after Home
         // appeared, a visible swap. At most until 2 s (room for the decodes
         // before the cap).
         let picksStarted = CACurrentMediaTime()
-        while home.billboardPicks.isEmpty, elapsed < 2.0 { try? await Task.sleep(for: .milliseconds(25)) }
+        while home.billboardPicks.isEmpty || !home.picksCurrent, elapsed < 2.0 {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
         let picksWait = (CACurrentMediaTime() - picksStarted) * 1000
         // (Home's own: its first `BillboardPicks.count` — the model holds
         // every tab's.)
@@ -2405,23 +2537,50 @@ final class LaunchPreloader: ObservableObject {
 
         // Shown at least `minimum` (the play breathes once, not a flash).
         if elapsed < Self.minimum { try? await Task.sleep(for: .seconds(Self.minimum - elapsed)) }
+        guard current == generation else { return }
         finish(note: "ready")
     }
 }
 
-/// The launch curtain (`LaunchStageView`) and — Render Lab → Launch: show
-/// numbers — what was loaded and how long it took.
+/// The launch curtain (the background, or the gate on it — `ProfileGate`) and
+/// — Render Lab → Launch: show numbers — what was loaded and how long it took.
 struct LaunchCurtain: View {
     @ObservedObject private var launch = LaunchPreloader.shared
+    @EnvironmentObject private var profiles: ProfileStore
     @ObservedObject private var probe = RenderProbe.shared
+    /// The gate's avatar flying to the top bar: the background dissolves
+    /// off Home with it.
+    @State private var dissolving = false
+    /// The gate shown — or, before the root has decided, the one it will
+    /// show at launch (the same view, so nothing changes as it's decided).
+    private var gate: LaunchPreloader.GateMode? {
+        if let gate = launch.gate { return gate }
+        guard !launch.gateDecided, !RootView.demoMode, RootView.gateNeeded(profiles) else { return nil }
+        return .launch
+    }
 
     var body: some View {
         ZStack {
             if launch.curtain {
                 ZStack {
+                    // One background under both (two crossfading dipped).
                     ATVBackground()
-                    LaunchStage(opening: launch.opening)
+                        .opacity(dissolving ? 0 : 1)
+                        .animation(ProfileGate.dissolve, value: dissolving)
+                        .allowsHitTesting(false)
+                    if launch.playing {
+                        Image("LaunchPlay")
+                            .resizable()
+                            .frame(width: 640, height: 640)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    } else if let mode = gate {
+                        ProfileGate(mode: mode, onFly: { dissolving = true })
+                            .transition(.opacity)
+                    }
                 }
+                .animation(Motion.fade, value: gate == nil)
+                .animation(Motion.fade, value: launch.playing)
                 .transition(.opacity)
             }
             // The numbers: on the curtain, and a little after on Home (to read).
@@ -2439,120 +2598,36 @@ struct LaunchCurtain: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 .padding(.leading, 84)
                 .padding(.bottom, 130)
+                .allowsHitTesting(false)
                 .transition(.opacity)
             }
         }
         .ignoresSafeArea()
-        .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.3), value: launch.numbersShown)
-    }
-}
-
-private struct LaunchStage: UIViewRepresentable {
-    let opening: Bool
-
-    func makeUIView(context: Context) -> LaunchStageView { LaunchStageView() }
-
-    func updateUIView(_ view: LaunchStageView, context: Context) {
-        if opening { view.open { LaunchPreloader.shared.lift() } }
-    }
-}
-
-/// The launch curtain's play, in Core Animation — it keeps its pace while
-/// Home is built on the main thread underneath. It takes over from the launch
-/// screen with the same picture (`LaunchPlay`, Tools/AppIcon/render.swift: the
-/// play `playHeight` tall in a `frameSide` square, centred) over the app's
-/// background: the play grows and shrinks while the app loads. `open`: a push —
-/// the play sinks in and comes back — then the curtain fades into Home.
-final class LaunchStageView: UIView {
-    // As render.swift's launch play and its `playShape`.
-    private static let playHeight: CGFloat = 220
-    private static let frameSide: CGFloat = 640
-    private static let playWidthRatio: CGFloat = 0.9
-    private static let playCorner: CGFloat = 0.13
-    private static let opticalNudge: CGFloat = 0.03
-
-    private static let breath: (scale: CGFloat, duration: CFTimeInterval) = (1.08, 0.8)
-    private static let pushed: CGFloat = 0.8
-    private static let pushDuration: CFTimeInterval = 0.12
-    private static let holdDuration: CFTimeInterval = 0.05
-    private static let releaseDuration: CFTimeInterval = 0.25
-
-    private let play = CALayer()
-    private var breathing = false
-    private var opened = false
-
-    init() {
-        super.init(frame: .zero)
-        isUserInteractionEnabled = false
-        play.contents = UIImage(named: "LaunchPlay")?.cgImage
-        layer.addSublayer(play)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard !bounds.isEmpty else { return }
-        let centre = incentre
-        let frame = Self.frameSide
-        let origin = CGPoint(x: bounds.midX - frame / 2, y: bounds.midY - frame / 2)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        play.bounds = CGRect(x: 0, y: 0, width: frame, height: frame)
-        play.anchorPoint = CGPoint(x: (centre.x - origin.x) / frame, y: (centre.y - origin.y) / frame)
-        play.position = centre
-        CATransaction.commit()
-        if !breathing && !opened {
-            breathing = true
-            let breathe = CABasicAnimation(keyPath: "transform.scale")
-            breathe.fromValue = 1
-            breathe.toValue = Self.breath.scale
-            breathe.duration = Self.breath.duration
-            breathe.autoreverses = true
-            breathe.repeatCount = .infinity
-            breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            play.add(breathe, forKey: "breathe")
+        .task {
+            try? await Task.sleep(for: LaunchPreloader.playHold)
+            // The background first: it fades in under the play, never
+            // after the gate (1 s more at most — a first draw, no copy yet).
+            if ProjectorPictureStore.shared.image == nil {
+                let start = CACurrentMediaTime()
+                while ProjectorPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1,
+                      !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(30))
+                }
+                // Its fade over, then the gate.
+                try? await Task.sleep(for: .seconds(Motion.fadeDuration))
+            }
+            guard !Task.isCancelled else { return }
+            if gate != nil { launch.endPlay() }
         }
-    }
-
-    /// The push; `done` once the play is back, for the curtain to fade.
-    func open(_ done: @escaping () -> Void) {
-        guard !opened else { return }
-        opened = true
-        // From wherever the breath is.
-        let now = (play.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1
-        play.removeAnimation(forKey: "breathe")
-
-        let total = Self.pushDuration + Self.holdDuration + Self.releaseDuration
-        let push = CAKeyframeAnimation(keyPath: "transform.scale")
-        push.values = [now, Self.pushed, Self.pushed, 1]
-        push.keyTimes = [0, Self.pushDuration / total, (Self.pushDuration + Self.holdDuration) / total, 1]
-            .map { NSNumber(value: $0) }
-        push.timingFunctions = [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .linear),
-                                CAMediaTimingFunction(name: .easeOut)]
-        push.duration = total
-        CATransaction.begin()
-        CATransaction.setCompletionBlock(done)
-        play.add(push, forKey: "push")
-        CATransaction.commit()
-    }
-
-    /// The play scales around its incentre: the point equally far from its
-    /// three sides (the unrounded triangle's — its left side is straight, at
-    /// the drawn shape's left). The drawn shape as render.swift's `playShape`:
-    /// centred, plus the optical nudge.
-    private var incentre: CGPoint {
-        let h = Self.playHeight, w = h * Self.playWidthRatio, r = h * Self.playCorner
-        let p = CGMutablePath()
-        p.move(to: CGPoint(x: 0, y: h / 2))
-        p.addArc(tangent1End: .zero, tangent2End: CGPoint(x: w, y: h / 2), radius: r)
-        p.addArc(tangent1End: CGPoint(x: w, y: h / 2), tangent2End: CGPoint(x: 0, y: h), radius: r)
-        p.addArc(tangent1End: CGPoint(x: 0, y: h), tangent2End: .zero, radius: r)
-        p.closeSubpath()
-        let left = bounds.midX + h * Self.opticalNudge - p.boundingBoxOfPath.width / 2
-        let side = (w * w + h * h / 4).squareRoot()
-        return CGPoint(x: left + h * w / (h + 2 * side), y: bounds.midY)
+        // Back for the next gate as the curtain comes (at once: reset as it
+        // went, the background came back during the curtain's own fade).
+        .onChange(of: launch.curtain) { _, on in
+            guard on else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { dissolving = false }
+        }
     }
 }
 

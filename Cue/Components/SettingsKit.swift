@@ -1,15 +1,14 @@
 import SwiftUI
 
-// THE SETTINGS LOOK — a sidebar and a column. On the left the
-// categories (`ATVSettingsView`); centred on the screen, the focused category's
-// settings, following focus. Right or Select goes into them, Left or Back
-// comes out again. Pages a row opens (a list to manage, a sign-in) open in
-// that right column, the categories staying beside them (`SettingsNav`).
+// THE SETTINGS LOOK — one column, centred, a level at a time: the
+// categories (`ATVSettingsView`), a category's settings, the pages its rows
+// open (a list to manage, a sign-in) — each in its place (`SettingsNav`);
+// Back goes up a level.
 // Rows rest on a faint fill and, focused, sit on the top bar's light
-// highlight; the focused row's description shows in a card right of the
-// rows (`SettingsDescriptionCard`), so the column never moves. (Tried: an info pane beside the
-// rows with the category's symbol in a box and the description below it —
-// the box wasted room, the words were far from their row.)
+// highlight; a row's description shows under its pill, always. (Tried:
+// the focused row's description in a card right of the rows; an info pane
+// beside the rows with the category's symbol in a box and the description
+// below it — the box wasted room, the words were far from their row.)
 //
 // - `SettingsPage`: a category's settings, in the column.
 // - `SettingsSection`: a titled group of rows.
@@ -39,14 +38,13 @@ enum SettingsMetrics {
     static let descriptionSize: CGFloat = 24
     static let sectionGap: CGFloat = 40
     static let rowGap: CGFloat = 14
-    /// The settings centred on the screen, the categories a sidebar
-    /// `columnGap` left of them: single-column rows read better narrow than
-    /// across the content's width (tried: the categories a third of it,
-    /// the settings the rest; both columns centred together, 440 + 780;
-    /// the sidebar 400 wide at the screen's left inset).
-    static let listWidth: CGFloat = 320
-    static let columnWidth: CGFloat = 780
-    static let columnGap: CGFloat = 64
+    /// One column of settings, centred: single-column rows read better
+    /// narrow than across the content's width. (Tried: 780; the column and
+    /// a description card right of it centred together; the categories a
+    /// sidebar left of the settings, in many shapes.)
+    static let columnWidth: CGFloat = 860
+    /// A row's description under its pill.
+    static let descriptionGap: CGFloat = 10
     /// Where both columns start, on every page: where Home's focused row
     /// has its name, below the top bar.
     static var top: CGFloat { FixedFocusMetrics.rowTop }
@@ -56,28 +54,6 @@ enum SettingsMetrics {
     /// Between a page's title and its description.
     static let headingSpacing: CGFloat = 6
 
-    /// The categories: the settings' rows and labels, a size smaller
-    /// (about 80 %), no icons (tried: each with its symbol in its colour).
-    enum Sidebar {
-        static let rowHeight: CGFloat = 52
-        static var rowRadius: CGFloat { rowHeight / 2 }
-        static let rowInset: CGFloat = 26
-        static let rowGap: CGFloat = 11
-        static let textSize: CGFloat = 30
-        static let sectionTextSize: CGFloat = 23
-        static var titleTextSize: CGFloat { SettingsMetrics.titleTextSize }
-        static let sectionLabelHeight: CGFloat = 29
-        static let sectionGap: CGFloat = 32
-        /// Where it starts: its first label on the line of the page's
-        /// description (baselines level), not the page's title — the
-        /// titles' sizes don't match. (Tried: level with the title.)
-        static var top: CGFloat {
-            let title = UIFont.systemFont(ofSize: titleTextSize, weight: .semibold).lineHeight
-            let description = UIFont.systemFont(ofSize: 24, weight: .medium).ascender
-            let label = sectionLabelHeight + UIFont.systemFont(ofSize: sectionTextSize, weight: .semibold).descender
-            return SettingsMetrics.top + title + SettingsMetrics.headingSpacing + description - label
-        }
-    }
     /// The focused platter: the top bar's bright glass highlight
     /// (`GlassHighlight`); this, where a plain fill is needed.
     static let focusedFill = FlatControl.focus
@@ -113,7 +89,12 @@ final class SettingsNav: ObservableObject {
         return true
     }
 
-    func clear() { stack.removeAll() }
+    /// Out of the column (Back on its first page) — set by its host.
+    var leave: () -> Void = {}
+
+    /// Back a page, or out when there's none (a page opened as the
+    /// column's first — the gate's profiles).
+    func back() { if !pop() { leave() } }
 }
 
 /// The column's rows, for Select on a category: each row reports its name
@@ -129,16 +110,11 @@ private struct SettingsOnlyRowKey: EnvironmentKey {
     static let defaultValue: String? = nil
 }
 
-/// The focused row's description and where its pill is, reported up to
-/// its page, which shows it in a card right of the rows
-/// (`SettingsDescriptionCard`).
-struct SettingsDescribedKey: PreferenceKey {
-    struct Described {
-        let text: String
-        let pill: Anchor<CGRect>
-    }
-    static let defaultValue: Described? = nil
-    static func reduce(value: inout Described?, nextValue: () -> Described?) {
+/// Where a row's pill is within its label (the description under it is
+/// outside), for `SettingsRowStyle` to draw the pill there.
+struct SettingsPillKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
         value = value ?? nextValue()
     }
 }
@@ -249,24 +225,20 @@ struct SettingsRoundButton: View {
 
 /// A titled group of rows. Its label as Apple TV's Settings', measured:
 /// 29 pt semibold capitals, no extra spacing, the title's grey (tried:
-/// Home's section hint, small and widely spaced). The sidebar's groups
-/// the same, at its scale (`Sidebar`).
+/// Home's section hint, small and widely spaced).
 struct SettingsSection<Content: View>: View {
     var title: String = ""
-    var sidebar = false
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: sidebar ? SettingsMetrics.Sidebar.rowGap : SettingsMetrics.rowGap) {
+        VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
             // Untitled: the rows alone, no label's room.
             if !title.isEmpty {
                 Text(title.uppercased())
-                    .font(.system(size: sidebar ? SettingsMetrics.Sidebar.sectionTextSize : SettingsMetrics.sectionTextSize,
-                                  weight: .semibold))
+                    .font(.system(size: SettingsMetrics.sectionTextSize, weight: .semibold))
                     .foregroundStyle(SettingsMetrics.labelText)
-                    .padding(.leading, sidebar ? SettingsMetrics.Sidebar.rowInset : SettingsMetrics.labelIndent)
-                    .frame(height: sidebar ? SettingsMetrics.Sidebar.sectionLabelHeight : SettingsMetrics.sectionLabelHeight,
-                           alignment: .bottomLeading)
+                    .padding(.leading, SettingsMetrics.labelIndent)
+                    .frame(height: SettingsMetrics.sectionLabelHeight, alignment: .bottomLeading)
             }
             content
         }
@@ -276,11 +248,11 @@ struct SettingsSection<Content: View>: View {
 
 // MARK: - Rows
 
-/// A row's content: name left, value (and chevron) right; focused, its
-/// description goes to the page's card right of the rows, so the column
-/// never moves. (Tried: the description inside the pill, under the name —
-/// the pill grew tall; under the pill, the rows below stepping down to
-/// make room; under every row, always.)
+/// A row's content: name left, value (and chevron) right; its description
+/// under the pill, always. (Tried: inside the pill, under the name — the
+/// pill grew tall; under the pill only while focused, the rows below
+/// stepping down to make room; the focused row's in a card right of the
+/// rows.)
 struct SettingsRowLabel: View {
     @Environment(\.isFocused) private var isFocused
     let title: String
@@ -325,9 +297,15 @@ struct SettingsRowLabel: View {
             }
             .frame(height: SettingsMetrics.rowHeight)
             .padding(.horizontal, SettingsMetrics.rowInset)
-            .anchorPreference(key: SettingsDescribedKey.self, value: .bounds) { pill in
-                guard isFocused, let description, !description.isEmpty else { return nil }
-                return .init(text: description, pill: pill)
+            .anchorPreference(key: SettingsPillKey.self, value: .bounds) { $0 }
+            if let description, !description.isEmpty {
+                Text(description)
+                    .font(.system(size: SettingsMetrics.descriptionSize))
+                    .foregroundStyle(SettingsMetrics.secondaryText)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, SettingsMetrics.rowInset)
+                    .padding(.top, SettingsMetrics.descriptionGap)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -376,8 +354,15 @@ struct SettingsRowStyle: ButtonStyle {
         }
 
         var body: some View {
+            // The pill behind the row's own part, not its description.
             configuration.label
-                .background(pill)
+                .backgroundPreferenceValue(SettingsPillKey.self) { anchor in
+                    GeometryReader { proxy in
+                        let rect = anchor.map { proxy[$0] } ?? CGRect(origin: .zero, size: proxy.size)
+                        pill.frame(width: rect.width, height: rect.height)
+                            .offset(x: rect.minX, y: rect.minY)
+                    }
+                }
                 .scaleEffect(isFocused ? (configuration.isPressed ? 1.0 : 1.02) : 1, anchor: .top)
                 .animation(.smooth(duration: 0.18), value: isFocused)
                 .animation(.smooth(duration: 0.1), value: configuration.isPressed)
@@ -459,13 +444,16 @@ struct SettingsOptionsRow: View {
     @EnvironmentObject private var nav: SettingsNav
     let title: String
     var description: String? = nil
+    /// The options page's line under its title, when it's not the row's
+    /// description (a row without one).
+    var pageDescription: String? = nil
     let options: [SettingsOption]
     let selection: String
     let onPick: (String) -> Void
 
     var body: some View {
         Button {
-            nav.push(SettingsOptionsPage(title: title, subtitle: description ?? "",
+            nav.push(SettingsOptionsPage(title: title, subtitle: pageDescription ?? description ?? "",
                                          options: options, selection: selection, onPick: onPick))
         } label: {
             SettingsRowLabel(title: title, value: options.first { $0.id == selection }?.label,
@@ -553,22 +541,13 @@ final class TopBarLock: ObservableObject {
 struct SettingsManagePage<Content: View>: View {
     let title: String
     let subtitle: String
-    var headerAction: SettingsEntryAction? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
         SettingsScrollingPage(title: title, subtitle: subtitle) {
-            if let headerAction {
-                if headerAction.labelled {
-                    SettingsLabelButton(icon: headerAction.icon, title: headerAction.title,
-                                        destructive: headerAction.destructive,
-                                        action: headerAction.action)
-                } else {
-                    SettingsIconButton(icon: headerAction.icon, action: headerAction.action)
-                }
-            }
+            EmptyView()
         } content: {
-            content
+            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) { content }
         }
     }
 }
@@ -621,13 +600,6 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
                     .padding(.horizontal, -60)
                     .padding(.bottom, -200)
                 }
-                .overlayPreferenceValue(SettingsDescribedKey.self) { described in
-                    GeometryReader { proxy in
-                        SettingsDescriptionCard(text: described?.text,
-                                                top: described.map { proxy[$0.pill].minY })
-                            .offset(x: proxy.size.width + SettingsMetrics.columnGap)
-                    }
-                }
                 .environment(\.settingsScroll, proxy)
             }
         }
@@ -655,45 +627,6 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
     }
 }
 
-/// The focused row's description, right of the rows — as wide as the
-/// categories' sidebar and as far from the column, so the three sit
-/// centred together — level with the row, following focus. A card of its
-/// own (the rows' faint fill, a light edge) so it reads as belonging to
-/// the row, not floating text. No description: the card fades away.
-struct SettingsDescriptionCard: View {
-    let text: String?
-    let top: CGFloat?
-    @State private var lastTop: CGFloat = 0
-    @State private var lastText = ""
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
-        Text(lastText)
-            .font(.system(size: SettingsMetrics.descriptionSize))
-            .foregroundStyle(SettingsMetrics.secondaryText)
-            .lineSpacing(4)
-            .fixedSize(horizontal: false, vertical: true)
-            .id(lastText)
-            .transition(.opacity)
-            .padding(24)
-            .frame(width: SettingsMetrics.listWidth, alignment: .topLeading)
-            .background(shape.fill(SettingsMetrics.restingFill))
-            .overlay(shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
-            .opacity(text == nil ? 0 : 1)
-            .offset(y: lastTop)
-            .onChange(of: text, initial: true) { _, new in
-                guard let new else { return }
-                withAnimation(Motion.fade) { lastText = new }
-            }
-            .onChange(of: top, initial: true) { old, new in
-                guard let new else { return }
-                // Coming from no card: there at once, fading in.
-                withAnimation(old == nil ? nil : Motion.focus) { lastTop = new }
-            }
-            .animation(Motion.fade, value: text == nil)
-    }
-}
-
 private struct SettingsScrollKey: EnvironmentKey {
     static let defaultValue: ScrollViewProxy? = nil
 }
@@ -712,8 +645,6 @@ struct SettingsEntryAction: Identifiable {
     let icon: String
     /// Its name — shown after the entry's name while it has focus.
     let title: String
-    /// By a page's heading: its name on it, not just the icon.
-    var labelled = false
     var destructive = false
     let action: () -> Void
 }
@@ -764,6 +695,21 @@ struct SettingsEntryRow: View {
         return ([extra, remove].compactMap { $0 } + actions).first { $0.id == focused }?.title
     }
 
+    /// The entry as a row of its column (`settingsRow`), by its first
+    /// control: Right from the categories and Back from the top bar land
+    /// there.
+    private var rowID: String { scrollID ?? title }
+    private var firstControl: String? {
+        extra?.id ?? actions.first?.id ?? (toggle != nil ? "switch" : remove?.id)
+    }
+
+    private struct EntryRowFocus: ViewModifier {
+        let id: String?
+        func body(content: Content) -> some View {
+            if let id { content.modifier(SettingsRowEntry(id: id)) } else { content }
+        }
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             if let leading { leading.frame(width: 40, height: 40) }
@@ -798,6 +744,7 @@ struct SettingsEntryRow: View {
                     SettingsSwitchButton(isOn: toggle.isOn, action: toggle.toggle)
                         .focused($focused, equals: "switch")
                         .disabled(anyMoving)
+                        .modifier(EntryRowFocus(id: firstControl == "switch" ? rowID : nil))
                 }
                 if let remove { button(remove, destructive: true) }
             }
@@ -823,6 +770,7 @@ struct SettingsEntryRow: View {
         }
         .focused($focused, equals: action.id)
         .disabled(anyMoving && !isTheMove)
+        .modifier(EntryRowFocus(id: firstControl == action.id ? rowID : nil))
         .onMoveCommand { direction in
             guard isTheMove else { return }
             switch direction {
@@ -884,55 +832,6 @@ struct SettingsIconButton: View {
                 .scaleEffect(isFocused ? (configuration.isPressed ? 1.04 : 1.12) : 1)
                 .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: 10, y: 5)
                 .animation(.smooth(duration: 0.15), value: isFocused)
-        }
-    }
-}
-
-/// A capsule with an icon and its name, for an action that needs saying
-/// (by a list's heading); destructive ones red: a red edge and text at
-/// rest, solid red focused.
-struct SettingsLabelButton: View {
-    let icon: String
-    let title: String
-    var destructive = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 24, weight: .semibold))
-                .padding(.horizontal, 24)
-                .frame(height: 56)
-        }
-        .buttonStyle(Style(destructive: destructive))
-    }
-
-    private struct Style: ButtonStyle {
-        let destructive: Bool
-        func makeBody(configuration: Configuration) -> some View { Chrome(configuration: configuration, destructive: destructive) }
-    }
-
-    private struct Chrome: View {
-        @Environment(\.isFocused) private var isFocused
-        let configuration: ButtonStyle.Configuration
-        let destructive: Bool
-        private static let red = Color(red: 1, green: 0.27, blue: 0.23)
-
-        var body: some View {
-            configuration.label
-                .foregroundStyle(isFocused ? (destructive ? Color.white : SettingsMetrics.focusedText)
-                                           : (destructive ? Self.red : SettingsMetrics.primaryText))
-                .background {
-                    if isFocused, !destructive { GlassHighlight(focused: true, shape: Capsule()) }
-                    else {
-                        Capsule().fill(isFocused ? Self.red
-                                       : (destructive ? Self.red.opacity(0.18) : FlatControl.rest))
-                    }
-                }
-                .scaleEffect(isFocused ? (configuration.isPressed ? 0.97 : 1.05) : 1)
-                .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: 10, y: 5)
-                .animation(.smooth(duration: 0.15), value: isFocused)
-                .animation(.smooth(duration: 0.1), value: configuration.isPressed)
         }
     }
 }

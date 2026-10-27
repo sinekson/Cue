@@ -118,12 +118,12 @@ private struct NuvioAccountPage: View {
 }
 
 /// Profiles → its page: every profile (avatar, name, "Primary · Active"),
-/// Select opening its page; Add Profile last (the keyboard for the name,
-/// then the new profile's page).
+/// Select opening its page; Add Profile last (`ProfileSetup`, the guided
+/// steps, then the new profile's page).
 private struct NuvioProfilesPage: View {
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var nav: SettingsNav
-    @State private var keyboard: KeyboardRequest?
+    @State private var adding = false
 
     var body: some View {
         SettingsPage(title: "Profiles",
@@ -137,22 +137,44 @@ private struct NuvioProfilesPage: View {
                     .settingsRow(id: "profile-\(profile.id)")
                 }
                 if profiles.canAddProfile {
-                    SettingsButtonRow(title: "Add Profile") {
-                        keyboard = KeyboardRequest(text: "", placeholder: "Profile name") { name in
-                            let name = name.trimmingCharacters(in: .whitespaces)
-                            guard !name.isEmpty else { return }
-                            if let created = profiles.addProfile(name: name) {
-                                nav.push(ProfileSettingsPage(profileID: created.id))
-                            } else {
-                                ToastCenter.shared.show("Can't add a profile just yet — try again in a moment",
-                                                        icon: "person.crop.circle.badge.exclamationmark")
-                            }
-                        }
-                    }
+                    SettingsButtonRow(title: "Add Profile") { adding = true }
                 }
             }
         }
-        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        .fullScreenCover(isPresented: $adding) {
+            ProfileSetup(onFinish: { created in
+                adding = false
+                nav.push(ProfileSettingsPage(profileID: created.id))
+            }, onCancel: { adding = false })
+            .environmentObject(profiles)
+        }
+    }
+}
+
+/// A locked profile's PIN, full screen; `onUnlocked` once it's right.
+struct ProfilePinCheck: View {
+    @EnvironmentObject private var profiles: ProfileStore
+    let profile: UserProfile
+    let onUnlocked: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        PinEntryView(
+            title: "Enter PIN",
+            subtitle: profile.name,
+            onSubmit: { pin in
+                let outcome = await profiles.verifyPin(id: profile.id, pin: pin)
+                if outcome.unlocked {
+                    onUnlocked()
+                    return nil
+                }
+                if outcome.retryAfterSeconds > 0 {
+                    return "Too many attempts. Try again in \(outcome.retryAfterSeconds)s."
+                }
+                return outcome.message ?? "Incorrect PIN"
+            },
+            onCancel: onCancel
+        )
     }
 }
 
@@ -160,10 +182,11 @@ private struct NuvioProfilesPage: View {
 /// asks its PIN), Name, Avatar, Colour, PIN, the active one's Collections,
 /// Use Primary's Add-ons (not Primary), Copy Settings, Delete Profile (not
 /// Primary).
-private struct ProfileSettingsPage: View {
+struct ProfileSettingsPage: View {
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.fromProfileGate) private var fromGate
     let profileID: Int
 
     @State private var keyboard: KeyboardRequest?
@@ -183,7 +206,8 @@ private struct ProfileSettingsPage: View {
         let active = profile.id == profiles.activeProfileID
         return SettingsPage(title: profile.name, subtitle: profiles.notes(for: profile)) {
             VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
-                if !active {
+                // On the gate, picking an avatar switches.
+                if !active, !fromGate {
                     SettingsButtonRow(title: "Switch to This Profile") {
                         if profile.pinEnabled { unlocking = true } else { profiles.setActive(profile.id) }
                     }
@@ -232,30 +256,14 @@ private struct ProfileSettingsPage: View {
         }
         .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
         .fullScreenCover(isPresented: $unlocking) {
-            ZStack {
-                ATVBackground()
-                PinEntryView(
-                    title: "Enter PIN",
-                    subtitle: profile.name,
-                    onSubmit: { pin in
-                        let outcome = await profiles.verifyPin(id: profile.id, pin: pin)
-                        if outcome.unlocked {
-                            unlocking = false
-                            profiles.setActive(profile.id)
-                            return nil
-                        }
-                        if outcome.retryAfterSeconds > 0 {
-                            return "Too many attempts. Try again in \(outcome.retryAfterSeconds)s."
-                        }
-                        return outcome.message ?? "Incorrect PIN"
-                    },
-                    onCancel: { unlocking = false }
-                )
-            }
+            ProfilePinCheck(profile: profile) {
+                unlocking = false
+                profiles.setActive(profile.id)
+            } onCancel: { unlocking = false }
         }
         .alert("Delete \(profile.name)?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) {
-                nav.pop()
+                nav.back()
                 profiles.delete(id: profile.id)
             }
             Button("Cancel", role: .cancel) {}
@@ -278,34 +286,53 @@ private struct ProfileAvatarPage: View {
     let profileID: Int
 
     private var profile: UserProfile? { profiles.profiles.first { $0.id == profileID } }
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: SettingsMetrics.rowGap), count: 6)
 
     var body: some View {
         if let profile {
             SettingsPage(title: "Avatar", subtitle: "Initials use the profile's colour.") {
-                Button { pick(nil) } label: {
-                    SettingsRowLabel(title: "Use Initials", checked: profile.avatarID == nil,
-                                     leading: AnyView(Circle().fill(Color(profileHex: profile.avatarColorHex))
-                                        .overlay(Text(profile.initial).font(.system(size: 20, weight: .heavy))
-                                            .foregroundStyle(.white))
-                                        .frame(width: 44, height: 44)))
+                AvatarChoices(initials: profile, chosen: profile.avatarID) { id in
+                    profiles.setAvatar(id: profileID, avatarID: id)
+                    nav.pop()
                 }
-                .settingsRow(id: "initials")
-                ForEach(groups, id: \.name) { group in
-                    SettingsSection(title: group.name) {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: SettingsMetrics.rowGap) {
-                            ForEach(group.items) { item in
-                                Button { pick(item.id) } label: {
-                                    AvatarTile(item: item, chosen: profile.avatarID == item.id)
-                                }
-                                .settingsRow(id: item.id)
-                            }
+            }
+        }
+    }
+}
+
+/// The avatars to pick from, in Settings' look: Use Initials (a row, the
+/// profile's colour), then the catalog six across under its kinds' names.
+/// Also Add Profile's avatar step (`ProfileSetup`).
+struct AvatarChoices: View {
+    @EnvironmentObject private var profiles: ProfileStore
+    /// Whose initials (name and colour).
+    let initials: UserProfile
+    let chosen: String?
+    let pick: (String?) -> Void
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: SettingsMetrics.rowGap), count: 6)
+
+    var body: some View {
+        Button { pick(nil) } label: {
+            SettingsRowLabel(title: "Use Initials", checked: chosen == nil,
+                             leading: AnyView(Circle().fill(Color(profileHex: initials.avatarColorHex))
+                                .overlay(Text(initials.initial).font(.system(size: 20, weight: .heavy))
+                                    .foregroundStyle(.white))
+                                .frame(width: 44, height: 44)))
+        }
+        .settingsRow(id: "initials")
+        ForEach(groups, id: \.name) { group in
+            SettingsSection(title: group.name) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                    ForEach(group.items) { item in
+                        Button { pick(item.id) } label: {
+                            AvatarTile(item: item, chosen: chosen == item.id)
                         }
+                        .settingsRow(id: item.id)
                     }
                 }
             }
-            .task { await profiles.loadAvatarCatalog() }
         }
+        .task { await profiles.loadAvatarCatalog() }
     }
 
     /// The catalog's kinds in its order.
@@ -317,11 +344,6 @@ private struct ProfileAvatarPage: View {
             byKind[item.category, default: []].append(item)
         }
         return order.map { (name: $0.capitalized, items: byKind[$0] ?? []) }
-    }
-
-    private func pick(_ id: String?) {
-        profiles.setAvatar(id: profileID, avatarID: id)
-        nav.pop()
     }
 
     private struct AvatarTile: View {

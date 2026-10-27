@@ -74,7 +74,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   quick motion; a stable 60 fps beats fancy.
 - The top bar hides by moving out the top and shows by moving back in
   (`GlassSidebar.hidden`, `Motion.move`) — everywhere; it is always in the
-  view tree, disabled while hidden. Hide the top bar's hiding and showing:
+  view tree, disabled while hidden. Auto-hide top bar's hiding and showing:
   a 0.4 s no-bounce spring (`autoHidden`, `autoHideMotion`; alone on the
   screen, the move's 0.35 s read as a snap; the present's 0.45 s a little
   slow); with the page's parts (into Details in
@@ -706,11 +706,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Stills kept for the last 8 pages.
 - **Background**: one still picture, Projector — recreated from tvOS's own
   dark backdrop (Photos, the TV app; the system doesn't hand it to apps:
-  with nothing drawn, an app shows flat grey): a dark warm grey, lighter
+  no API, it varies with the wallpaper): a dark warm grey, lighter
   across the top, a cool shadow bottom left, a brown one bottom right,
-  a mauve warmth low in the middle (`ProjectorPicture.render`: Core Image
+  a mauve warmth low in the middle — every colour a fifth darker than first
+  made, closer to Settings' grey (`ProjectorPicture.render`: Core Image
   gradients, blur, grain added going 16 → 8 bit — no banding), on every
-  page. (Tried: warm light top left, a cool shadow bottom right — darker.) Settings → Appearance → Background, Static (default) / Dynamic
+  page. (Tried: warm light top left, a cool shadow bottom right — darker; a
+  fifth lighter (~50 of 255 overall, now ~40);
+  tvOS Settings' backdrop, recreated — flat neutral grey, 28–29 of 255,
+  fine grain: kept in the code, `SettingsGreyPicture`, picked by
+  `AppBackground.picture`.) Settings → Appearance → Background, Static (default) / Dynamic
   (was the "Colours from the title" switch; same key). Dynamic: Home, Movies, Series follow the focused title
   (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
   only the tab in front sets it), the collection panels take its colour;
@@ -760,8 +765,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   moving-focus cards grow 6 %, the fixed box 4 % (`boxScale`: it
   overhangs its spot, its neighbours step aside, its info isn't scaled).
   Settings → Appearance → Card outlines, three levels (`FixedFocusRing.outlines`;
-  switching relayouts every view — live): High (default) the rim and the
-  bright focus edge, Low the rim only, Off neither (was the Focus outline
+  switching relayouts every view — live): Edges and focus (default) the rim and the
+  bright focus edge, Edges only the rim, Off neither (was the Focus outline
   switch — its off reads as Low). The
   fixed box's info sits `boxInfoGap` (21) below it, as far as a focused
   caption reads. On trial again: the row's name steps up out of the
@@ -862,64 +867,51 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   links: each one's text as the add-on wrote it (not ours to change),
   Nuvio's badges under it (to become switchable), as tall as their
   lines; text 26 / 24 pt, focused near-black (the second lines 85 %).
-- **Settings** (`ATVSettingsView`, `SettingsKit`): the categories a
-  sidebar 320 wide, 64 left of the settings (`columnGap`; tried: 400
-  wide at the screen's left inset, Home's 84); the
-  settings, 780 wide, centred on the screen (`listWidth`,
-  `columnWidth`; with every page rows only, the full width read too wide;
-  tried: both centred together, 440 + 780 and 480 + 920, 72 apart; across the content's width, the categories a third; 460 and
-  1080, centred — back when pages had tiles) (no icons — tried: each with its symbol in
-  its colour; an account shows a value only when something's
-  missing: "Signed out", "Add key" — all well, its state is in its
-  settings: Nuvio's in its header, "Connected." starting a key's
-  intro line; tried: the email and "Connected" on the left), the focused
-  category's settings the rest, following focus (0.15 s after it settles,
-  a 0.25 s fade; Right before they show: they show at once, focus on
-  their first row — it landed in the old ones). Right or Select goes in (the rows by name —
-  `SettingsRowsKey`, `settingsRowFocus`); Left or Back back to the
-  category, which keeps the flat "current" fill while focus is beside it;
-  Back on a category: the top bar. Focus never goes by geometry between
-  the columns: only the one holding focus takes it (`ATVSettingsView.Place`),
-  Left from any row lands on the shown category, Right / Select on the
-  page's last focused row (first time: its first); Up from the first
-  category or row: the top bar, and Down from it back to that very spot
-  (first time: the shown category — only it takes focus meanwhile,
-  `settingsOnlyRow`). Playback, About, Developer (old cards) still go by
-  geometry. Pages a row opens (Watched, Rows,
-  Add-ons) open in the column (`SettingsNav`), the
-  categories staying; Back closes them, focus back on the row; they stay
-  while focus is on their own category. Sign in is full screen (the first
-  launch's). On trial: the focused row's description in a card right of the
-  rows (`SettingsDescriptionCard`, `SettingsDescribedKey`) — the
-  sidebar's width (320) and as far from the column (64), so the three
-  sit centred together; level with the row's top, following focus
-  (`Motion.focus`), the text crossfading (0.25 s); the rows' faint fill,
-  a 1 pt white 12 % edge, the cards' corners; 24 pt, 55 %; no
-  description: it fades away. The column never moves. (Tried: under the
-  pill, the rows below stepping down to make room, as text under tvOS's
-  posters — a lot of movement; inside the focused pill, under the name —
-  the pill grew tall; opening after 0.4 s of rest, room and text in
-  steps, the rows above moving down to keep the focused one still —
-  horrible; every row's description always showing — not good either.) The categories are a sidebar: the settings' rows and section
-  labels a size smaller, about 80 % (`SettingsMetrics.Sidebar`: 52 pt
-  capsules, 11 apart, 30 pt text 26 pt in, 23 pt labels; tried: 26 pt
-  text with icons, Home's section hints as labels); it starts lower, its
-  first label level with the page's description (baselines;
-  `Sidebar.top` — level with the 57 pt title, the titles clashed); no fill at rest (the
-  shown one `FlatControl.selected` while focus is beside it), the whole
-  column at 50 % while focus is away from it (as the Apple TV app's
-  sidebar); the settings' rows on a faint fill (tried: both columns
-  alike, faint fills — no hierarchy); focused white. The rows
+- **Settings** (`ATVSettingsView`, `SettingsKit`): on trial, one
+  column, 860 wide, centred (`columnWidth`; rows only, the full width read
+  too wide; tried: 780), a level at a time, as Apple TV's Settings: first the
+  categories, as rows ("Settings"; Accounts — Nuvio, TMDB, MDBList —
+  General, Developer; an account shows a value only when something's
+  missing: "Signed out", "Add key"; no descriptions — a category's line heads its own page),
+  Select opens its settings, their rows open lower pages (Watched, Rows,
+  Add-ons…), each in the column's place (`SettingsNav`), focus on its
+  first row (`opening` — the engine took the row nearest the one left); Back goes up a
+  level, focus back on the row that opened it (the only row taking focus
+  as its page comes back, `returning` — else the first showed for a
+  moment); on the categories, Back: the top bar. Up from the first row:
+  the top bar; Down from it back to the row it left (first time: the
+  first — only it takes focus meanwhile, `settingsOnlyRow`). The rows by
+  name (`SettingsRowsKey`, `settingsRowFocus`); a list's entries
+  (`SettingsEntryRow`) are rows by their first control. Playback, About,
+  Developer (old cards) go by geometry. (Tried: the categories a sidebar
+  320 wide beside the settings — floating on the page, the three centred
+  together; the settings following the focused category, Right / Left
+  between the columns; in a glass panel as macOS Tahoe's, inset with 44
+  pt corners — it floated; flat and flush as macOS Sequoia's, white 5 %,
+  a hairline along its edge — kind of worked, kind of not; before that:
+  400 wide at the screen's left inset; 440 + 780 and 480 + 920 centred
+  together; the categories a third of the width; their rows 80 % of the
+  settings' size; icons.) Sign in is full screen (the first
+  launch's). A row's description under its pill, always (24 pt, 55 %,
+  lined up with the row's text, 10 below the pill — `descriptionGap`; the
+  pill drawn behind the row's own part only, `SettingsPillKey`) — most to
+  go, the rest kept short. (Tried: the focused row's in a card right of
+  the rows, level with it, following focus — 320 wide beside the centred
+  column, then 480 with the two centred together; under the pill, the
+  rows below stepping down to make room — a lot of movement; inside the
+  focused pill, under the name — the pill grew tall; opening after 0.4 s
+  of rest, the rows above moving down to keep the focused one still —
+  horrible.)
+  The rows on a faint fill, focused white. The rows
   as Apple TV's Settings, measured off its screen: 65 pt capsules, 14
   apart, 38 pt text (name medium, value regular) 33 pt in from the ends,
   the chevron 38 pt; focused 2 % larger (tried: 4 pt taller each side as
-  well, as measured — too large, and no longer a capsule) (`SettingsMetrics`; the categories share the shape, at their scale).
+  well, as measured — too large, and no longer a capsule) (`SettingsMetrics`).
   Section labels as Apple TV's too: 29 pt semibold capitals, no extra
-  spacing, 45 % (tertiary; was 55 %) (tried: Home's section hint, small and widely spaced);
-  the sidebar's at its scale (`SettingsSection(sidebar:)`).
+  spacing, 45 % (tertiary; was 55 %) (tried: Home's section hint, small and widely spaced).
   (Tried: 72 pt rows with the cards' corners, 22; 29 / 27 pt text 22 pt
   in.) Section labels and headings lined up with what's inside the rows —
-  the settings' text, the categories' names (`labelIndent` = `rowInset`;
+  the rows' text (`labelIndent` = `rowInset`;
   tried: 5 pt in from the rows' edge, as Home's row names, `textIndent`;
   on the edge itself). Choices open their options as a page in the column
   (`SettingsOptionsRow`: the options one row each, the current one
@@ -952,7 +944,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   management lives here, at the Nuvio website's parity: its page
   (`NuvioProfilesPage`, "N of 5 profiles · …") a row per profile (avatar,
   name, "Primary · Active", chevron) and Add Profile last (the keyboard
-  for the name, then its page; gone at 5). A profile's page
+  for the name, then its page; gone at 5) — on trial, the guided steps
+  instead (`ProfileSetup`, a setup assistant; the same on the gate): one
+  question a screen in the gate's look, a dot per step under it, Back a
+  step back (from the first, out) — the name (the keyboard at once), an
+  avatar (Settings' avatar page, `AvatarChoices`, in the column — Use
+  Initials, then the catalog six across under its kinds, the heading
+  fixed, the rows fading out above the dots; tried: the catalog eight
+  across in a box of its own — it scrolled badly), "Where should
+  titles come from?" (Use Primary's Add-ons, focused / Start Empty), "Lock
+  this profile?" (Not Now, focused / Set a PIN — twice; signed in only),
+  then the avatar large, "You're all set", Start Watching (gate) / Done
+  (Settings: the new profile's page). Created at that last press. A profile's page
   (`ProfileSettingsPage`): Switch to This Profile (not the active one; a
   locked one asks its PIN), Name (keyboard), Avatar (its page: Use
   Initials, then the catalog six across under its kinds — Select picks
@@ -965,12 +968,26 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   when keys are on, Copy Settings confirmed — syncs first); Delete
   Profile (not Primary, confirmed). No plugins switch (no plugins), no
   picture links as avatars. The top bar's avatar and the launch gate
-  (`ProfileGateView`) only switch. (Tried: switching from the Profiles
-  page itself; the full-screen editor and Add / Edit tiles on the gate.)
+  (`ProfileGate`) switch and add (Add Profile on the gate: no lockout
+  behind locked profiles, and no adding through another profile); the
+  gate edits through these pages: holding an avatar opens its page
+  over the gate (`.holdMenu(direct:)`); a locked one asks its PIN first,
+  and there's no Switch row (picking switches — `fromProfileGate`); Back
+  walks up, then the gate, focus on that avatar. Resting 0.5 s on an
+  avatar shows "HOLD TO EDIT" under its name (`SectionHint`'s look, its
+  room kept; `hintDelay`; tried: 1.5 s — late). (Tried: a hold menu with
+  the edit steps on the gate; a gear under the avatars opening the
+  Profiles overview — one step more than needed.)
+  (Tried: switching from the Profiles page itself; the full-screen
+  editor and Add / Edit tiles on the gate.)
   Then Sync: Sync Now, its value the last sync ("Today at
   22:34" / "Syncing…" / "Failed"), and a row per kind synced, its count
   as the value — every one a button with a chevron — Add-ons and
-  Watched open their pages, Watch progress, Library, Collections nothing
+  Watched open their pages (Add-ons: the add-ons a line each — Configure,
+  Rename, Move, a switch, Remove — then Add Add-on, as Add Profile; tried:
+  a round + by the heading; then Refresh Add-ons — every manifest fetched
+  again past the cache, this device only, nothing pushed to Nuvio; its
+  value "Refreshing…", then "Up to date" or "2 didn't answer"), Watch progress, Library, Collections nothing
   yet, until they get one (tried: those only to read, no fill or focus). (Tried: ACCOUNT / ACTIVE PROFILE / LAST SYNC in outlined
   boxes, round Sync now and Sign out beside them, the counts in tiles, the
   profiles in tiles to read; before that: the website's tiles, rows under
@@ -1039,8 +1056,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   row, Select lifting it, hold to hide, an Off section — looked horrible.)
   Appearance: switches in one list, no section labels (an untitled
   `SettingsSection` draws none), one-line descriptions — Background
-  (Static / Dynamic, an options page), Card outlines (High / Low / Off, an options page), Hide the top bar (tried: Look / Billboard /
-  Navigation sections, long descriptions). Home & Details (was Home &
+  (Static / Dynamic, an options page), Card outlines (Edges and focus / Edges only / Off, an options page — was
+  High / Low; its line on the options page only), Auto-hide top bar (was
+  Hide the top bar; no line) (tried: Look / Billboard / Navigation
+  sections, long descriptions). Home & Details (was Home &
   Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
   Rows, Continue Watching order, Billboard moves on by itself (moved from
   Appearance: behaviour, not looks), Hide watched titles (off; Home's
@@ -1072,16 +1091,55 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (no late updates; the episodes' peek stills decoded too — `peekStills`:
   created just before the rise, the name rose alone, the cards popped in).
   The launch: the system launch screen is the app's background colour
-  (`AppBackground` colour set) with the icon's play, 220 pt, centred
-  (`LaunchScreen`, from render.swift; tvOS ignores `UIColorName`). The
-  curtain takes over with the same: `ATVBackground` (the Projector picture
-  fading in) and the play (`LaunchStageView`, Core Animation — smooth while
-  Home is built underneath), growing and shrinking while the preload runs
-  (no ring). When it's done, a push (to 80 % and back, 0.42 s), then the
-  curtain fades into Home. Input and the top bar's focus timers start at
-  the lift. (Before ours, tvOS zooms the pink icon up — the system's.)
-  Tried and dropped: the pink picture full-screen (too bright), the play
-  opening into the app (Home through its growing shape — looked weird).
+  (`AppBackground` colour set), nothing on it (`LaunchScreen`, from
+  render.swift; tvOS ignores `UIColorName`; cached per install in the app's
+  `Library/SplashBoard`). tvOS 26 flies the icon's front layer — the play
+  — onto it and holds it in the middle until the app's first frame (the
+  system's, not ours; ~0.35 s in, mid-zoom — too quick; Settings, slower
+  to draw, holds ~1 s). The curtain carries on with the same play
+  (`LaunchPlay`, 220 pt in a 640 square — measured: the system's settled
+  pixels), still, on `ATVBackground` (the Projector picture fading in under it —
+  asked for at launch, a copy on disk per build, `ProjectorPictureStore`;
+  the gate waits for it, 1 s at most; tried: drawn at the curtain's first
+  frame — it faded in after the gate's avatars),
+  for 0.6 s (`LaunchCurtain.playHold`), then it fades as the gate comes in
+  (Motion.fade — the system's hand-off to Settings); without a gate it
+  stays until the curtain fades into Home. Coming back to the app (a warm
+  start) to the gate (after 4 hours away, or left up): the system's play
+  goes at once (the app's frame is ready), so the curtain shows ours from
+  the first phase out of the background (`cameBack`), held 0.95 s
+  (`resumeHold` — the system's share and ours at a cold start), then the
+  gate fades in. Coming back to the page: the page as it was (tried: the
+  play over it on a curtain — terrible over Home).
+  Input and the top bar's focus timers start at the lift. Tried and dropped: the play growing and
+  shrinking while the preload ran, then pushed (`LaunchStageView`); no play
+  of ours — the system's went too quick; the pink picture full-screen (too
+  bright); the play opening into the app (Home through its growing shape).
+  **Who's watching?** (`ProfileGate`, 2+ profiles or the active one
+  locked — `gateNeeded`): the curtain itself, after the held play
+  (`LaunchCurtain.gate`, expected before the root decides) — not a
+  system cover. The preload runs under it
+  for the last profile (focus starts there). Picked: the stores switch at
+  once (another profile — `LaunchPreloader.picked`, Home reloads for it,
+  `HomeViewModel.profileSwitched`, the same steps again from the pick);
+  ready, the avatar flies to the top bar's (`TopBarAvatar.frame`) on the
+  present spring as the background dissolves off Home (`gateLanded`);
+  not ready, it waits in the middle, breathing as the play. Look: 57 pt
+  semibold title (75 %), round avatars 180 pt with the cards' rim, focused
+  the bright edge, 5 % larger, a soft shadow; names 24 pt medium at a
+  caption's levels, stepping down by the avatar's growth while focused
+  (`GateSlot.step`) (tried: each profile a card as Settings' avatar tiles,
+  `GateCard` — beside a round Add Profile it looked mixed, Add as a card
+  read as a fake profile); last, below 5 profiles, Add Profile — a plus on
+  a flat round plate the avatars' size (`GateAddTile`; focused white, dark
+  plus); every slot one width (`GateSlot`), so with three the middle one
+  sits under the title. Select: Add Profile's guided steps (below), ending in the new
+  profile picked (its avatar flies to the top bar); the PIN pad flat (white focus, dots white 75 %, a
+  wrong PIN shakes, its line 55 %). Also after 4 hours away
+  (`awayForGate`, shown at once as the app comes back; a locked profile
+  asks its PIN again), after the welcome, and from the top bar's avatar
+  (on the curtain too; Back closes it, focus back on the avatar). At
+  launch and coming back Back does nothing.
   Pages whose content loads (`PagePreparer`, `PageLoad`): the data starts
   at the press, the page pushed at once under its background (above), shown
   once it's in or after 4 s at the latest — then with placeholders in

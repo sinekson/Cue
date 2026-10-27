@@ -192,9 +192,11 @@ private struct HomeRowsPage: View {
 
 // MARK: - Add-ons
 
-/// Settings → Nuvio → Add-ons: a round + by the heading (adding,
-/// from your phone), then the add-ons in order, each one line — Configure
-/// (when it has settings), Rename, Move, a switch for on / off, Remove.
+/// Settings → Nuvio → Add-ons: the add-ons in order, each one line —
+/// Configure (when it has settings), Rename, Move, a switch for on / off,
+/// Remove — then Add Add-on (from your phone), as Profiles' Add Profile,
+/// and Refresh Add-ons (their manifests fetched again, this device only).
+/// (Tried: a round + by the heading.)
 struct AddonsPage: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
@@ -203,13 +205,16 @@ struct AddonsPage: View {
     @State private var adding = false
     @State private var configuring: InstalledAddon?
     @State private var removing: InstalledAddon?
+    @State private var refreshing = false
+    @State private var refreshed: String?
+
+    private var refreshValue: String? { refreshing ? "Refreshing…" : refreshed }
 
     var body: some View {
         let configurable = addonManager.addons.contains { $0.configureURL != nil }
         SettingsManagePage(
             title: "Add-ons",
-            subtitle: "Higher ones come first for sources. Add one with + (from your phone).",
-            headerAction: SettingsEntryAction(id: "add", icon: "plus", title: "Add an add-on") { adding = true }
+            subtitle: "Higher ones come first for sources."
         ) {
             ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
                 SettingsEntryRow(
@@ -242,6 +247,19 @@ struct AddonsPage: View {
                     onDrop: { moving = nil }
                 )
             }
+            SettingsButtonRow(title: "Add Add-on") { adding = true }
+                .disabled(moving != nil)
+            SettingsButtonRow(title: "Refresh Add-ons", value: refreshValue) {
+                guard !refreshing else { return }
+                refreshing = true
+                Task {
+                    let failed = await addonManager.refreshManifests(bypassCache: true)
+                    refreshing = false
+                    refreshed = failed == 0 ? "Up to date"
+                        : failed == 1 ? "1 didn't answer" : "\(failed) didn't answer"
+                }
+            }
+            .disabled(moving != nil)
         }
         .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
         .onChange(of: moving) { _, id in TopBarLock.shared.locked = id != nil }
