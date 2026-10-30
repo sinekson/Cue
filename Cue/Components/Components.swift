@@ -755,15 +755,10 @@ struct PosterCard: View {
     // and the poster caption (Settings → Layout → "Poster labels"). Both are
     // wired to their real settings below.
 
-    /// Focus ring fallback. Classic always rings its focused card. Fusion
-    /// normally lets the accent GLOW mark focus — but the glow rides the Card
-    /// Shadows switch (off by default on the A8/A10X tiers), and with parallax
-    /// and zoom also off that left NO focus indicator at all. When the glow is
-    /// unavailable, fall back to the ring: a single stroked outline is one
-    /// vector stroke — no offscreen pass, nothing recomposited per frame.
+    /// Focus ring fallback: a single stroked outline is one vector stroke —
+    /// no offscreen pass, nothing recomposited per frame.
     private var showsFocusRing: Bool {
         guard isFocused else { return false }
-        // (The retired always-true theme flag used to short-circuit here.)
         // The glow this used to defer to no longer exists (it was always
         // `.clear` and has been removed), and the black drop shadow below is
         // disabled on this style too — so "shadows are on" can no longer stand
@@ -1139,11 +1134,8 @@ struct GridPosterCell: View {
     }
 }
 
-/// Card-button chrome per app theme. The Apple TV theme uses the native tvOS
-/// `CardButtonStyle` — the raised platter with the trackpad tilt/wiggle
-/// parallax, exactly like home-screen icons — while Classic keeps the
-/// borderless style so cards draw their own focus ring. Reads the theme from
-/// the environment so call sites don't need a ThemeManager in scope.
+/// Card-button chrome: the native tvOS `CardButtonStyle` — the raised platter
+/// with the trackpad tilt/wiggle parallax, exactly like home-screen icons.
 private struct MediaCardButtonStyleModifier: ViewModifier {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var perf = PerformanceSettingsStore.shared
@@ -1155,19 +1147,16 @@ private struct MediaCardButtonStyleModifier: ViewModifier {
             // Native platter: raised card + trackpad tilt/parallax.
             content.buttonStyle(CardButtonStyle())
         } else {
-            // "Card wiggle & lift" off (Settings → Performance): a lightweight
-            // scale-only focus that never re-composites the card as the finger
-            // moves — the cheap path for the A8. Cards still respond to focus;
+            // Reduce Motion: a scale-only focus. Cards still respond to focus;
             // their own glow/border (drawn off \.isFocused) still shows.
             content.buttonStyle(FlatCardButtonStyle(onPressChanged: onPressChanged))
         }
     }
 }
 
-/// Apple TV theme, parallax OFF: focus is a plain scale (like Classic's
-/// PlainCardButtonStyle) with no native platter — so there's no per-frame tilt
-/// recomposition of the focused poster. The card's own focus glow/border still
-/// render (they read `\.isFocused`, which this style leaves intact).
+/// Parallax off: focus is a plain scale with no native platter. The card's own
+/// focus glow/border still render (they read `\.isFocused`, which this style
+/// leaves intact).
 struct FlatCardButtonStyle: ButtonStyle {
     var onPressChanged: ((Bool) -> Void)? = nil
 
@@ -1213,13 +1202,8 @@ struct PlainCardButtonStyle: ButtonStyle {
     }
 }
 
-/// The shared Select-press feedback for a card button style. Every theme that
-/// suppresses the native tvOS platter (Classic, Onyx, Cinematic, Marquee,
-/// Streamline, and Apple TV with parallax off) draws its own press, so they all
-/// go through this: the same dip, the same curve, and **nothing at all** when
-/// "Button animations" is off or Reduce Motion is on. Before this, Marquee and
-/// Streamline cards had no press response whatsoever and Onyx/Cinematic dipped
-/// regardless of the setting.
+/// The shared Select-press feedback for a card button style: the same dip, the
+/// same curve, and **nothing at all** when Reduce Motion is on.
 private struct CardPressDip: ViewModifier {
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     let isPressed: Bool
@@ -1234,14 +1218,11 @@ private struct CardPressDip: ViewModifier {
 /// The one focus-motion vocabulary the whole app speaks.
 ///
 /// Every focusable element picks a ROLE here instead of writing its own
-/// `.scaleEffect(isFocused ? 1.0x : 1)`. A poster therefore lifts by the same
-/// amount in Classic, Apple TV, Cinematic, Theater, Aurora, Onyx, Marquee,
-/// Streamline and Stremio — and in any theme added later — and settles on the
-/// same curve, because they all go through `View.focusLift(_:_:)`.
+/// `.scaleEffect(isFocused ? 1.0x : 1)`: they all go through
+/// `View.focusLift(_:_:)` and settle on the same curve.
 ///
 /// Roles differ from ONE ANOTHER on purpose: a 300pt poster and a 72pt
-/// settings row should not grow by the same fraction. What they never differ
-/// by is which theme happens to be on screen.
+/// settings row should not grow by the same fraction.
 ///
 /// Adding a theme? Don't add scales — reuse these roles and the theme
 /// automatically inherits the app's focus behaviour, the "Focus zoom"
@@ -1289,9 +1270,7 @@ extension View {
     }
 
     /// Replaces a hand-rolled `.scaleEffect(focused ? x : 1)` +
-    /// `.animation(…, value: focused)` pair so the themes ported from other
-    /// apps (Marquee, Streamline, Onyx, Cinematic, Aurora) obey the same
-    /// performance switches Classic and Apple TV always have.
+    /// `.animation(…, value: focused)` pair, so everything obeys Reduce Motion.
     func focusLift(_ scale: CGFloat, _ focused: Bool,
                    animation: Animation = FusionFocus.liftAnimation) -> some View {
         modifier(FocusLift(scale: scale, focused: focused, animation: animation))
@@ -1319,8 +1298,6 @@ struct ContentRatingBadge: View {
 
 struct MetaBadge: View {
     let text: String
-    // `.primary` == white under Classic's forced-dark scheme (identical to
-    // the old hardcoded white) and flips dark in ATV light mode.
     var tint: Color = .primary.opacity(0.14)
     var textColor: Color = .primary
 
@@ -1623,9 +1600,6 @@ struct ImdbBadge: View {
 struct HeroGradient: View {
     let background: Color
     var fullBleed: Bool = false
-    /// Light appearance (Apple TV theme only — Classic is always dark): the
-    /// dark-tuned scrim opacities read as fog when the background is white,
-    /// so light mode uses tighter ramps that leave the art vivid.
     @Environment(\.colorScheme) private var scheme
     private var isLight: Bool { scheme == .light }
 
@@ -1785,7 +1759,7 @@ final class ToastCenter: ObservableObject {
 }
 
 /// Lower-center toast (§54): dark glass pill, white text, optional accent icon.
-/// Never takes focus. Hosted at the app root; only renders in the Fusion theme.
+/// Never takes focus. Hosted at the app root.
 struct FusionToastHost: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var center = ToastCenter.shared

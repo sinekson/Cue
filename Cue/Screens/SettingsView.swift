@@ -321,8 +321,6 @@ struct CueSwitch: View {
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                // `.primary` == white under Classic's forced-dark scheme;
-                // flips to a visible dark track in ATV light mode.
                 .fill(isOn ? theme.palette.secondary : Color.primary.opacity(0.18))
                 .frame(width: 64, height: 36)
             Circle()

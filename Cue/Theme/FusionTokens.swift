@@ -1,15 +1,11 @@
 import SwiftUI
 
-// Fusion design tokens (§8–12). Typography, corner radius, motion, and
-// materials for the Fusion theme. These are only consumed by Fusion-gated
-// components, so Classic is unaffected.
+// The fork's design tokens: typography, motion and materials, still used
+// by the old cards and the player.
 
-// MARK: - Typography (§8, §9)
+// MARK: - Typography
 
-/// Fusion type roles at the 1920×1080 reference. Heading roles honor the Serif
-/// font choice (serif face for big titles); body / metadata / technical roles
-/// stay sans even when Serif is selected, exactly as the spec requires. The
-/// Rounded and Monospaced choices apply everywhere.
+/// Type roles at the 1920×1080 reference.
 enum FusionType {
     static func heroTitle(_ f: AppFont) -> Font { .system(size: 62, weight: .bold, design: heading(f)) }
     static func pageTitle(_ f: AppFont) -> Font { .system(size: 46, weight: .bold, design: heading(f)) }
@@ -19,10 +15,7 @@ enum FusionType {
     static func button(_ f: AppFont) -> Font { .system(size: 23, weight: .semibold, design: body(f)) }
     static func badge(_ f: AppFont) -> Font { .system(size: 15, weight: .bold, design: body(f)) }
 
-    /// Heading design: serif titles when Serif is picked, else the font's design.
     private static func heading(_ f: AppFont) -> Font.Design { f.design }
-    /// Body design: sans when Serif is picked (headings only get serif), else
-    /// the font's own design.
     private static func body(_ f: AppFont) -> Font.Design {
         return f == .serif ? .default : f.design
     }
@@ -61,15 +54,11 @@ enum FusionFocus {
     static let borderWidth: CGFloat = 2
     static let borderColor = Color.white.opacity(0.88)
     static func shadow(_ focused: Bool) -> Color { .black.opacity(focused ? 0.58 : 0) }
-    /// The Select-press dip, shared by every theme's card button style so a
-    /// press reads the same in Classic, Apple TV, Onyx, Cinematic, Marquee and
-    /// Streamline. Applied via `View.cardPressDip(_:)`, which gates it on
-    /// "Button animations" + Reduce Motion.
+    /// The Select-press dip, shared by the card button styles. Applied via
+    /// `View.cardPressDip(_:)`, which gates it on Reduce Motion.
     static let pressScale: CGFloat = 0.97
     static let pressAnimation: Animation = .easeOut(duration: 0.12)
-    /// The curve a focus move settles on for themes that draw their own lift
-    /// (via `View.focusLift`). One value so Marquee, Streamline, Onyx,
-    /// Cinematic and Aurora don't each drift to their own duration.
+    /// The curve a focus move settles on (via `View.focusLift`).
     static let liftAnimation: Animation = .easeOut(duration: 0.16)
 }
 

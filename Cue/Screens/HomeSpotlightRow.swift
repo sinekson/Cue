@@ -340,7 +340,7 @@ extension SpotlightTint {
 
 // MARK: - Area + vivid accent
 
-/// Render Lab → Tint colour → "Area + vivid accent": the picture's colours
+/// The picture's colours
 /// grouped by how they LOOK (OKLab, a perceptual colour space — a light sky
 /// blue and a deep navy are different groups, a muted brown and a bright
 /// orange too), not by hue alone.

@@ -202,9 +202,6 @@ struct CueApp: App {
                 .environmentObject(mdblistSettings)
                 .environmentObject(playerSettings)
                 .environmentObject(streamBadges)
-                // Classic is hard-dark (the original look). The Apple TV theme
-                // honors its Appearance setting — light, dark, or nil to
-                // follow the TV's own system appearance.
                 .preferredColorScheme(theme.preferredColorScheme)
         }
     }

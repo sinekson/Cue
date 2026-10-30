@@ -2232,7 +2232,6 @@ private struct BillboardReasonLabel: View {
     }
 }
 
-/// Render Lab → Billboard scrim.
 /// What Home's text needs from TMDB for a series: its season count (catalog
 /// entries often carry no episode list) — one light request per title, kept
 /// for the session.
@@ -2866,7 +2865,7 @@ struct BillboardControls: View {
 /// follow a card's size, also as it grows) — nothing drawn live on a moving
 /// card.
 enum FixedFocusCardEdge {
-    /// The focus outline in the top bar's light (Render Lab → Focus outline)
+    /// The focus outline in the top bar's light
     /// — off: a plain white line.
     /// (The top bar's light is no focus style any more: every focused card
     /// uses the same plain line — `FixedFocusRing`.)
@@ -3415,7 +3414,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         rows.indices.contains(rowIndex) && panelRowIDs.contains(rows[rowIndex].id)
     }
     /// Destination rows: native scrolling, the system's lift, captions.
-    /// A change (Render Lab: Continue Watching's focus) rebuilds the rows
+    /// A change rebuilds the rows
     /// at once — half-switched, a row showed both kinds of cards.
     var destinationRowIDs: Set<String> = [] {
         didSet {
@@ -5880,8 +5879,8 @@ final class FixedFocusBoxView: UIView {
         didSet { if ringHidden != oldValue { applyOutlineStyle() } }
     }
     private func applyOutlineStyle() {
-        // The focus outline: the top bar's light, clearer (Render Lab →
-        // Focus outline), or a plain white line.
+        // The focus outline: the top bar's light, clearer, or a plain
+        // white line.
         let lit = FixedFocusCardEdge.focusLight
         let hidden = ringHidden
         focusRing.image = lit && !hidden ? FixedFocusCardEdge.focusImage : nil
@@ -8412,7 +8411,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     private var extras: Task<Void, Never>?
     private let outline = UIView()
     private let shadow = UIImageView()
-    /// The cards' edge (Render Lab → Card edge), as on every card.
+    /// The cards' edge, as on every card.
     private let edge = UIImageView()
     private var item: MetaItem?
     private var focusedNow = false
@@ -8679,7 +8678,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private let picture = UIImageView()
-    /// The card's edge (Render Lab → Card edge) and the focus outline, as on
+    /// The card's edge and the focus outline, as on
     /// the other rows' cards.
     private let edge = UIImageView()
     private let outline = UIView()
@@ -9150,7 +9149,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         state.alpha = 0
         backdrop.addSubview(state)
         // The card's edge (on top of its pictures) and its shadow (under
-        // the card, outside it) — Render Lab → Card edge.
+        // the card, outside it).
         edge.isUserInteractionEnabled = false
         contentView.addSubview(edge)
         dimCover.backgroundColor = .black
@@ -9340,7 +9339,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// The third line under the grown cell (as under the box).
     private let chips = FixedFocusChipsView()
 
-    /// Left of the box: dimmed (Render Lab → Previous poster).
+    /// Left of the box: dimmed.
     func setPast(_ past: Bool) {
         self.past = past
         applyAlpha()
@@ -9596,7 +9595,7 @@ final class FixedFocusStripLayout: UICollectionViewLayout {
         height = cardHeight()
         let pitch = card + FixedFocusMetrics.gap
         let extra = FixedFocusMetrics.boxWidth - card
-        // A lifted box (Render Lab) overhangs its spot: its neighbours step
+        // A lifted box overhangs its spot: its neighbours step
         // aside by as much, keeping the usual gap.
         let overhang = FixedFocusMetrics.boxWidth * (FixedFocusMetrics.boxScale - 1) / 2
         frames = (0..<count).map { i in
@@ -9627,7 +9626,7 @@ final class FixedFocusStripLayout: UICollectionViewLayout {
     private func attributes(_ i: Int) -> UICollectionViewLayoutAttributes {
         let a = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: i, section: 0))
         a.frame = frames[i]
-        // The grown title at the box's size (lifted, Render Lab): with its
+        // The grown title at the box's size (lifted): with its
         // size and place, so opening into the box and growing are one move.
         if i == wideIndex() {
             let scale = FixedFocusMetrics.boxScale
@@ -10083,7 +10082,7 @@ final class FixedFocusProgressView: UIView {
     }
 }
 
-/// The Left/Right and Up/Down curves (Render Lab → Motion). All through
+/// The Left/Right and Up/Down curves. All through
 /// `UIView.animate` — the only animation collection views follow for their
 /// cells' size changes.
 @MainActor

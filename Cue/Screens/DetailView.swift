@@ -919,7 +919,7 @@ struct DetailView: View {
         .task(id: url ?? "") {
             blurredBackdrop = await BlurredBackdrop.image(for: url)
         }
-        // On the rows' own curve and time (Render Lab → vertical curve).
+        // On the rows' own curve and time.
         .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll), value: below)
         .allowsHitTesting(false)
         .ignoresSafeArea()
@@ -1509,7 +1509,7 @@ struct DetailView: View {
 
 /// A Detail button. The primary one (Play / Resume) always shows its icon
 /// and title; the others are circles with an icon — and, focused, a small
-/// caption under them (Render Lab → Button captions). Nothing ever changes
+/// caption under them. Nothing ever changes
 /// size: focus only lights a button up. The top bar's materials
 /// (`GlassPill`): glass at rest, the bright highlight focused. `onHold`:
 /// holding Select for half a second runs it instead of the action (a press
