@@ -301,53 +301,6 @@ struct SettingsPage<Content: View>: View {
     }
 }
 
-/// A round button beside a page's header (Sync now, Sign out): a circle a
-/// row tall, its icon muted; focused white, its name under it.
-struct SettingsRoundButton: View {
-    let icon: String
-    let title: String
-    var spinning = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { Face(icon: icon, title: title, spinning: spinning) }
-            .buttonStyle(PlainCardButtonStyle())
-            .modifier(SettingsRowEntry(id: title))
-    }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var focused
-        let icon: String
-        let title: String
-        let spinning: Bool
-
-        var body: some View {
-            Image(systemName: icon)
-                .font(.system(size: 26, weight: .bold))
-                .rotationEffect(.degrees(spinning ? 360 : 0))
-                .animation(spinning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
-                           value: spinning)
-                .foregroundStyle(focused ? SettingsMetrics.focusedText : SettingsMetrics.secondaryText)
-                .frame(width: SettingsMetrics.rowHeight, height: SettingsMetrics.rowHeight)
-                .background {
-                    Circle().fill(focused ? FlatControl.focus : FlatControl.rest)
-                        .shadow(color: .black.opacity(focused ? 0.3 : 0), radius: 16, y: 8)
-                }
-                .scaleEffect(focused ? 1.06 : 1)
-                // Its name under it while focused (not in the layout).
-                .overlay(alignment: .bottom) {
-                    Text(title)
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(SettingsMetrics.primaryText)
-                        .fixedSize()
-                        .offset(y: 40)
-                        .opacity(focused ? 1 : 0)
-                }
-                .animation(.smooth(duration: 0.18), value: focused)
-        }
-    }
-}
-
 /// A titled group of rows. Its label as Apple TV's Settings', measured:
 /// 29 pt semibold capitals, no extra spacing, the title's grey (tried:
 /// Home's section hint, small and widely spaced).
@@ -544,37 +497,6 @@ struct SettingsOption: Identifiable {
     let label: String
     /// Before the label on the options page (a colour's swatch).
     var leading: AnyView? = nil
-}
-
-/// A choice: shows the current option; Select opens the options in the
-/// glass dropdown under it (`HoldMenu.openDropdown`), the current one checked.
-struct SettingsChoiceRow: View {
-    let title: String
-    var description: String? = nil
-    let options: [SettingsOption]
-    let selection: String
-    let onPick: (String) -> Void
-    @State private var frame = CGRect.zero
-
-    var body: some View {
-        Button {
-            let entries = options.map { option in
-                MenuEntry(title: option.label, icon: "", checked: option.id == selection) { onPick(option.id) }
-            }
-            HoldMenu.shared.openDropdown(entries, below: frame)
-        } label: {
-            SettingsRowLabel(title: title, value: options.first { $0.id == selection }?.label,
-                             chevron: true, description: description)
-        }
-        .settingsRow(id: title)
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { frame = geometry.frame(in: .global) }
-                    .onChange(of: geometry.frame(in: .global)) { _, rect in frame = rect }
-            }
-        }
-    }
 }
 
 /// A choice that opens its options as a page in the column (no pop-up):

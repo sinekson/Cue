@@ -7281,10 +7281,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 }
 
 extension UIView {
-    /// This view on screen (window points, its transform included).
-    @MainActor
-    var onScreen: CGRect { convert(bounds, to: nil) }
-
     /// A picture of this view as it looks now.
     @MainActor
     func picture() -> UIImage? {

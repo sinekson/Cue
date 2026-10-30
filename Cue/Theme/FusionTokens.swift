@@ -34,14 +34,6 @@ enum FusionType {
 
 // MARK: - Corner radius (§10)
 
-/// Fusion artwork radius. Poster radius comes straight from the user's
-/// corner-radius setting (0/6/11/16/22 steps); hero bars use that + 4. Does not
-/// apply to avatars, badges, progress bars, or the native scrubber.
-enum FusionRadius {
-    static func poster(_ setting: Int) -> CGFloat { CGFloat(setting) }
-    static func heroBar(_ setting: Int) -> CGFloat { CGFloat(setting) + 4 }
-}
-
 // MARK: - Motion (§12)
 
 /// Fusion motion language. Two easing curves — an "enter" curve

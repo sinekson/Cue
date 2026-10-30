@@ -32,7 +32,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         }
     }
 
-
     /// Its symbol on Settings' tile, on its pages (the categories: the play).
     var symbol: String {
         switch self {
@@ -390,41 +389,6 @@ private struct ToggleCardLabel: View {
     }
 }
 
-/// A navigation-style row with a trailing value + chevron. Focus = brighter
-/// fill + thick accent ring so the selected row is always unmistakable.
-struct SettingsValueCard: View {
-    @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let subtitle: String
-    let value: String
-    var icon: String = "puzzlepiece.extension.fill"
-
-    var body: some View {
-        HStack(spacing: CueSpacing.md) {
-            SettingsIconTile(symbol: icon)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
-                Text(subtitle).font(.system(size: 20))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: CueSpacing.lg)
-            Text(value).font(.system(size: 24, weight: .bold))
-                .foregroundStyle(theme.palette.secondary)
-            Image(systemName: "chevron.right").font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(isFocused ? theme.palette.textSecondary : theme.palette.textTertiary)
-        }
-        .padding(.horizontal, CueSpacing.md)
-        .padding(.vertical, CueSpacing.md)
-        .frame(minHeight: 72)
-        .background(SettingsRowBackground(isFocused: isFocused))
-        .animation(perf.motion(FusionFocus.liftAnimation), value: isFocused)
-    }
-}
-
 // MARK: - Add-ons detail
 
 /// Content & Discovery — the APK folds add-ons, catalogs and collections into
@@ -536,23 +500,6 @@ struct StreamBadgeSettings: View {
                 streamBadges.applyChosenRemoteProfile()
             }
         }
-    }
-}
-
-/// Full-screen Collections manager, opened from Home & Content. Menu/Back
-/// closes it back to the settings pane.
-private struct CollectionsCoverView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let onDone: () -> Void
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            CollectionsSettingsDetail()
-                .padding(.horizontal, CueSpacing.xxl)
-                .padding(.vertical, CueSpacing.xl)
-        }
-        .onExitCommand { onDone() }
     }
 }
 

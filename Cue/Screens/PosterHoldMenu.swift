@@ -1,41 +1,5 @@
 import SwiftUI
 
-// MARK: - Shared watched badge
-
-/// A small "watched" tick shown on a movie poster once it's been marked watched,
-/// so every theme surfaces watched state consistently. Series aren't badged at
-/// the card level (their episodes carry watched state individually).
-struct WatchedTickBadge: View {
-    var body: some View {
-        Image(systemName: "checkmark")
-            .font(.system(size: 15, weight: .black))
-            .foregroundStyle(.white)
-            .frame(width: 30, height: 30)
-            .background(Circle().fill(Color.green))
-            .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2))
-            .shadow(color: .black.opacity(0.5), radius: 3)
-            .padding(10)
-    }
-}
-
-private struct WatchedBadgeModifier: ViewModifier {
-    @EnvironmentObject private var watched: WatchedStore
-    let item: MetaItem?
-    let alignment: Alignment
-    func body(content: Content) -> some View {
-        content.overlay(alignment: alignment) {
-            if let item, !item.isSeries, watched.isWatched(item) { WatchedTickBadge() }
-        }
-    }
-}
-
-extension View {
-    /// Overlays a watched tick on a movie card when it's been marked watched.
-    func watchedBadge(_ item: MetaItem?, alignment: Alignment = .topTrailing) -> some View {
-        modifier(WatchedBadgeModifier(item: item, alignment: alignment))
-    }
-}
-
 // MARK: - Continue Watching actions (its hold menu's: `ContinueMenuAction`)
 
 /// What the Continue Watching hold menu does to a row, through the same
