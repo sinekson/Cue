@@ -1395,7 +1395,7 @@ struct DetailView: View {
             let progress = progressStore.progress(for: episode.id)
             let fraction = progress?.fraction ?? 0
             let done = isWatched(episode, season: season)
-            let inProgress = !done && fraction > 0.02 && fraction < 0.95
+            let inProgress = !done && progress?.isStarted == true
             let air = viewModel.airInfo(episode)
             let state = EpisodeRowState(
                 label: "S\(season):E\(episode.episode ?? 0)",
@@ -1431,8 +1431,7 @@ struct DetailView: View {
         let episode = list[index]
         let season = episode.season ?? 0
         var entries: [MenuEntry] = []
-        let fraction = progressStore.progress(for: episode.id)?.fraction ?? 0
-        let started = fraction > 0.02 && fraction < 0.95
+        let started = progressStore.progress(for: episode.id)?.isStarted ?? false
         entries.append(MenuEntry(title: started ? "Resume" : "Play", icon: "play.fill") { play(episode) })
         if started {
             entries.append(MenuEntry(title: "Play from Beginning", icon: "gobackward") {

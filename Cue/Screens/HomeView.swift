@@ -1041,7 +1041,7 @@ struct HomeView: View {
         case .recentlyWatched:
             return byRecency
         case .streamingStyle:
-            return byRecency.filter { $0.fraction >= 0.02 } + byRecency.filter { $0.fraction < 0.02 }
+            return byRecency.filter(\.isStarted) + byRecency.filter { !$0.isStarted }
         }
     }
 

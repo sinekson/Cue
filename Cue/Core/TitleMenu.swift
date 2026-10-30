@@ -72,9 +72,8 @@ final class TitleMenu {
     /// Started and not finished: the film, or an episode of the show.
     private func isStarted(_ item: MetaItem) -> Bool {
         guard let progress else { return false }
-        func started(_ p: WatchProgress) -> Bool { p.fraction > 0.02 && p.fraction < 0.95 }
-        if item.isSeries { return progress.items.values.contains { $0.metaID == item.id && started($0) } }
-        return progress.progress(for: ProgressStore.key(metaID: item.id, video: nil)).map(started) ?? false
+        if item.isSeries { return progress.items.values.contains { $0.metaID == item.id && $0.isStarted } }
+        return progress.progress(for: ProgressStore.key(metaID: item.id, video: nil))?.isStarted ?? false
     }
 
     /// As Continue Watching's: marked watched, its progress row goes too.

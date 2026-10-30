@@ -478,6 +478,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                                onHeld: { [weak self] in self?.setHeld($0) })
     }
 
+    /// New progress for the title it already shows.
+    func showProgress(_ progress: WatchProgress) {
+        detail.text = progress.episodeTitle ?? detail.text
+        state.show(progress)
+    }
+
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
                    progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false) {
         itemIndex = index
@@ -883,6 +889,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         captionName.frame = CGRect(x: 0, y: 0, width: caption.bounds.width, height: 30)
         captionYear.frame = CGRect(x: 0, y: FixedFocusMetrics.captionLineOffset,
                                    width: caption.bounds.width, height: 30)
+    }
+
+    /// New progress for the title it already shows.
+    func showProgress(_ progress: WatchProgress) {
+        facts.text = progress.episodeTitle ?? facts.text
+        state.show(progress)
     }
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell,
@@ -1676,7 +1688,7 @@ final class FixedFocusProgressView: UIView {
     func show(_ entry: WatchProgress?) {
         guard let entry else { return }
         episode.text = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
-        let started = entry.fraction > 0.02
+        let started = entry.isStarted
         remaining.text = started ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress") : "Up Next"
         fraction = started ? CGFloat(entry.fraction) : 0
         track.isHidden = !started

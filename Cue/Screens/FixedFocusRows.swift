@@ -234,6 +234,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         // transparent SwiftUI layer alone doesn't guarantee that) —
         // `setActive`.
         if controller.isViewLoaded { controller.setActive(active) }
+        let progressChanged = controller.progress != progress
         controller.progress = progress
         if controller.isPlaceholder, !placeholder, controller.isViewLoaded, !PageFade.shared.covering {
             // The content takes over the placeholders: one fade, the page.
@@ -244,6 +245,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         } else {
             controller.update(rows)
         }
+        // The same titles with new positions don't reload: the visible cards
+        // take them here.
+        if progressChanged, controller.isViewLoaded { controller.showProgress() }
         controller.setPlaceholder(placeholder)
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
@@ -449,6 +453,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// focused card itself sits at the spot), Select resumes.
     var continueRowID = ""
     var progress: [String: WatchProgress] = [:]
+
+    func showProgress() {
+        for case let cell as FixedFocusRowCell in outer.visibleCells where isContinue(cell.rowIndex) {
+            cell.showProgress()
+        }
+    }
 
     func isContinue(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && rows[rowIndex].id == continueRowID
@@ -3968,6 +3978,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
                           animations: { self.title.text = text })
         setNeedsLayout()
+    }
+
+    func showProgress() {
+        guard let row, let controller else { return }
+        func entry(_ index: Int) -> WatchProgress? {
+            row.items.indices.contains(index) ? controller.progress[row.items[index].id] : nil
+        }
+        for case let card as FixedFocusDestinationCell in destinationStrip?.visibleCells ?? [] {
+            if let progress = entry(card.itemIndex) { card.showProgress(progress) }
+        }
+        for case let card as FixedFocusPosterCell in strip.visibleCells {
+            if let progress = entry(card.itemIndex) { card.showProgress(progress) }
+        }
     }
 
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {

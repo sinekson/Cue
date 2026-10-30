@@ -854,7 +854,7 @@ struct RootView: View {
         playback = PlaybackRequest(
             meta: meta, video: nil,
             entry: StreamEntry(addonName: "Demo", stream: stream),
-            allEntries: [], resumePosition: nil
+            allEntries: [], resumePosition: nil, isDemo: true
         )
     }
 
@@ -935,7 +935,9 @@ struct RootView: View {
             pendingAutoPlayPop = false
             DispatchQueue.main.async { popActivePathForAutoPlay() }
         }) { request in
-            EngineTestPlayer(request: request) { playback = nil }
+            CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings) {
+                playback = nil
+            }
                 .ignoresSafeArea()
         }
         // Deep-link add-on install confirmation. A tvOS alert is fully
@@ -2758,7 +2760,7 @@ final class TitlePreloader {
 
     private func pump() {
         while running < Self.parallel, !queue.isEmpty {
-            guard !EngineTestController.isPlaying else { queue.removeAll(); return }
+            guard !PlayerController.isPlaying else { queue.removeAll(); return }
             let (item, depth) = queue.removeFirst()
             if let had = done[item.id], had >= depth { continue }
             let first = done[item.id] == nil

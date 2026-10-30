@@ -128,6 +128,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   under a curtain (`LaunchPreloader`, `ProfileGate` for "Who's watching?").
 - **Pictures**: posters and the box from add-ons; billboard and Details from
   TMDB's backdrop, decoded as focus settles (`TitlePreloader`).
+- **Progress**: under 30 s played in a session, nothing is saved (a Start Over
+  keeps its old position). After that the real position, seeks included: to
+  the device every 10 s, to Nuvio on the first save and every 30 s; both on
+  pause, leaving the app and exit. Finished at 95 %. Started means past 30 s
+  (`WatchProgress.isStarted`); "Up Next" only ever means unstarted.
 - **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): 2 s rest on the
   buttons, one `AVPlayer` handed between Home, Details and full screen, YouTube
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Be gentle on YouTube:
@@ -203,9 +208,13 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   list as the add-ons', then ready-made presets, then the editor).
 - Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
   are gone there (a second FFmpeg can take the engine's calls, so they can't
-  sit beside it); `EngineTestPlayer` is a bare test player with a readout, to
-  be replaced by the new player. Old playback settings stay, inert, until
-  then. Resume / Start Over still use the old StreamsView.
+  sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):
+  playback, subtitles, progress and track choice are in; controls, failover and
+  next episode to come. Audio default: picked by hand for the title, then the
+  setting, then the device's language; E-AC-3 Atmos over TrueHD (the bridge
+  drops TrueHD's objects). Sonos' Atmos badge proves nothing: check the readout
+  (Developer → Playback diagnostics HUD). Old playback settings stay, inert,
+  until then. Resume / Start Over still use the old StreamsView.
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
   DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio

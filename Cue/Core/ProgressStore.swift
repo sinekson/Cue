@@ -94,6 +94,9 @@ struct WatchProgress: Codable, Identifiable, Hashable {
         return min(max(positionSeconds / durationSeconds, 0), 1)
     }
 
+    /// Past 30 s and not finished. Under that it's unstarted: "Up Next", no bar.
+    var isStarted: Bool { positionSeconds >= 30 && fraction < 0.95 }
+
     var remainingTimeText: String? {
         guard durationSeconds.isFinite,
               positionSeconds.isFinite,
@@ -1139,8 +1142,8 @@ final class ProgressStore: ObservableObject {
         case .recentlyWatched:
             result = byRecency
         case .streamingStyle:
-            let inProgress = byRecency.filter { $0.fraction >= 0.02 }
-            let fresh = byRecency.filter { $0.fraction < 0.02 }
+            let inProgress = byRecency.filter(\.isStarted)
+            let fresh = byRecency.filter { !$0.isStarted }
             result = inProgress + fresh
         }
         continueWatchingMemo[sortMode] = result

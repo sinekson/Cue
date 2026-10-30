@@ -73,7 +73,7 @@ enum TopShelfExporter {
                 // zero duration; clamp anyway because playbackProgress is
                 // documented as 0...1 and a row restored from another device
                 // can carry a position past its duration.
-                progress: min(max(p.fraction, 0), 1),
+                progress: p.isStarted ? p.fraction : 0,
                 caption: caption,
                 // Wide card fallback when there's no TMDB episode still (the
                 // renderer tries that first): the show/movie backdrop at full
@@ -270,7 +270,7 @@ enum TopShelfCardRenderer {
         let key = "\(source)|\(episode ?? "")|\(timeLeft ?? "")"
         let digest = SHA256.hash(data: Data(key.utf8))
             .prefix(8).map { String(format: "%02x", $0) }.joined()
-        let name = "\(prefix)v4-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0.02 ? "" : "n").jpg"
+        let name = "\(prefix)v4-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0 ? "" : "n").jpg"
         guard let file = AppGroupResolver.sharedFile(name) else { return nil }
         if FileManager.default.fileExists(atPath: file.path) { return file }
 
@@ -283,7 +283,7 @@ enum TopShelfCardRenderer {
         guard let data,
               let image = ImageCache.decodeDownsampled(data, budget: max(size.width, size.height)),
               let jpeg = render(image, size: size, progress: Double(bucket) / 20,
-                                started: clamped > 0.02, episode: episode, timeLeft: timeLeft)
+                                started: clamped > 0, episode: episode, timeLeft: timeLeft)
         else { return nil }
         do {
             try jpeg.write(to: file, options: .atomic)

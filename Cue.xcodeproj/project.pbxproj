@@ -15,7 +15,6 @@
 		052D03A538922B0D9B0ACB78 /* NuvioAccountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C464D838A298B04AEE96A43 /* NuvioAccountManager.swift */; };
 		091FA8DF552668826D0157DB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A43B53E1ECE04FB2661CD6C0 /* Models.swift */; };
 		0B8D9F2F2FCB929E40CFD67A /* HomeCatalogSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BD92367FC04C571B51AF825 /* HomeCatalogSettingsStore.swift */; };
-		0D755131B44B090C0C521B7B /* EngineTestPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBE769C650A7AD399BDC3F60 /* EngineTestPlayer.swift */; };
 		0EDB9E2B2AFFB1721308C03D /* StreamBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE75906F141ECF54173ABFB4 /* StreamBadges.swift */; };
 		14415F3E3392CCBA0E2F690A /* CueTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A8E09639043F94B89D683A /* CueTheme.swift */; };
 		16B111AFE5C1666726B75D23 /* AddonManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C61F32F5FAF8106AC0232B /* AddonManager.swift */; };
@@ -37,6 +36,7 @@
 		4819AE91275956F9D3F32CB8 /* ContentFocusRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4EDB66B1027E31D29B8CFB1 /* ContentFocusRouter.swift */; };
 		48E04631B1EDE403BEBD7D55 /* NuvioSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA57CC4516DF2158767C8B3 /* NuvioSyncManager.swift */; };
 		4ABA98FC431EC05D2418155B /* PerformanceSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA64AEEE89DD0DEF9662A9C0 /* PerformanceSettingsStore.swift */; };
+		4B0CA102504F222454D672ED /* CuePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67A83AA23D28B331FFD7B030 /* CuePlayer.swift */; };
 		4DFC203CE80B1D0FC5C78B6F /* SourcePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6F975216498863474A0FA4 /* SourcePanel.swift */; };
 		4E5AF1989B50FA9B34C8D326 /* AppGroupResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 586DFC0A2C5A9D694A40702C /* AppGroupResolver.swift */; };
 		4EE2D14A7B65C54B2ADAC2E3 /* SettingsPlaybackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB8AB6F22DA58A0AA4DE37BB /* SettingsPlaybackView.swift */; };
@@ -173,6 +173,7 @@
 		609269EDD988823B299B0AAC /* TitleMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleMenu.swift; sourceTree = "<group>"; };
 		62C54CCACAEFDF547761C8F9 /* MenuEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuEntry.swift; sourceTree = "<group>"; };
 		65BB4AFF50A8A9F68622D9E6 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		67A83AA23D28B331FFD7B030 /* CuePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CuePlayer.swift; sourceTree = "<group>"; };
 		68ECE890FFEBF1D3EA964188 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
 		6A71AB2161724E58DB238EE8 /* StremioAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StremioAPI.swift; sourceTree = "<group>"; };
 		6E55D9E0F8198923EEBD3D31 /* Cue.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Cue.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -221,7 +222,6 @@
 		CDD865A5209FAC3E3637FD44 /* StagePicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagePicture.swift; sourceTree = "<group>"; };
 		D5BDD389635EE07DA7CABB7A /* TitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleBlock.swift; sourceTree = "<group>"; };
 		D747E1A83E78A4D39C362385 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
-		DBE769C650A7AD399BDC3F60 /* EngineTestPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineTestPlayer.swift; sourceTree = "<group>"; };
 		E9E1BA33775847CEF217F4C0 /* DetailAbout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailAbout.swift; sourceTree = "<group>"; };
 		EA3147397BAD4C058679BF21 /* PlaybackMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackMemory.swift; sourceTree = "<group>"; };
 		EAF2C8051620B4518D7B462E /* PerformanceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceProfile.swift; sourceTree = "<group>"; };
@@ -328,7 +328,7 @@
 			isa = PBXGroup;
 			children = (
 				F475D3148C854DB4176635F5 /* Atomic.swift */,
-				DBE769C650A7AD399BDC3F60 /* EngineTestPlayer.swift */,
+				67A83AA23D28B331FFD7B030 /* CuePlayer.swift */,
 				EA3147397BAD4C058679BF21 /* PlaybackMemory.swift */,
 				3EACF68D973258EB865160C5 /* PlayerTempSweep.swift */,
 				0AC9F737C2F281B615A7A82B /* RemoteInput.swift */,
@@ -550,13 +550,13 @@
 				4819AE91275956F9D3F32CB8 /* ContentFocusRouter.swift in Sources */,
 				AE2FBA63EFF888C21487D13F /* CueApp.swift in Sources */,
 				701E8EE87F82F53358AD4EBE /* CueDropdown.swift in Sources */,
+				4B0CA102504F222454D672ED /* CuePlayer.swift in Sources */,
 				14415F3E3392CCBA0E2F690A /* CueTheme.swift in Sources */,
 				1AD5C74792CE13AAB1C96067 /* DeepLinkService.swift in Sources */,
 				C05BA3DC2040C74FEF7DB06D /* DetailAbout.swift in Sources */,
 				282704283B6BBD1492DF0423 /* DetailTransition.swift in Sources */,
 				63DBE4658E7A1F5126AA572A /* DetailView.swift in Sources */,
 				F529A4C51A32B6AA00E2F639 /* DiagnosticsService.swift in Sources */,
-				0D755131B44B090C0C521B7B /* EngineTestPlayer.swift in Sources */,
 				4FAA65A442928A42A1EE0268 /* EpisodeRow.swift in Sources */,
 				7E58E4EDE00F2D9FB6C801D7 /* FPSOverlay.swift in Sources */,
 				E70C71A001415B6470A10AF4 /* FixedFocusCards.swift in Sources */,
