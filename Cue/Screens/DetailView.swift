@@ -1587,9 +1587,10 @@ struct DetailActionButton: View {
         focusLit = focused
     }
 
-    /// The look is `ActionFace`: a frosted pill at rest, a white capsule
-    /// when focused. (Tried and dropped: glass; a dark fill at rest —
-    /// grey, black, black with a light edge; nothing at rest.)
+    /// The look is `ActionFace`: a glass pill at rest, a white capsule
+    /// when focused. (Tried and dropped: a thin frost, too see-through over
+    /// the billboard's bright pictures; a dark fill at rest — grey, black,
+    /// black with a light edge; nothing at rest.)
     static let height: CGFloat = 64
     static let focusFill = Color.white
     static let restContent = Color.white.opacity(FixedFocusText.primary)
@@ -1715,39 +1716,31 @@ struct DetailActionButton: View {
 }
 
 /// THE ACTION BUTTONS' FACE (Details' and the billboard's buttons,
-/// Details' season buttons): at rest a frosted pill (`pill`; without it,
+/// Details' season buttons): at rest a glass pill (`pill`; without it,
 /// the content with the text's small shadow); focused, a white capsule, dark
 /// content; leaving, the capsule shrinks into the button as it fades
 /// (`DetailActionButton.leave`, `leaveFade`).
 extension EnvironmentValues {
     /// Drawn into an image (the billboard's buttons going out with their
-    /// card): the frosted pill as a flat stand-in — a blur can't be drawn.
+    /// card): the glass pill as a flat stand-in — glass can't be drawn.
     @Entry var actionFaceStill = false
-    /// The top bar's glass at rest (the thin frost read too see-through
-    /// over the billboard's bright pictures). false: the frost — kept for
-    /// now.
-    @Entry var actionFaceGlass = true
 }
 
 struct ActionFace: ViewModifier {
     @Environment(\.actionFaceStill) private var still
-    @Environment(\.actionFaceGlass) private var glass
     let lit: Bool
     var rest: Color = DetailActionButton.restContent
-    /// At rest on the frosted pill (the top bar's current tab, not glass);
-    /// false: nothing behind it (the billboard's Next, a season not shown).
+    /// At rest on the glass pill; false: nothing behind it (the billboard's Next, a season not shown).
     var pill = true
     /// The pill as the current one of a set (the row's season): the flat
-    /// light grey (`FlatControl.selected`), not the blur.
+    /// light grey (`FlatControl.selected`), not the glass.
     var current = false
     /// Its highlight dimmed (into / out of Details in place) — at
     /// `DetailActionButton.dimmedHighlight`.
     var dimmed = false
 
-    /// The frosted pill: the picture behind it blurred and darkened (the
-    /// system's thin material, dark — not glass), a faint light edge
-    /// brighter along the top. (Tried: a flat white 16 % — too little
-    /// contrast for the content.)
+    /// A flat pill's edge (the still's, Search's): a faint light edge
+    /// brighter along the top.
     static let pillEdge = LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.06)],
                                          startPoint: .top, endPoint: .bottom)
 
@@ -1765,15 +1758,11 @@ struct ActionFace: ViewModifier {
                     } else {
                         ZStack {
                             if still {
-                                Capsule().fill(glass ? Color.white.opacity(0.18) : Color.black.opacity(0.35))
-                            } else if glass {
-                                Color.clear.liquidGlass(in: Capsule())
-                            } else {
-                                Capsule().fill(.thinMaterial).environment(\.colorScheme, .dark)
-                            }
-                            // (The glass has its own edge.)
-                            if !glass || still {
+                                Capsule().fill(Color.white.opacity(0.18))
                                 Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
+                            } else {
+                                // (The glass has its own edge.)
+                                Color.clear.liquidGlass(in: Capsule())
                             }
                         }
                         // (Coming in, it grows into the button: into Details
