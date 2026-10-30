@@ -13,15 +13,11 @@ import SwiftUI
 enum FusionType {
     static func heroTitle(_ f: AppFont) -> Font { .system(size: 62, weight: .bold, design: heading(f)) }
     static func pageTitle(_ f: AppFont) -> Font { .system(size: 46, weight: .bold, design: heading(f)) }
-    static func moduleHeading(_ f: AppFont) -> Font { .system(size: 30, weight: .semibold, design: heading(f)) }
     static func cardTitle(_ f: AppFont) -> Font { .system(size: 22, weight: .semibold, design: body(f)) }
     static func bodyText(_ f: AppFont) -> Font { .system(size: 23, weight: .regular, design: body(f)) }
     static func metadata(_ f: AppFont) -> Font { .system(size: 20, weight: .medium, design: body(f)) }
     static func button(_ f: AppFont) -> Font { .system(size: 23, weight: .semibold, design: body(f)) }
     static func badge(_ f: AppFont) -> Font { .system(size: 15, weight: .bold, design: body(f)) }
-    /// Technical stream data — always monospaced regardless of font choice
-    /// (§8: "Technical source data may look especially appropriate in this mode").
-    static func technical(_ f: AppFont) -> Font { .system(size: 18, weight: .medium, design: .monospaced) }
 
     /// Heading design: serif titles when Serif is picked, else the font's design.
     private static func heading(_ f: AppFont) -> Font.Design { f.design }
@@ -44,31 +40,13 @@ enum FusionMotion {
     static func exit(_ d: Double) -> Animation { .timingCurve(0.4, 0, 0.6, 1, duration: d) }
 
     static let focusEntry = enter(0.22)
-    static let focusExit = exit(0.17)
     static let focusMove = enter(0.21)
-    static let focusMoveFast = enter(0.16)     // during rapid directional input
-    static let pressDown = enter(0.085)
-    static let pressRelease = exit(0.13)
     static let pageEnter = enter(0.32)
-    static let pageExit = exit(0.22)
-    static let heroSlide = enter(0.48)
-    static let dialogEnter = enter(0.24)
-    static let dialogExit = exit(0.18)
     static let toastEnter = enter(0.22)
     static let toastExit = exit(0.20)
     static let controlsAppear = enter(0.18)
     static let controlsDismiss = exit(0.26)
     static let upNext = enter(0.30)
-
-    /// Row reflow when a focused card grows into its landscape form (Onyx and
-    /// Marquee): the card's width animates 210→560pt while every neighbour
-    /// shifts, which is the largest layout move in the app. It settles with NO
-    /// bounce — the previous 0.82-damped spring overshot, so the whole row
-    /// visibly wobbled back into place — and runs slightly longer than a focus
-    /// move so the growth reads as deliberate rather than snapped.
-    /// Ambient auto-rotation of the hero. Deliberately slow: nobody asked
-    /// for this change, so it should drift rather than cut.
-    static let heroAutoRotate = enter(0.7)
 
     static let toastVisibleSeconds: Double = 2.6
 }
@@ -78,14 +56,8 @@ enum FusionMotion {
 /// Fusion focus treatment constants for artwork cards, so every card lifts by
 /// the same amount. Portrait and landscape differ slightly per the spec.
 enum FusionFocus {
-    static let portraitScale: CGFloat = 1.065
-    static let portraitLift: CGFloat = -8
-    static let landscapeScale: CGFloat = 1.075
-    static let landscapeLift: CGFloat = -7
     static let brightness: Double = 1.055
     static let saturation: Double = 1.035
-    /// Reduced scale used while the user is scrubbing focus rapidly (§15.5).
-    static let rapidScale: CGFloat = 1.025
     static let borderWidth: CGFloat = 2
     static let borderColor = Color.white.opacity(0.88)
     static func shadow(_ focused: Bool) -> Color { .black.opacity(focused ? 0.58 : 0) }
@@ -106,7 +78,6 @@ enum FusionFocus {
 /// Solid tones for floating layers where live glass is too costly (the
 /// slower boxes' stand-in for `liquidGlass`).
 enum FusionMaterials {
-    static let sidebar = Color(hex: 0x080A0D, alpha: 0.88)
     static let dialog = Color(hex: 0x14171D, alpha: 0.94)
 }
 

@@ -231,11 +231,6 @@ struct ManifestCatalog: Codable, Identifiable, Hashable {
         return extra?.contains { $0.isRequired == true } ?? false
     }
 
-    /// Genres this catalog can filter by (from the `genre` extra's options).
-    var genreOptions: [String] {
-        extra?.first { $0.name == "genre" }?.options ?? []
-    }
-
     var displayName: String {
         let base = name ?? id.capitalized
         let typeLabel: String
@@ -465,34 +460,9 @@ struct MetaItem: Codable, Identifiable, Hashable {
         self.videos = videos
     }
 
-
     var year: String? {
         guard let releaseInfo, !releaseInfo.isEmpty else { return nil }
         return String(releaseInfo.prefix(4))
-    }
-
-    /// Whether this title hasn't come out yet — drives "Hide unreleased
-    /// content" (Settings → Layout).
-    ///
-    /// `releaseInfo` arrives in a few shapes depending on the addon: a bare year
-    /// ("2027"), a full date ("2027-03-14"), or a series span ("2019-2023", or
-    /// "2019–" for one still airing). Taking the START of the span is right for
-    /// all of them — an ongoing series that premiered in 2019 is released, it
-    /// just isn't finished. An item with NO date counts as released: addons
-    /// leave the field off constantly, and hiding undated items would quietly
-    /// empty half of most catalogs.
-    var isUnreleased: Bool {
-        guard let releaseInfo, !releaseInfo.isEmpty else { return false }
-        // Full date: compare properly, so something due later THIS year is
-        // still correctly hidden.
-        if releaseInfo.count >= 10 {
-            if let date = ReleaseDateParser.ymdGMT.date(from: String(releaseInfo.prefix(10))) {
-                return date > Date()
-            }
-        }
-        let start = releaseInfo.prefix { $0 != "-" && $0 != "–" && $0 != "—" }
-        guard let year = Int(start), year > 1800 else { return false }
-        return year > Calendar.current.component(.year, from: Date())
     }
 
     var isSeries: Bool { type == "series" || type == "tv" }
@@ -617,18 +587,6 @@ enum ReleaseDateParser {
         f.dateFormat = "yyyy-MM-dd"
         return f
     }()
-    /// Bare "yyyy-MM-dd" in the device's locale/zone (display parsing —
-    /// keeps `airedText` rendering the calendar day the addon wrote).
-    static let ymdLocal: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-    static let mediumDisplay: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        return f
-    }()
     /// Full ISO 8601 (with or without fractional seconds), else bare date.
     static func parse(_ released: String) -> Date? {
         if let d = isoFull(released) { return d }
@@ -740,19 +698,6 @@ struct MetaVideo: Codable, Identifiable, Hashable {
     var airedDate: Date? {
         guard let released, !released.isEmpty else { return nil }
         return ReleaseDateParser.parse(released)
-    }
-
-    /// Air date formatted for display ("Jun 25, 2021"), or nil if unknown.
-    var airedText: String? {
-        guard let released, !released.isEmpty else { return nil }
-        var date = ReleaseDateParser.isoFull(released)
-        if date == nil {
-            // Bare "yyyy-MM-dd" — local zone, so the shown day matches what
-            // the addon wrote.
-            date = ReleaseDateParser.ymdLocal.date(from: String(released.prefix(10)))
-        }
-        guard let date else { return nil }
-        return ReleaseDateParser.mediumDisplay.string(from: date)
     }
 
     /// "Airs in 3 days" / "Airs tomorrow" for an episode that has NOT aired
@@ -1101,21 +1046,6 @@ struct Stream: Codable, Hashable {
         return score
     }
 
-    /// A magnet URI built from the info hash and any tracker sources.
-    var magnetURI: String? {
-        guard let infoHash, !infoHash.isEmpty else { return nil }
-        var magnet = "magnet:?xt=urn:btih:\(infoHash)"
-        for source in sources ?? [] {
-            let trimmed = source.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.lowercased().hasPrefix("dht:") else { continue }
-            let tracker = trimmed.hasPrefix("tracker:") ? String(trimmed.dropFirst("tracker:".count)) : trimmed
-            if let encoded = tracker.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-                magnet += "&tr=\(encoded)"
-            }
-        }
-        return magnet
-    }
-
     /// Addon-provided short label, e.g. "Torrentio\n4K" — its own line
     /// breaks kept (add-ons lay their labels out in lines).
     var displayName: String {
@@ -1369,7 +1299,6 @@ extension KeyedDecodingContainerProtocol {
     }
 }
 
-
 struct MetaResponse: Codable {
     let meta: MetaItem?
 }
@@ -1420,7 +1349,6 @@ struct AnyIgnorable: Codable {
         try c.encodeNil()
     }
 }
-
 
 /// A point in a series, ordered season-then-episode.
 ///

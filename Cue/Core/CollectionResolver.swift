@@ -34,14 +34,6 @@ struct CollectionProviders: Equatable {
 
     var any: Bool { tmdb || trakt }
 
-    /// TMDB is the one to recommend and the one to prefer when both are live:
-    /// it resolves every source type collections can hold (lists, collections,
-    /// companies, networks, people, discover queries), and it returns artwork,
-    /// descriptions and ids directly. A Trakt list carries titles and ids only
-    /// — its posters have to be borrowed from a meta add-on, one lookup per
-    /// title, for the first thirty entries and no further.
-    var preferredName: String? { tmdb ? "TMDB" : (trakt ? "Trakt" : nil) }
-
     static let none = CollectionProviders(tmdb: false, trakt: false)
 }
 
@@ -126,85 +118,6 @@ enum CollectionResolver {
             ?? ManifestCatalog(type: type, id: catalogID, name: source.title, extra: nil,
                                extraRequired: nil, extraSupported: nil)
         return AddonCatalog(addon: addon, catalog: catalog, genre: source.genre)
-    }
-
-    /// Resolve ONE folder's items, de-duplicated by id (TMDB, then Trakt, then
-    /// add-on catalogs). Returns empty when the folder has nothing resolvable.
-    static func resolveFolder(
-        _ folder: CueCollectionFolder,
-        addonManager: AddonManager,
-        /// The installed add-ons an add-on-only folder resolves through.
-        addons: [InstalledAddon],
-        providers: CollectionProviders,
-        tmdbLanguage: String,
-        maxTmdbPages: Int = Int.max,
-        /// First TMDB page of this window (see TMDBService.resolve). >1 means
-        /// "continue a streaming load", so addon/Trakt sources — which aren't
-        /// paged — are skipped to avoid re-returning what earlier windows
-        /// already delivered.
-        tmdbStartPage: Int = 1
-    ) async -> [MetaItem] {
-        // Only a CONNECTED service resolves, and TMDB wins OUTRIGHT: when TMDB
-        // can serve this folder, its Trakt sources aren't consulted at all —
-        // TMDB returns artwork, descriptions and resolved ids directly, while
-        // a Trakt list needs a per-title meta lookup just to get posters.
-        // Trakt resolves only when it is the folder's sole workable service
-        // (TMDB disconnected, or a Trakt-only folder).
-        let resolvableTmdb = providers.tmdb ? folder.effectiveSources.filter(\.isTMDBSource) : []
-        let traktSources = (providers.trakt && resolvableTmdb.isEmpty)
-            ? folder.effectiveSources.filter(\.isUsableTraktSource) : []
-        // Add-on catalogs only ever fill a folder with no TMDB or Trakt source
-        // at all (see the note at the top of this file), so every folder TMDB
-        // or Trakt could resolve before resolves exactly as it did.
-        let isAddonOnly = !folder.effectiveSources.contains(where: \.isTMDBSource)
-            && !folder.effectiveSources.contains(where: \.isUsableTraktSource)
-        let addonCatalogs = isAddonOnly
-            ? folder.addonSources.compactMap { addonCatalog(for: $0, addons: addons) } : []
-        guard !resolvableTmdb.isEmpty || !traktSources.isEmpty || !addonCatalogs.isEmpty else { return [] }
-
-        let isContinuation = tmdbStartPage > 1
-
-        // Every source in the folder is fetched CONCURRENTLY. They used to run
-        // one after another — each TMDB source, then each Trakt list, every one
-        // a full network round-trip — so a folder built from four sources took
-        // four round-trips end to end even though none of them depends on the
-        // others. Folders were already parallel; the wait was inside each one.
-        //
-        // Order is preserved by INDEX, not by arrival: the merge below still
-        // goes TMDB → Trakt → add-on, in each group's own source order, so the
-        // de-duplication keeps giving the same winner it always did (first
-        // source to claim an id owns it). Concurrency changes when things
-        // arrive, never what the folder resolves to.
-        func gather(_ count: Int,
-                    _ body: @escaping @Sendable (Int) async -> [MetaItem]) async -> [[MetaItem]] {
-            guard count > 0 else { return [] }
-            var out = [[MetaItem]](repeating: [], count: count)
-            await withTaskGroup(of: (Int, [MetaItem]).self) { group in
-                for i in 0..<count { group.addTask { (i, await body(i)) } }
-                for await (i, items) in group { out[i] = items }
-            }
-            return out
-        }
-
-        async let tmdbResults: [[MetaItem]] = gather(resolvableTmdb.count) { i in
-            await TMDBService.resolve(source: resolvableTmdb[i], language: tmdbLanguage,
-                                      maxPages: maxTmdbPages, startPage: tmdbStartPage)
-        }
-        async let traktResults: [[MetaItem]] = isContinuation ? [] : gather(traktSources.count) { i in
-            await resolveTrakt(source: traktSources[i], addonManager: addonManager)
-        }
-        async let addonResults: [[MetaItem]] = isContinuation ? [] : gather(addonCatalogs.count) { i in
-            let source = addonCatalogs[i]
-            return (try? await StremioAPI.catalog(addon: source.addon, catalog: source.catalog,
-                                                  genre: source.genre)) ?? []
-        }
-
-        var items: [MetaItem] = []
-        var seen = Set<String>()
-        for batch in await tmdbResults + traktResults + addonResults {
-            for item in batch where seen.insert(item.id).inserted { items.append(item) }
-        }
-        return items
     }
 
     /// One of a folder's catalogs, resolved: its name and titles.

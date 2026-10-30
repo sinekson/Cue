@@ -40,15 +40,6 @@ struct CommunityCollectionPreset: Identifiable {
     enum Kind {
         case network, studio, trending, topRated, newest
 
-        var markerLabel: String {
-            switch self {
-            case .network: return "Streaming Network"
-            case .studio: return "Studio"
-            case .trending: return "Trending"
-            case .topRated: return "Top Rated"
-            case .newest: return "Newest"
-            }
-        }
         /// Fallback emoji cover for sources with no brand logo (DISCOVER-type).
         var emoji: String? {
             switch self {
@@ -70,61 +61,12 @@ struct CommunityCollectionPreset: Identifiable {
     /// show movies too, not just shows.
     let sources: [CollectionSourceDTO]
 
-    /// A single representative source for logo/id lookups — every source in
-    /// a multi-source preset shares the same tmdbId/tmdbSourceType, they only
-    /// differ in mediaType.
-    var primarySource: CollectionSourceDTO { sources[0] }
-
-    var mediaLabel: String {
-        let hasMovie = sources.contains { ($0.mediaType ?? "movie").lowercased() != "tv" }
-        let hasTV = sources.contains { ($0.mediaType ?? "movie").lowercased() == "tv" }
-        if hasMovie && hasTV { return "Movies & Shows" }
-        return hasTV ? "TV Shows" : "Movies"
-    }
 }
 
 enum CommunityCollections {
     /// Stable id prefix so an installed community category can be recognized
     /// (and not duplicated) even after a rename.
     static let idPrefix = "community."
-
-    /// Per-category cover style: "Dark" sits a logo on a tinted-dark tile
-    /// (matches the app's near-black surfaces); "Bright" sits it on a
-    /// near-white tile instead, which is how most streaming/studio logos are
-    /// actually designed to be seen and reads much closer to their real
-    /// brand color. Chosen independently per category (id → isBright), one
-    /// shared UserDefaults key holding the whole map as JSON, so every view
-    /// that renders a community folder — the browse picker AND the
-    /// installed Home rows — reads the same live choice for that category.
-    static let coverStyleKey = "cue.communitycoverstyle.v1"
-
-    /// Memoized on the raw JSON string: every collection tile reads this map
-    /// in its body, and the strips hold 100–200 folders — a fresh JSONDecoder
-    /// per tile body was a per-scroll-frame allocation storm on the A8. The
-    /// map only changes when someone flips a style in the community picker.
-    private static let coverStyleLock = NSLock()
-    private static var coverStyleMemo: (json: String, map: [String: Bool])?
-
-    static func decodeCoverStyles(_ json: String) -> [String: Bool] {
-        coverStyleLock.lock()
-        if let memo = coverStyleMemo, memo.json == json {
-            defer { coverStyleLock.unlock() }
-            return memo.map
-        }
-        coverStyleLock.unlock()
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONDecoder().decode([String: Bool].self, from: data) else { return [:] }
-        coverStyleLock.lock()
-        coverStyleMemo = (json, dict)
-        coverStyleLock.unlock()
-        return dict
-    }
-
-    static func encodeCoverStyles(_ styles: [String: Bool]) -> String {
-        guard let data = try? JSONEncoder().encode(styles),
-              let json = String(data: data, encoding: .utf8) else { return "{}" }
-        return json
-    }
 
     /// `watchProviderID` (verified live against TMDB) switches the query from
     /// TMDB's `with_networks` (originals only, TV-only) to `with_watch_providers`
@@ -329,20 +271,6 @@ enum CommunityCollections {
         }
     }
 
-    /// Declares the tileShape that actually matches a logo's real proportions.
-    /// tvOS renders a folder cover with `.fill` (crop-to-cover); the real
-    /// Cue Android app renders it with `ContentScale.FillBounds` (stretch to
-    /// EXACTLY fill the declared shape's aspect ratio, no crop) — so a logo
-    /// whose real aspect ratio doesn't match the declared shape gets visibly
-    /// warped on Android and cropped on tvOS.
-    static func measuredTileShape(for urlString: String) async -> String {
-        guard let url = URL(string: urlString),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data), image.size.height > 0 else { return "SQUARE" }
-        let ratio = image.size.width / image.size.height
-        return ratio >= 1.5 ? "LANDSCAPE" : "SQUARE"
-    }
-
     /// One-time migration: an earlier build installed each category as its OWN
     /// standalone collection (its own Home row per category, and its own
     /// folder id — a random UUID). Fold any of those still around into their
@@ -384,55 +312,6 @@ enum CommunityCollections {
         }
     }
 
-    /// One-time fix for categories installed BEFORE tileShape was measured:
-    /// every logo-covered folder was hardcoded "LANDSCAPE" regardless of its
-    /// real proportions. Re-measures each already-installed community
-    /// folder's actual logo and corrects its declared shape — and when a
-    /// brand's installed logo is squarish (Warner Bros' shield), upgrades it
-    /// to the brand's WIDE logo variant when TMDB hosts one, so the tile
-    /// matches the rest of the landscape row.
-    /// One-shot guard: the remeasure downloads EVERY installed community logo
-    /// (to read its pixel size) and hits TMDB's images endpoint for each
-    /// square one — repeating that on every launch forever is pure waste,
-    /// especially for brands with no wide variant (Paramount, DC) that can
-    /// never converge. Fresh installs pick the wide logo up front, so once
-    /// this pass has run, launches skip it. Bump the key to re-run everywhere.
-    private static let logoMigrationKey = "cue.community.logoMigration.v2"
-
-    @MainActor
-    static func remeasureInstalledLogos(collections: CollectionsStore) async {
-        guard !UserDefaults.standard.bool(forKey: logoMigrationKey) else { return }
-        defer { UserDefaults.standard.set(true, forKey: logoMigrationKey) }
-        // The LIBRARY, not the visible subset: a community pack switched off
-        // account-wide is still installed and still needs its tiles re-measured,
-        // and `update` writes the library copy anyway.
-        for collection in collections.library where collection.id.hasPrefix(idPrefix) {
-            var changed = false
-            var updated = collection
-            for i in updated.folders.indices {
-                let folder = updated.folders[i]
-                guard let cover = folder.coverImageUrl, !cover.isEmpty else { continue }
-                var shape = await measuredTileShape(for: cover)
-                if shape != "LANDSCAPE",
-                   let preset = presets.first(where: { $0.id == folder.id }),
-                   let tmdbId = preset.primarySource.tmdbId,
-                   let wide = await TMDBService.brandWideLogo(
-                       id: tmdbId,
-                       isNetwork: preset.primarySource.tmdbSourceType?.uppercased() == "NETWORK"
-                   ), wide != cover {
-                    updated.folders[i].coverImageUrl = wide
-                    shape = "LANDSCAPE"
-                    changed = true
-                }
-                if updated.folders[i].tileShape != shape {
-                    updated.folders[i].tileShape = shape
-                    changed = true
-                }
-            }
-            if changed { collections.update(updated) }
-        }
-    }
-
     /// Runs only local, cheap fixes that are safe to execute near launch.
     @MainActor
     static func runLaunchMigrations(collections: CollectionsStore) {
@@ -440,13 +319,5 @@ enum CommunityCollections {
         resyncPresetSources(collections: collections)
     }
 
-    /// Runs every one-time consolidation/fix pass. The logo pass can download
-    /// every installed community logo and query TMDB, so keep it off the app
-    /// launch path and run it only when this screen is opened.
-    @MainActor
-    static func runStartupMigrations(collections: CollectionsStore) async {
-        runLaunchMigrations(collections: collections)
-        await remeasureInstalledLogos(collections: collections)
-    }
 }
 

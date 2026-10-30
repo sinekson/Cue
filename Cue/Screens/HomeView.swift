@@ -169,8 +169,6 @@ final class HomeViewModel: ObservableObject {
         orderedItems = ordered
     }
 
-
-
     func loadIfNeeded(
         addonManager: AddonManager,
         collections: CollectionsStore,
@@ -556,7 +554,6 @@ final class HomeViewModel: ObservableObject {
         // "- Movie" / "- Series" suffix: each title's facts line says it.
         settings.customTitle(for: key) ?? request.catalog.name ?? request.catalog.id.capitalized
     }
-
 
     /// Pull the billboard's backdrops into the image cache (art that is not
     /// on screen yet).
@@ -1446,9 +1443,6 @@ private struct FocusChangeModifier: ViewModifier {
             }
     }
 }
-
-
-
 
 // MARK: - Home rows (UIKit)
 
@@ -2562,7 +2556,6 @@ extension HomeUIKitView {
     /// end — in the middle of its strip at the top.)
     private static func dotsMid(depth: Int) -> CGFloat { depth == 0 ? peekDotsMid : rigidDotsMid }
 
-
     /// The billboard's text and dots for the rows to host (a change of
     /// title: on the pictures — `billboardPageText`).
     var billboardOverlay: AnyView {
@@ -2731,7 +2724,6 @@ extension HomeUIKitView {
         DetailTransition.shared.openInPlace(item, trailer: trailer.handOver()) { onSelectFeatured(item) }
     }
 
-
     /// The billboard's titles changed (its picks arrived): show the title now
     /// at its position.
     private func refreshBillboardItem() {
@@ -2767,7 +2759,6 @@ extension HomeUIKitView {
         focused = first
     }
 
-
     /// The billboard's text for a title, at its place (standing on its
     /// bottom line — it grows up — the buttons below it).
     /// (The reason — Details has none — goes with the swap; the rest stays
@@ -2782,8 +2773,6 @@ extension HomeUIKitView {
             .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
             .padding(.leading, FixedFocusMetrics.titleInset)
     }
-
-
 
     /// The ratings chips (nil: none at all) — the catalog's IMDb score until
     /// MDBList's arrive, as on the Detail page.
@@ -3361,15 +3350,11 @@ enum FixedFocusMetrics {
     /// title's name, its facts line and the summary (they differ only in
     /// brightness). Just above the smallest size that reads well on a TV.
     static let textSize: CGFloat = 24
-    /// The facts line, on screen (the billboard's meta line sits here too).
-    static var factsY: CGFloat { boxFrame.maxY + infoGap + factsOffset }
     /// One row below the billboard, none of it shows: Down scrolls one whole
     /// screen.
     static let billboardTopPeek: CGFloat = 0
     /// …and that row stands this much lower than usual, under the strip.
     static var billboardStripDrop: CGFloat { max(0, billboardTopPeek + 10 - rowTop) }
-    /// How far the billboard lifts as it fades out on Down.
-    static let billboardLift: CGFloat = 80
     /// The box, on screen.
     static var boxFrame: CGRect {
         CGRect(x: inset, y: rowTop + titleHeight, width: boxWidth, height: height)
@@ -4273,7 +4258,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         move()
     }
 
-
     /// The season count for the title you rest on (and the next two, so
     /// stepping right finds them ready) — then the box's text takes it.
     private var infoLoading: Task<Void, Never>?
@@ -4549,7 +4533,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-
     var rowHeaders: [String: FixedFocusRowHeader] = [:] {
         didSet {
             guard rowHeaders != oldValue, isViewLoaded else { return }
@@ -4574,7 +4557,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             : FixedFocusHeaderButton.gapBelow
         return FixedFocusHeaderButton.height + below - FixedFocusMetrics.titleHeight
     }
-
 
     /// The billboard's overlay (see `FixedFocusRows.billboardOverlay`).
     private var overlayHost: UIHostingController<AnyView>?
@@ -6557,7 +6539,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     func applyAccessory() { accessory?.view.alpha = isFocusRow ? 1 : 0 }
 
-
     private func placeAccessory() {
         if let host = accessory?.view {
             // Its own line: under the name, centred in the extra room (above
@@ -6731,7 +6712,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
     }
 
-
     /// The name's size (the next row's, on the billboard: smaller).
     var titleScale: CGFloat = 1 {
         didSet {
@@ -6815,7 +6795,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         contentView.bringSubviewToFront(titleHolder)
         contentView.bringSubviewToFront(headerBlock)
 
-
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -6882,8 +6861,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private var stage: StagePictureView?
     /// A collection row's panel (see `FixedFocusPanelView`).
     private var panel: FixedFocusPanelView?
-
-
 
     func showStage(_ item: MetaItem, direction: CGFloat, animated: Bool) {
         // Full screen: TMDB's ORIGINAL file, whatever size the pick came
@@ -7291,8 +7268,6 @@ extension UIView {
     }
 }
 
-
-
 /// THE way into Details, from everywhere (billboard, cards, Search, folders,
 /// More Like This). Nothing shown before it's final; every move is Core
 /// Animation (played by the render server — the main thread can't make it
@@ -7366,7 +7341,6 @@ final class DetailTransition {
     static let ringAfter: Double = 1.5
     static let giveUp: Double = 8
 
-    static let settleCurve = CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.2, 1)
     static let inOut = CAMediaTimingFunction(name: .easeInEaseOut)
     static let out = CAMediaTimingFunction(name: .easeOut)
 
@@ -7545,7 +7519,6 @@ final class DetailTransition {
             busy = false
         }
     }
-
 
     /// FROM THE BILLBOARD, IN PLACE, in two phases on the move spring (0.35 s).
     /// Out (`BillboardOpening`): the top bar, the peek and the dots move
@@ -8885,7 +8858,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                                onHeld: { [weak self] in self?.setHeld($0) })
     }
 
-
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
                    progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false) {
         itemIndex = index
@@ -9599,7 +9571,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     }
 }
 
-
 /// The poster row's layout: every position computed exactly — title i at
 /// `inset + i × pitch`, everything after the wide (focused) title shifted
 /// by its extra width. (UIKit's flow layout spread the posters out as soon
@@ -9668,7 +9639,6 @@ final class FixedFocusStripLayout: UICollectionViewLayout {
         return a
     }
 }
-
 
 /// The row list's layout: no scrolling — every row placed around the
 /// focused one. The focused row at the fixed spot; the row above so its
@@ -9910,9 +9880,6 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     }
 }
 
-
-
-
 final class FixedFocusPanelView: UIView {
     /// In the row cell: around the name, the tiles and the info under the
     /// box, from a little left of the box almost to the right edge.
@@ -10116,7 +10083,6 @@ final class FixedFocusProgressView: UIView {
     }
 }
 
-
 /// The Left/Right and Up/Down curves (Render Lab → Motion). All through
 /// `UIView.animate` — the only animation collection views follow for their
 /// cells' size changes.
@@ -10167,10 +10133,4 @@ enum FixedFocusMotion {
         run(duration: Motion.moveDuration, animations: animations, completion: { _ in completion() })
     }
 }
-
-
-
-
-
-
 

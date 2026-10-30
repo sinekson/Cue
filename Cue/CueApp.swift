@@ -356,7 +356,6 @@ struct RootView: View {
         }
     }
 
-    private var onHomeLikeTab: Bool { AppTab(rawValue: selectedTab)?.isHomeLike ?? false }
     // Persisted here (not inside HomeView) so switching tabs and coming back
     // doesn't rebuild it and re-trigger the catalog load / loading spinner.
     @StateObject private var homeViewModel = HomeViewModel()
@@ -2043,7 +2042,6 @@ struct RootView: View {
         Task { await resumeResolved(progress, fromBeginning: fromBeginning) }
     }
 
-
     /// Continue Watching resume. TMDB-sourced items are stored as `tmdb:<n>`
     /// (and episodes as `tmdb:<n>:<s>:<e>`), but Cinemeta and Torrentio only
     /// speak IMDb `tt` ids — so resuming one directly found no metadata and no
@@ -2177,7 +2175,6 @@ struct RootView: View {
     }
 }
 
-
 // NOTE: intentionally NOT #if DEBUG — the call sites above are unconditional.
 /// Dev: `-focusLog` logs every focus update and every FAILED move (the focus
 /// engine found no candidate) app-wide. Sim key delivery is flaky and
@@ -2223,7 +2220,6 @@ enum FocusTrace {
     }
 }
 // (end -focusLog tracer)
-
 
 // MARK: - Launch (docs/LOADING-PLAN.md §4)
 

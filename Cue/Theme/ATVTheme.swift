@@ -27,7 +27,6 @@ extension View {
 /// lower-middle of the screen (the flat `palette.background` used to leave a
 /// visible hard line where the hero band met the lighter graphite stage).
 enum ATVStage {
-    static let blend = Color(hex: 0x1E2126)
 }
 
 /// Settings → Appearance → Background, Dynamic (true): Home, Movies and

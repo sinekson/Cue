@@ -270,16 +270,6 @@ enum TMDBService {
         capped(&seasonEpisodeCache, limit: fatCacheLimit)
         seasonEpisodeCache[key] = value
     }
-    private static func cachedEpisodeCast(_ key: String) -> [CastMember]? {
-        cacheLock.lock(); defer { cacheLock.unlock() }
-        return episodeCastCache[key]
-    }
-    private static func storeEpisodeCast(_ value: [CastMember], for key: String) {
-        cacheLock.lock(); defer { cacheLock.unlock() }
-        _ = cachePurgeObserver
-        capped(&episodeCastCache, limit: fatCacheLimit)
-        episodeCastCache[key] = value
-    }
     private static func cachedFind(_ key: String) -> (Int, Bool)? {
         cacheLock.lock(); defer { cacheLock.unlock() }
         return findCache[key]
@@ -651,34 +641,7 @@ enum TMDBService {
         }
     }
 
-    /// TMDB has no network SEARCH endpoint — only lookup by id (matches
-    /// Android, which requires the id and fetches the name for confirmation).
-    static func networkName(id: Int) async -> String? {
-        struct Response: Decodable { let name: String? }
-        return (try? await get("/network/\(id)") as Response)?.name
-    }
-
     struct BrandInfo { let name: String; let logoURL: String? }
-
-    /// Network name + logo (for Community Collections tiles — official HQ art,
-    /// fetched live so it's never stale even if TMDB reshuffles a logo).
-    /// Widest logo variant (ratio ≥ 1.5) from a company/network's alternative
-    /// logos. Some brands' PRIMARY mark is squarish (Warner Bros' shield,
-    /// ratio ~1.1), which lands a mismatched square tile in an otherwise
-    /// landscape row — but TMDB usually also hosts the wide wordmark banner
-    /// (WB's is 1280×331). Highest-resolution wide variant wins; nil when the
-    /// brand has no wide logo at all.
-    static func brandWideLogo(id: Int, isNetwork: Bool) async -> String? {
-        struct ImagesResponse: Decodable { let logos: [Logo]? }
-        struct Logo: Decodable { let file_path: String?; let aspect_ratio: Double?; let width: Int? }
-        let path = isNetwork ? "/network/\(id)/images" : "/company/\(id)/images"
-        guard let body: ImagesResponse = try? await get(path, query: [:]) else { return nil }
-        return (body.logos ?? [])
-            .filter { ($0.aspect_ratio ?? 0) >= 1.5 }
-            .sorted { ($0.width ?? 0) > ($1.width ?? 0) }
-            .first
-            .flatMap { imageURL($0.file_path, size: "w500") }
-    }
 
     /// A title's picture for the billboard and Details: TMDB's main backdrop
     /// (TMDB's own choice, by votes), the original file. (Tried: one of
@@ -693,45 +656,6 @@ enum TMDBService {
               let file = body.backdrop_path
         else { return nil }
         return imageURL(file, size: "original")
-    }
-
-    static func networkBrand(id: Int) async -> BrandInfo? {
-        struct Response: Decodable { let name: String?; let logo_path: String? }
-        guard let body: Response = try? await get("/network/\(id)"), let name = body.name else { return nil }
-        return BrandInfo(name: name, logoURL: imageURL(body.logo_path, size: "w500"))
-    }
-
-    /// Company name + logo, same purpose as `networkBrand` for studios.
-    static func companyBrand(id: Int) async -> BrandInfo? {
-        struct Response: Decodable { let name: String?; let logo_path: String? }
-        guard let body: Response = try? await get("/company/\(id)"), let name = body.name else { return nil }
-        return BrandInfo(name: name, logoURL: imageURL(body.logo_path, size: "w500"))
-    }
-
-    static func collectionName(id: Int, language: String) async -> String? {
-        struct Response: Decodable { let name: String? }
-        return (try? await get("/collection/\(id)", query: ["language": language]) as Response)?.name
-    }
-
-    static func listName(id: Int, language: String) async -> String? {
-        struct Response: Decodable { let name: String? }
-        return (try? await get("/list/\(id)", query: ["language": language]) as Response)?.name
-    }
-
-    /// Parse a bare numeric id, or the id embedded in a themoviedb.org URL
-    /// (`/list/123-slug`, `/collection/456-slug`) — mirrors the Android app's
-    /// tolerant input so pasting either a URL or a plain id works.
-    static func parseTMDBID(from input: String) -> Int? {
-        let trimmed = input.trimmingCharacters(in: .whitespaces)
-        if let n = Int(trimmed) { return n }
-        guard let range = trimmed.range(of: #"(?:list|collection)/(\d+)"#, options: .regularExpression) else {
-            // Fall back to the first run of digits anywhere in the string.
-            let digits = trimmed.prefix { $0.isNumber }
-            return digits.isEmpty ? nil : Int(digits)
-        }
-        let match = String(trimmed[range])
-        let digits = match.drop { !$0.isNumber }
-        return Int(digits)
     }
 
     // MARK: - Collection source resolution
@@ -1931,55 +1855,16 @@ enum TMDBService {
         return out
     }
 
-    static func episodeCast(imdbID: String, type: String, episode: MetaVideo) async -> [CastMember] {
-        guard let season = episode.originalSeason ?? episode.season,
-              let number = episode.originalEpisode ?? episode.episode else { return [] }
-        let cacheKey = "\(type):\(imdbID):s\(season):e\(number)"
-        if let cached = cachedEpisodeCast(cacheKey) { return cached }
-        guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type), !isMovie else {
-            if !lastFindFailed(imdbID) { storeEpisodeCast([], for: cacheKey) }
-            return []
-        }
-        struct CreditsResponse: Decodable {
-            struct CastDTO: Decodable {
-                let id: Int
-                let name: String
-                let character: String?
-                let profile_path: String?
-            }
-            let cast: [CastDTO]?
-        }
-        guard let body: CreditsResponse = try? await get(
-            "/tv/\(tmdbID)/season/\(season)/episode/\(number)/credits"
-        ) else {
-            return []   // transient failure — not cached, retried next time
-        }
-        let cast = (body.cast ?? []).prefix(12).map {
-            CastMember(
-                id: $0.id,
-                name: $0.name,
-                character: $0.character,
-                profileURL: imageURL($0.profile_path, size: "w300")
-            )
-        }
-        storeEpisodeCast(cast, for: cacheKey)
-        return cast
-    }
-
     /// The parts of a TMDB collection as MetaItems (for the "belongs to" row).
     static func collectionItems(id: Int, language: String = preferredLanguage) async -> [MetaItem] {
         guard let raw = try? await resolveCollection(id: id, language: language) else { return [] }
         return await mapToMetaItems(raw)
     }
 
-    /// Whether a genre NAME is known for movies / TV (so callers can decide which
-    /// media type(s) to query for a Categories genre).
-    static func hasMovieGenre(_ name: String) -> Bool { movieGenres.values.contains(name) }
     /// A genre by its name, as TMDB has it for films / shows (nil: none).
     static func genre(named name: String, isMovie: Bool) -> Genre? {
         (isMovie ? movieGenres : tvGenres).first { $0.value == name }.map { Genre(id: $0.key, name: $0.value) }
     }
-    static func hasTVGenre(_ name: String) -> Bool { tvGenres.values.contains(name) }
 
     // MARK: Browse pages (genre, tag, studio, network, person)
 

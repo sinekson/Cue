@@ -24,27 +24,9 @@ enum CuePrimitives {
     static let neutral825 = Color(hex: 0x242424)
     static let neutral800 = Color(hex: 0x2D2D2D)
     static let neutral750 = Color(hex: 0x333333)
-    static let neutral700 = Color(hex: 0x4D4D4D)
     static let neutral200 = Color(hex: 0xE0E0E0)
     static let neutral100 = Color(hex: 0xF5F5F5)
-    static let red500 = Color(hex: 0xE53935)
-    static let red600 = Color(hex: 0xC62828)
     static let red300 = Color(hex: 0xFF5252)
-    static let blue500 = Color(hex: 0x1E88E5)
-    static let blue700 = Color(hex: 0x1565C0)
-    static let blue300 = Color(hex: 0x42A5F5)
-    static let violet500 = Color(hex: 0x8E24AA)
-    static let violet700 = Color(hex: 0x6A1B9A)
-    static let violet300 = Color(hex: 0xAB47BC)
-    static let green500 = Color(hex: 0x43A047)
-    static let green700 = Color(hex: 0x2E7D32)
-    static let green300 = Color(hex: 0x66BB6A)
-    static let amber500 = Color(hex: 0xFB8C00)
-    static let amber700 = Color(hex: 0xEF6C00)
-    static let amber300 = Color(hex: 0xFFA726)
-    static let rose500 = Color(hex: 0xD81B60)
-    static let rose700 = Color(hex: 0xC2185B)
-    static let rose300 = Color(hex: 0xEC407A)
     static let rating = Color(hex: 0xFFD700)
     static let torrent = Color(hex: 0x7E57C2)
     static let imdb = Color(hex: 0xF5C518)
@@ -65,11 +47,9 @@ struct ThemePalette: Identifiable, Equatable {
     var backgroundElevated: Color = CuePrimitives.neutral900
     var backgroundCard: Color = CuePrimitives.neutral825
     var surface: Color = CuePrimitives.neutral875
-    var surfaceVariant: Color = CuePrimitives.neutral800
     var panel: Color = CuePrimitives.neutral900
     var overlay: Color = Color.black.opacity(0.85)
     var field: Color = CuePrimitives.neutral850
-    var playerOverlay: Color = Color.black.opacity(0.8)
 
     // Stored (not computed) so the Apple TV theme's light palette can swap
     // them for dark-on-light text; every palette in CueThemes keeps these
@@ -86,10 +66,6 @@ struct ThemePalette: Identifiable, Equatable {
     /// the normal light text.
     var hasLightAccent: Bool { onSecondary != CuePrimitives.white }
 
-    /// Ink for a translucent accent TINT — the "selected" chip fill
-    /// (`secondary.opacity(~0.28)`), NOT the solid accent focus fill (which
-    /// uses `onSecondary` directly).
-    var onAccentTint: Color { hasLightAccent ? onSecondary : textPrimary }
 }
 
 /// The app's single palette: neutral white, no accent colour.
@@ -155,10 +131,6 @@ final class ThemeManager: ObservableObject {
 
     /// The one palette used across the app: neutral, no accent colour.
     var palette: ThemePalette { CueThemes.white }
-
-    /// The tone full-bleed hero/backdrop scrims fade toward — the stage's
-    /// graphite, so the hero band ends without a seam.
-    var stageBlend: Color { ATVStage.blend }
 
     /// Written into the synced preferences blob so it keeps its shape; the
     /// values are the fixed look, and nothing reads them back.

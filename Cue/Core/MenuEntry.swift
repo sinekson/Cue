@@ -184,16 +184,6 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
         present(request)
     }
 
-    /// A dropdown: `entries` in a panel under `anchor` (window points), opened
-    /// by Select on a control — not a hold. `onHeld`: the control while its
-    /// list is open (true) and back (false).
-    func openDropdown(_ entries: [MenuEntry], below anchor: CGRect, onHeld: ((Bool) -> Void)? = nil) {
-        install()
-        var request = HoldMenuRequest(entries: entries, anchor: anchor, onHeld: onHeld)
-        request.below = true
-        present(request)
-    }
-
     /// The menu, over whatever is in front.
     private func present(_ request: HoldMenuRequest) {
         guard let window else { return }

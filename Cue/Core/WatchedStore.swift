@@ -166,12 +166,6 @@ final class WatchedStore: ObservableObject {
     /// push (see `mark(fromPlayback:)`); bounded by age, so it never grows.
     private var finishedByPlayback: [String: Date] = [:]
 
-    func wasFinishedByPlayback(_ key: String, within seconds: TimeInterval = 120) -> Bool {
-        let cutoff = Date().addingTimeInterval(-seconds)
-        finishedByPlayback = finishedByPlayback.filter { $0.value >= cutoff }
-        return finishedByPlayback[key] != nil
-    }
-
     func toggleMovie(_ meta: MetaItem) {
         if isWatched(contentID: meta.id) {
             remove(contentID: meta.id, season: nil, episode: nil)
@@ -415,7 +409,6 @@ final class WatchedStore: ObservableObject {
         }
     }
 }
-
 
 /// Serializes watched-history writes off the main actor. Per storage KEY, so a
 /// burst of writes across profiles (an account switch) can't drop one profile's

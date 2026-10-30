@@ -23,7 +23,6 @@ enum SettingsMetrics {
     /// 65 pt capsules, 80 pt apart, 38 pt text (the name medium, the value
     /// regular) 30 pt in from the ends, the chevron 36 pt from the end.
     static let rowHeight: CGFloat = 65
-    static var rowRadius: CGFloat { rowHeight / 2 }
     /// A row's text from its ends. Labels outside the rows line up with it.
     static let rowInset: CGFloat = 30
     static var labelIndent: CGFloat { rowInset }
@@ -81,9 +80,6 @@ enum SettingsMetrics {
     /// The title's top: Apple's (56) lowered well clear of our top bar.
     static let titleTop: CGFloat = 121
 
-    /// The focused platter: the top bar's bright glass highlight
-    /// (`GlassHighlight`); this, where a plain fill is needed.
-    static let focusedFill = FlatControl.focus
     static let restingFill = FlatControl.restSubtle
     static let focusedText = Color.black
     /// The app's text levels (`FixedFocusText`): names and titles, values

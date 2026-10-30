@@ -8,7 +8,6 @@ private enum LibraryFilter: String, CaseIterable {
 
 struct LibraryView: View {
     @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var posterLayout: HomeCatalogSettingsStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progressStore: ProgressStore
 

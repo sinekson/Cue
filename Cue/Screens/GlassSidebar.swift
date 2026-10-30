@@ -185,9 +185,6 @@ struct GlassSidebar: View {
     /// The highlight gliding between the tabs.
     @Namespace private var navHighlight
 
-    /// Top navigation geometry (absolute, from the screen edges). The
-    /// avatar's right edge mirrors Home's left content margin.
-    static let topBarInset: CGFloat = 84
     static let topBarTop: CGFloat = 40
     /// Height of the top navigation's items (the standard glass control).
     static let topBarItemHeight: CGFloat = GlassPill.itemHeight

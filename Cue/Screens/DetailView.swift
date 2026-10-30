@@ -445,15 +445,6 @@ final class DetailViewModel: ObservableObject {
         if !extras.isEmpty { episodeExtras[season] = extras }
     }
 
-    func loadCast(for episode: MetaVideo) async {
-        guard meta.isSeries, episodeCasts[episode.id] == nil, !loadingEpisodeCast.contains(episode.id) else { return }
-        loadingEpisodeCast.insert(episode.id)
-        defer { loadingEpisodeCast.remove(episode.id) }
-        let cast = await TMDBService.episodeCast(imdbID: meta.id, type: meta.type, episode: episode)
-        // A cancelled cell task (scrolled away / page dismissed) must not
-        // publish — each insert re-renders the whole page.
-        if !Task.isCancelled, !cast.isEmpty { episodeCasts[episode.id] = cast }
-    }
 }
 
 struct DetailView: View {
@@ -1596,7 +1587,6 @@ struct DetailActionButton: View {
         focusLit = focused
     }
 
-    static let paintDelay = Duration.milliseconds(50)
     /// The look is `ActionFace`: a frosted pill at rest, a white capsule
     /// when focused. (Tried and dropped: glass; a dark fill at rest —
     /// grey, black, black with a light edge; nothing at rest.)

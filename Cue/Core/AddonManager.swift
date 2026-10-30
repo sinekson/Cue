@@ -466,21 +466,6 @@ final class AddonManager: ObservableObject {
         notifyLocalChange()
     }
 
-    /// Reorder a single addon one slot up/down (the APK's row arrows).
-    func moveUp(_ addon: InstalledAddon) {
-        guard let i = addons.firstIndex(where: { $0.id == addon.id }), i > 0 else { return }
-        addons.swapAt(i, i - 1)
-        save()
-        notifyLocalChange()
-    }
-
-    func moveDown(_ addon: InstalledAddon) {
-        guard let i = addons.firstIndex(where: { $0.id == addon.id }), i < addons.count - 1 else { return }
-        addons.swapAt(i, i + 1)
-        save()
-        notifyLocalChange()
-    }
-
     /// Enable/disable an addon in place (stays installed, contributes nothing
     /// while off).
     func setEnabled(_ addon: InstalledAddon, _ enabled: Bool) {
@@ -488,45 +473,6 @@ final class AddonManager: ObservableObject {
         addons[i].enabled = enabled
         save()
         notifyLocalChange()
-    }
-
-    /// Install every manifest URL in an exported setup blob. Accepts one URL per
-    /// line, comma-separated lists, and pasted text that contains manifest URLs.
-    @discardableResult
-    func importManifestURLs(from text: String) async -> (installed: Int, failed: Int) {
-        let urls = Self.extractManifestURLs(from: text)
-        guard !urls.isEmpty else { return (0, 0) }
-
-        var installed = 0
-        var failed = 0
-        for url in urls {
-            do {
-                try await install(manifestURL: url)
-                installed += 1
-            } catch {
-                failed += 1
-            }
-        }
-        return (installed, failed)
-    }
-
-    var exportedManifestList: String {
-        addons.map(\.manifestURL).joined(separator: "\n")
-    }
-
-    private static func extractManifestURLs(from text: String) -> [String] {
-        let pattern = #"https?://[^\s,;]+(?:manifest\.json)?"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, range: range)
-        var seen = Set<String>()
-        return matches.compactMap { match in
-            guard let r = Range(match.range, in: text) else { return nil }
-            let normalized = normalizeManifestURL(String(text[r]))
-            guard !seen.contains(normalized) else { return nil }
-            seen.insert(normalized)
-            return normalized
-        }
     }
 
     struct HealthResult: Identifiable, Equatable {

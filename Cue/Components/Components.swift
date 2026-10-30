@@ -864,9 +864,6 @@ struct ProgressStrip: View {
 enum AppGlass {
     static let focusTint = Color.white.opacity(0.92)
     static let currentTint = Color.white.opacity(0.18)
-    /// Glass that is an item itself (the billboard's dots): light enough to
-    /// read on any picture, clearly below the focus highlight.
-    static let idleTint = Color.white.opacity(0.4)
     /// (Nothing in the UI is pure white — `FixedFocusText.primary`.)
     static let text = Color.white.opacity(FixedFocusText.primary)
     static let textMuted = Color.white.opacity(FixedFocusText.secondary)

@@ -639,19 +639,7 @@ final class CollectionsStore: ObservableObject {
         notifyLocalChange()
     }
 
-    func generateID() -> String { UUID().uuidString }
-
     // MARK: Sync plumbing
-
-    /// The JSON array blob pushed to `sync_push_collections`. Exports the whole
-    /// LIBRARY, not the visible subset — otherwise hiding a collection on one
-    /// profile would delete it from the account for everyone.
-    func exportJSON() -> String {
-        guard !library.isEmpty,
-              let data = try? JSONEncoder().encode(library),
-              let json = String(data: data, encoding: .utf8) else { return "[]" }
-        return json
-    }
 
     /// Value snapshot of the whole library for callers that encode it
     /// OFF the main actor (the sync push): the copy is cheap (CoW), the
@@ -778,18 +766,6 @@ final class CollectionsStore: ObservableObject {
     /// Whether the collection is on ACCOUNT-WIDE (the catalog-settings switch).
     func isGloballyVisible(_ id: String) -> Bool { !globalHiddenIDs.contains(id) }
 
-    /// Show/hide a whole collection for EVERY profile.
-    func setGloballyVisible(_ visible: Bool, id: String) {
-        let changed = visible ? globalHiddenIDs.remove(id) != nil
-                              : globalHiddenIDs.insert(id).inserted
-        guard changed else { return }
-        saveLibrary()
-        saveHidden()
-        recomputeVisible()
-        guard !suppressChange else { return }
-        onLocalChange?()      // account-wide → push the shared blob
-    }
-
     /// Show/hide one collection on the ACTIVE profile. The collection stays in
     /// the account-wide library either way.
     func setVisible(_ visible: Bool, id: String) {
@@ -838,18 +814,6 @@ final class CollectionsStore: ObservableObject {
         recomputeVisible()
         guard !suppressChange else { return }
         onVisibilityChange?()
-    }
-
-    /// Show/hide a folder for the WHOLE account (catalog settings default).
-    func setFolderGloballyVisible(_ visible: Bool, id: String) {
-        let changed = visible ? globalHiddenFolderIDs.remove(id) != nil
-                              : globalHiddenFolderIDs.insert(id).inserted
-        guard changed else { return }
-        saveLibrary()          // global set rides with the shared library
-        saveHidden()
-        recomputeVisible()
-        guard !suppressChange else { return }
-        onLocalChange?()       // account-wide → push the shared blob
     }
 
     private func recomputeVisible() {

@@ -20,12 +20,6 @@ enum TitleBlock {
     static let ratingsHeight: CGFloat = 36
     static let ratingsToDescription: CGFloat = 20
 
-    /// The description: at most `descriptionLines`, in a FIXED room — the
-    /// meta line and badges below sit at fixed spots (an anchor); a short
-    /// text leaves room between it and the meta line.
-    static let descriptionSize: CGFloat = 26
-    static let descriptionOpacity: Double = 0.82
-    static let descriptionLineSpacing: CGFloat = 6
     static let descriptionWidth: CGFloat = 920
     static let descriptionLines = 5
     /// One line at `descriptionSize` with its spacing.
@@ -33,7 +27,6 @@ enum TitleBlock {
     static var descriptionMaxHeight: CGFloat { CGFloat(descriptionLines) * descriptionLineHeight }
     static let descriptionToMeta: CGFloat = 20
 
-    static let metaSize: CGFloat = 25
     static let metaHeight: CGFloat = 34
     static let metaToBadges: CGFloat = 10
     /// The badges row (outlined chips).
@@ -49,9 +42,6 @@ enum TitleBlock {
     static func hintY(screenHeight: CGFloat) -> CGFloat {
         screenHeight - hintBottomInset - Spotlight.labelHeight
     }
-    /// The "▴ Previous" hint's top: as far from the top edge as the bottom
-    /// one is from the bottom.
-    static let topHintY: CGFloat = hintBottomInset
     /// THE anchor: the logo slot's top, this far above the "▾" hint (where
     /// it was with the longer block, so the logo didn't move).
     static let logoTopAboveHint: CGFloat = 713
@@ -162,17 +152,6 @@ enum TitleBlock {
         return seasons == 1 ? "1 Season" : nil
     }
 
-    /// First 4-digit year found in a date/string (for the year-only display).
-    static func firstYear(in text: String) -> String? {
-        let digits = Array(text)
-        for i in 0...(max(0, digits.count - 4)) where i + 4 <= digits.count {
-            let slice = String(digits[i..<i + 4])
-            if slice.allSatisfy(\.isNumber), let year = Int(slice), (1900...2100).contains(year) {
-                return slice
-            }
-        }
-        return nil
-    }
 }
 
 /// The quiet signpost to the next (or previous) section — the SAME on
@@ -296,14 +275,6 @@ final class ModeSwap: ObservableObject {
     static let depthScale: CGFloat = 1.06
     /// The page may load and re-render after this.
     static let swapSettle: Double = 0.8
-
-    /// The top bar's away/back move (trailers, the sidebar).
-    static let swapDuration: Double = 0.5
-    static let swapControlPoints = (CGPoint(x: 0.35, y: 0), CGPoint(x: 0.15, y: 1))
-    static var swap: Animation {
-        .timingCurve(swapControlPoints.0.x, swapControlPoints.0.y,
-                     swapControlPoints.1.x, swapControlPoints.1.y, duration: swapDuration)
-    }
 
     /// The backdrop at a depth progress `p` (0 = the billboard, 1 = Details).
     static func depthScale(_ p: CGFloat) -> CGFloat { 1 + (depthScale - 1) * p }

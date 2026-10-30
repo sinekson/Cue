@@ -420,8 +420,6 @@ struct PlayerSettings: Codable, Equatable {
     static let timeoutUnlimited = Int.max
     /// Selectable countdown values, matching STREAM_AUTOPLAY_TIMEOUT_VALUES.
     static let timeoutValues: [Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, timeoutUnlimited]
-    /// Selectable auto-play-trailer delays (seconds).
-    static let trailerDelayValues: [Int] = [0, 1, 2, 3, 5]
     /// Selectable Up Next lead times (seconds before end) for chapter-less files.
     static let upNextLeadValues: [Int] = [10, 15, 20, 30, 45, 60, 90, 120, 180]
     /// Subtitle color presets (hex, display name) — no color picker on tvOS.

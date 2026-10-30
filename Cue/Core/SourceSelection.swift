@@ -163,10 +163,6 @@ enum SourceSelection {
         dedupe(byAddon(entries, perTier: perTier).flatMap(\.entries))
     }
 
-    static func selectUnfiltered(_ entries: [StreamEntry], cap: Int) -> [StreamEntry] {
-        dedupe(byAddonUnfiltered(entries, cap: cap).flatMap(\.entries))
-    }
-
     private static func dedupe(_ entries: [StreamEntry]) -> [StreamEntry] {
         var seen = Set<String>()
         return entries.filter { entry in
