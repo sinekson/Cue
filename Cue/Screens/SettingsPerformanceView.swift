@@ -124,11 +124,9 @@ private struct PerfRowLabel<Accessory: View>: View {
 }
 
 
-/// Settings → Developer, first half (Render Lab): the launch numbers and the
-/// FPS overlay.
-struct RenderLabSettings: View {
+/// Settings → Developer, first half: the FPS overlay.
+struct MeasureSettings: View {
     @ObservedObject private var store = PerformanceSettingsStore.shared
-    @ObservedObject private var probe = RenderProbe.shared
 
     private var s: Binding<PerformanceSettingsStore.Settings> {
         Binding(get: { store.settings }, set: { store.settings = $0 })
@@ -136,15 +134,6 @@ struct RenderLabSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: CueSpacing.xl) {
-            SettingsGroupCard(title: "Home layout", subtitle: "Switch tabs to refresh Home.") {
-                PerfToggleRow(
-                    icon: "gauge.with.dots.needle.67percent",
-                    title: "Launch: show numbers",
-                    subtitle: "The launch screen lists what it loaded and how long each step took (cold starts).",
-                    isOn: Binding(get: { probe.flags.launchNumbers }, set: { probe.flags.launchNumbers = $0 })
-                )
-            }
-
             SettingsGroupCard(title: "Measure", subtitle: "Live frame rate over the whole app") {
                 PerfToggleRow(
                     icon: "speedometer",

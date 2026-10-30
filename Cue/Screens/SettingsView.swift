@@ -67,8 +67,7 @@ struct SettingsCategoryPane: View {
     }
 }
 
-/// Settings → Developer: Render Lab (the design's switches and the frame
-/// rate), then the performance switches — one page.
+/// Settings → Developer: the frame rate, then the diagnostics — one page.
 struct DeveloperSettingsDetail: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
@@ -77,7 +76,7 @@ struct DeveloperSettingsDetail: View {
 
     var body: some View {
         DetailScaffold(title: SettingsCategory.developer.title, subtitle: "") {
-            RenderLabSettings()
+            MeasureSettings()
             PerformanceSettings()
             SettingsGroupCard(title: "Add-ons") {
                 Button { showHealth = true } label: {

@@ -2227,8 +2227,8 @@ enum FocusTrace {
 /// one-time artwork — and Home is built under it. That ends when it's done (at least `minimum` shown), or at `cap`
 /// — never waiting on the network: what isn't on disk loads as usual
 /// afterwards. Then the curtain fades into Home; input
-/// comes back with the fade (`lift`). Every step reports a count and its time
-/// (Render Lab → Launch: show numbers).
+/// comes back with the fade (`lift`). Every step logs a count and its time to
+/// the probe.
 /// With profiles to choose from, "Who's watching?" (`ProfileGate`) is the
 /// curtain from its first frame: the preload runs under it for the last
 /// profile (focus starts there); another one picked, the same steps again for
@@ -2252,7 +2252,6 @@ final class LaunchPreloader: ObservableObject {
     /// Coming back the system's play goes at once (the app's frame is
     /// ready): ours holds as long as the two together at a cold start.
     static let resumeHold: Duration = .seconds(0.95)
-    @Published private(set) var lines: [String] = []
 
     enum GateMode { case launch, resume, topBar }
     /// "Who's watching?" on the curtain.
@@ -2311,10 +2310,6 @@ final class LaunchPreloader: ObservableObject {
         line(String(format: "Total     %.2f s  (%@)", elapsed, note))
         ready = true
         if gate == nil { lift() }
-        Task {
-            try? await Task.sleep(for: .seconds(Self.numbersLinger))
-            numbersShown = false
-        }
     }
 
     /// Returns once the curtain has lifted (at once if it has), or the
@@ -2413,13 +2408,8 @@ final class LaunchPreloader: ObservableObject {
     }
 
     private func line(_ text: String) {
-        lines.append(text)
         PlayerProbe.event("launch", text)
     }
-
-    /// The numbers stay this long after Home appears (to read them).
-    static let numbersLinger: Double = 6
-    @Published private(set) var numbersShown = true
 
     private func steps(firstLaunch: Bool, generation current: Int) async {
         guard let home, let addonManager else { return }
@@ -2527,12 +2517,10 @@ final class LaunchPreloader: ObservableObject {
     }
 }
 
-/// The launch curtain (the background, or the gate on it — `ProfileGate`) and
-/// — Render Lab → Launch: show numbers — what was loaded and how long it took.
+/// The launch curtain (the background, or the gate on it — `ProfileGate`).
 struct LaunchCurtain: View {
     @ObservedObject private var launch = LaunchPreloader.shared
     @EnvironmentObject private var profiles: ProfileStore
-    @ObservedObject private var probe = RenderProbe.shared
     /// The gate's avatar flying to the top bar: the background dissolves
     /// off Home with it.
     @State private var dissolving = false
@@ -2568,27 +2556,8 @@ struct LaunchCurtain: View {
                 .animation(Motion.fade, value: launch.playing)
                 .transition(.opacity)
             }
-            // The numbers: on the curtain, and a little after on Home (to read).
-            if probe.flags.launchNumbers, launch.numbersShown, !launch.lines.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(launch.lines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                    }
-                }
-                .font(.system(size: 20, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.75))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .padding(.leading, 84)
-                .padding(.bottom, 130)
-                .allowsHitTesting(false)
-                .transition(.opacity)
-            }
         }
         .ignoresSafeArea()
-        .animation(.easeOut(duration: 0.3), value: launch.numbersShown)
         .task {
             try? await Task.sleep(for: LaunchPreloader.playHold)
             // The background first: it fades in under the play, never

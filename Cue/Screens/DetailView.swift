@@ -1730,7 +1730,8 @@ struct ActionFace: ViewModifier {
     @Environment(\.actionFaceStill) private var still
     let lit: Bool
     var rest: Color = DetailActionButton.restContent
-    /// At rest on the glass pill; false: nothing behind it (the billboard's Next, a season not shown).
+    /// At rest on the glass pill; false: nothing behind it (the billboard's
+    /// Next, a season not shown).
     var pill = true
     /// The pill as the current one of a set (the row's season): the flat
     /// light grey (`FlatControl.selected`), not the glass.
