@@ -47,15 +47,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
   `-transitionSlowMo` (4×), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
   `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
-- Render Lab (Settings → Performance) holds experiment switches
-  (`PerformanceSettingsStore` / `RenderProbe.shared.flags`). Remove options
-  once a decision is made.
+- Settings → Developer holds experiment switches
+  (`PerformanceSettingsStore`). Remove options once a decision is made.
 
 ## Code map
 
-- `Cue/Screens/HomeView.swift` (~9k lines): UIKit Home (`HomeUIKitView`,
-  `FixedFocusRowsController`, cells), billboard (`FixedFocusBillboardText`),
-  `DetailTransition`.
+- `Cue/Screens/HomeView.swift` (~3k lines): Home's SwiftUI side
+  (`HomeViewModel`, `HomeUIKitView`), billboard (`FixedFocusBillboardText`).
+- `Cue/Screens/FixedFocusRows.swift` (~4k lines): the UIKit rows
+  (`FixedFocusRowsController`, the box, `FixedFocusRowCell`).
+- `Cue/Screens/FixedFocusCards.swift` (~2k lines): the cards, the layouts,
+  `FixedFocusMotion`.
+- `Cue/Screens/DetailTransition.swift` (~1k lines): the way into Details.
 - `Cue/Screens/DetailView.swift`: Details; `DetailPreparer` (data from disk at
   the press) at the end.
 - `Cue/Screens/StagePicture.swift`: billboard/Details picture (`StagePictureView`),
@@ -92,11 +95,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Everything in the page is flat (`FlatControl`). Details' and the
   billboard's buttons (`DetailActionButton`) and Details' season buttons
   (`FixedFocusSeasonFace`) share one face (`ActionFace`): at rest a
-  pill on the top bar's glass (`liquidGlass`, its own edge; the frost —
-  the system's thin material, dark, a 1 pt edge brighter along the top —
-  read too see-through over bright pictures, kept in the code for now:
-  `actionFaceGlass` false; a flat white 16 % lacked contrast; tried: a
-  thicker frost, dark and light; the scope pill's flat look; on the
+  pill on the top bar's glass (`liquidGlass`, its own edge; tried: the
+  frost — the system's thin material, dark, a 1 pt edge brighter along the
+  top — read too see-through over bright pictures; a flat white 16 %
+  lacked contrast; a thicker frost, dark and light; the scope pill's flat look; on the
   billboard, flat raised fills — light grey read as light mode, black
   40 % with an edge and shadow — glass is the look over pictures), content in
   the text's colour; focused: a white capsule (the one pure white), dark content,
@@ -517,21 +519,6 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Never dimmed, in focus or not.
   Before it, **Network & Studios**: a moving-focus row of logos on
   light plates (`logoRowIDs`), Select: their titles.
-- **Details' Cast & Crew**: after More Like This. Moving focus, portraits
-  (2:3, smaller than the posters — seven across, `portraitCard`; many
-  people; tried: the portrait poster's size), name + role under each; creators /
-  director first, then the cast (a show: `aggregate_credits`, most episodes
-  first), about 20; no photo: initials; Select: the person's page; no menu.
-- **Details' About**: the page's last row — a SwiftUI view in the rows
-  (`FixedFocusRows.customRows`), not cards. `DetailAbout`. To read: the
-  summary in a fixed box (560 × 280, 8 lines, "…"; Select: all of it), beside
-  it the facts in three columns — when/how long/rated → who → where from
-  (language, country, original title) → budget/box office, empty ones close
-  up — and one line with every rating (not pressable). Below, where to go:
-  one line per kind, its name on the left — Genres (flat, slightly rounded
-  tags: links, not the season buttons' capsules; TMDB genres → that genre's
-  films or shows, `Route.genre`), later Tags (TMDB keywords, same look),
-  Network & Studios (logos). Fixed height per title.
 - **Browse pages** (Details' genres, tags, studios, networks, cast — one view,
   `TMDBBrowseView`): a kind label (GENRE / TAG / STUDIO / NETWORK / ACTOR…),
   the name, one facts line; a person has a portrait and a 3-line bio, a
@@ -841,7 +828,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   interactive and the search controller's own choice (its keyboard) takes
   focus.
 - **Hold menus**: all are Cue's own `HoldMenu` (not the system's: it ate the
-  next press; tried again as a Render Lab switch — ours kept). Glass
+  next press; tried again as a switch — ours kept). Glass
   panel beside the card, sized as tvOS's context menu (measured): rows
   66 tall, no gaps, 28 pt medium, the icon in front; focused a white
   capsule (round ends — 30 pt corners read rectangular), 2 % larger;
@@ -1324,12 +1311,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`bestKnown`); a studio — its best-known titles (`studioBestKnown`);
   about 20 (`relatedCount`). Fetched with the search (the page swaps in
   whole).
-  TWO ORDERS, to compare on the TV (Render Lab → "Search: Cue's order",
-  `RenderProbe.flags.searchOwnOrder`, on by default — remove the switch
-  once decided):
-  - **TMDB's**, as it comes: Top Results the combined search's first 6;
-    each scope its own search's order.
-  - **Cue's** (`SearchViewModel.ranked`): only names whose start or a
+  ORDER: Cue's, not TMDB's as it comes (decided 2026-10-30):
+  - `SearchViewModel.ranked`: only names whose start or a
     word's starts with what's typed (`matchForm`: lowercased, no
     accents, punctuation a space — "dune part" finds "Dune: Part Two";
     none match, a typo: all), the best known first — fame plus a bonus:
@@ -1341,7 +1324,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
     by that score. Studios: the exact name first, else TMDB's order.
     Limit: TMDB matches whole words, so two letters find titles with that
     word ("di" → Italian titles, not Die Hard) until the third.
-  - **Both**: one studio into Top Results when it's what you typed — the
+  - One studio into Top Results when it's what you typed — the
     name itself first, a name or word starting with it (3 letters on)
     second; none while a title or person has that very name ("dune": the
     films, not a studio called Dune). Led by a person or studio, Top
@@ -1442,6 +1425,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Removed features: cloud library, Plex/Jellyfin, Live TV/M3U, JS plugins,
   in-app debrid/TorrServer, themes/accent palettes, external players,
   Trakt/SIMKL accounts (public Trakt lists stay), Stremio account.
+- Removed from the screen: the launch's numbers (the steps still go to the
+  probe log, `LaunchPreloader.line`).
 - Ask before touching the Nuvio sync.
 - Rejected looks: glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
@@ -1470,7 +1455,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   TMDB page's old Clear Cache and About's (both gone).
 - A collection editor (create and edit Cue's collections) — wanted back,
   in the new Settings look; the old one (`CollectionsSettingsDetail`,
-  old cards) is no longer reachable. Skipped for now: a collection is
+  `CollectionSourcePickerView`, old cards) is deleted: last in commit
+  f29be4c. Skipped for now: a collection is
   treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
   Collections row stays a count with no page (talked over, not built: a
   list as the add-ons', then ready-made presets, then the editor).
