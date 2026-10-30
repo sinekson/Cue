@@ -461,7 +461,7 @@ struct RootView: View {
                     sources(request).transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: sourcePicker.request?.id)
+            .animation(Motion.fade, value: sourcePicker.request?.id)
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -2063,22 +2063,15 @@ struct RootView: View {
         homeLikePath.wrappedValue.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
     }
 
-    /// The source picker's screen: the page dimmed as behind the hold
-    /// menus, the panel popping in on the right.
+    /// The source picker's screen: full screen over the page blurred.
     private func sources(_ request: SourcePicker.Request) -> some View {
-        ZStack {
-            Color.black.opacity(HoldMenu.dimming)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-            SourcePanel(meta: request.meta, video: request.video,
-                        onPlay: { entry, all in
-                sourcePicker.close()
-                play(request.meta, request.video, entry, all, fromStart: request.fromStart)
-            }, onClose: { sourcePicker.close() })
-            .id(request.id)
-            .ignoresSafeArea()
-            .transition(.scale(scale: 0.96, anchor: .trailing).combined(with: .opacity))
-        }
+        SourcePanel(meta: request.meta, video: request.video,
+                    onPlay: { entry, all in
+            sourcePicker.close()
+            play(request.meta, request.video, entry, all, fromStart: request.fromStart)
+        }, onClose: { sourcePicker.close() })
+        .id(request.id)
+        .ignoresSafeArea()
     }
 
     /// Continue Watching hold → "Choose Source": the source picker, through

@@ -47,8 +47,6 @@ struct DetailAbout: View {
     /// Between the title's name above and About's first line.
     static let topGap: CGFloat = 8
 
-    private var columnWidth: CGFloat { ((Self.boxWidth - Self.columnGap) / 2).rounded(.down) }
-
     var body: some View {
         HStack(alignment: .top, spacing: Self.boxGap) {
             genresBox
@@ -90,7 +88,6 @@ struct DetailAbout: View {
     // MARK: Boxes
 
     /// The summary, whole, under its name (as the other columns' parts).
-    /// (Also in Details' Summary panel.)
     var summaryBox: some View {
         Group {
             if let text = meta.description, !text.isEmpty {
@@ -106,11 +103,14 @@ struct DetailAbout: View {
         .frame(width: Self.boxWidth, alignment: .topLeading)
     }
 
-    /// The facts two to a line (an empty one leaves no gap), then every
-    /// rating. (Also beside the summary in Details' Summary panel.)
-    var factsBox: some View {
+    private var factsBox: some View { factsBox(across: 2, width: Self.boxWidth) }
+
+    /// The facts so many to a line (an empty one leaves no gap), then every
+    /// rating. (Also under the summary in Details' About panel.)
+    func factsBox(across: Int, width: CGFloat) -> some View {
         let all = factLines.flatMap { $0 }
-        let rows = stride(from: 0, to: all.count, by: 2).map { Array(all[$0 ..< min($0 + 2, all.count)]) }
+        let rows = stride(from: 0, to: all.count, by: across).map { Array(all[$0 ..< min($0 + across, all.count)]) }
+        let columnWidth = ((width - CGFloat(across - 1) * Self.columnGap) / CGFloat(across)).rounded(.down)
         let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating,
                                                  onDetails: true)
         return VStack(alignment: .leading, spacing: 18) {
@@ -127,7 +127,7 @@ struct DetailAbout: View {
                 }
             }
         }
-        .frame(width: Self.boxWidth, alignment: .topLeading)
+        .frame(width: width, alignment: .topLeading)
     }
 
     /// The genres, then the tags — chips, wrapping, each opening its titles.
@@ -296,57 +296,122 @@ private struct AboutChipStyle: ButtonStyle {
     }
 }
 
-/// Details' Info: the summary in full, in a glass panel over the page (it
-/// floats — glass), About's facts and ratings under it. Select or Back
-/// closes it.
-struct DetailSummaryPanel<Summary: View, Facts: View>: View {
+/// Details' About: full screen, as tvOS Settings' text pages — the page
+/// blurred behind, the name centred at the top, the summary and the facts
+/// and ratings in one column under it, fading out at its foot. Up / Down
+/// scrolls; Select or Back closes it.
+struct DetailSummaryPanel<Facts: View>: View {
     let title: String
     /// The genres, under the name (a page header's subtitle).
     let genres: String
-    /// About's own columns — its size, levels and widths.
-    let summary: Summary
+    let summary: String
     let facts: Facts
     let onClose: () -> Void
     /// Focus comes to it when it opens (over the UIKit rows: Back must close
     /// it, not the page).
     @FocusState private var focused: Bool
+    /// How far the column has scrolled, and its height.
+    @State private var scrolled: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+
+    private var maxScroll: CGFloat {
+        max(0, contentHeight - (SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop) + SummaryPanelMetrics.fade)
+    }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.4).ignoresSafeArea()
+        ZStack(alignment: .top) {
+            FullScreenBlur()
             Button(action: onClose) {
-                VStack(alignment: .leading, spacing: 28) {
-                    // As a row's name (About's in the rows), the genres
-                    // under it as a page header's subtitle.
-                    VStack(alignment: .leading, spacing: 6) {
+                ZStack(alignment: .top) {
+                    Color.clear
+                    VStack(spacing: 6) {
                         Text(title)
-                            .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
+                            .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1)
                         if !genres.isEmpty {
                             Text(genres)
                                 .font(.system(size: 24, weight: .medium))
                                 .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
-                                .fixedSize(horizontal: false, vertical: true)
+                                .lineLimit(1)
                         }
                     }
-                    .frame(width: DetailAbout.boxWidth, alignment: .leading)
-                    // One column, About's width: the summary, then the facts
-                    // and ratings, a little further apart than the facts' lines.
-                    VStack(alignment: .leading, spacing: 28) {
-                        summary
-                        facts
-                    }
+                    .frame(width: 1400)
+                    .padding(.top, SummaryPanelMetrics.titleTop)
+                    column
+                        .padding(.top, SummaryPanelMetrics.columnTop)
                 }
-                .padding(56)
-                .background { Color.clear.liquidGlass(in: RoundedRectangle(cornerRadius: 44, style: .continuous)) }
             }
             .buttonStyle(SummaryPanelStyle())
             .focused($focused)
         }
+        .frame(width: 1920, height: 1080)
+        .ignoresSafeArea()
         .onAppear { focused = true }
+        .onMoveCommand { direction in
+            switch direction {
+            case .down: withAnimation(Motion.move) { scrolled = min(scrolled + SummaryPanelMetrics.step, maxScroll) }
+            case .up: withAnimation(Motion.move) { scrolled = max(scrolled - SummaryPanelMetrics.step, 0) }
+            default: break
+            }
+        }
         .onExitCommand(perform: onClose)
     }
+
+    private var column: some View {
+        Color.clear
+            .frame(width: SummaryPanelMetrics.columnWidth, height: SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop)
+            .overlay(alignment: .top) {
+                VStack(alignment: .leading, spacing: 44) {
+                    Text(summary)
+                        .font(.system(size: SettingsMetrics.descriptionTextSize))
+                        .lineSpacing(9)
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .fixedSize(horizontal: false, vertical: true)
+                    facts
+                }
+                .frame(width: SummaryPanelMetrics.columnWidth, alignment: .leading)
+                .background { GeometryReader { geo in
+                    Color.clear
+                        .onAppear { contentHeight = geo.size.height }
+                        .onChange(of: geo.size.height) { _, height in contentHeight = height }
+                } }
+                .offset(y: -scrolled)
+            }
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [scrolled > 0 ? .clear : .black, .black],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: SummaryPanelMetrics.fade)
+                    Color.black
+                    LinearGradient(colors: [.black, scrolled < maxScroll ? .clear : .black],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: SummaryPanelMetrics.fade)
+                }
+            }
+    }
+}
+
+/// The About panel's measures (off tvOS's own text pages).
+/// Behind the full-screen panels (About, the sources), as tvOS Settings':
+/// the page blurred, darkened a little.
+struct FullScreenBlur: View {
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.regularMaterial)
+                .environment(\.colorScheme, .dark)
+            Color.black.opacity(0.25)
+        }
+    }
+}
+
+enum SummaryPanelMetrics {
+    static let columnWidth: CGFloat = 680
+    static let titleTop: CGFloat = 96
+    static let columnTop: CGFloat = 236
+    static let columnBottom: CGFloat = 1040
+    static let fade: CGFloat = 60
+    static let step: CGFloat = 320
 }
 
 /// The panel draws itself: no focus chrome.

@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// The sources, in a Liquid Glass popup on the right, over the page dimmed
-/// (as a hold menu): the name, the episode, the add-ons' tabs, then the
-/// links (plain rows, the white highlight).
+/// The sources, full screen over the page blurred (as About's panel): the
+/// name and the episode centred, under them in one column the add-ons' tabs,
+/// then the links (plain rows, the white highlight).
 /// Shown over the whole app by `SourcePicker` — from Details (hold Play) and
 /// Continue Watching ("Choose Source"). The links in the add-ons' own order
 /// (an aggregator like AIOStreams has sorted and filtered them), their labels'
@@ -28,17 +28,10 @@ struct SourcePanel: View {
     /// Search Again: where focus starts, until the first link is in.
     @FocusState private var again: Bool
 
-    /// Wide: an aggregator's long lines on as few lines as can be (1240
-    /// was too wide).
-    static let width: CGFloat = 1100
-    /// Not the screen's whole height (too chunky); the list scrolls.
-    private static let height: CGFloat = 900
-    /// The screen margin right of it.
-    private static let margin: CGFloat = 48
-    private static let corner: CGFloat = 44
-    /// The rows' highlight sits this far in from the platter's edge, its
-    /// corners following the platter's (as in the system menu).
-    static let inset: CGFloat = 14
+    /// Wide: an aggregator's long lines on as few lines as can be.
+    private static let width: CGFloat = 1100
+    /// The list fades out over this at the screen's foot.
+    private static let fade: CGFloat = 60
 
     init(meta: MetaItem, video: MetaVideo?, onPlay: @escaping (StreamEntry, [StreamEntry]) -> Void,
          onClose: @escaping () -> Void) {
@@ -58,9 +51,19 @@ struct SourcePanel: View {
     }
 
     var body: some View {
-        panel
-            .padding(.trailing, Self.margin)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        ZStack(alignment: .top) {
+            FullScreenBlur()
+            header
+                .padding(.top, SummaryPanelMetrics.titleTop)
+            VStack(alignment: .leading, spacing: 18) {
+                controls
+                list
+            }
+            .frame(width: Self.width)
+            .padding(.top, SummaryPanelMetrics.columnTop)
+        }
+        .frame(width: 1920, height: 1080)
+        .ignoresSafeArea()
             .focusSection()
             .onExitCommand(perform: onClose)
             // Focus into the panel at once: left where it was (Details' Play,
@@ -90,11 +93,11 @@ struct SourcePanel: View {
             }
     }
 
-    /// As the About panel's: the name as a row's, under it the episode.
+    /// As the About panel's: the name, under it the episode.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(spacing: 6) {
             Text(model.meta.name)
-                .font(.system(size: Spotlight.headerTitleSize, weight: .semibold))
+                .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
                 .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 .lineLimit(1)
             if let video = model.video, !video.seasonEpisodeCode.isEmpty {
@@ -105,7 +108,7 @@ struct SourcePanel: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 22)
+        .frame(width: 1400)
     }
 
     /// Search Again, the add-ons' tabs, and when the list was found.
@@ -151,27 +154,6 @@ struct SourcePanel: View {
         guard let foundAt = model.foundAt else { return "" }
         let minutes = Int(now.timeIntervalSince(foundAt) / 60)
         return minutes < 1 ? "Found just now" : "Found \(minutes) min ago"
-    }
-
-    private var panel: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            header
-            VStack(alignment: .leading, spacing: 18) {
-                controls
-                list
-            }
-        }
-        .padding(.top, 48)
-        .padding(.horizontal, Self.inset)
-        .padding(.bottom, Self.inset)
-        .frame(width: Self.width, height: Self.height)
-        .background {
-            // The platter only: it stays still while the rows scroll over it.
-            let shape = RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-            Color.clear
-                .liquidGlass(in: shape)
-        }
-        .focusSection()
     }
 
     /// An add-on's pill: its name and how many links it gave — a spinner
@@ -222,12 +204,16 @@ struct SourcePanel: View {
                         .focused($focused, equals: entry.id)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.top, 2)
+                .padding(.bottom, Self.fade)
             }
-            // Kept inside the platter: rows scroll under its edges.
-            .clipShape(UnevenRoundedRectangle(
-                bottomLeadingRadius: SourceRowStyle.corner, bottomTrailingRadius: SourceRowStyle.corner,
-                style: .continuous))
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: Self.fade)
+                }
+            }
             .focusSection()
         }
     }

@@ -2517,12 +2517,17 @@ extension HomeUIKitView {
     /// The billboard is paging by itself right now: the setting on, focus
     /// on it (not Details, a menu, or the app in the background).
     var autoPageRunning: Bool {
-        guard let billboard, !autoPageDone else { return false }
+        // (A trailer playing: it moves on at its end.)
+        autoPagePossible && !autoPageDone && !trailer.playing
+    }
+    /// The setting on, a title to go to, nothing over the billboard.
+    /// A trailer's end needs no more: it pages on after moves along the
+    /// buttons too (`autoPageDone`).
+    var autoPagePossible: Bool {
+        guard let billboard else { return false }
         // It stops at the last title (no wrap back to the first).
         return autoPage && billboard.index < billboard.count - 1
             && homeScenePhase == .active && active && detailsOpen.depth == 0
-            // (A trailer playing: it moves on at its end.)
-            && !trailer.playing
     }
     /// A new episode's or season's pick: that season's trailer (TMDB's
     /// season airing then).
@@ -2617,11 +2622,11 @@ extension HomeUIKitView {
         }
         .onAppear {
             trailer.reset()
-            trailer.onEnd = {
-                guard autoPageRunning, let position = billboard else { return }
-                billboardCommand = FixedFocusRowsCommand(
-                    action: .page(rowID: featuredRowID, index: position.index + 1))
-            }
+        }
+        .onChange(of: trailer.endings) { _, _ in
+            guard autoPagePossible, let position = billboard else { return }
+            billboardCommand = FixedFocusRowsCommand(
+                action: .page(rowID: featuredRowID, index: position.index + 1))
         }
         .onChange(of: rows.first(where: { $0.id == featuredRowID })?.items.map(\.id)) { _, _ in
             autoPageDone = false

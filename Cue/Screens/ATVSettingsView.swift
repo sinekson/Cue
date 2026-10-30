@@ -127,9 +127,10 @@ struct ATVSettingsView: View {
         }
         // One handler for the whole screen (a nested one takes every press).
         .onExitCommand {
-            // The row to land on, before its page is back (see `returning`).
-            returning = nav.stack.isEmpty ? nil : openedFrom.last ?? nil
-            if !nav.pop() { onExit() }
+            // The row to land on, before its page is back (see `returning`);
+            // with the pop: alone, it took focus off the page going out, whose
+            // rows scrolled as it left.
+            if !nav.pop(with: { returning = openedFrom.last ?? nil }) { onExit() }
         }
     }
 

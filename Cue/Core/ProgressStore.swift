@@ -424,6 +424,20 @@ final class ProgressStore: ObservableObject {
         }
     }
 
+    /// The keys of `remote` rows for an episode finished after the row was
+    /// last written (see `episodeWatchedAfter`). The merge would drop them;
+    /// the sync manager asks so it can delete them from the account too, or
+    /// the account and every other device keep a position this one hides. A
+    /// newer local row (the episode played again here) keeps its key.
+    func remoteKeysWatchedSince(_ remote: [WatchProgress]) -> [String] {
+        remote.compactMap { entry in
+            guard episodeWatchedAfter?(entry) == true else { return nil }
+            if let local = items[entry.id], local.updatedAt > entry.updatedAt,
+               episodeWatchedAfter?(local) != true { return nil }
+            return entry.id
+        }
+    }
+
     private static let maxProgressSeconds: Double = 30 * 24 * 60 * 60
 
     private nonisolated static func sanitized(_ entry: WatchProgress) -> WatchProgress? {

@@ -687,7 +687,7 @@ final class TrailerGate: ObservableObject {
 /// in its place, under the shade and text. Anything else — a press,
 /// focus off the buttons, leaving — fades it back out to the still; resting again,
 /// it goes on where it was (another title: from its start). Played to its
-/// end: back to the still, `onEnd` (the billboard moves on), and that
+/// end: back to the still, `endings` (the billboard moves on), and that
 /// title's trailer doesn't play again this visit.
 @MainActor
 final class StageTrailer: ObservableObject {
@@ -705,7 +705,8 @@ final class StageTrailer: ObservableObject {
     /// card — `StagePictureView.attachTrailer`; Details: `StageTrailerView`).
     let surface = TrailerSurface()
     weak var stage: StagePictureView?
-    var onEnd: (() -> Void)?
+    /// Played to their end: Home follows it, with its state of that moment.
+    @Published private(set) var endings = 0
 
     private var itemID: String?
     private var player: AVPlayer?
@@ -925,11 +926,12 @@ final class StageTrailer: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.itemID == id else { return }
-                if let id { self.ended.insert(id) }
+                // By the player: taken over, its title's id gains the season.
+                guard let self, self.player === player else { return }
+                if let id = self.itemID { self.ended.insert(id) }
                 self.full = false
                 self.release()
-                self.onEnd?()
+                self.endings &+= 1
             }
         }
         readyObserver = item.observe(\.status) { [weak self] item, _ in

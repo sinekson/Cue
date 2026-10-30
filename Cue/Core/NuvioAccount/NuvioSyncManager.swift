@@ -1909,6 +1909,16 @@ final class NuvioSyncManager: ObservableObject {
             // By the account's key: the local one names nothing there.
             deleteWatchProgress(keys: blocked.map { accountKeyByLocalID[$0] ?? $0 }, profile: profile)
         }
+        // Rows for an episode marked watched after they were last written: the
+        // store drops them, so the account has to as well. No time limit, unlike
+        // removals: the mark itself says the row is over, however old it is.
+        let finished = Set(progressStore.remoteKeysWatchedSince(pulled))
+        if !finished.isEmpty {
+            pulled.removeAll { finished.contains($0.id) }
+            NSLog("[NuvioCWSync] pullWatchProgress: %d row(s) for episodes watched since — queued for deletion",
+                  finished.count)
+            deleteWatchProgress(keys: finished.map { accountKeyByLocalID[$0] ?? $0 }, profile: profile)
+        }
         // Metadata enrichment is a run of network calls; the store write after
         // it must still be going to the profile these rows came from.
         pulled = await enrichMetadata(pulled)

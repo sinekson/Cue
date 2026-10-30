@@ -30,16 +30,10 @@ struct AccountSettingsDetail: View {
                     SettingsSection(title: "Sync") {
                         if let sync = NuvioSyncManager.shared { SyncNowRow(sync: sync) }
                         SettingsLinkRow(title: "Add-ons", value: addons.addons.count.formatted()) { AddonsPage() }
-                        // Its page: later.
-                        Button {} label: {
-                            SettingsRowLabel(title: "Watch progress", value: progress.items.count.formatted(), chevron: true)
+                        SettingsLinkRow(title: "Watch Progress", value: progress.items.count.formatted()) {
+                            WatchProgressPage()
                         }
-                        .settingsRow(id: "Watch progress")
-                        // Its page: later.
-                        Button {} label: {
-                            SettingsRowLabel(title: "Library", value: library.items.count.formatted(), chevron: true)
-                        }
-                        .settingsRow(id: "Library")
+                        SettingsLinkRow(title: "Library", value: library.items.count.formatted()) { LibraryPage() }
                         // Its page: later.
                         Button {} label: {
                             SettingsRowLabel(title: "Collections", value: collections.library.count.formatted(), chevron: true)
@@ -731,6 +725,163 @@ struct WatchedSettingsPage: View {
     }
 }
 
+/// Settings → Account → Watch Progress: every position the account holds,
+/// one to a row, newest first (what Continue Watching is made from; there
+/// only a show's latest, unfinished). Select starts Edit on the row's
+/// button; Edit gives each row a trash button, one press removes it, and
+/// Remove All beside Done. Removals reach the account (`ProgressStore.onRemove`).
+struct WatchProgressPage: View {
+    @EnvironmentObject private var progress: ProgressStore
+    @Environment(\.settingsRowFocus) private var rowFocus
+    @State private var editing = false
+
+    private var rows: [WatchProgress] {
+        progress.items.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    var body: some View {
+        let rows = rows
+        SettingsPage(title: "Watch Progress", subtitle: "", accessory: rows.isEmpty ? nil : AnyView(accessory)) {
+            if rows.isEmpty {
+                Text("Nothing in progress.")
+                    .font(.system(size: SettingsMetrics.valueTextSize))
+                    .foregroundStyle(SettingsMetrics.secondaryText)
+                    .padding(.horizontal, SettingsMetrics.labelIndent)
+            } else {
+                LazyVStack(spacing: SettingsMetrics.tallRowGap) {
+                    ForEach(rows) { row($0, ids: rows.map(\.id)) }
+                }
+            }
+        }
+        .onExitCommand(perform: editing ? { end() } : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
+        .onChange(of: rows.isEmpty) { _, empty in if empty { editing = false } }
+        .onDisappear { TopBarLock.shared.locked = false }
+    }
+
+    private func row(_ item: WatchProgress, ids: [String]) -> some View {
+        WatchedRow(id: item.id, poster: item.poster, name: item.name.isEmpty ? item.metaID : item.name,
+                   detail: Self.detail(of: item), editing: editing,
+                   removeLine: "Remove this position, on all your devices",
+                   onSelect: {
+                       editing = true
+                       DispatchQueue.main.async { rowFocus?.wrappedValue = item.id }
+                   },
+                   onRemove: {
+                       WatchedRow.removed(item.id, in: ids, focus: rowFocus)
+                       progress.remove(id: item.id)
+                   })
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if editing {
+            SettingsCapsuleButton(title: "Remove All") {
+                editing = false
+                progress.clearAllProgress()
+            }
+            SettingsCapsuleButton(title: "Done") { end() }
+        } else {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
+            }
+        }
+    }
+
+    private func end() {
+        editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
+    }
+
+    /// "S1:E1, 14:43 of 25:00, 14 Oct 2026"; a film without the episode.
+    private static func detail(of item: WatchProgress) -> String {
+        var parts = ["\(clock(item.positionSeconds)) of \(clock(item.durationSeconds))",
+                     item.updatedAt.formatted(.dateTime.day().month(.abbreviated).year())]
+        if let season = item.season, let episode = item.episode {
+            parts.insert("S\(season):E\(episode)", at: 0)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// "14:43", "1:02:09".
+    private static func clock(_ seconds: Double) -> String {
+        let total = Int(seconds)
+        let minutes = String(format: "%02d", total / 60 % 60), rest = String(format: "%02d", total % 60)
+        return total >= 3600 ? "\(total / 3600):\(minutes):\(rest)" : "\(total / 60):\(rest)"
+    }
+}
+
+/// Settings → Account → Library: what Home shows as Saved for Later, one
+/// to a row, newest first, with the date it was added. Select starts Edit
+/// on the row's button; Edit gives each row a trash button, one press
+/// removes it, and Remove All beside Done. Removals reach the account
+/// (`LibraryStore.onRemove`).
+struct LibraryPage: View {
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.settingsRowFocus) private var rowFocus
+    @State private var editing = false
+
+    private var rows: [SavedLibraryItem] {
+        library.items.values.sorted { $0.addedAt > $1.addedAt }
+    }
+
+    var body: some View {
+        let rows = rows
+        SettingsPage(title: "Library", subtitle: "", accessory: rows.isEmpty ? nil : AnyView(accessory)) {
+            if rows.isEmpty {
+                Text("Nothing saved yet.")
+                    .font(.system(size: SettingsMetrics.valueTextSize))
+                    .foregroundStyle(SettingsMetrics.secondaryText)
+                    .padding(.horizontal, SettingsMetrics.labelIndent)
+            } else {
+                LazyVStack(spacing: SettingsMetrics.tallRowGap) {
+                    ForEach(rows, id: \.key) { row($0, ids: rows.map(\.key)) }
+                }
+            }
+        }
+        .onExitCommand(perform: editing ? { end() } : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
+        .onChange(of: rows.isEmpty) { _, empty in if empty { editing = false } }
+        .onDisappear { TopBarLock.shared.locked = false }
+    }
+
+    private func row(_ item: SavedLibraryItem, ids: [String]) -> some View {
+        WatchedRow(id: item.key, poster: item.poster, name: item.name,
+                   detail: "Added \(item.addedAt.formatted(.dateTime.day().month(.abbreviated).year()))",
+                   editing: editing,
+                   removeLine: "Remove from your library, on all your devices",
+                   onSelect: {
+                       editing = true
+                       DispatchQueue.main.async { rowFocus?.wrappedValue = item.key }
+                   },
+                   onRemove: {
+                       WatchedRow.removed(item.key, in: ids, focus: rowFocus)
+                       library.remove(id: item.id, type: item.type)
+                   })
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if editing {
+            SettingsCapsuleButton(title: "Remove All") {
+                editing = false
+                // One by one: `clearAll` is the account switch's, it queues no deletes.
+                for item in rows { library.remove(id: item.id, type: item.type) }
+            }
+            SettingsCapsuleButton(title: "Done") { end() }
+        } else {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
+            }
+        }
+    }
+
+    private func end() {
+        editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
+    }
+}
+
 /// One row of Watched, Apple's two-line row (its Languages' "Deutsch /
 /// German"): a title (a small poster, the name, what was watched last and
 /// when, a chevron) or an episode (its name, when). A list's tall row, lit
@@ -742,6 +893,8 @@ private struct WatchedRow: View {
     let detail: String
     var chevron = false
     let editing: Bool
+    /// The left-hand line while its trash button has focus.
+    var removeLine = "Remove from Watched"
     let onSelect: () -> Void
     let onRemove: () -> Void
 
@@ -771,7 +924,7 @@ private struct WatchedRow: View {
             }
         }
         .anchorPreference(key: SettingsDescribedKey.self, value: .bounds) { pill in
-            focused == .remove ? .init(text: "Remove from Watched", pill: pill) : nil
+            focused == .remove ? .init(text: removeLine, pill: pill) : nil
         }
         .focusSection()
         .id(id)

@@ -86,7 +86,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
   One glass everywhere: Apple's `.regular`, tinted black 30 %
   (`AppGlass.surfaceTint`; tried: untinted — everywhere, and the panels
-  alone), the panels (hold menus, sources, About) too (tried for them: a
+  alone), the hold menus too (tried for them: a
   smoked flat panel, near-black 90 %, a light top edge, a shadow; the
   scope pill's flat fill, see-through and solid).
   Everything in the page is flat (`FlatControl`). Details' and the
@@ -387,11 +387,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   or player — `TrailerGate`) for `Spotlight.trailerDelay` (2 s), the title's trailer (TMDB's keys → `TrailerResolver.backdropItem`; ranked in `trailerKeys`: names like recap / clip / TV spot last, the user's language, then English, Trailer over Teaser, official, "Official / Main / Final Trailer", the larger upload, the newest — in the app's language (TMDB's language setting; English for now, anime too, no subtitles); played from YouTube's HLS playlist, rewritten before the player sees it (`TrailerPlaylist`): only H.264 (hardware-decoded), nothing below 720p, so it adapts between 720p and 1080p and doesn't stall (tried: the 1080p video and audio files merged at play time — two whole downloads, it stalled; that pair stays as the fallback when a playlist fails); up to 5 tried, any below 720p skipped — none good enough, the still stays; not on Apple TV HD; a show's season first — the billboard's new episode / season pick's, Details' row's season, matched to TMDB's by its air date (the add-ons number seasons their own way: Bleach's TYBW is 17, TMDB's 2) — then the show's). Resolved ahead and kept: the billboard's first 3 titles' trailers from launch (under the curtain, not holding it), 4 s apart (`TrailerResolver.warm`, `warmCount`), the rest as they're rested on (tried: every title, again every 2 hours — with up to 5 keys each, 100+ requests a launch: YouTube flagged the TV's address). Gentle on YouTube: its watch page asked for once a session (the player script's address and config kept — `__sessionYtCfg`, YouTubeKit), then only the player answers; refused (its bot check, "Sign in to confirm you're not a bot", or a page that isn't the video's) — no remote extractor (it asks from the same address); a bot check or 3 keys in a row not resolving: no lookups for 30 min, kept across launches (`holdOff`, `cue.trailers.heldOffUntil` — asking on kept the flag on); on disk (`CueCache/trailers.json`) a key's URLs until googlevideo's expiry, a key that won't do (age restricted — not tried remotely, ~10 s lost; below 720p; nothing playable) for 30 days; TMDB's video and season lists a day. Loaded hidden at the rest's start (resolved, buffering), shown when the delay is up; a dead URL resolved again once
   fades in over its picture, in its place: on Home on the current card,
   under its shade and text (`StagePictureView.attachTrailer`); on Details
-  over `rowsBackdrop`'s picture. The whole trailer (not a cut). Moving
+  over `rowsBackdrop`'s picture. The whole trailer (tried: the first
+  45 s — didn't work; talked over, not wanted: rules for when one plays
+  — titles not started, once a week; talked over, not built: cutting at
+  YouTube's end screen, `endscreen.endscreenRenderer.startMs` — none of
+  5 big trailers checked had one, and only the watch page gave it, a
+  page per key; YouTube marks nothing at a video's start). Moving
   between the buttons: it plays on (tried: fading out on any move —
   annoying). Paging, leaving the buttons: fades out to the still (0.35 s);
   resting again it goes on where it was. At its end: the still, and the
-  billboard moves on (if it pages by itself) — that title's trailer not
+  billboard moves on (if it pages by itself, after moves along the
+  buttons too, which stop the timed paging) — that title's trailer not
   again this visit. The billboard doesn't page by itself while one plays
   (nor its dots' timer). While it's on the picture, the peek (the first
   row's name and cards), the dots and the top bar move out — the way
@@ -450,12 +456,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   trailer again from its start — `TrailerPlayerView`, removed.)
 - **Details** uses the billboard's text and shade. Three buttons, as
   Home's billboard: Play, Library, About (`text.alignleft`; was "Summary" — the panel holds About's parts). Hold Play → straight to the
-  source list. Summary opens the summary in place, in a glass panel
-  (`DetailSummaryPanel`): the name as a row's, the genres under it (" · ", a page header's subtitle — 24 pt medium, 50 %), then About's own summary
-  and facts and ratings (`summaryBox`, `factsBox` — its size, levels and
-  width), one under the other, 28 pt apart (tried: 18–20 apart; side by side; the summary alone,
-  28 pt, 1240 then 920 wide — empty); Back closes it, focus back on the
-  button.
+  source list. About opens full screen, on trial, as tvOS Settings' text pages
+  (`DetailSummaryPanel`, `SummaryPanelMetrics`): the page blurred behind
+  (the system's regular material, dark, black 25 % over it), the name
+  centred at the top (57 pt semibold), the genres under it, then one
+  column 680 wide (tried: 1092, Apple's, facts three across — too wide):
+  the summary (29 pt, body level), the facts two across, the ratings. Up / Down scrolls it (the Up / Down steps 320 pt),
+  fading at its ends; Select or Back closes it, focus back on the button.
+  (Tried: a glass panel over the page — the name as a row's, About's
+  summary and facts one under the other, 28 pt apart, 18–20 apart, side
+  by side; the summary alone, 28 pt, 1240 then 920 wide — empty.) The
+  source panel may follow.
   Play says "Play"; under it, while focused, a show's episode ("S2:E13";
   a film: nothing — the time left dropped; tried: the episode on the
   button), or "Finding a source…" while it searches.
@@ -856,16 +867,19 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   beside the held card.)
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.
-  The panel (`SourcePanel`): a plain pop-up as the hold menus — on the
-  right (48 pt in), 1100 × 900, glass, over the page dimmed
-  (`HoldMenu.dimming`), in with a slight grow from its right edge
-  (0.2 s); focus goes in at once, on Search Again until the first link
+  The panel (`SourcePanel`), on trial as About's: full screen over the page
+  blurred (`FullScreenBlur`, tvOS Settings' way), 0.25 s fade; the name
+  centred at Settings' title size, the episode under it, the rest in one
+  centred column, 1100 wide, the links fading out at the screen's foot;
+  focus goes in at once, on Search Again until the first link
   (left on Details' Play — its own host, not disabled with the page — a
-  Back reached nothing). (Tried and dropped: full height, 1000 and 1240 wide; the
+  Back reached nothing). (Tried and dropped: a glass pop-up on the right,
+  48 pt in, 1100 × 900, over the page dimmed, with a slight grow from its
+  right edge; full height, 1000 and 1240 wide; the
   title's picture alone behind it with its logo left of the panel, or
   with the billboard's shade and the panel in the middle, 0.5 s fade.)
-  In it: the name as a row's, a show's episode under
-  it ("S1:E1 · Pilot", the caption's second line); then Search Again (an
+  In it: a show's episode ("S1:E1 · Pilot") under
+  the name; then Search Again (an
   icon only, a press) and one tab per add-on — a tab shows its links as
   focus reaches it, no press (no "All"); first, the first link's add-on —
   and at the row's end when the list was found ("Found 4 min ago" —
@@ -1061,7 +1075,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   value "Refreshing…", then the last refresh ("Today at 22:34", kept —
   `cue.addons.refreshedAt`) or "2 didn't answer"; the add-ons 16 apart,
   the buttons 29 under them as Apple's Add Language…, `listButtonGap`; tried:
-  one gap for all), Watch progress, Library, Collections nothing
+  one gap for all), Collections nothing
   yet, until they get one (tried: those only to read, no fill or focus). (Tried: ACCOUNT / ACTIVE PROFILE / LAST SYNC in outlined
   boxes, round Sync now and Sign out beside them, the counts in tiles, the
   profiles in tiles to read; before that: the website's tiles, rows under
@@ -1090,6 +1104,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   episodes as tiles two or three across — looked terrible; posters four
   across with captions — they hid the order. Talked over: Select mode
   with ticks and Remove (N) — not needed, one press removes.)
+  Watch Progress (`WatchProgressPage`): every position the account holds
+  (a film or episode, what Continue Watching is made from), newest first,
+  Watched's rows: a small poster, the name, "S1:E1, 14:43 of 25:00, 14 Oct
+  2026", no chevron. Select starts Edit on the row's button; Edit gives each
+  a round trash, one press removes it, Remove All beside Done; both reach the
+  account (every device). A row for an episode marked watched after it was
+  last written is hidden and, on a pull, deleted from the account
+  (`remoteKeysWatchedSince`; no time limit; hidden only, the website kept it).
+  Library (`LibraryPage`): Home's Saved for Later, all of it, newest first,
+  Watched's rows: a small poster, the name, "Added 14 Oct 2026", no chevron.
+  Select and Edit as Watch Progress'; Remove All removes one by one
+  (`LibraryStore.clearAll` queues no account deletes).
   TMDB (`TMDBServicePage`), its row's line "Search, artwork, cast and details
   for every title." (descriptions short; tried: "Powers search and
   everything Cue shows about a title." — too broad, posters are the
@@ -1444,7 +1470,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   TMDB page's old Clear Cache and About's (both gone).
 - A collection editor (create and edit Cue's collections) — wanted back,
   in the new Settings look; the old one (`CollectionsSettingsDetail`,
-  old cards) is no longer reachable.
+  old cards) is no longer reachable. Skipped for now: a collection is
+  treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
+  Collections row stays a count with no page (talked over, not built: a
+  list as the add-ons', then ready-made presets, then the editor).
 - Player rework (resume / Start Over still use the old StreamsView).
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;

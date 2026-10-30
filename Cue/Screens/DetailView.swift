@@ -619,13 +619,14 @@ struct DetailView: View {
             ATVBackground()
             rowsLayer
 
-            // Info: the summary in a glass panel over the page; Back (or
-            // Select) closes it, focus back on Info.
+            // About: full screen over the page, blurred; Back (or Select)
+            // closes it, focus back on its button.
             if summaryShown, viewModel.meta.description?.isEmpty == false {
                 DetailSummaryPanel(title: viewModel.meta.name,
                                    genres: about.genres.map(\.name).joined(separator: " · "),
-                                   summary: about.summaryBox,
-                                   facts: about.factsBox.environmentObject(theme).environmentObject(mdblist)) {
+                                   summary: viewModel.meta.description ?? "",
+                                   facts: about.factsBox(across: 2, width: SummaryPanelMetrics.columnWidth)
+                                       .environmentObject(theme).environmentObject(mdblist)) {
                     summaryShown = false
                     returningToInfo = true
                     actionFocus = .info

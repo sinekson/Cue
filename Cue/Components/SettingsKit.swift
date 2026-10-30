@@ -139,11 +139,15 @@ final class SettingsNav: ObservableObject {
         change(forward: true) { self.stack.append(page) }
     }
 
-    /// False when there was nothing to take off.
+    /// False when there was nothing to take off. `with`: changes made in
+    /// the same update, which the page going out, frozen, never sees.
     @discardableResult
-    func pop() -> Bool {
+    func pop(with update: () -> Void = {}) -> Bool {
         guard !stack.isEmpty else { return false }
-        change(forward: false) { _ = self.stack.popLast() }
+        change(forward: false) {
+            update()
+            _ = self.stack.popLast()
+        }
         return true
     }
 
