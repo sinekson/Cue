@@ -4236,6 +4236,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if custom(rowIndex) != nil { onDepth(depth(of: rowIndex)) }
         let rowChanged = rowIndex != focusedRow || !hasFocus
         let fromBillboard = rowChanged && hasFocus && isFeatured(focusedRow)
+        let hadFocus = hasFocus
         hasFocus = true
         guard rowChanged else { return }
         let oldRowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
@@ -4246,9 +4247,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
         box.alpha = 0
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
+        let direction: CGFloat = rowIndex > focusedRow ? 1 : -1
         focusedRow = rowIndex
         let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
         let move = {
+            // The old row's card closes as into a fixed row (see `setGrown`).
+            FixedFocusPosterCell.vertical = hadFocus ? (direction: direction, duration: duration) : nil
+            FixedFocusPosterCell.reshaping = hadFocus ? duration : nil
+            defer { FixedFocusPosterCell.vertical = nil; FixedFocusPosterCell.reshaping = nil }
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()

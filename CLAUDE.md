@@ -1485,6 +1485,3 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   memory over a long film (the loopback path's leak), styled ASS (it
   hands raw ASS; we draw it). A fallback engine only if Aether shows a
   real gap. Trailers keep their own `AVPlayer`.
-- Up from a fixed row into a collection row above it: the fixed row's
-  card shrinks differently than when leaving into a fixed row. Left as
-  it is for now — it may be the better animation; look at both later.
