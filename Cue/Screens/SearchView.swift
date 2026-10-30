@@ -167,16 +167,10 @@ final class SearchViewModel: ObservableObject {
                 MetaItem(id: "company:\($0.id)", type: "company", name: $0.name, poster: $0.logoURL,
                          background: nil)
             }
-            // What leads Top Results (in either order): its Related titles,
-            // fetched before anything shows — the page swaps in whole.
-            let leads = Set([true, false].compactMap { next.lead(own: $0) })
-            next.related = await withTaskGroup(of: (String, [MetaItem]).self) { group in
-                for lead in leads {
-                    group.addTask { (lead.id, await Self.related(to: lead)) }
-                }
-                var related: [String: [MetaItem]] = [:]
-                for await (id, titles) in group { related[id] = titles }
-                return related
+            // What leads Top Results: its Related titles, fetched before
+            // anything shows — the page swaps in whole.
+            if let lead = next.lead() {
+                next.related = [lead.id: await Self.related(to: lead)]
             }
             guard !Task.isCancelled else { return }
             found = next
@@ -245,8 +239,8 @@ final class SearchViewModel: ObservableObject {
 
 }
 
-/// What one search found — every kind, in TMDB's order — and both orders
-/// over it (Render Lab → Search: Cue's order).
+/// What one search found — every kind, in TMDB's order — and Cue's order
+/// over it.
 struct SearchFound {
     var query = ""
     /// TMDB's combined search (films, series, people): Top Results in its
@@ -274,26 +268,26 @@ struct SearchFound {
 
     private typealias Model = SearchViewModel
 
-    /// Top Results: the order's list, a studio taken in when it's what you
+    /// Top Results: Cue's order, a studio taken in when it's what you
     /// typed (`withStudio`); led by a person or studio, the rest of the
     /// places their Related titles; led by a title, only the places the
     /// matches leave ("frieren": the show, then what's like it).
-    func topResults(own: Bool) -> [MetaItem] {
-        let base = withStudio(own ? rankedTop() : top, count: Self.topCount)
+    func topResults() -> [MetaItem] {
+        let base = withStudio(rankedTop(), count: Self.topCount)
         guard let lead = base.first, let more = related[lead.id], !more.isEmpty else { return base }
         let kept = ["person", "company"].contains(lead.type) ? [lead] : base
         var seen = Set(kept.map(\.id))
         return kept + more.filter { seen.insert($0.id).inserted }.prefix(Self.topCount - kept.count)
     }
 
-    /// What leads Top Results in that order (its first card), if anything.
-    func lead(own: Bool) -> MetaItem? {
-        withStudio(own ? rankedTop() : top, count: 1).first
+    /// What leads Top Results (its first card), if anything.
+    func lead() -> MetaItem? {
+        withStudio(rankedTop(), count: 1).first
     }
 
     /// The Related scope: the lead's.
-    func relatedTitles(own: Bool) -> [MetaItem] {
-        lead(own: own).flatMap { related[$0.id] } ?? []
+    func relatedTitles() -> [MetaItem] {
+        lead().flatMap { related[$0.id] } ?? []
     }
 
     // MARK: Cue's own order
@@ -353,7 +347,7 @@ struct SearchFound {
         (rankedTitles() + rankedPeople()).sorted { $0.score > $1.score }.map(\.item)
     }
 
-    /// One studio into Top Results (both orders), when it's what you
+    /// One studio into Top Results, when it's what you
     /// typed: the name itself → first; its name or a word starting with it
     /// (3 letters on) → second, after the first hit. At most one — the
     /// list keeps its length. None while a title or person has that very
@@ -393,7 +387,6 @@ struct SearchFound {
 struct SearchView: View {
     // Owned by RootView so the query + results PERSIST across tab switches.
     @ObservedObject var viewModel: SearchViewModel
-    @ObservedObject private var probe = RenderProbe.shared
     /// Its tab is in front (the row leaves the focus engine otherwise).
     var active = true
 
@@ -480,22 +473,18 @@ struct SearchView: View {
         SearchScope.allCases.filter { $0 == .top || !items(in: $0).isEmpty }
     }
 
-    /// The cards of the scope chosen — in Cue's own order or TMDB's
-    /// (Render Lab → Search: Cue's order).
+    /// The cards of the scope chosen, in Cue's order.
     private var scoped: [MetaItem] { items(in: viewModel.scope) }
 
     private func items(in scope: SearchScope) -> [MetaItem] {
-        let own = probe.flags.searchOwnOrder
         let found = viewModel.found
         switch scope {
-        case .top: return found.topResults(own: own)
-        case .movies:
-            return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type == "movie" }
-        case .series:
-            return (own ? found.rankedTitles().map(\.item) : found.results).filter { $0.type != "movie" }
-        case .people: return own ? found.rankedPeople().map(\.item) : found.people
-        case .studios: return own ? found.rankedStudios() : found.studios
-        case .related: return found.relatedTitles(own: own)
+        case .top: return found.topResults()
+        case .movies: return found.rankedTitles().map(\.item).filter { $0.type == "movie" }
+        case .series: return found.rankedTitles().map(\.item).filter { $0.type != "movie" }
+        case .people: return found.rankedPeople().map(\.item)
+        case .studios: return found.rankedStudios()
+        case .related: return found.relatedTitles()
         }
     }
 

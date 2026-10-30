@@ -130,9 +130,6 @@ final class RenderProbe: ObservableObject {
     struct Flags: Codable, Equatable {
         /// The launch screen shows what it loaded and how long it took.
         var launchNumbers = true
-        /// Search in Cue's own order (`SearchViewModel.ranked`) — off:
-        /// TMDB's, as it comes. To compare the two on the TV.
-        var searchOwnOrder = true
 
         init() {}
 
@@ -141,7 +138,6 @@ final class RenderProbe: ObservableObject {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let d = Flags()
             launchNumbers = (try? c.decode(Bool.self, forKey: .launchNumbers)) ?? d.launchNumbers
-            searchOwnOrder = (try? c.decode(Bool.self, forKey: .searchOwnOrder)) ?? d.searchOwnOrder
         }
     }
 
