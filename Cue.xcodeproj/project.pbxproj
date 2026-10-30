@@ -23,6 +23,7 @@
 		1AD5C74792CE13AAB1C96067 /* DeepLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300808B71D35000E1EB1F5B0 /* DeepLinkService.swift */; };
 		2249DAE898CE934F7BF83266 /* ProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4BBC739E3399FA6DA063F27 /* ProfilesView.swift */; };
 		2805EBADC519E05898889E8D /* Atomic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F475D3148C854DB4176635F5 /* Atomic.swift */; };
+		282704283B6BBD1492DF0423 /* DetailTransition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D7B03CD83C5198350DA484D /* DetailTransition.swift */; };
 		291A7A1DD8E6AA35FD797B3B /* TrailerPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5427161C5B0687D4E2BE224 /* TrailerPlayer.swift */; };
 		2A5D67319BBE83D40A353516 /* CollectionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D0D29B5B2CF8CCAC26FE74 /* CollectionResolver.swift */; };
 		2AB47E0B77562598B0188E64 /* WatchedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24942AB2575A11ACFA406AC6 /* WatchedStore.swift */; };
@@ -68,6 +69,7 @@
 		8361939032B8D0F372BAC1CC /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68ECE890FFEBF1D3EA964188 /* FolderView.swift */; };
 		862DFBD0817FD88823C61B10 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 53F8C4744F7B239600918FE3 /* VLCKitSPM */; };
 		8A528A8674DA8255C41E9CFC /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BFF6963EAAD2C29809A7AB /* LibraryView.swift */; };
+		8AACEF3BA291CC13376D89D3 /* FixedFocusRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC317497DF9AA68207E5A654 /* FixedFocusRows.swift */; };
 		93A87DE56F5855D2C0ABFD2F /* TopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A324DBCCDD1DEFB66AC24EC /* TopShelfProvider.swift */; };
 		97E1E3C1E9EEC4FE32E3710A /* CueTopShelf.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4E4AA107295EA31FE200B3C4 /* CueTopShelf.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		98D26A0A1B3463BF320964F8 /* libdovi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = DB8047703F029D397938BA5D /* libdovi.xcframework */; };
@@ -106,6 +108,7 @@
 		DA71E76045B7783EADDC9FB8 /* AnimeSkipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1712C822CE750273F4EAFE42 /* AnimeSkipService.swift */; };
 		DAC31132CD1D2219A2283882 /* SourcePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46FD842FBAFF5DC345DC17ED /* SourcePicker.swift */; };
 		DAD7A3059AE3F28D72FAA8FE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B579DDB0DCC6D5653FD0C85 /* SettingsView.swift */; };
+		E70C71A001415B6470A10AF4 /* FixedFocusCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D1776BE37E47A28BBDB0B8 /* FixedFocusCards.swift */; };
 		E9185E9840E0062F87AC68BD /* NuvioSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602333697EE6D2181FFAD0F1 /* NuvioSyncModels.swift */; };
 		EC0AE8F9E7F307E092075113 /* AtmosHLS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EF563F2FFBC5E55203E23FF /* AtmosHLS.swift */; };
 		EC263304AE7415B356028A1A /* BillboardPicks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FD9D8AECB46DB5C84D9072 /* BillboardPicks.swift */; };
@@ -161,11 +164,13 @@
 		1E34823403F7BB0680738BFD /* Secrets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Secrets.swift; sourceTree = "<group>"; };
 		2213550E8060995CE6B9EE88 /* StreamProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamProbe.swift; sourceTree = "<group>"; };
 		24942AB2575A11ACFA406AC6 /* WatchedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchedStore.swift; sourceTree = "<group>"; };
+		25D1776BE37E47A28BBDB0B8 /* FixedFocusCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixedFocusCards.swift; sourceTree = "<group>"; };
 		26DE8F594FF4ADB4A57E378F /* HomeSpotlightRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeSpotlightRow.swift; sourceTree = "<group>"; };
 		279282F873907A9D62AB4FD6 /* SeriesEpisodes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeriesEpisodes.swift; sourceTree = "<group>"; };
 		2A4DFD40558A4DA25442A0E7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2A54C85ADAE68CED064B63B3 /* PlayerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerScreen.swift; sourceTree = "<group>"; };
 		2D3400FB6BF684496A69683F /* InfuseInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfuseInfoPanel.swift; sourceTree = "<group>"; };
+		2D7B03CD83C5198350DA484D /* DetailTransition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailTransition.swift; sourceTree = "<group>"; };
 		2D8EA33A7A9ABD7C430A3FAF /* AddonPhoneAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddonPhoneAddView.swift; sourceTree = "<group>"; };
 		2EA57CC4516DF2158767C8B3 /* NuvioSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioSyncManager.swift; sourceTree = "<group>"; };
 		300808B71D35000E1EB1F5B0 /* DeepLinkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkService.swift; sourceTree = "<group>"; };
@@ -241,6 +246,7 @@
 		C9CBFA6B6C30326539006AEB /* CueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CueApp.swift; sourceTree = "<group>"; };
 		CA24B3B033C18205E72FE90A /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		CA64AEEE89DD0DEF9662A9C0 /* PerformanceSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceSettingsStore.swift; sourceTree = "<group>"; };
+		CC317497DF9AA68207E5A654 /* FixedFocusRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixedFocusRows.swift; sourceTree = "<group>"; };
 		CCD9BB4C0B2491CBED905964 /* PlayerVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerVideoView.swift; sourceTree = "<group>"; };
 		CD216D7CFAAAAC8ADCE5DBE2 /* PlayLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayLauncher.swift; sourceTree = "<group>"; };
 		CDD865A5209FAC3E3637FD44 /* StagePicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagePicture.swift; sourceTree = "<group>"; };
@@ -294,8 +300,11 @@
 				4E2AA54994F2EEFCB7172538 /* ATVSettingsView.swift */,
 				7B190C6A3EC193403F990E44 /* CommunityCollectionsView.swift */,
 				E9E1BA33775847CEF217F4C0 /* DetailAbout.swift */,
+				2D7B03CD83C5198350DA484D /* DetailTransition.swift */,
 				9390D85D459598B237A2DDF2 /* DetailView.swift */,
 				C260FB90E1BB991E81A4E53B /* EpisodeRow.swift */,
+				25D1776BE37E47A28BBDB0B8 /* FixedFocusCards.swift */,
+				CC317497DF9AA68207E5A654 /* FixedFocusRows.swift */,
 				68ECE890FFEBF1D3EA964188 /* FolderView.swift */,
 				58D8180984B4284D3CA243B6 /* GlassSidebar.swift */,
 				26DE8F594FF4ADB4A57E378F /* HomeSpotlightRow.swift */,
@@ -652,11 +661,14 @@
 				BECEE13BBC79348FB5A59A3E /* DVSampleEngine.swift in Sources */,
 				1AD5C74792CE13AAB1C96067 /* DeepLinkService.swift in Sources */,
 				C05BA3DC2040C74FEF7DB06D /* DetailAbout.swift in Sources */,
+				282704283B6BBD1492DF0423 /* DetailTransition.swift in Sources */,
 				63DBE4658E7A1F5126AA572A /* DetailView.swift in Sources */,
 				F529A4C51A32B6AA00E2F639 /* DiagnosticsService.swift in Sources */,
 				A82303F8FB516C139CF71103 /* DoviConverter.swift in Sources */,
 				4FAA65A442928A42A1EE0268 /* EpisodeRow.swift in Sources */,
 				7E58E4EDE00F2D9FB6C801D7 /* FPSOverlay.swift in Sources */,
+				E70C71A001415B6470A10AF4 /* FixedFocusCards.swift in Sources */,
+				8AACEF3BA291CC13376D89D3 /* FixedFocusRows.swift in Sources */,
 				8361939032B8D0F372BAC1CC /* FolderView.swift in Sources */,
 				42A53CE91F5E0075581CE031 /* FusionPlayerControlsOverlay.swift in Sources */,
 				387F35D894BB7A293511CEAC /* FusionTokens.swift in Sources */,
