@@ -16,7 +16,6 @@
 		091FA8DF552668826D0157DB /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A43B53E1ECE04FB2661CD6C0 /* Models.swift */; };
 		0B8D9F2F2FCB929E40CFD67A /* HomeCatalogSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BD92367FC04C571B51AF825 /* HomeCatalogSettingsStore.swift */; };
 		0EDB9E2B2AFFB1721308C03D /* StreamBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE75906F141ECF54173ABFB4 /* StreamBadges.swift */; };
-		105308B9895585ED17492507 /* PlusJakartaSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4ED2098EB7561EB5475D336C /* PlusJakartaSans-Regular.ttf */; };
 		14415F3E3392CCBA0E2F690A /* CueTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12A8E09639043F94B89D683A /* CueTheme.swift */; };
 		16B111AFE5C1666726B75D23 /* AddonManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C61F32F5FAF8106AC0232B /* AddonManager.swift */; };
 		16E76E61881ED1CB11301075 /* AddonImportServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0AB684825AA665A3AC7D960 /* AddonImportServer.swift */; };
@@ -34,7 +33,6 @@
 		4236D220243714F07E4B7C2C /* SettingsKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C27A72377EDE6FBED88E941 /* SettingsKit.swift */; };
 		42A53CE91F5E0075581CE031 /* FusionPlayerControlsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC5AC3D434127E5FAE91B741 /* FusionPlayerControlsOverlay.swift */; };
 		434B79EF1B503FF19DF14B20 /* Secrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E34823403F7BB0680738BFD /* Secrets.swift */; };
-		45CBF8D1836F65B919963A9A /* PlusJakartaSans-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C45407D6F1D172B051558A68 /* PlusJakartaSans-Bold.ttf */; };
 		471C3F310AB3E82B7CD8DBC6 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F6F8D325C67E7A6D506D338 /* LibraryStore.swift */; };
 		47F246950A8E0B5A4717B874 /* TraktService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A13952D7A45BC795F0CCFC /* TraktService.swift */; };
 		4819AE91275956F9D3F32CB8 /* ContentFocusRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4EDB66B1027E31D29B8CFB1 /* ContentFocusRouter.swift */; };
@@ -82,7 +80,6 @@
 		A82303F8FB516C139CF71103 /* DoviConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BCF48A88AB0A7442C961E5F /* DoviConverter.swift */; };
 		A9BA58D171225570A2D0FA26 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8754CC2FD0C184520717DD39 /* WelcomeView.swift */; };
 		AE2FBA63EFF888C21487D13F /* CueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9CBFA6B6C30326539006AEB /* CueApp.swift */; };
-		AE7CE2857C70A58347AF9778 /* PlusJakartaSans-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E56E6015FDB7F2E44E0951B2 /* PlusJakartaSans-Medium.ttf */; };
 		B074DCF89E60A240F8C653F9 /* PerformanceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF2C8051620B4518D7B462E /* PerformanceProfile.swift */; };
 		B1A040D1791BEC43A01A044E /* NuvioConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 187DF84826DC68D109534E01 /* NuvioConfig.swift */; };
 		B28FAB516D8086489D654821 /* PlayerDiagnosticsHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92F56EC9EB04BE991D5269B7 /* PlayerDiagnosticsHUD.swift */; };
@@ -183,7 +180,6 @@
 		4DE369DD1A78346B8EF0000A /* SettingsServicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsServicesView.swift; sourceTree = "<group>"; };
 		4E2AA54994F2EEFCB7172538 /* ATVSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATVSettingsView.swift; sourceTree = "<group>"; };
 		4E4AA107295EA31FE200B3C4 /* CueTopShelf.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = CueTopShelf.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		4ED2098EB7561EB5475D336C /* PlusJakartaSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Regular.ttf"; sourceTree = "<group>"; };
 		4EF563F2FFBC5E55203E23FF /* AtmosHLS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtmosHLS.swift; sourceTree = "<group>"; };
 		4F1FA5D4ACFC3745DE4DA4AD /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
 		586DFC0A2C5A9D694A40702C /* AppGroupResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupResolver.swift; sourceTree = "<group>"; };
@@ -240,7 +236,6 @@
 		BA51396247C368D25CDB0DF7 /* PosterHoldMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PosterHoldMenu.swift; sourceTree = "<group>"; };
 		BAAB9D1B45DD965DE6373AEC /* ATVTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATVTheme.swift; sourceTree = "<group>"; };
 		C260FB90E1BB991E81A4E53B /* EpisodeRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EpisodeRow.swift; sourceTree = "<group>"; };
-		C45407D6F1D172B051558A68 /* PlusJakartaSans-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Bold.ttf"; sourceTree = "<group>"; };
 		C4FD9D8AECB46DB5C84D9072 /* BillboardPicks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillboardPicks.swift; sourceTree = "<group>"; };
 		C5427161C5B0687D4E2BE224 /* TrailerPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailerPlayer.swift; sourceTree = "<group>"; };
 		C9CBFA6B6C30326539006AEB /* CueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CueApp.swift; sourceTree = "<group>"; };
@@ -254,7 +249,6 @@
 		DB8047703F029D397938BA5D /* libdovi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = libdovi.xcframework; path = Vendor/libdovi.xcframework; sourceTree = "<group>"; };
 		DC5AC3D434127E5FAE91B741 /* FusionPlayerControlsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionPlayerControlsOverlay.swift; sourceTree = "<group>"; };
 		E31DA5DC883BAAD36F0AA911 /* PlayerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViewModel.swift; sourceTree = "<group>"; };
-		E56E6015FDB7F2E44E0951B2 /* PlusJakartaSans-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PlusJakartaSans-Medium.ttf"; sourceTree = "<group>"; };
 		E9E1BA33775847CEF217F4C0 /* DetailAbout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailAbout.swift; sourceTree = "<group>"; };
 		EA3147397BAD4C058679BF21 /* PlaybackMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackMemory.swift; sourceTree = "<group>"; };
 		EAF2C8051620B4518D7B462E /* PerformanceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceProfile.swift; sourceTree = "<group>"; };
@@ -344,24 +338,6 @@
 				DB8047703F029D397938BA5D /* libdovi.xcframework */,
 			);
 			name = Frameworks;
-			sourceTree = "<group>";
-		};
-		519A1984AB15D6FD98C02C7D /* Fonts */ = {
-			isa = PBXGroup;
-			children = (
-				C45407D6F1D172B051558A68 /* PlusJakartaSans-Bold.ttf */,
-				E56E6015FDB7F2E44E0951B2 /* PlusJakartaSans-Medium.ttf */,
-				4ED2098EB7561EB5475D336C /* PlusJakartaSans-Regular.ttf */,
-			);
-			path = Fonts;
-			sourceTree = "<group>";
-		};
-		525F9C6D636317CC91C03443 /* Resources */ = {
-			isa = PBXGroup;
-			children = (
-				519A1984AB15D6FD98C02C7D /* Fonts */,
-			);
-			path = Resources;
 			sourceTree = "<group>";
 		};
 		95CE89202C884CEC160F070B /* Products */ = {
@@ -486,7 +462,6 @@
 				24A07D79F249212EDD6D9040 /* Components */,
 				AAFB5983A601911F5BE06C36 /* Core */,
 				9EF0E529C7E207B6600CBBF3 /* Player */,
-				525F9C6D636317CC91C03443 /* Resources */,
 				280828D06ED3FA4E8694CDD5 /* Screens */,
 				98EE7C8D2B4B786FCE5919DD /* Theme */,
 			);
@@ -603,9 +578,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				6B01EA4056BC3DA3EBCC2AFF /* Assets.xcassets in Resources */,
-				45CBF8D1836F65B919963A9A /* PlusJakartaSans-Bold.ttf in Resources */,
-				AE7CE2857C70A58347AF9778 /* PlusJakartaSans-Medium.ttf in Resources */,
-				105308B9895585ED17492507 /* PlusJakartaSans-Regular.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

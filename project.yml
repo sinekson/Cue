@@ -80,10 +80,6 @@ targets:
         UIBackgroundModes:
           - audio
         # Plus Jakarta Sans — bundled for the Stremio theme's chrome typography.
-        UIAppFonts:
-          - PlusJakartaSans-Regular.ttf
-          - PlusJakartaSans-Medium.ttf
-          - PlusJakartaSans-Bold.ttf
         # Deep links: cue:// (open a title) + stremio:// (install an addon).
         CFBundleURLTypes:
           - CFBundleURLName: app.cue.deeplink
