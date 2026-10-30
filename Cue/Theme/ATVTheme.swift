@@ -32,7 +32,7 @@ enum ATVStage {
 
 /// Settings → Appearance → Background, Dynamic (true): Home, Movies and
 /// Series take on the focused title's colours (`TitleBackground`), a
-/// folder its cover's. Static — and on every other page — the Projector
+/// folder its cover's. Static — and on every other page — the Bands
 /// picture. (A page opened from Details shows that title's blurred
 /// picture either way — `DetailsBackdropBackground`.)
 enum AppBackground {
@@ -40,19 +40,14 @@ enum AppBackground {
 
     /// The setting (outside SwiftUI).
     static var followsTitle: Bool { UserDefaults.standard.bool(forKey: followsTitleKey) }
-
-    /// The still picture: Projector, or Settings' flat grey (tried, kept).
-    enum Picture { case projector, settingsGrey }
-    static let picture: Picture = .projector
 }
 
-/// The app's still background, after tvOS's own dark backdrop (Photos,
-/// the TV app — not available to apps): a dark warm grey, lighter across
-/// the top, a cool shadow bottom left, a brown one bottom right — a base
-/// gradient and large, soft pools, blurred and grained (the grain also
-/// keeps the dark gradients from banding on a TV). Drawn once with Core
-/// Image at 1080p.
-enum ProjectorPicture {
+/// The app's still background, tvOS's light Settings backdrop gone dark:
+/// tvOS Settings' grey (measured off its screen: 28–29 of 255) under tall,
+/// soft bands, lighter and darker, no colour — blurred and grained (the
+/// grain also keeps the dark gradients from banding on a TV). Drawn once
+/// with Core Image at 1080p.
+enum BandsPicture {
     private struct Pool {
         let color: UInt32
         /// Centre, as fractions of the screen.
@@ -61,30 +56,19 @@ enum ProjectorPicture {
         let rx: CGFloat, ry: CGFloat
     }
 
-    /// Base gradient, top → bottom, leaning: its top end this many screen
-    /// widths to the left.
-    private static let top: UInt32 = 0x2A2826
-    private static let bottom: UInt32 = 0x262324
-    private static let tilt: CGFloat = 0
-
+    private static let base: UInt32 = 0x1D1D1D
     private static let pools = [
-        // Warm grey light across the top, brightest a little right of centre.
-        Pool(color: 0x2E2A28, x: 0.46, y: 0.05, rx: 0.34, ry: 0.42),
-        // The top corners darker: neutral left, grey right (from a dip
-        // just right of the light).
-        Pool(color: 0x262624, x: 0.00, y: 0.10, rx: 0.22, ry: 0.40),
-        Pool(color: 0x222222, x: 1.00, y: 0.00, rx: 0.22, ry: 0.25),
-        Pool(color: 0x242222, x: 0.70, y: 0.00, rx: 0.12, ry: 0.22),
-        // A dark band across the left, just under the middle.
-        Pool(color: 0x1E1E1F, x: 0.18, y: 0.68, rx: 0.28, ry: 0.16),
-        // A cool shadow, bottom left.
-        Pool(color: 0x191A1E, x: 0.02, y: 1.00, rx: 0.30, ry: 0.42),
-        // A warm mauve low in the middle, a brown shadow bottom right.
-        Pool(color: 0x2D272A, x: 0.55, y: 1.00, rx: 0.30, ry: 0.30),
-        Pool(color: 0x24221C, x: 0.98, y: 1.00, rx: 0.30, ry: 0.28),
-        // A faint warmth on the right, middle, and across the middle.
-        Pool(color: 0x2C2929, x: 0.80, y: 0.66, rx: 0.30, ry: 0.30),
-        Pool(color: 0x2B2828, x: 0.50, y: 0.38, rx: 0.40, ry: 0.18),
+        // Lighter down the left and the right.
+        Pool(color: 0x2B2B2B, x: 0.10, y: 0.35, rx: 0.26, ry: 0.75),
+        Pool(color: 0x2E2E2E, x: 0.95, y: 0.45, rx: 0.18, ry: 0.70),
+        // A dark band from the top, left of the middle.
+        Pool(color: 0x212121, x: 0.42, y: 0.05, rx: 0.13, ry: 0.55),
+        // The lightest: top right, again bottom right.
+        Pool(color: 0x363636, x: 0.68, y: 0.10, rx: 0.22, ry: 0.55),
+        Pool(color: 0x323232, x: 0.82, y: 0.98, rx: 0.20, ry: 0.40),
+        // Dark low in the middle, lighter beside it.
+        Pool(color: 0x1F1F1F, x: 0.46, y: 0.95, rx: 0.20, ry: 0.50),
+        Pool(color: 0x2A2A2A, x: 0.20, y: 0.95, rx: 0.16, ry: 0.40),
     ]
 
     /// The grain's full range (sRGB, 0–1): up to ±3 levels of 255.
@@ -103,13 +87,7 @@ enum ProjectorPicture {
         }
 
         // Core Image's y runs up: the top of the screen is y = h.
-        let linear = CIFilter(name: "CILinearGradient", parameters: [
-            "inputPoint0": CIVector(x: w * (0.5 - tilt), y: h),
-            "inputPoint1": CIVector(x: w * 0.5, y: 0),
-            "inputColor0": color(top),
-            "inputColor1": color(bottom),
-        ])!.outputImage!
-        var image = linear.cropped(to: rect)
+        var image = CIImage(color: color(base)).cropped(to: rect)
 
         for pool in pools {
             // A circle of radius 1000 scaled into the pool's ellipse.
@@ -162,46 +140,12 @@ enum ProjectorPicture {
     }
 }
 
-/// tvOS Settings' own backdrop, recreated (tried as the app's background,
-/// kept — `AppBackground.picture`): a flat neutral grey (measured off its screen: 28–29 of 255, ~#1D1D1D)
-/// with a fine grey grain (±2 levels, as measured). Drawn once at 1080p.
-enum SettingsGreyPicture {
-    /// The grey (sRGB, 0–255).
-    private static let level: Float = 28.5
-    /// The grain's full range (sRGB, 0–1): up to ±2 levels of 255.
-    static let grain: CGFloat = 4.0 / 255
-    static let size = CGSize(width: 1920, height: 1080)
-
-    /// Draws the picture: each pixel the same random offset on every
-    /// channel (grey grain), from two dice (triangular).
-    static func render() -> CGImage? {
-        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
-        let width = Int(size.width), height = Int(size.height)
-        var pixels = [UInt8](repeating: 255, count: width * height * 4)
-        var seed: UInt32 = 0x9E3779B9
-        let amplitude = Float(Self.grain) * 255 / 2
-        pixels.withUnsafeMutableBufferPointer { dst in
-            for i in stride(from: 0, to: dst.count, by: 4) {
-                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
-                let dice = Float(seed & 0xFFFF) + Float(seed >> 16)
-                let v = UInt8(max(0, min(255, level + (dice / 65535 - 1) * amplitude + 0.5)))
-                dst[i] = v; dst[i + 1] = v; dst[i + 2] = v
-            }
-        }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
-        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                       bytesPerRow: width * 4, space: srgb,
-                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
-    }
-}
-
-/// The drawn Projector picture (~8 MB), off the main thread: asked for at
+/// The drawn picture (~8 MB), off the main thread: asked for at
 /// launch, from a copy on disk once drawn (a first draw took longer than
 /// the launch's play — the background faded in after the gate).
 @MainActor
-final class ProjectorPictureStore: ObservableObject {
-    static let shared = ProjectorPictureStore()
+final class BandsPictureStore: ObservableObject {
+    static let shared = BandsPictureStore()
     @Published private(set) var image: UIImage?
     private var drawing = false
 
@@ -213,9 +157,7 @@ final class ProjectorPictureStore: ObservableObject {
         Task.detached(priority: .userInitiated) {
             var picture = UIImage(contentsOfFile: file.path)?.preparingForDisplay()
             if picture == nil {
-                let cg = AppBackground.picture == .projector
-                    ? ProjectorPicture.render() : SettingsGreyPicture.render()
-                if let cg {
+                if let cg = BandsPicture.render() {
                     let drawn = UIImage(cgImage: cg)
                     picture = drawn
                     let folder = file.deletingLastPathComponent()
@@ -236,22 +178,21 @@ final class ProjectorPictureStore: ObservableObject {
         }
     }
 
-    /// The copy on disk: one per build (the drawing may change with it) and
-    /// picture.
+    /// The copy on disk: one per build (the drawing may change with it).
     private static var file: URL {
         let built = (try? Bundle.main.executableURL?.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate)?.map { Int($0.timeIntervalSince1970) } ?? 0
         return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CueCache/background-\(AppBackground.picture)-\(built).png")
+            .appendingPathComponent("CueCache/background-\(built).png")
     }
 }
 
-/// The app's background, behind every screen: the Projector picture — on
+/// The app's background, behind every screen: the Bands picture — on
 /// Home, Movies, Series and a folder (`titles`) with Background: Dynamic,
 /// the title background (`TitleBackground`).
 struct ATVBackground: View {
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
-    @ObservedObject private var projector = ProjectorPictureStore.shared
+    @ObservedObject private var picture = BandsPictureStore.shared
     /// Home, Movies, Series, a folder: pages that follow the title.
     var titles = false
 
@@ -262,15 +203,15 @@ struct ATVBackground: View {
             if followed {
                 TitleBackgroundView()
                     .transition(.opacity)
-            } else if let image = projector.image {
+            } else if let image = picture.image {
                 Image(uiImage: image)
                     .resizable()
                     .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: Motion.fadeDuration), value: followed)
-        .animation(.easeInOut(duration: Motion.fadeDuration), value: projector.image)
+        .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
-        .onAppear { projector.load() }
+        .onAppear { picture.load() }
     }
 }

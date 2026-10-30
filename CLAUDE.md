@@ -674,7 +674,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Other pages in and out** (folders, browse pages — from Home,
   Search or Details): the same crossfade both ways, no system slide
   (`PageFade`; Details' way in stays its zoom). In: at the press the new
-  page's background (`Route.pageBackground` — the Projector / title
+  page's background (`Route.pageBackground` — the Bands / title
   background, or Details' blurred picture) fades in over the page below
   (0.25 s, ease in-out, `backTime`; Core Animation, so it runs while the
   page is pushed and built under it) — the background alone, as on the
@@ -710,18 +710,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   live page taking over (`pageBack`, set per route; the pages call it,
   not `dismiss()`).
   Stills kept for the last 8 pages.
-- **Background**: one still picture, Projector — recreated from tvOS's own
-  dark backdrop (Photos, the TV app; the system doesn't hand it to apps:
-  no API, it varies with the wallpaper): a dark warm grey, lighter
-  across the top, a cool shadow bottom left, a brown one bottom right,
-  a mauve warmth low in the middle — every colour a fifth darker than first
-  made, closer to Settings' grey (`ProjectorPicture.render`: Core Image
-  gradients, blur, grain added going 16 → 8 bit — no banding), on every
-  page. (Tried: warm light top left, a cool shadow bottom right — darker; a
-  fifth lighter (~50 of 255 overall, now ~40);
-  tvOS Settings' backdrop, recreated — flat neutral grey, 28–29 of 255,
-  fine grain: kept in the code, `SettingsGreyPicture`, picked by
-  `AppBackground.picture`.) Settings → Appearance → Background, Static (default) / Dynamic
+- **Background**: one still picture on every page, Bands (`BandsPicture.render`:
+  Core Image pools, blur, grain added going 16 → 8 bit — no banding):
+  tvOS's light Settings backdrop gone dark — tvOS Settings' neutral grey
+  (28–29 of 255, measured) under tall soft bands of lighter and darker
+  grey, ~30–54 of 255, no colour. (Tried: bands of violet, teal and blue
+  on a slate base — the purple disliked; slate blue for the violet, 30 %
+  less saturated — too blue, too lively; on the grey; grey at the sides,
+  teal and blue only in the middle and top right. Before: Projector —
+  tvOS's own dark backdrop recreated (Photos, the TV app; no API), a dark
+  warm grey with a cool shadow and a mauve warmth — it read brownish;
+  warmer and darker versions of it; tvOS Settings' backdrop itself, flat
+  grey.) Settings → Appearance → Background, Static (default) / Dynamic
   (was the "Colours from the title" switch; same key). Dynamic: Home, Movies, Series follow the focused title
   (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
   only the tab in front sets it), the collection panels take its colour;
@@ -730,7 +730,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details (person, studio/network, genre, tag — `Route…backdrop`) shows
   that title's Details picture as below its billboard: blurred and
   dimmed (`DetailsBackdropBackground`). Everything else, and
-  everything with Static: Projector. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
+  everything with Static: Bands. Tried and dropped: a choice of pictures (Ink, Stage, Slate),
   Search / Library following the title, neutral pages keeping the last
   title's background, the old solid colours. No vignette anywhere; below
   Details' billboard only blur + one dim (`dimBelow`, 55 %; a bright
@@ -1213,8 +1213,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   system's, not ours; ~0.35 s in, mid-zoom — too quick; Settings, slower
   to draw, holds ~1 s). The curtain carries on with the same play
   (`LaunchPlay`, 220 pt in a 640 square — measured: the system's settled
-  pixels), still, on `ATVBackground` (the Projector picture fading in under it —
-  asked for at launch, a copy on disk per build, `ProjectorPictureStore`;
+  pixels), still, on `ATVBackground` (the Bands picture fading in under it —
+  asked for at launch, a copy on disk per build, `BandsPictureStore`;
   the gate waits for it, 1 s at most; tried: drawn at the curtain's first
   frame — it faded in after the gate's avatars),
   for 0.6 s (`LaunchCurtain.playHold`), then it fades as the gate comes in

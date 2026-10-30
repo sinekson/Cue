@@ -1720,7 +1720,7 @@ struct HomeUIKitView: View {
 /// THE TITLE BACKGROUND (Background: Dynamic): Home, Movies and
 /// Series (while in front) set it as focus moves, a folder to its cover,
 /// and they show it (`ATVBackground(titles:)`); every other page shows
-/// the Projector picture. Home's collection panels take its colour
+/// the Bands picture. Home's collection panels take its colour
 /// (`addPanel`).
 @MainActor
 final class TitleBackground: ObservableObject {

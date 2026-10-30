@@ -168,7 +168,7 @@ struct CueApp: App {
         BackCatch.install()
         InputHold.install()
         // The background, in before the gate (it fades in under the play).
-        ProjectorPictureStore.shared.load()
+        BandsPictureStore.shared.load()
     }
 
     @StateObject private var theme = ThemeManager()
@@ -2607,9 +2607,9 @@ struct LaunchCurtain: View {
             try? await Task.sleep(for: LaunchPreloader.playHold)
             // The background first: it fades in under the play, never
             // after the gate (1 s more at most — a first draw, no copy yet).
-            if ProjectorPictureStore.shared.image == nil {
+            if BandsPictureStore.shared.image == nil {
                 let start = CACurrentMediaTime()
-                while ProjectorPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1,
+                while BandsPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1,
                       !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(30))
                 }
