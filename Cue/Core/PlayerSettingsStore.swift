@@ -652,3 +652,29 @@ final class PlayerSettingsStore: ObservableObject {
             data, forKey: ProfileScopedDefaults.key(Self.key, profileID))
     }
 }
+
+/// Saved settings of the old player: decoded so a save keeps its shape, until
+/// the new player's settings replace them.
+enum PlaybackMode: String, Codable, CaseIterable {
+    case automatic, fidelity, compatibility
+
+    var label: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .fidelity: return "Maximum Fidelity"
+        case .compatibility: return "Compatibility"
+        }
+    }
+}
+
+enum AspectMode: String, CaseIterable {
+    case fit, zoom, stretch
+
+    var label: String {
+        switch self {
+        case .fit: return "Fit"
+        case .zoom: return "Zoom"
+        case .stretch: return "Stretch"
+        }
+    }
+}

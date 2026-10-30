@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import KSPlayer
 import Network
 import SwiftUI
 import UIKit
@@ -348,11 +347,6 @@ enum PlayerProbe {
             out.append("[\(sampler.name)]")
             out.append(contentsOf: lines.map { "  " + $0 })
         }
-        let cache = MediaCacheServer.shared.probeLines
-        if !cache.isEmpty {
-            out.append("[cache]")
-            out.append(contentsOf: cache.map { "  " + $0 })
-        }
         // Last, and deliberately so: it is the block to read when nothing in
         // the live state looks wrong but the session still feels broken.
         let health = healthLines()
@@ -425,14 +419,6 @@ final class ColorProbeServer {
                     // session would run and reports the listener's state — the
                     // way to prove, from outside, that a listener killed by a
                     // suspension is rebuilt rather than handed out dead.
-                    case let p where p.hasPrefix("/cachecheck"):
-                        #if DEBUG
-                        MediaCacheServer.shared.debugCheckListener { line in
-                            Task { @MainActor in Self.sendText(on: connection, line + "\n") }
-                        }
-                        #else
-                        Self.sendText(on: connection, "cachecheck: debug builds only\n")
-                        #endif
                     case let p where p.hasPrefix("/health"):
                         Self.sendText(on: connection,
                                       PlayerProbe.healthLines().joined(separator: "\n") + "\n")
@@ -534,9 +520,6 @@ final class ColorProbeServer {
             trail.append("--- dv trail ---")
             trail.append(contentsOf: dv)
         }
-        // Live cache state on every read — the trail only records EVENTS, and
-        // "how much has actually downloaded" is a level, not an event.
-        trail.append(MediaCacheServer.shared.statusLine)
         let body = Data((trail.joined(separator: "\n") + "\n").utf8)
         let head = """
         HTTP/1.1 200 OK\r
@@ -682,16 +665,12 @@ enum FlightRecorder {
     /// which is the whole point: it has to keep recording while main is stuck.
     private static func line(mainStall: Double, note: String?) -> String {
         var out = String(
-            format: "%@ mem=%.0fMB vms=%d state=%@ mainStall=%.0fs",
+            format: "%@ mem=%.0fMB state=%@ mainStall=%.0fs",
             Self.stamp(),
             PlayerProbe.footprintMB(),
-            PlayerViewModel.liveInstanceCounter.wrappedValue,
             appState.wrappedValue,
             mainStall
         )
-        // The cache's own snapshot is lock-guarded and built for cross-thread
-        // reads (`statusLine`), so this costs a lock and a string.
-        out += " | " + MediaCacheServer.shared.statusLine
         if let note { out += " | " + note }
         return out
     }
@@ -719,91 +698,6 @@ enum FlightRecorder {
         UserDefaults.standard.set(trail, forKey: key)
     }
 }
-
-/// The electronic equivalent of toggling the TV input, used to recover a panel
-/// wedged grey by a bad HDMI mode switch.
-///
-/// Deliberately GLOBAL (not owned by a player): the wedge is most often escaped
-/// by backing out of the player, and at that point there is no view model left
-/// to run a recovery — the display manager is still there, though, so this is
-/// driven straight off it. `sessionTarget` lets a live player put its own mode
-/// back; with no player the target is home mode (nil).
-@MainActor
-enum DisplayResync {
-    /// Set by the active player so step 3 restores the SESSION's HDR/DV mode
-    /// rather than dropping to SDR. Cleared on teardown.
-    static var sessionTarget: (() -> AVDisplayCriteria?)?
-
-    static func force(reason: String) {
-        guard let manager = UIApplication.shared.ks_keyWindow?.avDisplayManager else {
-            PlayerProbe.event("display", "force re-sync: no display manager")
-            return
-        }
-        let held = manager.preferredDisplayCriteria
-        let target = held ?? sessionTarget?()
-        // 1/3 — drop the criteria and the app's pin, so tvOS is allowed to move
-        // the panel and a later request is not deduped.
-        manager.preferredDisplayCriteria = nil
-        SessionDisplayMode.resetPinForResync()
-        PlayerProbe.event("display", "force re-sync 1/3 — dropped criteria (held="
-            + (held != nil ? "set" : "nil") + ") reason=\(reason)")
-        // 2/3 — force a DEFINITE different mode (SDR) so the link re-trains even
-        // if tvOS thought it was already home.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            let sdr = AVDisplayCriteria(
-                refreshRate: Float(UIScreen.main.maximumFramesPerSecond),
-                videoDynamicRange: DynamicRange.sdr.rawValue
-            )
-            manager.preferredDisplayCriteria = sdr
-            PlayerProbe.event("display", "force re-sync 2/3 — stepped through SDR")
-            // 3/3 — restore.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                manager.preferredDisplayCriteria = target
-                PlayerProbe.event("display", "force re-sync 3/3 — restored "
-                    + (target == nil ? "home mode" : "session mode"))
-            }
-        }
-    }
-}
-
-/// Remote probe commands, fired from the Mac with:
-///
-///   xcrun devicectl device notification post --device <id> \
-///     --name app.cue.tv.probe.resyncDisplay
-///
-/// The grey-screen wedge leaves the WHOLE TV grey, so recovery must not depend
-/// on the viewer finding the remote gesture. This lets the person reading the
-/// probe trigger the SAME display re-sync from outside, and lets a support
-/// session recover the panel without touching the Apple TV.
-enum ProbeRemote {
-    static let resyncDarwinName = "app.cue.tv.probe.resyncDisplay"
-    static let resyncNotification = Notification.Name("cue.probe.resyncDisplay")
-
-    private static let callback: CFNotificationCallback = { _, _, _, _, _ in
-        // Darwin callbacks are not on a known queue; hop to main and run the
-        // GLOBAL display re-sync (works even with no player open, which is the
-        // case the moment the viewer backs out of a wedged grey player).
-        DispatchQueue.main.async {
-            PlayerProbe.event("display", "remote re-sync command received")
-            MainActor.assumeIsolated { DisplayResync.force(reason: "remote") }
-            NotificationCenter.default.post(name: resyncNotification, object: nil)
-        }
-    }
-
-    nonisolated(unsafe) private static var installed = false
-    static func install() {
-        guard !installed else { return }
-        installed = true
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            nil, callback,
-            resyncDarwinName as CFString, nil, .deliverImmediately
-        )
-        PlayerProbe.event("life", "remote probe commands armed — \(resyncDarwinName)")
-    }
-}
-
-// MARK: - App-wide probe
 
 /// Everything the player probe never reached: browsing, focus, data loads,
 /// sync and app lifecycle.
@@ -981,7 +875,6 @@ enum AppProbe {
         // without this it was first touched when a client read the log —
         // making every event logged before that read show a NEGATIVE time.
         _ = PlayerProbe.startedAt
-        ProbeRemote.install()
         PlayerProbe.register("app") {
             [
                 "tab=\(tab)  screen=\(screen)  depth=\(depth)  scene=\(scene)",
@@ -990,11 +883,7 @@ enum AppProbe {
                 "thermal=\(thermalLabel(ProcessInfo.processInfo.thermalState))"
                     + "  lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled.probe)"
                     + "  cpus=\(ProcessInfo.processInfo.activeProcessorCount)",
-                // Live player-model census. More than 1 while nothing is being
-                // handed to PiP is a leak, and this is the block a browse is
-                // read against.
-                "playerVMs=\(PlayerViewModel.liveInstanceCounter.wrappedValue)"
-                    + "  mem=\(String(format: "%.0fMB", PlayerProbe.footprintMB()))",
+                "mem=\(String(format: "%.0fMB", PlayerProbe.footprintMB()))",
                 "audio=\(audioRouteLabel)",
             ]
         }

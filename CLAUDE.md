@@ -201,7 +201,11 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
   Collections row stays a count with no page (talked over, not built: a
   list as the add-ons', then ready-made presets, then the editor).
-- Player rework (resume / Start Over still use the old StreamsView).
+- Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
+  are gone there (a second FFmpeg can take the engine's calls, so they can't
+  sit beside it); `EngineTestPlayer` is a bare test player with a readout, to
+  be replaced by the new player. Old playback settings stay, inert, until
+  then. Resume / Start Over still use the old StreamsView.
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
   DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio

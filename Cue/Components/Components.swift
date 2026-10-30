@@ -1354,7 +1354,7 @@ struct MDBListRatingsRow: View {
 
     var body: some View {
         if wraps {
-            InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+            WrapRow(spacing: 10, lineSpacing: 10) {
                 ForEach(entries) { chip($0) }
             }
         } else {
@@ -1857,6 +1857,47 @@ struct PillButtonStyle: ButtonStyle {
                                            : quiet ? FlatControl.restSubtle : FlatControl.rest))
                 .scaleEffect(isFocused ? (configuration.isPressed ? 1.02 : 1.06) : 1)
                 .animation(.smooth(duration: 0.18), value: isFocused)
+        }
+    }
+}
+
+struct WrapRow: Layout {
+    var spacing: CGFloat = 20
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > maxWidth {
+                widest = max(widest, x)
+                y += rowHeight + lineSpacing
+                x = 0
+                rowHeight = 0
+            }
+            x += (x > 0 ? spacing : 0) + size.width
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: min(max(widest, x), maxWidth), height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache _: inout ()) {
+        let maxWidth = proposal.width ?? bounds.width
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > maxWidth {
+                y += rowHeight + lineSpacing
+                x = 0
+                rowHeight = 0
+            }
+            if x > 0 { x += spacing }
+            subview.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + y),
+                          anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

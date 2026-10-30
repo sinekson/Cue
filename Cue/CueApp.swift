@@ -466,7 +466,6 @@ struct RootView: View {
                 FocusTrace.installIfRequested()
                 startPlayerDemoIfRequested()
                 startDetailDemoIfRequested()
-                ScrubThumbnailer.runSelfTestIfRequested()
                 PlayLauncher.shared.configure(.init(
                     addonManager: addonManager, progress: progressStore, watched: watched,
                     settings: { [playerSettings] in playerSettings.settings },
@@ -560,11 +559,6 @@ struct RootView: View {
                     // full sync of every destination, debounced (see
                     // SyncCoordinator). Registered by name, so this is safe to
                     // reach twice.
-                    // Coming back from Picture in Picture: re-present the
-                    // cover for the session PiPHandoff kept alive.
-                    PiPHandoff.shared.present = { request in
-                        playback = request
-                    }
                     let coordinator = SyncCoordinator.shared
                     coordinator.observe(watched: watched, library: library,
                                         progress: progressStore)
@@ -941,15 +935,8 @@ struct RootView: View {
             pendingAutoPlayPop = false
             DispatchQueue.main.async { popActivePathForAutoPlay() }
         }) { request in
-            PlayerScreen(
-                request: request,
-                addonManager: addonManager,
-                progressStore: progressStore,
-                playerSettings: playerSettings.settings
-            ) {
-                // Just dismiss the cover; the auto-play pop runs in onDismiss.
-                playback = nil
-            }
+            EngineTestPlayer(request: request) { playback = nil }
+                .ignoresSafeArea()
         }
         // Deep-link add-on install confirmation. A tvOS alert is fully
         // focusable and remote-navigable, and Cancel carries the `.cancel`
@@ -1954,25 +1941,6 @@ struct RootView: View {
     }
 
     private func startPlayback(_ request: PlaybackRequest) {
-        // A session parked in the Picture in Picture window is still decoding
-        // and still owns the audio route, and nothing in the app ever ended
-        // one — `stop()` had no callers at all. Opening a different title over
-        // it left two engines live: two soundtracks at once and two pipelines
-        // on a 3 GB A10X, and with the hybrid cache on, `beginSession` for the
-        // new origin tore down the parked session's connections and deleted
-        // the cache file its reader was still reading.
-        if PiPHandoff.shared.isActive {
-            // Window first: `finish()` on its own runs the teardown but leaves
-            // AVKit's window up over a view model that no longer exists.
-            PiPHandoff.shared.viewModel?.pictureInPicture.stop()
-            // Then the teardown `onDidStop` would have run — synchronously,
-            // BEFORE the new cover. Teardown resets state the two sessions
-            // share (the cache server's session, the audio session, the sync
-            // pause), so letting it land after the new load has started strips
-            // that out from under the new engine. AVKit's own `didStop` still
-            // arrives later and finds nothing parked, which is a no-op.
-            PiPHandoff.shared.finish()
-        }
         playback = request
     }
 
@@ -2790,7 +2758,7 @@ final class TitlePreloader {
 
     private func pump() {
         while running < Self.parallel, !queue.isEmpty {
-            guard PlayerViewModel.liveInstances == 0 else { queue.removeAll(); return }
+            guard !EngineTestController.isPlaying else { queue.removeAll(); return }
             let (item, depth) = queue.removeFirst()
             if let had = done[item.id], had >= depth { continue }
             let first = done[item.id] == nil

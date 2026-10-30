@@ -422,7 +422,7 @@ struct PlaybackSettingsDetail: View {
                 icon: "timer",
                 selection: String(store.settings.subtitleDelaySeconds),
                 options: PlayerSettings.subtitleDelayValues.map {
-                    CueDropdownOption(String($0), PlayerViewModel.formatDelay($0))
+                    CueDropdownOption(String($0), "\($0 > 0 ? "+" : ($0 < 0 ? "−" : ""))\(String(format: "%.1f", abs($0))) s")
                 }
             ) { store.settings.subtitleDelaySeconds = Double($0) ?? 0 }
 
