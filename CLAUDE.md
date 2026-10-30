@@ -74,11 +74,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   quick motion; a stable 60 fps beats fancy.
 - The top bar hides by moving out the top and shows by moving back in
   (`GlassSidebar.hidden`, `Motion.move`) — everywhere; it is always in the
-  view tree, disabled while hidden. Auto-hide top bar's hiding and showing:
+  view tree, disabled while hidden. Auto-hide top bar: on every tab,
+  Settings too (was: Settings kept it). Its hiding and showing:
   a 0.4 s no-bounce spring (`autoHidden`, `autoHideMotion`; alone on the
   screen, the move's 0.35 s read as a snap; the present's 0.45 s a little
   slow); with the page's parts (into Details in
   place, a trailer) it keeps the move's.
+  (Tried: tvOS's own sidebar, `TabView` `.sidebarAdaptable` — closed a
+  small pill top left, Back opening it; ours kept.)
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
   One glass everywhere: Apple's `.regular`, tinted black 30 %
@@ -111,7 +114,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   icon-only (billboard: Library, Next — only its chevron, no pill;
   Details: Library, About), their names under them while
   focused. (Tried, for later: Library's plus becoming the tick — its strokes
-  morphing, with a quarter turn, the tick drawn from its left end.) (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
+  morphing, with a quarter turn, the tick drawn from its left end; SF
+  Symbols' Magic Replace and Draw Off / Draw On — on tvOS the plus's arms
+  retracted to their outer ends, four dots, not into its middle as in the
+  SF Symbols app.) (Tried: bold text; every button labelled.) (Tried and dropped: a dark fill
   at rest — grey, black, black with a light edge; nothing at rest.)
 - No accent colours. Colour only for information (rating sources).
 - Text: 24 pt regular is the base; 23–25 pt is the floor for TV text.
@@ -867,22 +873,57 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   links: each one's text as the add-on wrote it (not ours to change),
   Nuvio's badges under it (to become switchable), as tall as their
   lines; text 26 / 24 pt, focused near-black (the second lines 85 %).
-- **Settings** (`ATVSettingsView`, `SettingsKit`): on trial, one
-  column, 860 wide, centred (`columnWidth`; rows only, the full width read
-  too wide; tried: 780), a level at a time, as Apple TV's Settings: first the
+- **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings
+  recreated, measured off its screen (`SettingsMetrics`), on trial
+  with a description in its picture's place: the page's title centred
+  over the screen (57 pt; Apple's at 56 pt, ours at 121 — clear of the
+  top bar; tried: 30 pt lower; at 101 it crowded the bar), the rows on
+  the right (1060 pt in, 779 wide, the first — a row or a section label, the same line either way — at 254: as far under the title as Apple's 189 under its 56; tried: 209 — too close under the title), on the left,
+  centred 525 in: Apple's tile (`SettingsIcon`, 537 pt square, 112 pt
+  corners, white 29 %), its top 48 below the first row's (Apple's; tried: 80),
+  a symbol cut out of it — the page's background showing through — all
+  at one size (180 pt semibold; tried: 150 — small in the tile; 200): a gear (`gear`; tried: `gearshape`) on the
+  categories (whatever row is focused; tried: the app's play), a category's own (outline, no
+  fill) on its page and the pages opened from it, crossfading
+  (`SettingsCategory.symbol`, `SettingsNav.category`; tried: on a
+  category's pages no tile, the symbol alone in the tile's grey, light,
+  filled where it has a fill, as Apple's lower levels draw theirs — one
+  font size for all, 426 pt (Apple's globe's 490 wide); each fitted —
+  into 490 pt, by area, to the tile's width — sizes off; SF Symbols —
+  Nuvio `arrow.trianglehead.2.clockwise.rotate.90`, TMDB
+  `photo.badge.magnifyingglass` (tried: `text.below.photo`), MDBList `hand.thumbsup` (tried: `star`), Appearance `paintpalette` (tried:
+  `paintbrush`), Home & Details `rectangle.grid.3x1`, Playback
+  `playpause`, About `info.circle`, Developer
+  `chevron.left.forwardslash.chevron.right`); under it (56 pt) Apple's description text
+  (`SettingsDescriptionText`, 880 wide, 29 pt regular, 65 %, centred),
+  staying there: the focused row's description, else the page's,
+  crossfading (0.25 s); nothing to say: it fades away (tried: a home
+  screen icon's size, 400 × 240, a category's symbol on its pages, the
+  text 24 pt medium 55 % 537 wide; the text alone, no icon; Apple's tall tile, 537 pt square, the symbol dark on it; no picture — the rows centred, a
+  card right of them with the description following focus, the two
+  centred together; the page's description centred under the title, the
+  rows under it at 255; a row's description under its pill; tried: Apple's way — a tile on the left, 537 pt square at (525,
+  527), grey, the category's symbol dark on it, the description under it,
+  the rows on the right, 1060 pt in, the first at 209); 65 tall, 80 apart (rows holding buttons — lists in Edit, the add-ons and Home rows' lists: Apple's taller rows, 119 tall, 30 pt corners, 16 apart, round buttons 66 pt a lighter fill, centres 117 apart, the last 18 from the end — `tallRowHeight`, `rowButtonSize`); text 30 pt in, the chevron
+  36 from the end; focused, the platter 4.5 pt larger each side (788 ×
+  74, a capsule), its content 1.2 % larger; a section's label 46 below
+  the row above. (Tried: one column, 860 wide, centred, the title over
+  it; 780; with the tile, mirrored — the rows left under a left-aligned title, the tile
+  right: looked bad.) A level at a time: first the
   categories, as rows ("Settings"; Accounts — Nuvio, TMDB, MDBList —
   General, Developer; an account shows a value only when something's
-  missing: "Signed out", "Add key"; no descriptions — a category's line heads its own page),
+  missing: "Signed out", "Add key"; each category's line shows as its row is focused — what's behind it; tried: none here, the line heading the category's own page — pointless once inside, and shown for any row without a description),
   Select opens its settings, their rows open lower pages (Watched, Rows,
   Add-ons…), each in the column's place (`SettingsNav`), focus on its
   first row (`opening` — the engine took the row nearest the one left); Back goes up a
-  level, focus back on the row that opened it (the only row taking focus
+  level from any row (tried: below the first row up to it first, as Home's
+  and Details' — often useless), focus back on the row that opened it (the only row taking focus
   as its page comes back, `returning` — else the first showed for a
   moment); on the categories, Back: the top bar. Up from the first row:
   the top bar; Down from it back to the row it left (first time: the
   first — only it takes focus meanwhile, `settingsOnlyRow`). The rows by
   name (`SettingsRowsKey`, `settingsRowFocus`); a list's entries
-  (`SettingsEntryRow`) are rows by their first control. Playback, About,
+  (`SettingsEntryRow`) are rows by their first control. Playback,
   Developer (old cards) go by geometry. (Tried: the categories a sidebar
   320 wide beside the settings — floating on the page, the three centred
   together; the settings following the focused category, Right / Left
@@ -892,21 +933,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   400 wide at the screen's left inset; 440 + 780 and 480 + 920 centred
   together; the categories a third of the width; their rows 80 % of the
   settings' size; icons.) Sign in is full screen (the first
-  launch's). A row's description under its pill, always (24 pt, 55 %,
-  lined up with the row's text, 10 below the pill — `descriptionGap`; the
-  pill drawn behind the row's own part only, `SettingsPillKey`) — most to
-  go, the rest kept short. (Tried: the focused row's in a card right of
-  the rows, level with it, following focus — 320 wide beside the centred
-  column, then 480 with the two centred together; under the pill, the
+  launch's). Descriptions: on the left (above), short, and only where
+  they say what the name and rows don't — what a brand is (Nuvio, TMDB,
+  MDBList's own lines), what a setting affects ("one-time", "this device
+  only"), a count you need ("3 of 5 profiles"); else none, the tile alone
+  (Nuvio's pages done; the rest one category at a time). (Tried: a row's under its pill, always (24 pt, 55 %, 10
+  below it); the focused row's card 480 wide; under the pill, the
   rows below stepping down to make room — a lot of movement; inside the
   focused pill, under the name — the pill grew tall; opening after 0.4 s
   of rest, the rows above moving down to keep the focused one still —
   horrible.)
-  The rows on a faint fill, focused white. The rows
-  as Apple TV's Settings, measured off its screen: 65 pt capsules, 14
-  apart, 38 pt text (name medium, value regular) 33 pt in from the ends,
-  the chevron 38 pt; focused 2 % larger (tried: 4 pt taller each side as
-  well, as measured — too large, and no longer a capsule) (`SettingsMetrics`).
+  The rows on a faint fill, focused white; 38 pt text (name medium,
+  value regular). (Tried: focused 2 % larger, uniformly.)
   Section labels as Apple TV's too: 29 pt semibold capitals, no extra
   spacing, 45 % (tertiary; was 55 %) (tried: Home's section hint, small and widely spaced).
   (Tried: 72 pt rows with the cards' corners, 22; 29 / 27 pt text 22 pt
@@ -915,35 +953,60 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   tried: 5 pt in from the rows' edge, as Home's row names, `textIndent`;
   on the edge itself). Choices open their options as a page in the column
   (`SettingsOptionsRow`: the options one row each, the current one
-  checked, Select picks and goes back) — no pop-up menus (tried: the
+  checked, Select picks and stays — Back goes up; tried: going back on a pick) — no pop-up menus (tried: the
   glass dropdown, `HoldMenu.openDropdown`; MDBList's done, the other
   pages still to move over).
   Text at the app's levels (names 75 %, values 55 %, labels 45 %). (Tried
   and dropped: the rows beside an info pane — a box with the category's
   symbol, the description under it: room wasted, the words far from their
-  row.) Playback, About, Developer still on the old cards (Right goes in,
+  row.) Playback, Developer still on the old cards (Right goes in,
   Select not yet) — to be redone one by one.
-  A page's heading stays where it starts, level with the categories; only
-  the rows scroll, under it, fading out over 24 pt at its foot — nothing
-  goes higher (`SettingsScrollingPage`; tried: the whole page scrolling
-  up past where it started).
-  Not everything is a button: what's only to read takes no focus. Every
+  Between levels, as Apple TV's Settings' (measured off a recording):
+  into a page the rows go left and the new ones come from the right,
+  200 pt on a 0.55 s no-bounce spring; Back the other way (`SettingsPageMove`,
+  `AnyTransition.settingsPage`, `SettingsNav.forward`; tried: 80 pt — too
+  little; the move's 0.35 s — quick beside Apple's). The old rows fade in
+  0.25 s, the new ones over 0.5 s; left of the column the rows fade away
+  at a soft edge, 960–1040 pt, never reaching the tile (`columnMask`).
+  Only the rows (and a page's own buttons) move: the title and description
+  are the screen's, not the page's (`SettingsPageHeaderKey`), the title
+  crossfading in place 0.15 s after the press, 0.3 s; the tile's symbol
+  as before; an old card page moves whole. The lit row rides out with its
+  page, fading with it; the new page lights 0.7 s after the press
+  (focus is there all along, unseen — `SettingsNav.settling`,
+  `settingsFocusHidden`; tried: gone just ahead of the move; lit on the
+  new page throughout — it didn't go with the others).
+  (Lesson: a view going out is frozen — environment changes don't reach
+  it, only its transition's own modifier; tried: shifting the rows
+  through the environment, the page going out stayed put.)
+  Only the rows scroll, fading out over 47 pt above where the first
+  starts (as Apple's: from ~18 pt under the title; tried: 24 pt, from the title's foot — too close) — nothing goes higher (`SettingsScrollingPage`; tried: the whole
+  page scrolling up past where it started).
+  Not everything is a button: what's only to read takes no focus —
+  Apple's look, a row's name and value, no fill (`SettingsInfoRow`), and
+  only below the buttons, never a button under it: a page's rows to read
+  come last (14 pt more room under a button above, `infoGap`). A page with nothing to press holds focus unseen (`SettingsFocusHolder`;
+  without it focus left for the top bar). Every
   page — a category's own and those opened from it — its title alone,
-  one title on the column, as Apple TV's Settings' (measured: 57 pt
-  semibold, 75 % — the app's primary; tried: the labels' grey, 55 %, as
-  measured; a row's size, 29 then 38 pt semibold), the
-  description under it (24 pt medium, 50 %), the page's round buttons
-  at its right end (`SettingsScrollingPage`). (Tried: titled as a row's
+  one title on the column, as Apple TV's Settings' (57 pt bold, at most
+  800 wide, "…" past it — clear of the buttons on its line,
+  `titleMaxWidth`; the section labels' grey, 45 % — as Apple's; tried: semibold at 75 %, the
+  app's primary — much brighter than Apple's; the labels' grey, 55 %; a
+  row's size, 29 then 38 pt semibold), the
+  description on the left, the page's round
+  buttons at the rows' right end on the title's line (`SettingsScrollingPage`). (Tried: titled as a row's
   name, 40 pt, 55 % — it outweighed the categories; the trail over the
   title, "NUVIO › PROFILES"; a category's own page untitled — a title
   at times and not at others; the description alone, on the "ACCOUNTS"
-  label's line.) Nuvio, rows only (as MDBList's): "Nuvio", Nuvio's line under it
-  ("Manage synced data across web, mobile, and TV."; tried: "Overview");
+  label's line.) **Descriptions** say what's behind a row: the focused row's, else nothing (the tile alone). A page keeps a line of its own only where it explains the page and its rows have none: options pages, Add-ons, Rating Providers, a count ("3 of 5 profiles"). Nuvio, rows only (as MDBList's): "Nuvio", its row's line
+  ("Keeps your profiles, add-ons and watch progress in sync across your
+  devices.", signed in or out; tried: "Manage synced data across web,
+  mobile, and TV."; "Overview");
   Account (the email; its page: Sign Out with the email on its right,
   confirmed — `NuvioAccountPage`), Profiles (the active one) — all profile
   management lives here, at the Nuvio website's parity: its page
-  (`NuvioProfilesPage`, "N of 5 profiles · …") a row per profile (avatar,
-  name, "Primary · Active", chevron) and Add Profile last (the keyboard
+  (`NuvioProfilesPage`, "N of 5 profiles") a row per profile (avatar,
+  name, "Primary, Active", chevron) and Add Profile last (the keyboard
   for the name, then its page; gone at 5) — on trial, the guided steps
   instead (`ProfileSetup`, a setup assistant; the same on the gate): one
   question a screen in the gate's look, a dot per step under it, Back a
@@ -986,44 +1049,62 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Then Sync: Sync Now, its value the last sync ("Today at
   22:34" / "Syncing…" / "Failed"), and a row per kind synced, its count
   as the value — every one a button with a chevron — Add-ons and
-  Watched open their pages (Add-ons: the add-ons a line each — Configure,
-  Rename, Move, a switch, Remove — then Add Add-on, as Add Profile; tried:
+  Watched open their pages (Add-ons: a row per add-on (logo, name, "Off" when off), lit whole,
+  Select its page (`AddonPage`: Configure, Rename, Remove — wide rows);
+  Edit on the title's line (as Rating Providers') gives each row a round
+  on / off (an eye, struck through when off; "Off" left of it
+  only at rest — tried: a tick, empty when off — looked odd beside the handle) and the ≡ handle (`SettingsReorderRow`),
+  Done or Back ends it (tried: one line each with Configure, Rename, Move,
+  a switch, Remove — too many buttons); then Add Add-on, as Add Profile; tried:
   a round + by the heading; then Refresh Add-ons — every manifest fetched
   again past the cache, this device only, nothing pushed to Nuvio; its
-  value "Refreshing…", then "Up to date" or "2 didn't answer"), Watch progress, Library, Collections nothing
+  value "Refreshing…", then the last refresh ("Today at 22:34", kept —
+  `cue.addons.refreshedAt`) or "2 didn't answer"; the add-ons 16 apart,
+  the buttons 29 under them as Apple's Add Language…, `listButtonGap`; tried:
+  one gap for all), Watch progress, Library, Collections nothing
   yet, until they get one (tried: those only to read, no fill or focus). (Tried: ACCOUNT / ACTIVE PROFILE / LAST SYNC in outlined
   boxes, round Sync now and Sign out beside them, the counts in tiles, the
   profiles in tiles to read; before that: the website's tiles, rows under
   them, the info tiles pressable — actions hidden behind a label.)
-  Watched (`WatchedSettingsPage`): "Watched", "N records · M titles"
-  under it, a round Clear all at the heading's end (`SettingsPage`'s
-  `accessory`; confirmed); a title to a row, newest first, simply
-  scrolling (no paging): the rows' look, a small poster (64 × 96), the
-  name over what was watched last and when — "Last watched" (sentence
-  case, medium, 75 %) then "S2:E4 on 14 Oct 2026, 23:15" (55 %; tried: " · ", " – "); a film
-  "Watched" and the date, a show's chevron at the end
-  (tried: "41 episodes" with the date at the row's end)
-  (tried: posters four across with captions — they hid the order). A show: Select opens
-  its episodes (`WatchedTitlePage`: name, "N episodes · S seasons", a
-  round Remove all; a section per season, in the show's order (not watch order), tiles two
-  across (tried: three — names cut short) in the
-  count tiles' look, "E3 · name" and when watched; Select: Remove in the
-  dropdown; empty, it closes). A film: Select, Remove in the dropdown.
-  Hold any title: Remove from Watched (a show asks first). Names,
-  posters, episode names from the add-on's meta on disk (only the rest
-  fetched, else TMDB). No Details from here, no summaries.
-  TMDB (`TMDBServicePage`): "TMDB", "Powers search and everything Cue
-  shows about a title." (descriptions short; tried: a list of everything
-  it feeds); then rows, as MDBList's: API Key (its page, below), Language
-  (TMDB's; moved from Home & Content — an options page), then TMDB's
-  attribution line at the end (text only, no logo yet). No feature
-  switches: a key means on. A Cache section: Stored ("42 MB of 128 MB" —
-  its `URLCache` on disk, to read) and Clear Cache. No request counts:
+  Watched (`WatchedSettingsPage`): "Watched", "M titles" under it; a
+  title to a row, newest first, simply scrolling: a list's tall rows (as
+  the add-ons'), a small poster (58 × 87), the name (38 pt medium) over
+  what was watched last and when ("S2:E4, 14 Oct 2026"; a film the
+  date), a chevron on every row (`WatchedRow`). Select opens the title's
+  page (`WatchedTitlePage`): a show "N episodes, S seasons", a section
+  per season in the show's order, an episode a tall row ("E3: name",
+  when under it — "14 Oct 2026, 23:15"); a film its one row. Edit on the
+  title's line, on both pages (on the title's page Select on a row too,
+  focus on its button), gives each row a round trash; one press removes
+  it (on the list the whole title, a show every episode), no confirming
+  — Edit is the safety, and a title is easily marked again; focus to the
+  next row's; a title's page left empty closes. Remove All beside Done
+  (on the list it also clears Continue Watching, on every device). No
+  hold menus, no alerts, no dropdowns. Names, posters, episode names from
+  the add-on's meta on disk (only the rest fetched, else TMDB). (Tried:
+  no title pages, the rows without chevrons, Select starting Edit —
+  episodes couldn't be removed one by one; a minus for the button; Select
+  on an episode asking to remove it in an alert; Clear All confirmed;
+  "N records · M titles", a round trash Clear all; "Last watched" over
+  "S2:E4 on 14 Oct 2026, 23:15"; hold for Remove; Remove in a dropdown;
+  episodes as tiles two or three across — looked terrible; posters four
+  across with captions — they hid the order. Talked over: Select mode
+  with ticks and Remove (N) — not needed, one press removes.)
+  TMDB (`TMDBServicePage`), its row's line "Search, artwork, cast and details
+  for every title." (descriptions short; tried: "Powers search and
+  everything Cue shows about a title." — too broad, posters are the
+  add-ons'; a list of everything it feeds); then rows, as MDBList's: API Key (its page, below), Language
+  (TMDB's; moved from Home & Content — an options page). No attribution
+  line on the page (tried: "This product uses the TMDB API…" at its end;
+  it stays in the old About's Licenses text). No feature
+  switches: a key means on. No cache rows (tried: Clear Cache and Stored
+  "9.2 MB of 134.2 MB" — only the URL cache's JSON, TMDB's own disk caches
+  survived the clear: it did nothing useful). No request counts:
   TMDB has no quota and reports none (a soft per-second limit only). (Tried: STATUS and API KEY in outlined boxes
   with round buttons beside them — Type key, Send from phone, Remove key;
   no key: the QR on the page itself; Language as a tile under Status,
   `SettingsChoiceTile`, label over value.)
-  MDBList (`MDBListServicePage`): "Ratings from IMDb, Rotten Tomatoes,
+  MDBList (`MDBListServicePage`), its row's line "Ratings from IMDb, Rotten Tomatoes,
   Letterboxd and more."; only wide rows — no round buttons, no outlined
   boxes, no Status (the way the rest of Settings goes, one page at a
   time; what's only to read: Apple's way, a row's text and value with
@@ -1034,21 +1115,29 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Phone (the full-screen QR), the how-to under the name — a key saved or
   removed, back. No replacing in place: remove, then add. (Tried: the
   TMDB page's Status and API key boxes, round buttons beside them, the
-  QR on the page without a key.) Then Usage, to read, from `/user`'s
-  body (asked with the key's check as the page opens; `MDBListUsage`):
-  Account (username · plan), Requests Today ("312 of 1,000"), Resets
-  (local time), Paused only while a 429 holds requests back (moved off
-  the Developer page). Then a Ratings section of wide rows,
+  QR on the page without a key.) Then Usage, under API Key: a row with the requests ("312 of 1,000"), opening
+  its page, to read, from `/user`'s
+  body (asked with the key's check as MDBList's page opens; `MDBListUsage`; tried: last on the page, the rows themselves):
+  Account (the username), Plan, Requests Today ("312 of 1,000"), Resets
+  (local time), Paused ("Until …") only while a 429 holds requests back (moved off
+  the Developer page). The Ratings section of wide rows,
   the value on the right: Show
-  ratings (Everywhere / Details only / Off — Off hides the catalog's IMDb
-  score too; `MDBListSettings.place`); Order, showing the first three as their chips (marks, no scores),
+  Ratings (Everywhere / Details Only / Off — Off hides the catalog's IMDb
+  score too; `MDBListSettings.place`; its page's description says what
+  every option does in running text, as Apple's Keyboard Layout page —
+  "Choose where titles show their ratings. Everywhere shows them on …";
+  tried: each option's line alone, changing as focus moved — better to
+  see them all; a line per option under a blank line — too long, too
+  far down); was "Show ratings"); Rating Providers (was Order), showing the first three as their chips (marks, no scores),
   opening its page in the column (`RatingOrderPage`: "The first three
   show on titles; the rest stand in when one is missing." under its
-  name; the sources one row each — Move, a switch, the rows' usual gap) —
+  name; Apple TV's list with Edit, as its Languages: under "PREFERRED ORDER" a row per source, the name only — no on / off (every source in the order; tried: Select turning it on / off); Edit, a capsule on the title's line (`SettingsCapsuleButton`, Apple's: 71 tall, 38 pt text 36 in), makes it Cancel and Done (focus on Done; Select on a row: Edit too, focus on that row) and gives each row its ≡ handle (`SettingsReorderRow`: at rest the whole row lights; in Edit focus is the handle's alone — a round button lighting white, the row as it is (tried: the whole row white, the handle plain lines); Select lifts the row — it lights whole, white, the handle its lines alone, Up / Down move it, Select or Back puts it down); Done keeps the order, Cancel or Back puts it back. No trash. Tried: Move and a switch on every row, `SettingsEntryRow`) —
   the chips on the billboard, Details and About, the same order for
-  every title (MAL in it shows only where a title has one: anime); On
-  Home's rows (1 / 2 / 3 ratings, `rowCount`, 1): how many of the same
-  order the fixed box shows (`FixedFocusChipsView`). (Tried: the box's
+  every title (MAL in it shows only where a title has one: anime); Ratings
+  on Rows (1 / 2 / 3, `rowCount`, 1; only while Show Ratings is
+  Everywhere; its page says what it does; was "On Home's rows" — "1
+  rating"): how many of the same order the fixed box shows
+  (`FixedFocusChipsView`). (Tried: the box's
   own rule — a source picked in a dropdown, "MyAnimeList for anime" as a
   tick after the sources; an Anime row — MyAnimeList first / Your order —
   for the chips and the box alike; a Rating priority tile opening its own page; the
@@ -1057,23 +1146,46 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   "Fallback" labels, a line after the third, a preview of a film's and an
   anime's chips on placeholder cards; a numbered list, one focus to a
   row, Select lifting it, hold to hide, an Off section — looked horrible.)
-  Appearance: switches in one list, no section labels (an untitled
-  `SettingsSection` draws none), one-line descriptions — Background
-  (Static / Dynamic, an options page), Card outlines (Edges and focus / Edges only / Off, an options page — was
-  High / Low; its line on the options page only), Auto-hide top bar (was
-  Hide the top bar; no line) (tried: Look / Billboard / Navigation
-  sections, long descriptions). Home & Details (was Home &
+  About (`AboutDetail`; was the fork's card — a CUE logo, Diagnostics,
+  Clear cache): Privacy and Licenses & Credits, pages in the column
+  (running text, focus on `SettingsFocusHolder`), then to read: Version,
+  Device, Software, Source Code. No updates line: there are none to
+  check. Version: below 1.0 a pre-release, shown "0.9 Pre-release"
+  (`MARKETING_VERSION`, was 9 — the Android version it tracked); 1.0
+  after the playback rework. Orivio isn't named in the app (GPLv3 and
+  the source address are); it stays in the repository.
+  Appearance (its row's line "Change how Cue's pages and cards look."; tried: "Colours,
+  the focus outline and the top bar."): switches in one list, no section
+  labels (an untitled `SettingsSection` draws none) — Background
+  (Static / Dynamic, an options page), Card Outlines (Edges and Focus /
+  Edges Only / Off, an options page — was High / Low), Auto-Hide Top Bar
+  (was Hide the top bar; no line). Each options page says what every
+  option does in running text, as Show Ratings' ("Choose what's behind
+  the pages. Static keeps …"; tried: Background's line about Dynamic
+  alone; Card outlines' "A thin edge around every card, …") (tried:
+  Look / Billboard / Navigation sections, long descriptions). Home & Details (was Home &
   Content; the add-ons are Nuvio's, synced — only under Nuvio → Sync):
-  Rows, Continue Watching order, Billboard moves on by itself (moved from
-  Appearance: behaviour, not looks), Hide watched titles (off; Home's
-  catalog rows without watched films and shows with every aired episode
-  watched — of the 20 shows Next Up looks at, `finishedShows`; Continue
-  Watching, Saved for Later, collections untouched; `HomeHideWatched`),
-  Hide spoilers (off; Details' episodes not watched or started: the still
-  blurred, `BlurredBackdrop`, `FixedFocusCardState.blurred`; titles kept —
-  the row shows no synopsis; `DetailHideSpoilers`), Trailers and Trailer sound
-  (Nuvio's synced tvOS prefs, `heroTrailersEnabled` / `heroTrailerSound`
-  — the old preview's switches, reused), one list.
+  its row's line "Choose what Home shows and how titles behave."; one list — Home Rows
+  (its value the rows that show, no more), Continue Watching Order (Last
+  Watched / In Progress First, an options page in running text; was a
+  press switching in place, "Recently watched / Streaming style"), Hide
+  Watched Titles (off; Home's catalog rows without watched films and
+  shows with every aired episode watched — of the 20 shows Next Up looks
+  at, `finishedShows`; Continue Watching, Saved for Later, collections
+  untouched; `HomeHideWatched`), Auto-Advance Billboard (moved from
+  Appearance: behaviour, not looks; was "Billboard moves on by itself"),
+  Trailers (With Sound / Silent / Off, an options page — one row setting
+  Nuvio's two synced tvOS prefs, `heroTrailersEnabled` /
+  `heroTrailerSound`; was two switches), Hide Spoilers (off; Details'
+  episodes not watched or started: the still blurred, `BlurredBackdrop`,
+  `FixedFocusCardState.blurred`; titles kept — the row shows no synopsis;
+  `DetailHideSpoilers`). Home Rows (`HomeRowsPage`; its row's line "Choose which rows show on Home, their order and their names."), as the add-ons': a
+  row each (name, its source, "Off" when hidden), lit whole, Select its
+  page (`HomeRowPage`: Rename, Source to read); Edit on the title's line
+  gives each the eye and the ≡ handle (tried: Rename, Move and a switch
+  on every line). Continue Watching and Saved for Later aren't in the
+  list (can't be moved or hidden, for now). No separator dots anywhere in
+  Settings: a comma, a colon or a row of its own.
   Continue Watching and Library aren't repeated in Settings, and no row
   sends you elsewhere in the app.
 - **App icon and Top Shelf images**: generated, never hand-edited —
@@ -1167,7 +1279,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   pages (their `TMDBBrowseViewModel`, a `PreparedPage`; the grid's
   `placeholder:` — two lines of empty posters).
 - **Search**: SwiftUI `.searchable` (the system's field, keyboard,
-  dictation, suggestions). Nothing scrolls but the row, sideways.
+  dictation, suggestions), 20 pt lower than the other pages under the
+  top bar (it crowded it). Nothing scrolls but the row, sideways.
   Where it comes from: TMDB, not the add-ons' catalogs: its combined
   search (`TMDBService.searchMulti` — films, series and people in one
   list), its film and series searches (`TMDBService.search`, a page each,
@@ -1325,10 +1438,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   refactor's player (now the system's); a setting "foreign titles in original audio"
   (anime: Japanese with English subtitles — burned in, or YouTube's
   captions added to the playlist).
+- TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
+- A proper cache setting (every cache — pictures, title records,
+  TMDB's, trailers — what it holds and one honest clear), replacing the
+  TMDB page's old Clear Cache and About's (both gone).
 - A collection editor (create and edit Cue's collections) — wanted back,
   in the new Settings look; the old one (`CollectionsSettingsDetail`,
   old cards) is no longer reachable.
 - Player rework (resume / Start Over still use the old StreamsView).
+  Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
+  LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
+  DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio
+  tvOS app. The player code came with the fork (Orivio's, never reworked
+  here, many issues): replace it, don't patch it. It replaces today's five paths (KSPlayer's AVPlayer and
+  FFmpeg, VLC, `DVSampleEngine`, the loopback remux) and their timer
+  failovers; no engine setting. Needs tvOS 18 (we target 17). To watch:
+  memory over a long film (the loopback path's leak), styled ASS (it
+  hands raw ASS; we draw it). A fallback engine only if Aether shows a
+  real gap. Trailers keep their own `AVPlayer`.
 - Up from a fixed row into a collection row above it: the fixed row's
   card shrinks differently than when leaving into a fixed row. Left as
   it is for now — it may be the better animation; look at both later.

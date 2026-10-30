@@ -11,7 +11,7 @@ enum ServiceKey {
     var about: String {
         switch self {
         case .tmdb:
-            return "Powers search and everything Cue shows about a title."
+            return "Search, artwork, cast and details for every title."
         case .mdblist:
             return "Ratings from IMDb, Rotten Tomatoes, Letterboxd and more."
         }
@@ -72,50 +72,36 @@ enum ServiceKey {
     }
 }
 
-/// TMDB's answers kept on disk: how much, of how much, and a way to drop
-/// them (the next pages ask TMDB again).
-private struct TMDBCacheSection: View {
-    @State private var used = TMDBService.cacheUsage
+/// MDBList → Usage: its account and the day's requests, only to read: what
+/// its last answer said (`/user` is asked as MDBList's page opens, with the
+/// key's check). Nothing here is a button, so `SettingsFocusHolder` keeps
+/// focus on the page.
+private struct MDBListUsagePage: View {
+    @ObservedObject private var usage = MDBListUsage.shared
 
     var body: some View {
-        SettingsSection(title: "Cache") {
-            SettingsInfoRow(title: "Stored",
-                            value: "\(Self.megabytes(used.disk)) of \(Self.megabytes(used.capacity))")
-            SettingsButtonRow(title: "Clear Cache") {
-                TMDBService.clearCache()
-                used = TMDBService.cacheUsage
-            }
-        }
-    }
-
-    private static func megabytes(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-    }
-}
-
-/// MDBList's account and the day's requests, only to read: what its last
-/// answer said (`/user` is asked as the page opens, with the key's check).
-private struct MDBListUsageSection: View {
-    @ObservedObject var usage: MDBListUsage
-
-    var body: some View {
-        if usage.account != nil || usage.snapshot != nil {
-            SettingsSection(title: "Usage") {
+        SettingsPage(title: "Usage") {
+            SettingsSection {
                 if let account = usage.account {
-                    SettingsInfoRow(title: "Account",
-                                    value: [account.username, account.plan].filter { !$0.isEmpty }.joined(separator: " · "))
+                    if !account.username.isEmpty {
+                        SettingsInfoRow(title: "Account", value: account.username)
+                    }
+                    if !account.plan.isEmpty {
+                        SettingsInfoRow(title: "Plan", value: account.plan)
+                    }
                 }
                 if let snapshot = usage.snapshot {
-                    SettingsInfoRow(title: "Requests Today",
-                                    value: "\((snapshot.limit - snapshot.remaining).formatted()) of \(snapshot.limit.formatted())")
+                    SettingsInfoRow(title: "Requests Today", value: snapshot.requestsToday)
                     if let resetsAt = snapshot.resetsAt {
                         SettingsInfoRow(title: "Resets", value: Self.when(resetsAt))
                     }
                 }
                 if let paused = usage.pausedUntil, paused > Date() {
-                    SettingsInfoRow(title: "Paused", value: "Too many requests · until \(Self.when(paused))")
+                    SettingsInfoRow(title: "Paused", value: "Until \(Self.when(paused))")
                 }
             }
+            // Behind the rows: in their list it pushed them down a gap.
+            .background(alignment: .top) { SettingsFocusHolder() }
         }
     }
 
@@ -129,14 +115,18 @@ private struct MDBListUsageSection: View {
     }
 }
 
-/// Settings → TMDB: the key's row, the language, the cache (its size,
-/// Clear Cache), TMDB's attribution at the end. No request counts: TMDB
-/// has no quota and reports none.
+private extension MDBListUsage.Snapshot {
+    /// "312 of 1,000".
+    var requestsToday: String { "\((limit - remaining).formatted()) of \(limit.formatted())" }
+}
+
+/// Settings → TMDB: the key's row and the language. No request counts:
+/// TMDB has no quota and reports none.
 struct TMDBServicePage: View {
     @EnvironmentObject private var tmdb: TMDBSettingsStore
 
     var body: some View {
-        SettingsPage(title: ServiceKey.tmdb.name, subtitle: ServiceKey.tmdb.about) {
+        SettingsPage(title: ServiceKey.tmdb.name) {
             VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
                 ServiceKeyRow(service: .tmdb, key: tmdb.settings.trimmedAPIKey) { tmdb.setAPIKey($0) }
                 SettingsOptionsRow(
@@ -145,28 +135,29 @@ struct TMDBServicePage: View {
                     selection: tmdb.settings.language
                 ) { tmdb.settings.language = $0 }
             }
-            TMDBCacheSection()
-            Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
-                .font(.system(size: 24))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
-                .padding(.leading, SettingsMetrics.labelIndent)
         }
     }
 }
 
-/// Settings → MDBList: the key's row, then the ratings — where they
-/// show, the sources' order (its own page), how many on Home's rows.
+/// Settings → MDBList: the key's row, Usage (its own page), then the
+/// ratings — where they show, the sources' order (its own page), how many
+/// on Home's rows.
 struct MDBListServicePage: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
+    @ObservedObject private var usage = MDBListUsage.shared
 
     var body: some View {
-        SettingsPage(title: ServiceKey.mdblist.name, subtitle: ServiceKey.mdblist.about) {
-            ServiceKeyRow(service: .mdblist, key: mdblist.settings.apiKey) { key in
-                mdblist.settings.apiKey = key
-                // Kept true for older Cue versions, which still read it.
-                mdblist.settings.enabled = !key.isEmpty
+        SettingsPage(title: ServiceKey.mdblist.name) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                ServiceKeyRow(service: .mdblist, key: mdblist.settings.apiKey) { key in
+                    mdblist.settings.apiKey = key
+                    // Kept true for older Cue versions, which still read it.
+                    mdblist.settings.enabled = !key.isEmpty
+                }
+                if !mdblist.settings.apiKey.isEmpty, usage.account != nil || usage.snapshot != nil {
+                    SettingsLinkRow(title: "Usage", value: usage.snapshot?.requestsToday) { MDBListUsagePage() }
+                }
             }
-            if !mdblist.settings.apiKey.isEmpty { MDBListUsageSection(usage: .shared) }
             ratings
         }
     }
@@ -174,61 +165,86 @@ struct MDBListServicePage: View {
     private var ratings: some View {
         SettingsSection(title: "Ratings") {
             SettingsOptionsRow(
-                title: "Show ratings",
+                title: "Show Ratings",
+                pageDescription: "Choose where titles show their ratings. Everywhere shows them on Home's "
+                    + "billboard and rows and on Details. Details Only keeps them to a title's own page. "
+                    + "Off hides them everywhere.",
                 options: RatingsPlace.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                 selection: mdblist.settings.place.rawValue
             ) { mdblist.settings.place = RatingsPlace(rawValue: $0) ?? .everywhere }
             // The first three as their chips, without scores.
-            SettingsLinkRow(title: "Order", trailing: AnyView(HStack(spacing: 10) {
-                ForEach(Array(mdblist.settings.shownProviders.prefix(FixedFocusBillboardText.ratingsShown))) {
+            SettingsLinkRow(title: "Rating Providers", trailing: AnyView(HStack(spacing: 10) {
+                ForEach(Array(mdblist.settings.orderedProviders.prefix(FixedFocusBillboardText.ratingsShown))) {
                     RatingChip(provider: $0)
                 }
             })) {
                 RatingOrderPage()
             }
-            // How many of them under Home's fixed box.
-            SettingsOptionsRow(
-                title: "On Home's rows",
-                options: (1...FixedFocusBillboardText.ratingsShown).map {
-                    SettingsOption(id: "\($0)", label: $0 == 1 ? "1 rating" : "\($0) ratings")
-                },
-                selection: "\(mdblist.settings.rowCount)"
-            ) { mdblist.settings.rowCount = Int($0) ?? 1 }
+            // How many of them under Home's fixed box; only while Home shows them.
+            if mdblist.settings.place == .everywhere {
+                SettingsOptionsRow(
+                    title: "Ratings on Rows",
+                    pageDescription: "How many ratings the focused title shows on Home's rows. "
+                        + "They follow the order of Rating Providers.",
+                    options: (1...FixedFocusBillboardText.ratingsShown).map { SettingsOption(id: "\($0)", label: "\($0)") },
+                    selection: "\(mdblist.settings.rowCount)"
+                ) { mdblist.settings.rowCount = Int($0) ?? 1 }
+            }
         }
     }
 }
 
-/// MDBList → Order: the sources, one row each — Move, and a switch.
+/// MDBList → Rating Providers, as Apple TV's lists (its Languages): under
+/// "Preferred Order" a row per source, Edit on the title's line (Select on
+/// a row: Edit too, focus on that row). In Edit: Cancel and Done there,
+/// each row its ≡ handle — Select lifts a row, Up / Down move it, Select or
+/// Back puts it down. Done keeps the order, Cancel (or Back) puts it back
+/// as it was.
 private struct RatingOrderPage: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
+    @Environment(\.settingsRowFocus) private var rowFocus
+    /// In Edit: the order before it, for Cancel.
+    @State private var before: [String]?
     @State private var moving: MDBListProvider?
 
     var body: some View {
-        SettingsPage(title: "Order",
-                     subtitle: "The first three show on titles; the rest stand in when one is missing.") {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
-            ForEach(mdblist.settings.orderedProviders) { provider in
-                let shown = mdblist.settings.isShown(provider)
-                SettingsEntryRow(
-                    title: provider.fullName,
-                    scrollID: provider.id,
-                    dimmed: !shown,
-                    actions: [SettingsEntryAction(id: "move", icon: "arrow.up.arrow.down", title: "Move") {
-                        moving = provider
-                    }],
-                    toggle: SettingsEntrySwitch(isOn: shown, title: shown ? "Never show" : "Show") {
-                        mdblist.settings.setShown(provider, !shown)
-                    },
-                    isMoving: moving == provider,
-                    anyMoving: moving != nil,
-                    onMoveStep: { mdblist.settings.move(provider, by: $0) },
-                    onDrop: { moving = nil }
-                )
-            }
+        SettingsPage(title: "Rating Providers",
+                     subtitle: "The first three show on titles; the rest stand in when one is missing.",
+                     accessory: AnyView(accessory)) {
+            SettingsSection(title: "Preferred Order", spacing: SettingsMetrics.tallRowGap) {
+                ForEach(mdblist.settings.orderedProviders) { provider in
+                    SettingsReorderRow(title: provider.fullName, id: provider.id, editing: before != nil,
+                                       isMoving: moving == provider, anyMoving: moving != nil,
+                                       onSelect: { edit(focusing: provider.id) },
+                                       onLift: { moving = provider },
+                                       onMoveStep: { mdblist.settings.move(provider, by: $0) },
+                                       onDrop: { moving = nil })
+                }
             }
         }
-        .onChange(of: moving) { _, provider in TopBarLock.shared.locked = provider != nil }
+        .onExitCommand(perform: before != nil && moving == nil ? { end(keeping: false) } : nil)
+        .onChange(of: before != nil) { _, editing in TopBarLock.shared.locked = editing }
         .onDisappear { TopBarLock.shared.locked = false }
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if before != nil {
+            SettingsCapsuleButton(title: "Cancel") { end(keeping: false) }.disabled(moving != nil)
+            SettingsCapsuleButton(title: "Done") { end(keeping: true) }.disabled(moving != nil)
+        } else {
+            SettingsCapsuleButton(title: "Edit") { edit(focusing: "Done") }
+        }
+    }
+
+    private func edit(focusing id: String) {
+        before = mdblist.settings.order
+        DispatchQueue.main.async { rowFocus?.wrappedValue = id }
+    }
+
+    private func end(keeping: Bool) {
+        if !keeping, let before { mdblist.settings.order = before }
+        moving = nil; before = nil
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
     }
 }
 

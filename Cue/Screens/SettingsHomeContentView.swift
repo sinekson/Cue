@@ -3,8 +3,8 @@ import SwiftUI
 // MARK: - Home & Details
 
 /// Settings → Home & Details: Home's rows (their order, names, which
-/// show), Continue Watching's order, the billboard paging by itself,
-/// hiding watched titles and spoilers.
+/// show), Continue Watching's order, hiding watched titles, the billboard
+/// paging by itself, trailers, hiding spoilers.
 /// (The add-ons are Nuvio's, synced: under Nuvio → Sync.)
 struct HomeContentSettingsDetail: View {
     @EnvironmentObject private var addonManager: AddonManager
@@ -16,52 +16,52 @@ struct HomeContentSettingsDetail: View {
 
     var body: some View {
         let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
-        let hidden = rows.filter { !$0.isShown(settings: settings) }.count
-        SettingsPage(title: SettingsCategory.homeContent.title, subtitle: SettingsCategory.homeContent.subtitle) {
+        SettingsPage(title: SettingsCategory.homeContent.title) {
             SettingsSection {
                 SettingsLinkRow(
-                    title: "Rows",
-                    description: "Their order, their names, and which ones show.",
-                    value: hidden > 0 ? "\(rows.count) · \(hidden) hidden" : "\(rows.count)"
+                    title: "Home Rows",
+                    description: "Choose which rows show on Home, their order and their names.",
+                    value: "\(rows.filter { $0.isShown(settings: settings) }.count)"
                 ) { HomeRowsPage() }
 
-                // Two options: Select switches between them in place.
-                SettingsButtonRow(
-                    title: "Continue Watching order",
-                    description: "Recently watched: the last played first. Streaming style: titles in progress first.",
-                    value: settings.continueWatchingSortMode.displayName
-                ) {
-                    settings.continueWatchingSortMode =
-                        settings.continueWatchingSortMode == .recentlyWatched ? .streamingStyle : .recentlyWatched
-                }
+                SettingsOptionsRow(
+                    title: "Continue Watching Order",
+                    pageDescription: "Choose how Continue Watching is sorted. Last Watched puts what you played "
+                        + "most recently first. In Progress First puts titles you're part way through "
+                        + "ahead of the rest.",
+                    options: ContinueWatchingSortMode.allCases.map { SettingsOption(id: $0.rawValue, label: $0.displayName) },
+                    selection: settings.continueWatchingSortMode.rawValue
+                ) { settings.continueWatchingSortMode = ContinueWatchingSortMode(rawValue: $0) ?? .recentlyWatched }
 
                 SettingsToggleRow(
-                    title: "Billboard moves on by itself",
-                    description: "The next title every \(Int(BillboardAutoPage.interval)) seconds, up to the last. Off: only Left and Right.",
-                    isOn: $billboardAutoPage
-                )
-
-                SettingsToggleRow(
-                    title: "Trailers",
-                    description: "Resting on a title, its trailer plays over the picture, on the billboard and Details.",
-                    isOn: $settings.heroTrailersEnabled
-                )
-
-                SettingsToggleRow(
-                    title: "Trailer sound",
-                    description: "Off: trailers play silently.",
-                    isOn: $settings.heroTrailerSound
-                )
-
-                SettingsToggleRow(
-                    title: "Hide watched titles",
-                    description: "Home's rows leave out films you've watched and shows you've finished.",
+                    title: "Hide Watched Titles",
+                    description: "Leaves films you've watched and shows you've finished out of Home's rows.",
                     isOn: $hideWatched
                 )
 
                 SettingsToggleRow(
-                    title: "Hide spoilers",
-                    description: "Episodes you haven't watched yet show their picture blurred.",
+                    title: "Auto-Advance Billboard",
+                    description: "Moves on to the next title every \(Int(BillboardAutoPage.interval)) seconds.",
+                    isOn: $billboardAutoPage
+                )
+
+                SettingsOptionsRow(
+                    title: "Trailers",
+                    pageDescription: "Choose how trailers play when you rest on a title on the billboard or Details. "
+                        + "With Sound plays them with it. Silent plays them without sound. "
+                        + "Off leaves the picture still.",
+                    options: [SettingsOption(id: "sound", label: "With Sound"),
+                              SettingsOption(id: "silent", label: "Silent"),
+                              SettingsOption(id: "off", label: "Off")],
+                    selection: !settings.heroTrailersEnabled ? "off" : settings.heroTrailerSound ? "sound" : "silent"
+                ) {
+                    settings.heroTrailersEnabled = $0 != "off"
+                    if $0 != "off" { settings.heroTrailerSound = $0 == "sound" }
+                }
+
+                SettingsToggleRow(
+                    title: "Hide Spoilers",
+                    description: "Blurs the pictures of episodes you haven't watched.",
                     isOn: $hideSpoilers
                 )
             }
@@ -135,153 +135,237 @@ private struct HomeRowEntry: Identifiable {
     }
 }
 
-/// Settings → Home & Details → Rows: Home's rows in order, each one line —
-/// Rename (the keyboard at once), Move, and a switch for showing it.
+/// Settings → Home & Details → Home Rows: Home's rows in order, as the
+/// add-ons': a row each (its name, where it comes from, "Off" when hidden),
+/// lit whole; Select opens its page (`HomeRowPage`). Edit, on the title's
+/// line, gives each row an on / off and the ≡ handle; Done or Back ends it.
+/// (Tried: each one line with Rename, Move and a switch.)
 private struct HomeRowsPage: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
+    @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.settingsRowFocus) private var rowFocus
+    @State private var editing = false
     @State private var moving: String?
-    @State private var keyboard: KeyboardRequest?
 
     var body: some View {
         let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
-        SettingsManagePage(title: "Home rows", subtitle: "Rename, move or hide Home's rows.") {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                let shown = row.isShown(settings: settings)
-                SettingsEntryRow(
-                    title: row.title(settings: settings),
-                    scrollID: row.id,
-                    dimmed: !shown,
-                    actions: actions(for: row),
-                    toggle: SettingsEntrySwitch(isOn: shown, title: shown ? "Hide" : "Show") {
-                        settings.setEnabled(!shown, key: row.key)
-                    },
-                    isMoving: moving == row.id,
-                    anyMoving: moving != nil,
-                    onMoveStep: { step in
-                        guard rows.indices.contains(index + step) else { return }
-                        settings.move(key: row.key, up: step < 0,
-                                      within: HomeRowEntry.catalogKeys(addonManager)
-                                          + HomeRowEntry.collectionKeys(collections))
-                    },
-                    onDrop: { moving = nil }
-                )
+        SettingsPage(title: "Home Rows",
+                     accessory: AnyView(accessory(hasRows: !rows.isEmpty))) {
+            SettingsSection(spacing: SettingsMetrics.tallRowGap) {
+                ForEach(rows) { row in
+                    let shown = row.isShown(settings: settings)
+                    SettingsReorderRow(
+                        title: row.title(settings: settings), id: row.id,
+                        value: shown ? row.source : "Off",
+                        chevron: true,
+                        dimmed: !shown,
+                        toggle: SettingsEntrySwitch(isOn: shown, title: shown ? "Hide" : "Show") {
+                            settings.setEnabled(!shown, key: row.key)
+                        },
+                        editing: editing, isMoving: moving == row.id, anyMoving: moving != nil,
+                        onSelect: { nav.push(HomeRowPage(key: row.key)) },
+                        onLift: { moving = row.id },
+                        onMoveStep: { step in
+                            settings.move(key: row.key, up: step < 0,
+                                          within: HomeRowEntry.catalogKeys(addonManager)
+                                              + HomeRowEntry.collectionKeys(collections))
+                        },
+                        onDrop: { moving = nil })
+                }
             }
         }
-        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
-        .onChange(of: moving) { _, id in TopBarLock.shared.locked = id != nil }
+        .onExitCommand(perform: editing && moving == nil ? endEditing : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
         .onDisappear { TopBarLock.shared.locked = false }
     }
 
-    private func actions(for row: HomeRowEntry) -> [SettingsEntryAction] {
-        var actions: [SettingsEntryAction] = []
-        actions.append(SettingsEntryAction(id: "rename", icon: "pencil", title: "Rename") {
-            keyboard = KeyboardRequest(text: row.title(settings: settings), placeholder: row.defaultTitle) { text in
-                // Empty or the original: its own name again.
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                settings.setCustomTitle(trimmed == row.defaultTitle ? nil : trimmed, key: row.key)
+    @ViewBuilder private func accessory(hasRows: Bool) -> some View {
+        if editing {
+            SettingsCapsuleButton(title: "Done", action: endEditing).disabled(moving != nil)
+        } else if hasRows {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
             }
-        })
-        actions.append(SettingsEntryAction(id: "move", icon: "arrow.up.arrow.down", title: "Move") {
-            moving = row.id
-        })
-        return actions
+        }
+    }
+
+    private func endEditing() {
+        moving = nil; editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
+    }
+}
+
+/// A Home row's own page: Rename (the keyboard; empty or the original: its
+/// own name again), and where it comes from, to read.
+private struct HomeRowPage: View {
+    @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var collections: CollectionsStore
+    @EnvironmentObject private var settings: HomeCatalogSettingsStore
+    let key: String
+
+    @State private var keyboard: KeyboardRequest?
+
+    var body: some View {
+        if let row = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
+            .first(where: { $0.key == key }) {
+            let name = row.title(settings: settings)
+            SettingsPage(title: name) {
+                SettingsSection {
+                    SettingsButtonRow(title: "Rename", value: name) {
+                        keyboard = KeyboardRequest(text: name, placeholder: row.defaultTitle) { text in
+                            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            settings.setCustomTitle(trimmed == row.defaultTitle ? nil : trimmed, key: row.key)
+                        }
+                    }
+                    SettingsInfoRow(title: "Source", value: row.source)
+                        .padding(.top, SettingsMetrics.infoGap)
+                }
+            }
+            .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        }
     }
 }
 
 // MARK: - Add-ons
 
-/// Settings → Nuvio → Add-ons: the add-ons in order, each one line —
-/// Configure (when it has settings), Rename, Move, a switch for on / off,
-/// Remove — then Add Add-on (from your phone), as Profiles' Add Profile,
-/// and Refresh Add-ons (their manifests fetched again, this device only).
-/// (Tried: a round + by the heading.)
+/// Settings → Nuvio → Add-ons: the add-ons in order, a row each (its logo,
+/// its name, "Off" when off), lit whole; Select opens its page
+/// (`AddonPage`: Configure, Rename, Remove). Edit, on the title's line,
+/// gives each row an on / off and the ≡ handle (`SettingsReorderRow`);
+/// Done or Back ends it. Then Add Add-on (from your phone), as Profiles'
+/// Add Profile, and Refresh Add-ons (their manifests fetched again, this
+/// device only). (Tried: each one line with Configure, Rename, Move, a
+/// switch and Remove — too many buttons; a round + by the heading.)
 struct AddonsPage: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.settingsRowFocus) private var rowFocus
+    @State private var editing = false
     @State private var moving: String?
-    @State private var keyboard: KeyboardRequest?
     @State private var adding = false
-    @State private var configuring: InstalledAddon?
-    @State private var removing: InstalledAddon?
     @State private var refreshing = false
-    @State private var refreshed: String?
+    /// The last refresh's add-ons that didn't answer (this visit).
+    @State private var failed = 0
+    @AppStorage("cue.addons.refreshedAt") private var refreshedAt: Double = 0
 
-    private var refreshValue: String? { refreshing ? "Refreshing…" : refreshed }
+    private var refreshValue: String {
+        if refreshing { return "Refreshing…" }
+        if failed > 0 { return failed == 1 ? "1 didn't answer" : "\(failed) didn't answer" }
+        guard refreshedAt > 0 else { return "Not yet" }
+        return DateFormatter.settingsWhen.string(from: Date(timeIntervalSince1970: refreshedAt))
+    }
 
     var body: some View {
-        let configurable = addonManager.addons.contains { $0.configureURL != nil }
-        SettingsManagePage(
-            title: "Add-ons",
-            subtitle: "Higher ones come first for sources."
-        ) {
-            ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
-                SettingsEntryRow(
-                    title: addon.displayName,
-                    scrollID: addon.id,
-                    dimmed: !addon.enabled,
-                    leading: AnyView(AddonLogo(addon: addon)),
-                    extra: addon.configureURL == nil ? nil
-                        : SettingsEntryAction(id: "configure", icon: "slider.horizontal.3", title: "Configure") {
-                            configuring = addon
+        SettingsPage(title: "Add-ons", subtitle: "Higher ones come first for sources.",
+                     accessory: AnyView(accessory)) {
+            SettingsSection(spacing: SettingsMetrics.tallRowGap) {
+                ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
+                    SettingsReorderRow(
+                        title: addon.displayName, id: addon.id,
+                        leading: AnyView(AddonLogo(addon: addon)),
+                        value: addon.enabled ? nil : "Off",
+                        chevron: true,
+                        dimmed: !addon.enabled,
+                        toggle: SettingsEntrySwitch(isOn: addon.enabled, title: addon.enabled ? "Turn off" : "Turn on") {
+                            addonManager.setEnabled(addon, !addon.enabled)
                         },
-                    reservesExtra: configurable,
-                    actions: [
-                        SettingsEntryAction(id: "rename", icon: "pencil", title: "Rename") {
-                            keyboard = KeyboardRequest(text: addon.displayName, placeholder: addon.manifest.name) {
-                                addonManager.rename(addon, to: $0)
-                            }
-                        },
-                        SettingsEntryAction(id: "move", icon: "arrow.up.arrow.down", title: "Move") {
-                            moving = addon.id
-                        },
-                    ],
-                    toggle: SettingsEntrySwitch(isOn: addon.enabled, title: addon.enabled ? "Turn off" : "Turn on") {
-                        addonManager.setEnabled(addon, !addon.enabled)
-                    },
-                    remove: SettingsEntryAction(id: "remove", icon: "trash", title: "Remove") { removing = addon },
-                    isMoving: moving == addon.id,
-                    anyMoving: moving != nil,
-                    onMoveStep: { step in addonManager.move(addon, to: index + step) },
-                    onDrop: { moving = nil }
-                )
-            }
-            SettingsButtonRow(title: "Add Add-on") { adding = true }
-                .disabled(moving != nil)
-            SettingsButtonRow(title: "Refresh Add-ons", value: refreshValue) {
-                guard !refreshing else { return }
-                refreshing = true
-                Task {
-                    let failed = await addonManager.refreshManifests(bypassCache: true)
-                    refreshing = false
-                    refreshed = failed == 0 ? "Up to date"
-                        : failed == 1 ? "1 didn't answer" : "\(failed) didn't answer"
+                        editing: editing, isMoving: moving == addon.id, anyMoving: moving != nil,
+                        onSelect: { nav.push(AddonPage(addonID: addon.id)) },
+                        onLift: { moving = addon.id },
+                        onMoveStep: { addonManager.move(addon, to: index + $0) },
+                        onDrop: { moving = nil })
                 }
+                // Under the list as Apple's Add Language…, the rows' own gap between them.
+                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                    SettingsButtonRow(title: "Add Add-on") { adding = true }
+                    SettingsButtonRow(title: "Refresh Add-ons", value: refreshValue) {
+                        guard !refreshing else { return }
+                        refreshing = true
+                        Task {
+                            failed = await addonManager.refreshManifests(bypassCache: true)
+                            refreshing = false
+                            if failed == 0 { refreshedAt = Date().timeIntervalSince1970 }
+                        }
+                    }
+                }
+                .disabled(editing)
+                .padding(.top, SettingsMetrics.listButtonGap - SettingsMetrics.tallRowGap)
             }
-            .disabled(moving != nil)
         }
-        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
-        .onChange(of: moving) { _, id in TopBarLock.shared.locked = id != nil }
+        .onExitCommand(perform: editing && moving == nil ? endEditing : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
         .onDisappear { TopBarLock.shared.locked = false }
         .fullScreenCover(isPresented: $adding) {
             AddonPhoneAddView(addonManager: addonManager) { adding = false }
                 .environmentObject(theme)
         }
-        .fullScreenCover(item: $configuring) { addon in
-            AddonPhoneAddView(addonManager: addonManager, configuring: addon) { configuring = nil }
-                .environmentObject(theme)
-        }
-        .alert("Remove \(removing?.displayName ?? "")?",
-               isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-               presenting: removing) { addon in
-            Button("Remove", role: .destructive) {
-                addonManager.remove(addon)
-                removing = nil
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if editing {
+            SettingsCapsuleButton(title: "Done", action: endEditing).disabled(moving != nil)
+        } else if !addonManager.addons.isEmpty {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
             }
-            Button("Cancel", role: .cancel) { removing = nil }
-        } message: { _ in
-            Text("It's removed from this device and your account. You can add it back later with its link.")
+        }
+    }
+
+    private func endEditing() {
+        moving = nil; editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
+    }
+}
+
+/// An add-on's own page: Configure (when it has settings — its page on
+/// your phone), Rename (the keyboard; empty: its own name again), Remove
+/// (confirmed; back to the list).
+private struct AddonPage: View {
+    @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var nav: SettingsNav
+    let addonID: String
+
+    @State private var keyboard: KeyboardRequest?
+    @State private var configuring = false
+    @State private var confirmRemove = false
+
+    private var addon: InstalledAddon? { addonManager.addons.first { $0.id == addonID } }
+
+    var body: some View {
+        if let addon {
+            SettingsPage(title: addon.displayName, subtitle: addon.manifest.description ?? "") {
+                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                    if addon.configureURL != nil {
+                        SettingsButtonRow(title: "Configure") { configuring = true }
+                    }
+                    SettingsButtonRow(title: "Rename", value: addon.displayName) {
+                        keyboard = KeyboardRequest(text: addon.displayName, placeholder: addon.manifest.name) {
+                            addonManager.rename(addon, to: $0)
+                        }
+                    }
+                    SettingsButtonRow(title: "Remove") { confirmRemove = true }
+                }
+            }
+            .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+            .fullScreenCover(isPresented: $configuring) {
+                AddonPhoneAddView(addonManager: addonManager, configuring: addon) { configuring = false }
+                    .environmentObject(theme)
+            }
+            .alert("Remove \(addon.displayName)?", isPresented: $confirmRemove) {
+                Button("Remove", role: .destructive) {
+                    nav.back()
+                    addonManager.remove(addon)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It's removed from this device and your account. You can add it back later with its link.")
+            }
         }
     }
 }

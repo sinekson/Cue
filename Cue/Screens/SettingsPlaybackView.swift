@@ -61,7 +61,7 @@ struct PlaybackSettingsDetail: View {
     private var settingsScaffold: some View {
         switch section {
         case nil:
-            DetailScaffold(title: SettingsCategory.playback.title, subtitle: SettingsCategory.playback.subtitle) {
+            DetailScaffold(title: SettingsCategory.playback.title, subtitle: "") {
                 SettingsGroupCard(title: "") {
                     ForEach(PlaybackSection.allCases) { section in
                         Button {

@@ -114,8 +114,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "3"
-        # Tracks the Android APK release this port mirrors (v0.7.15-beta).
-        MARKETING_VERSION: "9"
+        # Pre-release until 1.0 (after the playback rework).
+        MARKETING_VERSION: "0.9"
         CURRENT_PROJECT_VERSION: "1"
         # The sanitize script below writes into the built .app, so user
         # script sandboxing must be off or the phase is denied file access.
@@ -220,7 +220,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "3"
-        MARKETING_VERSION: "9"
+        MARKETING_VERSION: "0.9"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: CueTopShelf/CueTopShelf.entitlements
       configs:

@@ -7,14 +7,6 @@ import Foundation
 struct MDBListSettings: Codable, Equatable {
     var enabled: Bool = false
     var apiKey: String = ""
-    var showTrakt = true
-    var showImdb = true
-    var showTmdb = true
-    var showLetterboxd = true
-    var showTomatoes = true
-    var showAudience = true
-    var showMetacritic = true
-    var showMyAnimeList = true
     /// The sources' order (raw values): ratings show in it, and the billboard
     /// shows the first three.
     var order: [String] = MDBListSettings.defaultOrder.map(\.rawValue)
@@ -32,28 +24,18 @@ struct MDBListSettings: Codable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, apiKey, showTrakt, showImdb, showTmdb, showLetterboxd
-        case showTomatoes, showAudience, showMetacritic, showMyAnimeList, order
-        case place, rowCount
+        case enabled, apiKey, order, place, rowCount
     }
 
     /// Tolerant per-field decode, exactly like `PlayerSettingsStore`: adding a
     /// field in a future release must not make an existing blob undecodable
-    /// and silently reset the user's API key and source toggles to defaults
+    /// and silently reset the user's API key and order to defaults
     /// (the store has no unreadable-blob guard).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MDBListSettings()
         enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
         apiKey = (try? c.decode(String.self, forKey: .apiKey)) ?? d.apiKey
-        showTrakt = (try? c.decode(Bool.self, forKey: .showTrakt)) ?? d.showTrakt
-        showImdb = (try? c.decode(Bool.self, forKey: .showImdb)) ?? d.showImdb
-        showTmdb = (try? c.decode(Bool.self, forKey: .showTmdb)) ?? d.showTmdb
-        showLetterboxd = (try? c.decode(Bool.self, forKey: .showLetterboxd)) ?? d.showLetterboxd
-        showTomatoes = (try? c.decode(Bool.self, forKey: .showTomatoes)) ?? d.showTomatoes
-        showAudience = (try? c.decode(Bool.self, forKey: .showAudience)) ?? d.showAudience
-        showMetacritic = (try? c.decode(Bool.self, forKey: .showMetacritic)) ?? d.showMetacritic
-        showMyAnimeList = (try? c.decode(Bool.self, forKey: .showMyAnimeList)) ?? d.showMyAnimeList
         order = (try? c.decode([String].self, forKey: .order)) ?? d.order
         place = (try? c.decode(RatingsPlace.self, forKey: .place)) ?? d.place
         rowCount = (try? c.decode(Int.self, forKey: .rowCount)) ?? d.rowCount
@@ -77,35 +59,6 @@ struct MDBListSettings: Codable, Equatable {
         place == .everywhere || (place == .details && onDetails)
     }
 
-    /// The sources that show, in order.
-    var shownProviders: [MDBListProvider] { orderedProviders.filter(isShown) }
-
-    func isShown(_ provider: MDBListProvider) -> Bool {
-        switch provider {
-        case .trakt: return showTrakt
-        case .imdb: return showImdb
-        case .tmdb: return showTmdb
-        case .letterboxd: return showLetterboxd
-        case .tomatoes: return showTomatoes
-        case .audience: return showAudience
-        case .metacritic: return showMetacritic
-        case .myanimelist: return showMyAnimeList
-        }
-    }
-
-    mutating func setShown(_ provider: MDBListProvider, _ shown: Bool) {
-        switch provider {
-        case .trakt: showTrakt = shown
-        case .imdb: showImdb = shown
-        case .tmdb: showTmdb = shown
-        case .letterboxd: showLetterboxd = shown
-        case .tomatoes: showTomatoes = shown
-        case .audience: showAudience = shown
-        case .metacritic: showMetacritic = shown
-        case .myanimelist: showMyAnimeList = shown
-        }
-    }
-
     /// One step up (−1) or down (+1).
     mutating func move(_ provider: MDBListProvider, by step: Int) {
         var providers = orderedProviders
@@ -123,7 +76,7 @@ enum RatingsPlace: String, Codable, CaseIterable {
     var label: String {
         switch self {
         case .everywhere: return "Everywhere"
-        case .details: return "Details only"
+        case .details: return "Details Only"
         case .off: return "Off"
         }
     }
@@ -183,7 +136,7 @@ struct MDBListRatings: Equatable, Codable, Sendable {
 
     /// Ordered, display-ready entries (matches the Android hero ratings row).
     func entries(settings: MDBListSettings) -> [MDBListRatingEntry] {
-        settings.shownProviders.compactMap { provider in
+        settings.orderedProviders.compactMap { provider in
             value(of: provider).map { MDBListRatingEntry(provider: provider, text: provider.format($0)) }
         }
     }

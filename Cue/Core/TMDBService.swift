@@ -203,16 +203,6 @@ enum TMDBService {
         return URLSession(configuration: config)
     }()
 
-    /// The answers kept on disk, and room for them (Settings → TMDB).
-    static var cacheUsage: (disk: Int, capacity: Int) {
-        let cache = session.configuration.urlCache
-        return (cache?.currentDiskUsage ?? 0, cache?.diskCapacity ?? 0)
-    }
-
-    static func clearCache() {
-        session.configuration.urlCache?.removeAllCachedResponses()
-    }
-
     // Cache TMDB→IMDB id lookups so repeated collection loads stay cheap.
     // Guarded by `cacheLock` — these caches are read/written from many
     // concurrent `Task`s (catalog rows map items in parallel), and a plain

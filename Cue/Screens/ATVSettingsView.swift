@@ -1,14 +1,17 @@
 import SwiftUI
 
-/// The Settings screen: one column, centred, a level at a time — as Apple
-/// TV's Settings. First the categories (`SettingsCategoriesPage`); Select
-/// opens one's settings, and their rows open lower pages, each in the same
-/// column (`SettingsNav`). Back goes up a level, focus back on the row that
-/// opened it; on the categories, to the top bar. Up from the first row: the
-/// top bar; Down from it goes back to the row it left (first time: the
-/// first). (Tried: the categories a sidebar beside the settings — floating
-/// on the page; in a glass panel, as macOS Tahoe's; flat and flush, as
-/// macOS Sequoia's.)
+/// The Settings screen as Apple TV's Settings, a level at a time: the
+/// title centred, the rows in a column on the right, on the left (the
+/// picture's place) an icon — a gear on the categories, a
+/// category's symbol on its pages — and the focused row's description. First the
+/// categories (`SettingsCategoriesPage`); Select opens one's settings, and
+/// their rows open lower pages, each in the same column (`SettingsNav`).
+/// Back goes up a level, focus back on the row that opened it; on the
+/// categories, to the top bar. Up from the first row: the top bar; Down
+/// from it goes back to the row it left (first time: the first). (Tried:
+/// one centred column; the categories a sidebar beside the settings —
+/// floating on the page; in a glass panel, as macOS Tahoe's; flat and
+/// flush, as macOS Sequoia's.)
 struct ATVSettingsView: View {
 
     /// The top bar holds focus.
@@ -36,6 +39,8 @@ struct ATVSettingsView: View {
     /// Each page's last focused row (the categories by "", a page opened
     /// in the column by its id).
     @State private var lastRow: [String: String] = [:]
+    /// The page's title and line; nil: an old card, its own.
+    @State private var header: SettingsPageHeaderKey.Header?
 
     /// `-settingsPage <category>`: opens with that category's settings.
     private static var launchCategory: SettingsCategory? {
@@ -48,19 +53,34 @@ struct ATVSettingsView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let page = nav.stack.last {
-                page.view.id(page.id)
-                    .transition(.opacity)
-            } else if let root {
-                root.transition(.opacity)
-            } else {
-                SettingsCategoriesPage()
-                    .transition(.opacity)
+            SettingsIcon(symbol: nav.stack.isEmpty ? nil : nav.category?.symbol)
+            ZStack(alignment: .topLeading) {
+                if let page = nav.stack.last {
+                    page.view.id(page.id)
+                        .transition(.settingsPage)
+                } else if let root {
+                    root.transition(.settingsPage)
+                } else {
+                    SettingsCategoriesPage()
+                        .transition(.settingsPage)
+                }
             }
+            .frame(width: SettingsMetrics.columnWidth, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .mask { columnMask }
+            .padding(.leading, SettingsMetrics.columnX)
         }
-        .frame(width: SettingsMetrics.columnWidth, alignment: .topLeading)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .topLeading) { title }
+        .overlayPreferenceValue(SettingsDescribedKey.self, alignment: .topLeading) { described in
+            SettingsDescriptionText(text: described?.text ?? header?.subtitle ?? "")
+                .offset(x: SettingsMetrics.iconCenterX - SettingsMetrics.descriptionWidth / 2,
+                        y: SettingsMetrics.top + SettingsMetrics.iconBelowTop + SettingsMetrics.iconSize.height
+                           + SettingsMetrics.descriptionGapBelowIcon)
+        }
+        .onPreferenceChange(SettingsPageHeaderKey.self) { header = $0 }
         .environment(\.settingsOnlyRow, barFocused ? barRow : returning)
+        .environment(\.settingsFocusHidden, nav.settling)
         // Screen coordinates: the same start with or without the top bar.
         .ignoresSafeArea()
         .background(ATVBackground())
@@ -113,6 +133,40 @@ struct ATVSettingsView: View {
         }
     }
 
+    /// Rows moving left of the column fade away at this edge, never
+    /// crossing to the tile (open everywhere else: they come from the right).
+    private var columnMask: some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: 80)
+            Color.black
+        }
+        .padding(.leading, -100)
+        .padding(.trailing, -300)
+        .padding(.vertical, -200)
+    }
+
+    /// Over the screen; a new one crossfades in place, behind the rows' start.
+    private var title: some View {
+        ZStack {
+            if let title = header?.title {
+                Text(title)
+                    // Apple's: bold, the section labels' grey.
+                    .font(.system(size: SettingsMetrics.titleTextSize, weight: .bold))
+                    .foregroundStyle(SettingsMetrics.labelText)
+                    .lineLimit(1)
+                    // Clear of the buttons on its line (Remove All and Done end ~1390).
+                    .frame(maxWidth: SettingsMetrics.titleMaxWidth)
+                    .id(title)
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: 1920)
+        .offset(y: SettingsMetrics.titleTop)
+        .animation(.easeInOut(duration: 0.3).delay(0.15), value: header?.title)
+        .allowsHitTesting(false)
+    }
+
     /// The page in the column: a page opened there, else the categories.
     private var pageKey: String { nav.stack.last?.id.uuidString ?? "" }
 
@@ -153,7 +207,7 @@ private struct SettingsCategoriesPage: View {
     }
 
     private func row(_ category: SettingsCategory, value: String? = nil) -> some View {
-        SettingsLinkRow(title: category.title, value: value) {
+        SettingsLinkRow(title: category.title, description: category.subtitle, value: value) {
             SettingsCategoryPane.inColumn(category)
         }
     }
@@ -170,19 +224,57 @@ private struct SettingsCategoriesPage: View {
     }
 }
 
+/// The picture on the left, as Apple TV's Settings' (its tile, size and
+/// grey), a symbol cut out of it — a hole showing the page behind: a
+/// gear on the categories, a category's own on its pages, all at one size.
+private struct SettingsIcon: View {
+    /// A category's symbol; nil: the gear.
+    let symbol: String?
+
+    var body: some View {
+        let size = SettingsMetrics.iconSize
+        RoundedRectangle(cornerRadius: SettingsMetrics.iconRadius, style: .continuous)
+            .fill(Color.white.opacity(0.29))
+            .overlay {
+                Image(systemName: symbol ?? "gear")
+                    .font(.system(size: SettingsMetrics.iconSymbolSize, weight: .semibold))
+                    .blendMode(.destinationOut)
+                    .id(symbol)
+                    .transition(.opacity)
+            }
+            .animation(Motion.fade, value: symbol)
+            .compositingGroup()
+            .frame(width: size.width, height: size.height)
+            .offset(x: SettingsMetrics.iconCenterX - size.width / 2,
+                    y: SettingsMetrics.top + SettingsMetrics.iconBelowTop)
+            .allowsHitTesting(false)
+    }
+}
+
 extension SettingsCategoryPane {
     /// Categories on the new rows.
-    private static let rowCategories: Set<SettingsCategory> = [.account, .tmdb, .mdblist, .appearance, .homeContent]
+    private static let rowCategories: Set<SettingsCategory> = [.account, .tmdb, .mdblist, .appearance, .homeContent, .about]
 
     /// A category's settings in the column. Pages not yet on the new rows
     /// keep their own layout, from the same top.
     @ViewBuilder
     static func inColumn(_ category: SettingsCategory) -> some View {
         if rowCategories.contains(category) {
-            SettingsCategoryPane(category: category)
+            SettingsCategoryPane(category: category).modifier(ShowsSymbol(category: category))
         } else {
             SettingsCategoryPane(category: category)
                 .padding(.top, SettingsMetrics.top - CueSpacing.lg)
+                .modifier(ShowsSymbol(category: category))
+        }
+    }
+
+    /// Its page in the column: the tile shows its symbol (for the pages
+    /// opened from it too, until Back takes the column to the categories).
+    private struct ShowsSymbol: ViewModifier {
+        @EnvironmentObject private var nav: SettingsNav
+        let category: SettingsCategory
+        func body(content: Content) -> some View {
+            content.onAppear { nav.category = category }
         }
     }
 }

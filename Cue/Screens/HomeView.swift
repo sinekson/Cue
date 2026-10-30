@@ -2446,8 +2446,8 @@ enum FixedFocusRing {
         case high, low, off
         var label: String {
             switch self {
-            case .high: "Edges and focus"
-            case .low: "Edges only"
+            case .high: "Edges and Focus"
+            case .low: "Edges Only"
             case .off: "Off"
             }
         }

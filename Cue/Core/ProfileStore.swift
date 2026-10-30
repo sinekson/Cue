@@ -242,10 +242,10 @@ final class ProfileStore: ObservableObject {
 
     var canAddProfile: Bool { profiles.count < Self.maxProfiles }
 
-    /// "Primary · Active", what applies.
+    /// "Primary, Active", what applies.
     func notes(for profile: UserProfile) -> String {
         [profile.id == 1 ? "Primary" : nil, profile.id == activeProfileID ? "Active" : nil]
-            .compactMap { $0 }.joined(separator: " · ")
+            .compactMap { $0 }.joined(separator: ", ")
     }
 
     /// The avatar's name, or "Initials".

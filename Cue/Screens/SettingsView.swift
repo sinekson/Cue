@@ -21,14 +21,29 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .account: return "Your Nuvio account: syncing with your other devices, and your watch history."
+        case .account: return "Keeps your profiles, add-ons and watch progress in sync across your devices."
         case .tmdb: return ServiceKey.tmdb.about
         case .mdblist: return ServiceKey.mdblist.about
-        case .appearance: return "Colours, the focus outline and the top bar."
-        case .homeContent: return "Home's rows, Continue Watching and the billboard."
-        case .playback: return "Player, audio and subtitles, sources"
-        case .about: return "App information, updates, and legal links"
-        case .developer: return "Render Lab, frame rate and performance switches"
+        case .appearance: return "Change how Cue's pages and cards look."
+        case .homeContent: return "Choose what Home shows and how titles behave."
+        case .playback: return "Choose how titles play, with their audio, subtitles and sources."
+        case .about: return "See Cue's version, privacy and licenses."
+        case .developer: return "Test Cue's rendering and performance."
+        }
+    }
+
+
+    /// Its symbol on Settings' tile, on its pages (the categories: the play).
+    var symbol: String {
+        switch self {
+        case .account: return "arrow.trianglehead.2.clockwise.rotate.90"
+        case .tmdb: return "photo.badge.magnifyingglass"
+        case .mdblist: return "hand.thumbsup"
+        case .appearance: return "paintpalette"
+        case .homeContent: return "rectangle.grid.3x1"
+        case .playback: return "playpause"
+        case .about: return "info.circle"
+        case .developer: return "chevron.left.forwardslash.chevron.right"
         }
     }
 
@@ -62,7 +77,7 @@ struct DeveloperSettingsDetail: View {
     @State private var showHealth = false
 
     var body: some View {
-        DetailScaffold(title: SettingsCategory.developer.title, subtitle: SettingsCategory.developer.subtitle) {
+        DetailScaffold(title: SettingsCategory.developer.title, subtitle: "") {
             RenderLabSettings()
             PerformanceSettings()
             SettingsGroupCard(title: "Add-ons") {
@@ -541,126 +556,78 @@ private struct CollectionsCoverView: View {
     }
 }
 
+/// About: what's behind Cue, then what's only to read. Pressing leads to
+/// Privacy and Licenses & Credits, in the column.
 struct AboutDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @State private var info: AboutInfo?
-    // Starts empty and is filled by .task below. The default value used to be
-    // `DiagnosticsService.cacheSizeLabel()`, which walks the whole cache
-    // directory synchronously on the main thread — and a @State default is
-    // evaluated every time the view struct is built, not once, so opening
-    // About (and every redraw of it) stuttered.
-    @State private var cacheLabel = "…"
-    @State private var clearing = false
-
     var body: some View {
-        DetailScaffold(title: SettingsCategory.about.title, subtitle: SettingsCategory.about.subtitle) {
-            SettingsGroupCard(title: "") {
-                VStack(spacing: CueSpacing.sm) {
-                    HStack(spacing: CueSpacing.sm) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(theme.palette.secondary)
-                        Text("CUE")
-                            .font(.system(size: 40, weight: .heavy))
-                            .foregroundStyle(theme.palette.textPrimary)
-                    }
-                    Text("Version \(DiagnosticsService.appVersion)")
-                        .font(.system(size: 18))
-                        .foregroundStyle(theme.palette.textTertiary)
+        SettingsPage(title: SettingsCategory.about.title) {
+            SettingsSection {
+                SettingsLinkRow(title: "Privacy") { AboutPrivacyPage() }
+                SettingsLinkRow(title: "Licenses & Credits") { AboutLicensesPage() }
+                VStack(spacing: 0) {
+                    SettingsInfoRow(title: "Version", value: DiagnosticsService.appVersion)
+                    SettingsInfoRow(title: "Device", value: DiagnosticsService.deviceName)
+                    SettingsInfoRow(title: "Software", value: DiagnosticsService.systemVersion)
+                    SettingsInfoRow(title: "Source Code", value: DiagnosticsService.sourceAddress)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, CueSpacing.md)
-
-                Button { info = .privacy } label: {
-                    SettingsValueCard(title: "Privacy Policy", subtitle: "View our privacy policy", value: "", icon: "hand.raised.fill")
-                }.buttonStyle(PlainCardButtonStyle())
-                Button { info = .licenses } label: {
-                    SettingsValueCard(title: "Licenses & Attributions", subtitle: "Open-source components used in this app", value: "", icon: "doc.text.fill")
-                }.buttonStyle(PlainCardButtonStyle())
+                .padding(.top, SettingsMetrics.infoGap)
             }
-
-            SettingsGroupCard(title: "Diagnostics", subtitle: "Device information and storage") {
-                SettingsValueCard(title: "System", subtitle: DiagnosticsService.deviceModel, value: DiagnosticsService.systemVersion, icon: "appletv.fill")
-                Button {
-                    guard !clearing else { return }
-                    clearing = true
-                    // Off the main thread for the same reason as the initial
-                    // measurement: clearing and re-measuring both enumerate the
-                    // cache directory recursively.
-                    Task {
-                        await Task.detached(priority: .userInitiated) {
-                            DiagnosticsService.clearCaches()
-                        }.value
-                        cacheLabel = await Self.measureCache()
-                        clearing = false
-                    }
-                } label: {
-                    SettingsValueCard(
-                        title: "Clear cache",
-                        subtitle: "Remove cached source lists, metadata and images",
-                        value: clearing ? "…" : cacheLabel,
-                        icon: "trash.fill"
-                    )
-                }.buttonStyle(PlainCardButtonStyle())
-            }
-        }
-        .task {
-            // Measure the cache once the view is on screen, off the main
-            // thread — see cacheLabel above.
-            cacheLabel = await Self.measureCache()
-        }
-        .fullScreenCover(item: $info) { item in
-            AboutInfoView(info: item)
-                .environmentObject(theme)
-        }
-    }
-
-    private static func measureCache() async -> String {
-        await Task.detached(priority: .utility) {
-            DiagnosticsService.cacheSizeLabel()
-        }.value
-    }
-}
-
-/// The static info pages reachable from About.
-private enum AboutInfo: String, Identifiable {
-    case privacy, licenses
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .privacy: return "Privacy Policy"
-        case .licenses: return "Licenses & Attributions"
-        }
-    }
-
-    var body: String {
-        switch self {
-        case .privacy:
-            return "Cue does not collect, store, or share any personal data. All playback, library, and account information stays on your device or with the third-party services you explicitly connect (such as TMDB, Trakt, or your debrid provider). No analytics or tracking is performed by this app."
-        case .licenses:
-            return "This app uses open-source components including SwiftUI, KSPlayer, and metadata provided by TMDB. TMDB is used under their API terms; this product uses the TMDB API but is not endorsed or certified by TMDB. Full license texts for bundled components are available in the source repository."
         }
     }
 }
 
-private struct AboutInfoView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.dismiss) private var dismiss
-    let info: AboutInfo
+/// Running text on a page of its own, lined up with the rows' text.
+private struct AboutText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
 
     var body: some View {
-        DetailScaffold(title: info.title, subtitle: "") {
-            SettingsGroupCard(title: "") {
-                Text(info.body)
-                    .font(.system(size: 22))
-                    .foregroundStyle(theme.palette.textSecondary)
-                    .lineSpacing(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(CueSpacing.md)
+        Text(text)
+            .font(.system(size: SettingsMetrics.descriptionTextSize))
+            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .lineSpacing(6)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, SettingsMetrics.rowInset)
+    }
+}
+
+/// Only to read: focus stays on the page, unseen.
+private struct AboutPrivacyPage: View {
+    var body: some View {
+        SettingsPage(title: "Privacy") {
+            SettingsSection {
+                AboutText("Cue collects nothing about you and has no analytics or tracking.")
+                AboutText("It talks only to the services it needs: Nuvio to sync your account, "
+                    + "TMDB for search and details, MDBList for ratings if you add a key, the add-ons "
+                    + "you installed for titles and sources, and YouTube for trailers.")
+                AboutText("What those services receive is covered by their own privacy policies.")
+            }
+            .background(alignment: .top) { SettingsFocusHolder() }
+        }
+    }
+}
+
+private struct AboutLicensesPage: View {
+    var body: some View {
+        SettingsPage(title: "Licenses & Credits") {
+            SettingsSection {
+                AboutText("Cue is free software under the GNU General Public License, version 3. "
+                    + "Its source code is at \(DiagnosticsService.sourceAddress).")
+            }
+            .background(alignment: .top) { SettingsFocusHolder() }
+            SettingsSection(title: "Built With") {
+                VStack(spacing: 0) {
+                    SettingsInfoRow(title: "KSPlayer", value: "GPLv3")
+                    SettingsInfoRow(title: "FFmpeg", value: "LGPLv2.1")
+                    SettingsInfoRow(title: "VLCKit", value: "LGPLv2.1")
+                    SettingsInfoRow(title: "YouTubeKit", value: "MIT")
+                    SettingsInfoRow(title: "libdovi", value: "MIT")
+                }
+            }
+            SettingsSection {
+                AboutText("This product uses the TMDB API but is not endorsed or certified by TMDB.")
             }
         }
-        .onExitCommand { dismiss() }
     }
 }
 
@@ -801,9 +768,9 @@ private struct AddonHealthRow: View {
         let timing = result.elapsedMS.map { "\($0) ms" } ?? "not checked"
         switch result.status {
         case .failed(let reason):
-            return "\(result.capabilities) · \(timing) · \(reason)"
+            return "\(result.capabilities), \(timing), \(reason)"
         default:
-            return "\(result.capabilities) · \(timing)"
+            return "\(result.capabilities), \(timing)"
         }
     }
 

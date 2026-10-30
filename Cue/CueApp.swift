@@ -988,13 +988,11 @@ struct RootView: View {
         }
     }
 
-    /// Layout → "Hide the sidebar until it's needed": the collapsed rail is
-    /// off screen entirely and content runs full width, until a sideways press
-    /// at the left edge of the content (or Menu) calls it back. Settings keeps
-    /// its rail regardless — that pane is navigated THROUGH the rail, and
-    /// hiding it there leaves no way back out of a settings detail.
+    /// Appearance → Auto-hide top bar: the bar is off screen until Up from
+    /// the page's top (or Back) calls it back — on every tab, Settings too
+    /// (its Up from the first row and Back on the categories go to the bar).
     private var sidebarAutoHides: Bool {
-        homeCatalogSettings.autoHideSidebar && selectedTab != 3
+        homeCatalogSettings.autoHideSidebar
     }
 
     /// Set when the auto-hiding rail has been summoned; cleared when it
@@ -1319,8 +1317,9 @@ struct RootView: View {
                     .navigationDestination(for: Route.self) { destination(for: $0, path: trail($searchPath)) }
             }
             // Apple's search field and keyboard (UISearchController) ignore
-            // the safe-area inset, and sat under the bar — a plain one here.
-            .padding(.top, searchPath.isEmpty ? GlassSidebar.topBarClearance : 0)
+            // the safe-area inset, and sat under the bar — a plain one here,
+            // 20 pt more than the other pages' (the field read cramped under it).
+            .padding(.top, searchPath.isEmpty ? GlassSidebar.topBarClearance + 20 : 0)
         case .library:
             NavigationStack(path: $libraryPath) {
                 libraryRoot

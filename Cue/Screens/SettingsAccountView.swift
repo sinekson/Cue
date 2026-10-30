@@ -19,7 +19,7 @@ struct AccountSettingsDetail: View {
     var body: some View {
         Group {
             if case .signedIn(_, let email) = account.authState {
-                SettingsPage(title: SettingsCategory.account.title, subtitle: "Manage synced data across web, mobile, and TV.") {
+                SettingsPage(title: SettingsCategory.account.title) {
                     VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
                         SettingsLinkRow(title: "Account", value: email.isEmpty ? "Nuvio account" : email) {
                             NuvioAccountPage(email: email)
@@ -49,13 +49,10 @@ struct AccountSettingsDetail: View {
                     }
                 }
             } else {
-                SettingsPage(title: SettingsCategory.account.title, subtitle: SettingsCategory.account.subtitle) {
+                SettingsPage(title: SettingsCategory.account.title) {
                     SettingsSection {
                         // The first launch's sign-in screen, over everything.
-                        SettingsButtonRow(
-                            title: "Sign in",
-                            description: "Sign in to your Nuvio account to sync profiles, Continue Watching, your library, add-ons and settings with your other devices."
-                        ) { signingIn = true }
+                        SettingsButtonRow(title: "Sign in") { signingIn = true }
                     }
                 }
             }
@@ -72,14 +69,6 @@ struct AccountSettingsDetail: View {
 private struct SyncNowRow: View {
     @ObservedObject var sync: NuvioSyncManager
 
-    private static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        formatter.doesRelativeDateFormatting = true
-        return formatter
-    }()
-
     var body: some View {
         SettingsButtonRow(title: "Sync Now", value: state) {
             Task { await sync.syncNow() }
@@ -90,7 +79,7 @@ private struct SyncNowRow: View {
         if sync.isSyncing { return "Syncing…" }
         if sync.lastSyncError != nil { return "Failed" }
         guard let last = sync.lastSyncedAt else { return "Not yet" }
-        return Self.formatter.string(from: last)
+        return DateFormatter.settingsWhen.string(from: last)
     }
 }
 
@@ -102,7 +91,7 @@ private struct NuvioAccountPage: View {
     @State private var confirmSignOut = false
 
     var body: some View {
-        SettingsPage(title: "Account", subtitle: "Signed in to Nuvio on this TV.") {
+        SettingsPage(title: "Account") {
             SettingsButtonRow(title: "Sign Out", value: email) { confirmSignOut = true }
         }
         .alert("Sign out?", isPresented: $confirmSignOut) {
@@ -117,7 +106,7 @@ private struct NuvioAccountPage: View {
     }
 }
 
-/// Profiles → its page: every profile (avatar, name, "Primary · Active"),
+/// Profiles → its page: every profile (avatar, name, "Primary, Active"),
 /// Select opening its page; Add Profile last (`ProfileSetup`, the guided
 /// steps, then the new profile's page).
 private struct NuvioProfilesPage: View {
@@ -127,7 +116,7 @@ private struct NuvioProfilesPage: View {
 
     var body: some View {
         SettingsPage(title: "Profiles",
-                     subtitle: "\(profiles.profiles.count) of \(ProfileStore.maxProfiles) profiles · Each has its own synced data.") {
+                     subtitle: "\(profiles.profiles.count) of \(ProfileStore.maxProfiles) profiles") {
             VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
                 ForEach(profiles.profiles) { profile in
                     Button { nav.push(ProfileSettingsPage(profileID: profile.id)) } label: {
@@ -289,7 +278,7 @@ private struct ProfileAvatarPage: View {
 
     var body: some View {
         if let profile {
-            SettingsPage(title: "Avatar", subtitle: "Initials use the profile's colour.") {
+            SettingsPage(title: "Avatar") {
                 AvatarChoices(initials: profile, chosen: profile.avatarID) { id in
                     profiles.setAvatar(id: profileID, avatarID: id)
                     nav.pop()
@@ -453,7 +442,7 @@ private struct ProfileCollectionsPage: View {
     @EnvironmentObject private var collections: CollectionsStore
 
     var body: some View {
-        SettingsPage(title: "Collections", subtitle: "What this profile sees.") {
+        SettingsPage(title: "Collections") {
             VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
                 ForEach(collections.library) { collection in
                     if collections.isGloballyVisible(collection.id) {
@@ -482,7 +471,7 @@ private struct ProfileCollectionFoldersPage: View {
 
     var body: some View {
         if let collection = collections.library.first(where: { $0.id == collectionID }) {
-            SettingsPage(title: collection.title, subtitle: "Which folders this profile sees.") {
+            SettingsPage(title: collection.title) {
                 SettingsToggleRow(title: "Show This Collection",
                                   isOn: Binding(get: { collections.isVisible(collection.id) },
                                                 set: { collections.setVisible($0, id: collection.id) }))
@@ -586,16 +575,17 @@ private struct ProfileCopyPage: View {
 }
 
 /// Settings → Account → Watched: every title watched, one to a row, newest
-/// first, scrolling. A show opens what was watched of it
-/// (`WatchedTitlePage`); a film's Select — and any title's hold — offers
-/// Remove. Clear all by the heading. Removals reach the account
-/// (`WatchedStore.onRemove`).
+/// first, scrolling; Select opens its page (`WatchedTitlePage`). Edit on
+/// the title's line gives each row a trash button — one press removes the
+/// title, every episode of a show — and Remove All beside Done. No hold
+/// menus, no alerts. Removals reach the account (`WatchedStore.onRemove`).
 struct WatchedSettingsPage: View {
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var progress: ProgressStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.settingsRowFocus) private var rowFocus
 
     /// The titles' records: the add-ons' (from disk for anything opened
     /// before), else TMDB's — the name, the poster, the episodes' names.
@@ -603,7 +593,7 @@ struct WatchedSettingsPage: View {
     /// Names Continue Watching or the library already know.
     @State private var known: [String: String] = [:]
     @State private var ready = false
-    @State private var confirmClear = false
+    @State private var editing = false
 
     /// One title: a film, or a show's watched episodes.
     struct Entry: Identifiable {
@@ -625,9 +615,7 @@ struct WatchedSettingsPage: View {
 
     var body: some View {
         let entries = entries
-        SettingsPage(title: "Watched", subtitle: summary(entries), accessory: entries.isEmpty ? nil : AnyView(
-            SettingsRoundButton(icon: "trash", title: "Clear all") { confirmClear = true }
-        )) {
+        SettingsPage(title: "Watched", subtitle: Self.count(watched), accessory: entries.isEmpty ? nil : AnyView(accessory)) {
             if ready {
                 if entries.isEmpty {
                     Text("Nothing watched yet.")
@@ -635,27 +623,42 @@ struct WatchedSettingsPage: View {
                         .foregroundStyle(SettingsMetrics.secondaryText)
                         .padding(.horizontal, SettingsMetrics.labelIndent)
                 } else {
-                    LazyVStack(spacing: SettingsMetrics.rowGap) {
-                        ForEach(entries) { entry in row(entry) }
+                    LazyVStack(spacing: SettingsMetrics.tallRowGap) {
+                        ForEach(entries) { entry in row(entry, in: entries) }
                     }
                 }
             }
         }
         .animation(.easeOut(duration: 0.25), value: ready)
         .task { await resolve() }
-        .onAppear { HoldMenu.shared.install() }
-        .alert("Clear all watch history?", isPresented: $confirmClear) {
-            Button("Clear everything", role: .destructive) {
+        .onExitCommand(perform: editing ? { end(focusing: "Edit") } : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
+        .onChange(of: entries.isEmpty) { _, empty in if empty { editing = false } }
+        .onDisappear { TopBarLock.shared.locked = false }
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if editing {
+            SettingsCapsuleButton(title: "Remove All") {
+                editing = false
                 if let sync = NuvioSyncManager.shared {
                     Task { await sync.clearWatchHistoryEverywhere() }
                 } else {
                     watched.clearAll()
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Removes all \(Self.count(watched)) here and everything in Continue Watching — on this TV and on all your devices. This can't be undone.")
+            SettingsCapsuleButton(title: "Done") { end(focusing: "Edit") }
+        } else {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
+            }
         }
+    }
+
+    private func end(focusing id: String) {
+        editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = id }
     }
 
     /// The Account page's value: "214 titles".
@@ -664,28 +667,15 @@ struct WatchedSettingsPage: View {
         return titles == 1 ? "1 title" : "\(titles) titles"
     }
 
-    /// "1,530 records · 214 titles".
-    private func summary(_ entries: [Entry]) -> String {
-        let records = watched.items.count
-        return "\(records.formatted()) \(records == 1 ? "record" : "records") · "
-            + "\(entries.count.formatted()) \(entries.count == 1 ? "title" : "titles")"
-    }
-
-    private func row(_ entry: Entry) -> some View {
+    private func row(_ entry: Entry, in entries: [Entry]) -> some View {
         let name = name(of: entry)
-        let remove = MenuEntry(title: "Remove from Watched", icon: "minus.circle", destructive: true,
-                               confirm: entry.isShow ? "Remove All \(entry.items.count) Episodes" : nil) {
-            watched.remove(keys: entry.items.map(\.key))
-        }
-        return WatchedTitleRow(id: entry.id, poster: metas[entry.id]?.poster, name: name,
-                               label: entry.isShow ? "Last watched" : "Watched",
-                               detail: detail(of: entry), opens: entry.isShow, hold: [remove]) { frame in
-            if entry.isShow {
-                nav.push(WatchedTitlePage(id: entry.id, name: name, meta: metas[entry.id]))
-            } else {
-                HoldMenu.shared.openDropdown([remove], below: frame)
-            }
-        }
+        return WatchedRow(id: entry.id, poster: metas[entry.id]?.poster, name: name,
+                          detail: detail(of: entry), chevron: true, editing: editing,
+                          onSelect: { nav.push(WatchedTitlePage(id: entry.id, name: name, meta: metas[entry.id])) },
+                          onRemove: {
+                              WatchedRow.removed(entry.id, in: entries.map(\.id), focus: rowFocus)
+                              watched.remove(keys: entry.items.map(\.key))
+                          })
     }
 
     private func name(of entry: Entry) -> String {
@@ -695,14 +685,14 @@ struct WatchedSettingsPage: View {
         return entry.id
     }
 
-    /// What was watched last, and when (after its label): "S2:E4 on 14 Oct
-    /// 2026, 23:15"; a film just the date.
+    /// What was watched last, and when: "S2:E4, 14 Oct 2026"; a film the
+    /// date alone.
     private func detail(of entry: Entry) -> String {
-        let date = entry.latest.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
+        let date = entry.latest.formatted(.dateTime.day().month(.abbreviated).year())
         guard entry.isShow, let last = entry.items.max(by: { $0.watchedAt < $1.watchedAt }) else {
             return date
         }
-        return "S\(last.season ?? 0):E\(last.episode ?? 0) on \(date)"
+        return "S\(last.season ?? 0):E\(last.episode ?? 0), \(date)"
     }
 
     /// Every title's record: the add-on's (from disk when it was ever
@@ -741,96 +731,129 @@ struct WatchedSettingsPage: View {
     }
 }
 
-/// A watched title, one to a row: a small poster, the name, under it its
-/// label ("Last watched") and what was watched last and when (a show: a chevron at the end — it opens). The rows' look: a faint fill, focused white.
-/// Select gets the row's frame (a dropdown opens under it).
-private struct WatchedTitleRow: View {
+/// One row of Watched, Apple's two-line row (its Languages' "Deutsch /
+/// German"): a title (a small poster, the name, what was watched last and
+/// when, a chevron) or an episode (its name, when). A list's tall row, lit
+/// whole at rest; in Edit only its trash button takes focus.
+private struct WatchedRow: View {
     let id: String
-    let poster: String?
+    var poster: String?? = nil
     let name: String
-    let label: String
     let detail: String
-    let opens: Bool
-    let hold: [MenuEntry]
-    let action: (CGRect) -> Void
-    @State private var frame = CGRect.zero
-    /// Its hold menu is open: the press that opened it isn't a Select.
-    @State private var held = false
+    var chevron = false
+    let editing: Bool
+    let onSelect: () -> Void
+    let onRemove: () -> Void
 
-    var body: some View {
-        Button { if !held { action(frame) } } label: {
-            Face(poster: poster, name: name, label: label, detail: detail, opens: opens, hold: hold) { held = $0 }
-        }
-        .settingsRow(id: id)
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { frame = geometry.frame(in: .global) }
-                    .onChange(of: geometry.frame(in: .global)) { _, rect in frame = rect }
-            }
-        }
+    private enum Part: Hashable { case row, remove }
+    @FocusState private var focused: Part?
+
+    @Environment(\.settingsFocusHidden) private var focusHidden
+    private var lit: Bool { !editing && focused == .row && !focusHidden }
+
+    /// Focus after a removal: the next row's button, else the one before's.
+    static func removed(_ id: String, in ids: [String], focus: FocusState<String?>.Binding?) {
+        guard let index = ids.firstIndex(of: id) else { return }
+        let next = ids.indices.contains(index + 1) ? ids[index + 1]
+            : ids.indices.contains(index - 1) ? ids[index - 1] : nil
+        if let next { DispatchQueue.main.async { focus?.wrappedValue = next } }
     }
 
-    private struct Face: View {
-        @Environment(\.isFocused) private var isFocused
-        let poster: String?
-        let name: String
-        let label: String
-        let detail: String
-        let opens: Bool
-        let hold: [MenuEntry]
-        let onHeld: (Bool) -> Void
+    var body: some View {
+        Group {
+            if editing {
+                face
+            } else {
+                Button(action: onSelect) { face }
+                    .buttonStyle(PressStyle())
+                    .focused($focused, equals: .row)
+                    .modifier(SettingsRowEntry(id: id))
+            }
+        }
+        .anchorPreference(key: SettingsDescribedKey.self, value: .bounds) { pill in
+            focused == .remove ? .init(text: "Remove from Watched", pill: pill) : nil
+        }
+        .focusSection()
+        .id(id)
+    }
 
-        var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-            HStack(spacing: 22) {
-                RemoteImage(url: poster, maxDimension: 96, fallback: AnyView(Color.white.opacity(0.08)))
-                    .frame(width: 64, height: 96)
+    private var face: some View {
+        HStack(spacing: 24) {
+            if let poster {
+                let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RemoteImage(url: poster, maxDimension: 90, fallback: AnyView(Color.white.opacity(0.08)))
+                    .frame(width: 58, height: 87)
                     .clipShape(shape)
                     .overlay { shape.strokeBorder(Color.white.opacity(0.3), lineWidth: 1.5) }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(name)
-                        .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                        .foregroundStyle(isFocused ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
-                    // The label a step up (brighter, medium), what and when after it.
-                    (Text(label)
-                        .fontWeight(.medium)
-                        .foregroundStyle(isFocused ? SettingsMetrics.focusedText.opacity(0.85)
-                                                   : SettingsMetrics.primaryText)
-                     + Text("  \(detail)")
-                        .foregroundStyle(isFocused ? SettingsMetrics.focusedText.opacity(0.6)
-                                                   : SettingsMetrics.secondaryText))
-                        .font(.system(size: 24))
-                }
-                .lineLimit(1)
-                Spacer(minLength: 16)
-                if opens {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(isFocused ? SettingsMetrics.focusedText.opacity(0.6)
-                                                   : SettingsMetrics.secondaryText)
-                }
             }
-            .padding(.vertical, 14)
-            .padding(.leading, 14)
-            .padding(.trailing, SettingsMetrics.rowInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .holdMenu(focused: isFocused, onHeld: onHeld) { hold }
-            .animation(.smooth(duration: 0.18), value: isFocused)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
+                    .foregroundStyle(lit ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
+                Text(detail)
+                    .font(.system(size: SettingsMetrics.descriptionTextSize))
+                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 24)
+            if editing {
+                Button(action: onRemove) {
+                    SettingsRowButtonFace(icon: "trash", focused: focused == .remove, onLitRow: false)
+                }
+                .buttonStyle(PressStyle())
+                .focused($focused, equals: .remove)
+                .modifier(SettingsRowEntry(id: id))
+                .transition(.opacity)
+            } else if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
+                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.45) : SettingsMetrics.secondaryText)
+                    .padding(.trailing, SettingsMetrics.chevronInset)
+            }
+        }
+        .padding(.leading, poster == nil ? SettingsMetrics.rowInset : 16)
+        .padding(.trailing, editing ? SettingsMetrics.rowButtonInset : SettingsMetrics.rowInset)
+        .frame(height: SettingsMetrics.tallRowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
+            Group {
+                if lit { GlassHighlight(focused: true, shape: shape) }
+                else { shape.fill(SettingsMetrics.restingFill) }
+            }
+            .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
+                - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
+            .shadow(color: .black.opacity(lit ? 0.3 : 0), radius: 16, y: 8)
+        }
+        .scaleEffect(lit ? SettingsMetrics.focusScale : 1)
+        .animation(.smooth(duration: 0.18), value: lit)
+        .animation(.smooth(duration: 0.15), value: focused)
+        .animation(.smooth(duration: 0.2), value: editing)
+    }
+
+    /// No system focus look: the row draws it.
+    private struct PressStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.98 : 1)
+                .animation(.smooth(duration: 0.1), value: configuration.isPressed)
         }
     }
 }
 
-/// A show's watched episodes (Watched → a show): a section per season, the
-/// episodes two across (their names fit), each with when it was watched; Select: Remove.
-/// Remove all by the heading. Empty, the page closes.
+/// A title's page (Watched → a title): what was watched of it — a show's
+/// episodes, a section per season in the show's order ("E3: name", when
+/// under it); a film its one row. Edit on the title's line gives each row
+/// its trash button (one press removes it) and Remove All beside Done;
+/// Select on a row starts Edit on its button. Empty, the page closes.
 struct WatchedTitlePage: View {
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.settingsRowFocus) private var rowFocus
     let id: String
     let name: String
     let meta: MetaItem?
-    @State private var removeAllFrame = CGRect.zero
+    @State private var editing = false
 
     private var items: [WatchedItem] {
         watched.items.values.filter { $0.contentID == id }
@@ -839,102 +862,80 @@ struct WatchedTitlePage: View {
 
     var body: some View {
         let items = items
+        let isShow = items.contains { $0.episode != nil }
         let seasons = Dictionary(grouping: items) { $0.season ?? 0 }.sorted { $0.key < $1.key }
-        SettingsPage(title: name, subtitle: summary(items, seasons: seasons.count), accessory: AnyView(
-            SettingsRoundButton(icon: "trash", title: "Remove all") {
-                HoldMenu.shared.openDropdown([
-                    MenuEntry(title: "Remove All \(items.count == 1 ? "1 Episode" : "\(items.count) Episodes")",
-                              icon: "minus.circle", destructive: true) {
-                        watched.remove(keys: items.map(\.key))
-                    }
-                ], below: removeAllFrame)
-            }
-            .background {
-                GeometryReader { geometry in
-                    Color.clear
-                        .onAppear { removeAllFrame = geometry.frame(in: .global) }
-                        .onChange(of: geometry.frame(in: .global)) { _, rect in removeAllFrame = rect }
-                }
-            }
-        )) {
-            ForEach(seasons, id: \.key) { season, episodes in
-                SettingsSection(title: season == 0 ? "Specials" : "Season \(season)") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: SettingsMetrics.rowGap,
-                                                                 alignment: .top), count: 2),
-                              alignment: .leading, spacing: SettingsMetrics.rowGap) {
+        let ids = items.map(\.key)
+        SettingsPage(title: name, subtitle: summary(items, isShow: isShow, seasons: seasons.count),
+                     accessory: AnyView(accessory)) {
+            if isShow {
+                ForEach(seasons, id: \.key) { season, episodes in
+                    SettingsSection(title: season == 0 ? "Specials" : "Season \(season)",
+                                    spacing: SettingsMetrics.tallRowGap) {
                         ForEach(episodes, id: \.key) { item in
-                            WatchedEpisodeTile(title: title(of: item), date: item.watchedAt, key: item.key) {
-                                watched.remove(keys: [item.key])
-                            }
+                            row(item, title: title(of: item), ids: ids)
                         }
                     }
+                }
+            } else {
+                SettingsSection(spacing: SettingsMetrics.tallRowGap) {
+                    ForEach(items, id: \.key) { item in row(item, title: name, ids: ids) }
                 }
             }
         }
         .onChange(of: items.isEmpty) { _, empty in if empty { nav.pop() } }
+        .onExitCommand(perform: editing ? { end() } : nil)
+        .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
+        .onDisappear { TopBarLock.shared.locked = false }
     }
 
-    /// "41 episodes · 3 seasons".
-    private func summary(_ items: [WatchedItem], seasons: Int) -> String {
-        "\(items.count == 1 ? "1 episode" : "\(items.count) episodes") · "
+    private func row(_ item: WatchedItem, title: String, ids: [String]) -> some View {
+        WatchedRow(id: item.key, name: title, detail: Self.when(item.watchedAt), editing: editing,
+                   onSelect: {
+                       editing = true
+                       DispatchQueue.main.async { rowFocus?.wrappedValue = item.key }
+                   },
+                   onRemove: {
+                       WatchedRow.removed(item.key, in: ids, focus: rowFocus)
+                       watched.remove(keys: [item.key])
+                   })
+    }
+
+    @ViewBuilder private var accessory: some View {
+        if editing {
+            SettingsCapsuleButton(title: "Remove All") { watched.remove(keys: items.map(\.key)) }
+            SettingsCapsuleButton(title: "Done") { end() }
+        } else {
+            SettingsCapsuleButton(title: "Edit") {
+                editing = true
+                DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
+            }
+        }
+    }
+
+    private func end() {
+        editing = false
+        DispatchQueue.main.async { rowFocus?.wrappedValue = "Edit" }
+    }
+
+    /// "14 Oct 2026, 23:15".
+    private static func when(_ date: Date) -> String {
+        date.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
+    }
+
+    /// "41 episodes, 3 seasons"; a film nothing — its row says it.
+    private func summary(_ items: [WatchedItem], isShow: Bool, seasons: Int) -> String {
+        guard isShow else { return "" }
+        return "\(items.count == 1 ? "1 episode" : "\(items.count) episodes"), "
             + (seasons == 1 ? "1 season" : "\(seasons) seasons")
     }
 
-    /// "E3 · Episode title": the record's name for it, else what the entry
+    /// "E3: Episode title": the record's name for it, else what the entry
     /// carries (the episode's own name when Cue marked it).
     private func title(of item: WatchedItem) -> String {
         let number = "E\(item.episode ?? 0)"
         let video = meta?.videos?.first { $0.season == item.season && $0.episode == item.episode }
         let title = video?.title ?? (item.title == name || item.title == meta?.name ? "" : item.title)
-        return title.isEmpty ? number : "\(number) · \(title)"
-    }
-}
-
-/// One watched episode: its number and name, when it was watched under it
-/// (the count tiles' look); Select opens Remove under it.
-private struct WatchedEpisodeTile: View {
-    let title: String
-    let date: Date
-    let key: String
-    let remove: () -> Void
-    @State private var frame = CGRect.zero
-
-    var body: some View {
-        Button {
-            HoldMenu.shared.openDropdown([MenuEntry(title: "Remove", icon: "minus.circle",
-                                                    destructive: true, run: remove)], below: frame)
-        } label: {
-            Face(title: title, date: date)
-        }
-        .settingsRow(id: key)
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onAppear { frame = geometry.frame(in: .global) }
-                    .onChange(of: geometry.frame(in: .global)) { _, rect in frame = rect }
-            }
-        }
-    }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var isFocused
-        let title: String
-        let date: Date
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(isFocused ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
-                Text(date.formatted(.dateTime.day().month(.abbreviated).year().hour().minute()))
-                    .font(.system(size: 24))
-                    .foregroundStyle(isFocused ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
-            }
-            .lineLimit(1)
-            .padding(SettingsMetrics.rowInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(.smooth(duration: 0.18), value: isFocused)
-        }
+        return title.isEmpty ? number : "\(number): \(title)"
     }
 }
 

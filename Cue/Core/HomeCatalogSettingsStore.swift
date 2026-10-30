@@ -15,14 +15,8 @@ enum ContinueWatchingSortMode: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
     var displayName: String {
         switch self {
-        case .recentlyWatched: return "Recently watched"
-        case .streamingStyle: return "Streaming style"
-        }
-    }
-    var summary: String {
-        switch self {
-        case .recentlyWatched: return "Most recently played first"
-        case .streamingStyle: return "Titles you're mid-episode on first, then the rest"
+        case .recentlyWatched: return "Last Watched"
+        case .streamingStyle: return "In Progress First"
         }
     }
 }

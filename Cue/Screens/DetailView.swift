@@ -1662,7 +1662,9 @@ struct DetailActionButton: View {
                                 .font(.system(size: iconSize, weight: .bold))
                                 // (Into Details in place: › becomes About's;
                                 // set from another host — no transaction.)
-                                .contentTransition(.opacity)
+                                .contentTransition(["plus", "checkmark"].contains(shownIcon)
+                                    ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
+                                    : .opacity)
                                 .animation(Motion.move, value: shownIcon)
                         }
                     }

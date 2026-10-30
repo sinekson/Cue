@@ -189,41 +189,6 @@ final class ImageCache: @unchecked Sendable {
         ioQueue.async { [self] in writeCacheFile(data, to: fileURL) }
     }
 
-    /// Where the disk layer lives, derived the same way `init` does so callers
-    /// can measure/clear it without reaching into the singleton. "Clear cache"
-    /// needs it because this directory is a SIBLING of `Caches/CueCache`,
-    /// not a child — so the About screen neither counted nor deleted it while
-    /// its subtitle promised cached images were included, and up to 512 MB of
-    /// artwork survived every clear.
-    static var diskDirectory: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("cue-images", isDirectory: true)
-    }
-
-    /// Drop every cached image: decoded pixels AND the encoded bytes on disk.
-    /// Backs Settings → "Clear cache" (see `DiagnosticsService.clearCaches`).
-    ///
-    /// The deletion runs ON `ioQueue` so it serializes with pending writes: a
-    /// store queued before the clear still lands first, and anything queued
-    /// after it writes into the RECREATED directory instead of silently
-    /// failing for the rest of the session. It is `sync` so the caller can
-    /// re-measure the cache immediately and see the freed bytes — call it OFF
-    /// the main thread (the one caller, "Clear cache", already does).
-    func clearDisk() {
-        memory.removeAllObjects()
-        // An in-flight prefetch would otherwise refill the cache we were just
-        // asked to empty. Hopped to the main actor because that is where
-        // `prefetch(urls:)` writes this property from.
-        Task { @MainActor [weak self] in self?.prefetchTask?.cancel() }
-        // `.barrier` now that the queue is concurrent: this is the one operation
-        // that must not run alongside a read or a write, since it deletes the
-        // directory both of them are using.
-        ioQueue.sync(flags: .barrier) {
-            try? fm.removeItem(at: diskURL)
-            try? fm.createDirectory(at: diskURL, withIntermediateDirectories: true)
-        }
-    }
-
     /// One download per URL, however many callers want it.
     ///
     /// The same poster routinely appears in two rows, and the prefetch may

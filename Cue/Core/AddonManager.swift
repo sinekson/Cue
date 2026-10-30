@@ -17,10 +17,9 @@ final class AddonManager: ObservableObject {
 
     /// The LEGACY device-wide list. Never deleted (except on account switch):
     /// it is what the PRIMARY profile inherits when add-ons are separate, and
-    /// the live list in shared mode. Other profiles start from the defaults —
-    /// Trakt-switch semantics; `ensureDefaults` means never truly empty.
+    /// the live list in shared mode. Other profiles start empty: nothing is
+    /// installed that the viewer didn't add.
     private static let storageKey = "cue.addons.v1"
-    static let cinemetaURL = "https://v3-cinemeta.strem.io/manifest.json"
 
     // MARK: Per-profile scope
 
@@ -41,8 +40,8 @@ final class AddonManager: ObservableObject {
 
     /// Point the store at a profile: swap the previous profile's add-on list
     /// out for this one's. The primary profile inherits the legacy device-wide
-    /// list; any other profile with no list of its own starts from the
-    /// defaults (its account rows pull in on the next sync).
+    /// list; any other profile with no list of its own starts empty (its
+    /// account rows pull in on the next sync).
     func setProfile(_ id: Int) {
         guard id != profileID else { return }
         profileID = id
@@ -50,18 +49,15 @@ final class AddonManager: ObservableObject {
         defer { suppressChange = false }
         addons = []
         load()
-        ensureDefaults()
     }
 
     /// Forget a deleted profile's add-ons so a recycled profile id starts
-    /// from the seed instead of inheriting them.
+    /// empty instead of inheriting them.
     func forgetProfile(_ id: Int) {
         UserDefaults.standard.removeObject(forKey: Self.storageKey + ".p\(id)")
-        UserDefaults.standard.removeObject(forKey: Self.forgottenDefaultsKey + ".p\(id)")
         if id == profileID {
             addons = []
             load()
-            ensureDefaults()
         }
     }
 
@@ -311,7 +307,6 @@ final class AddonManager: ObservableObject {
         profileID = UserDefaults.standard.object(forKey: Self.activeProfileKey) as? Int ?? 1
         defer { Self.shared = self }
         load()
-        ensureDefaults()
         // Manifests barely ever change — skip the launch refresh when the last
         // one is under an hour old (faster cold start, less addon traffic).
         // Settings → Add-ons' Refresh Add-ons always forces it.
@@ -460,9 +455,6 @@ final class AddonManager: ObservableObject {
     }
 
     func remove(_ addon: InstalledAddon) {
-        // Record it FIRST: a default removed on purpose must not come back on
-        // the next launch, or the Remove button looks broken.
-        noteDefaultRemoved(addon)
         addons.removeAll { $0.id == addon.id }
         save()
         notifyLocalChange()
@@ -662,7 +654,7 @@ final class AddonManager: ObservableObject {
     private func load() {
         // Separate mode: this profile's own list; only the PRIMARY profile
         // falls back to the legacy device-wide list (Trakt-switch semantics —
-        // other profiles start fresh with the defaults). Shared mode: the
+        // other profiles start empty). Shared mode: the
         // legacy list IS the list.
         guard let data = ProfileScopedDefaults.data(Self.storageKey, profileID),
               let decoded = try? JSONDecoder().decode([InstalledAddon].self, from: Self.inflated(data))
@@ -694,9 +686,8 @@ final class AddonManager: ObservableObject {
     /// and a viewer with no account would lose the list outright).
     ///
     /// Written by `save()`, read by `load()`, and nothing else touches the key.
-    /// An older build reading a compressed blob decodes nothing and falls back
-    /// to the default addons, so a DOWNGRADE re-seeds the list from the
-    /// account rather than keeping it.
+    /// An older build reading a compressed blob decodes nothing, so a
+    /// DOWNGRADE re-pulls the list from the account rather than keeping it.
     private static let compressionMagic = Data([0x4F, 0x41, 0x5A, 0x31])   // "OAZ1"
 
     /// Compressed, behind a magic prefix — or the plain JSON when compression
@@ -752,85 +743,8 @@ final class AddonManager: ObservableObject {
         }
     }
 
-    /// Add-ons every install gets, with or without an account.
-    ///
-    /// Someone who chose "Use without an account" still has to be able to
-    /// browse something, so these are guaranteed rather than merely seeded:
-    /// `ensureDefaults()` puts back any that are missing. Removing one by hand
-    /// is still respected — see `forgottenDefaultsKey`.
-    static let defaultManifestURLs = [cinemetaURL, openSubtitlesURL]
-
-    static let openSubtitlesURL = "https://opensubtitles-v3.strem.io/manifest.json"
-
-    /// Defaults the viewer deliberately removed. Without this, `ensureDefaults`
-    /// would reinstate them on the next launch and the Remove button would look
-    /// broken.
-    private static let forgottenDefaultsKey = "cue.addons.forgottenDefaults.v1"
-
-    /// Scoped like the list itself (mode-aware). The legacy device-wide set
-    /// belongs to the PRIMARY profile (a default IT removed must not
-    /// reappear); other profiles start with the defaults present.
-    private var forgottenDefaults: Set<String> {
-        get {
-            if let scoped = UserDefaults.standard.stringArray(
-                forKey: ProfileScopedDefaults.key(Self.forgottenDefaultsKey, profileID)) {
-                return Set(scoped)
-            }
-            guard profileID == 1 else { return [] }
-            return Set(UserDefaults.standard.stringArray(forKey: Self.forgottenDefaultsKey) ?? [])
-        }
-        set {
-            UserDefaults.standard.set(
-                Array(newValue),
-                forKey: ProfileScopedDefaults.key(Self.forgottenDefaultsKey, profileID)
-            )
-        }
-    }
-
-    /// Put back any default the viewer hasn't explicitly removed.
-    ///
-    /// The bundled manifests are stand-ins so there is content before the first
-    /// network round-trip; `refreshManifests()` replaces them with the live
-    /// ones moments later.
-    func ensureDefaults() {
-        var changed = false
-        let forgotten = forgottenDefaults
-        for url in Self.defaultManifestURLs where !forgotten.contains(url) {
-            guard !addons.contains(where: { $0.manifestURL == url }) else { continue }
-            addons.append(Self.bundledDefault(for: url))
-            changed = true
-        }
-        if changed { save() }
-    }
-
-    /// Remember that a default was removed on purpose.
-    func noteDefaultRemoved(_ addon: InstalledAddon) {
-        guard Self.defaultManifestURLs.contains(addon.manifestURL) else { return }
-        forgottenDefaults.insert(addon.manifestURL)
-    }
-
-    private static func bundledDefault(for url: String) -> InstalledAddon {
-        url == openSubtitlesURL ? bundledOpenSubtitles() : bundledCinemeta()
-    }
-
-    /// Placeholder for the subtitles default, replaced by the live manifest.
-    static func bundledOpenSubtitles() -> InstalledAddon {
-        let manifest = AddonManifest(
-            id: "org.stremio.opensubtitlesv3",
-            name: "OpenSubtitles v3",
-            version: "1.0.0",
-            description: "Subtitles from OpenSubtitles",
-            logo: nil,
-            types: ["movie", "series"],
-            idPrefixes: ["tt"],
-            catalogs: [],
-            resources: [.simple("subtitles")]
-        )
-        return InstalledAddon(manifestURL: openSubtitlesURL, manifest: manifest)
-    }
-
-    /// Seed manifest so the home screen has content before the first network
-    /// round-trip; replaced by the live manifest on launch.
+    /// Cinemeta, never installed: only the sync's look-up of bare Continue
+    /// Watching rows asks it for their names and art.
     static func bundledCinemeta() -> InstalledAddon {
         let manifest = AddonManifest(
             id: "com.linvo.cinemeta",
@@ -848,6 +762,6 @@ final class AddonManager: ObservableObject {
             ],
             resources: [.simple("catalog"), .simple("meta")]
         )
-        return InstalledAddon(manifestURL: cinemetaURL, manifest: manifest)
+        return InstalledAddon(manifestURL: "https://v3-cinemeta.strem.io/manifest.json", manifest: manifest)
     }
 }
