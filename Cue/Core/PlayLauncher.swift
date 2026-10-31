@@ -37,6 +37,7 @@ final class PlayLauncher: ObservableObject {
 
     private var context: Context?
     private var model: StreamsViewModel?
+    private var modelKey: String?
     private var task: Task<Void, Never>?
 
     func configure(_ context: Context) { self.context = context }
@@ -76,6 +77,12 @@ final class PlayLauncher: ObservableObject {
         }
     }
 
+    /// The links found so far for this title or episode, while the sweep that
+    /// started it is the last one: it goes on behind the player.
+    func links(_ meta: MetaItem, _ video: MetaVideo?) -> [StreamEntry]? {
+        modelKey == Self.key(meta, video) ? model?.entries : nil
+    }
+
     /// Back while searching: it stops.
     func cancel() {
         task?.cancel()
@@ -99,6 +106,7 @@ final class PlayLauncher: ObservableObject {
         let key = Self.key(meta, video)
         let model = StreamsViewModel(meta: meta, video: video)
         self.model = model
+        modelKey = key
         model.onFirstLink = { [weak self, weak model] entry in
             guard let self, let model, self.search?.key == key else { return }
             self.search = nil

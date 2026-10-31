@@ -1216,9 +1216,8 @@ struct StreamEntry: Identifiable, Hashable {
         return String(addonName[separator.upperBound...])
     }
 
-    /// Identity that survives between sessions, for remembering a link the
-    /// viewer walked out on. NOT the URL: a debrid link is freshly signed on
-    /// every resolve, so keying on it would never match twice. An infoHash is
+    /// Identity of a link across sweeps. NOT the URL: a debrid link is freshly
+    /// signed on every resolve, so keying on it would never match twice. An infoHash is
     /// the same torrent forever; a filename is the same file; the display
     /// strings are the last resort.
     var rejectionKey: String {

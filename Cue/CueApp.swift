@@ -219,9 +219,6 @@ extension Route {
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
         case .keyword: return "Tag"
-        case .streams: return "Sources"
-        case .streamsFromStart: return "Sources (from start)"
-        case .streamsResume: return "Sources (resume)"
         }
     }
 
@@ -233,10 +230,6 @@ extension Route {
         case .tmdbCompany(_, let name, _, _): return name
         case .genre(_, let name, _, _): return name
         case .keyword(_, let name, _, _): return name
-        case .streams(let meta, let video),
-             .streamsFromStart(let meta, let video),
-             .streamsResume(let meta, let video, _):
-            return meta.name + (video.map { " S\($0.season ?? 0)E\($0.episode ?? 0)" } ?? "")
         default: return ""
         }
     }
@@ -275,13 +268,6 @@ extension Route {
 
 enum Route: Hashable {
     case detail(MetaItem)
-    case streams(MetaItem, MetaVideo?)
-    /// Source picker that plays from 0:00 (the Detail page's Start Over).
-    case streamsFromStart(MetaItem, MetaVideo?)
-    /// Continue Watching resume: re-scrape fresh sources and auto-play the one
-    /// matching what was last watched. `fromStart` plays it from 0:00 (Start
-    /// Over) instead of the saved position.
-    case streamsResume(MetaItem, MetaVideo?, fromStart: Bool)
     /// A folder of a collection, opened from its Home row — on Movies /
     /// Series, only that type (`type`).
     case folder(CueCollection, CueCollectionFolder, type: String? = nil)
@@ -343,16 +329,6 @@ struct RootView: View {
     /// The layer has its own stack for the pages opened from Details.
     @State private var detailLayers: [Int: DetailLayer] = [:]
 
-    /// The navigation stack of the Home-like tab in front (Home, Movies,
-    /// Series): plays and sources opened from its rows are pushed there.
-    private var homeLikePath: Binding<[Route]> {
-        switch selectedTab {
-        case AppTab.movies.rawValue: return $moviesPath
-        case AppTab.series.rawValue: return $seriesPath
-        default: return $homePath
-        }
-    }
-
     // Persisted here (not inside HomeView) so switching tabs and coming back
     // doesn't rebuild it and re-trigger the catalog load / loading spinner.
     @StateObject private var homeViewModel = HomeViewModel()
@@ -364,7 +340,6 @@ struct RootView: View {
     /// player closes so Back returns to the title page, not the source list.
     /// Deferred (not popped at play time) so StreamsView isn't torn down while
     /// its resolve Task is still running.
-    @State private var pendingAutoPlayPop = false
     /// A deep-link add-on install waiting for the viewer to say yes.
     ///
     /// A `stremio://` / `https://…/manifest.json` / `cue://<host>` link used
@@ -833,7 +808,8 @@ struct RootView: View {
     private func startPlayerDemoIfRequested() {
         let args = ProcessInfo.processInfo.arguments
         let wantsMKV = args.contains("-playerDemoMKV")
-        guard wantsMKV || args.contains("-playerDemo") else { return }
+        guard wantsMKV || args.contains("-playerDemo") || args.contains("-playerDemoFailover")
+                || args.contains("-playerDemoDead") else { return }
         // Once per process: the root content re-appears whenever the player
         // cover dismisses — including the Picture in Picture handoff — and a
         // second demo session would tear the parked one down.
@@ -851,10 +827,21 @@ struct RootView: View {
                 : "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8",
             infoHash: nil, behaviorHints: nil
         )
+        // `-playerDemoFailover`: dead links first, then the stream;
+        // `-playerDemoDead`: dead links only.
+        func entry(_ url: String) -> StreamEntry {
+            StreamEntry(addonName: "Demo", stream: Stream(name: url, title: url, description: nil, url: url,
+                                                          infoHash: nil, behaviorHints: nil))
+        }
+        let good = StreamEntry(addonName: "Demo", stream: stream)
+        var entries = [good]
+        if args.contains("-playerDemoFailover") || args.contains("-playerDemoDead") {
+            let dead = (1...4).map { entry("http://127.0.0.1:9/dead\($0).mkv") }
+            entries = args.contains("-playerDemoDead") ? dead : Array(dead.prefix(3)) + [good]
+        }
         playback = PlaybackRequest(
-            meta: meta, video: nil,
-            entry: StreamEntry(addonName: "Demo", stream: stream),
-            allEntries: [], resumePosition: nil, isDemo: true
+            meta: meta, video: nil, entry: entries[0],
+            allEntries: entries, resumePosition: nil, isDemo: true
         )
     }
 
@@ -923,18 +910,7 @@ struct RootView: View {
         // Playing: no billboard trailer under it.
         .onChange(of: playback == nil) { _, none in TrailerGate.shared.playerUp = !none }
         .onChange(of: launch.gate != nil || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
-        .fullScreenCover(item: $playback, onDismiss: {
-            // Pop the auto-played source page ONLY after the cover has fully
-            // torn down. Mutating the NavigationStack path in the same runloop
-            // tick that dismisses the cover desyncs the stack — the path empties
-            // but the pushed source view lingers as a focused "ghost" (looks
-            // glitched; Back on it escapes to tvOS and quits the app). The extra
-            // TabView layer in the Fusion layout makes that race fire reliably.
-            // Deferring to onDismiss + the next tick sequences the two mutations.
-            guard pendingAutoPlayPop else { return }
-            pendingAutoPlayPop = false
-            DispatchQueue.main.async { popActivePathForAutoPlay() }
-        }) { request in
+        .fullScreenCover(item: $playback) { request in
             CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings) {
                 playback = nil
             }
@@ -1862,75 +1838,6 @@ struct RootView: View {
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                           onOpenInPlace: openInPlace(path), backdrop: backdrop)
-        case .streams(let meta, let video):
-            StreamsView(
-                meta: meta, video: video,
-                // Auto Link Selector auto-played: flag a deferred pop; the real
-                // pop happens when the player closes (see the player cover),
-                // never while this view's resolve Task is still running.
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                let key = ProgressStore.key(metaID: meta.id, video: video)
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: progressStore.progress(for: key)?.positionSeconds
-                ))
-            }
-        case .streamsFromStart(let meta, let video):
-            // Same picker, but playback ignores any saved progress (Start Over).
-            // Carries `onAutoDismiss` like every other automatic route: without
-            // it an auto-picked Start Over had nothing to pop, so the source
-            // list uncovered itself behind the player and Back landed on it.
-            StreamsView(
-                meta: meta, video: video,
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: nil
-                ))
-            }
-        case .streamsResume(let meta, let video, let fromStart):
-            // Continue Watching: re-scrape and auto-play the best format match,
-            // with the full list as the player's failover. Start Over plays the
-            // matched link from 0:00; a normal resume from the saved position.
-            let key = ProgressStore.key(metaID: meta.id, video: video)
-            let progress = progressStore.progress(for: key)
-            StreamsView(
-                meta: meta, video: video,
-                resumeAutoPlay: true,
-                resumeSignature: progress?.streamSignature,
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: fromStart ? nil : progress?.positionSeconds
-                ))
-            }
-        }
-    }
-
-    /// Pop the source page off the active tab's stack after an Auto Link
-    /// Selector auto-play, so backing out of the player returns to the title
-    /// page. Safe here because the player has fully closed by now. The player
-    /// covers the stack while it's up, so the top entry is still the source page.
-    private func popActivePathForAutoPlay() {
-        switch selectedTab {
-        case 0: if !homePath.isEmpty { homePath.removeLast() }
-        case 1: if !searchPath.isEmpty { searchPath.removeLast() }
-        case 2: if !libraryPath.isEmpty { libraryPath.removeLast() }
-        case 4: if !moviesPath.isEmpty { moviesPath.removeLast() }
-        case 5: if !seriesPath.isEmpty { seriesPath.removeLast() }
-        default: break
         }
     }
 
@@ -2019,13 +1926,8 @@ struct RootView: View {
     @MainActor
     private func resumeResolved(_ progress: WatchProgress, fromBeginning: Bool) async {
         let (meta, video) = await canonicalResumeIdentity(progress)
-        // Resume ALWAYS re-scrapes a fresh link now: a remembered URL from a
-        // debrid/Comet-style addon expires, so replaying it "fails to load" and
-        // (with no failover alternates) drops you back to 0:00. Instead route to
-        // the source picker, which auto-plays the link best matching what was
-        // last watched, with the full list as failover. Start Over takes the
-        // same matched-link path but plays from 0:00.
-        homeLikePath.wrappedValue.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
+        // Always a fresh link, the first one, as Play: a remembered URL expires.
+        PlayLauncher.shared.play(meta, video, fromStart: fromBeginning)
     }
 
     /// The source picker's screen: full screen over the page blurred.

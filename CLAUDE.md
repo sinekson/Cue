@@ -138,8 +138,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer` through the player rework.
-- **Sources**: no sorting or filtering, the add-ons' order; Play takes the
-  first link; 5-min cache; none remembered. Hold Play: the source list
+- **Sources**: no sorting or filtering, the add-ons' order; Play, Resume and Start Over
+  take the first link (`PlayLauncher`); a link that fails or shows
+  no frame in 20 s: the next, silently, up to 3 times, then the source list; 5-min cache; none remembered. Hold Play: the source list
   (`SourcePanel`).
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
@@ -209,17 +210,34 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
 - Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
   are gone there (a second FFmpeg can take the engine's calls, so they can't
   sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):
-  playback, subtitles, progress and track choice are in; controls, failover and
-  next episode to come. Audio default: picked by hand for the title, then the
+  playback, subtitles, progress, track choice, failover and scrubbing are in
+  (a press is 10 s, presses add up; one seek 0.3 s after the last input,
+  playback goes on until then; playing, a press held 0.5 s starts the scan,
+  Apple's: picture paused, the slider runs on by itself at 8, 24 or 60 s a
+  second (the same way faster, the other way slower, then it turns round;
+  Select, Play or Back land there and play). Not real fast-forward: the
+  engine plays 2× at most, never backwards. The bar follows at 30 Hz, stills never wait:
+  a disk window, 10 min ahead in a 6 GB budget (a quarter of free space at
+  most; packets on disk on both engine paths, the software default is
+  memory; a kill's leftovers go at launch, `PlayerTempSweep`), so seeks and
+  stills inside it use no network; `loadPreview` asks
+  the engine first, its own connection only for what it doesn't hold);
+  the bar shows what's on disk ahead. Paused, with the bar focused: a swipe
+  is fine control, about 30 s across the pad whatever the length, with a
+  glide, exact frames; nothing lands until Select (which plays), Back cancels;
+  next episode to come. Controls are ours, in tvOS's look (the system's player
+  loses the software path): timeline with the remote on it, Up to round glass
+  buttons, a glass panel rising from them (`TrackList`). Back: panel, buttons,
+  a scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the
   setting, then the device's language; E-AC-3 Atmos over TrueHD (the bridge
   drops TrueHD's objects). Sonos' Atmos badge proves nothing: check the readout
   (Developer → Playback diagnostics HUD). Old playback settings stay, inert,
-  until then. Resume / Start Over still use the old StreamsView.
+  until then.
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
   DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio
-  tvOS app. The player code came with the fork (Orivio's, never reworked
-  here, many issues): replace it, don't patch it. It replaces today's five paths (KSPlayer's AVPlayer and
+  tvOS app. The player is built from scratch: Orivio's is no reference or feature list;
+  add only what we decide is important. It replaces today's five paths (KSPlayer's AVPlayer and
   FFmpeg, VLC, `DVSampleEngine`, the loopback remux) and their timer
   failovers; no engine setting. Needs tvOS 18 (we target 17). To watch:
   memory over a long film (the loopback path's leak), styled ASS (it

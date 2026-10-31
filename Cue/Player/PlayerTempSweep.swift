@@ -33,7 +33,9 @@ import UIKit
 /// clears the file if a cache session actually starts, so turning the feature
 /// off (or never playing a cacheable stream again) strands it permanently.
 enum PlayerTempSweep {
-    private static let remuxPrefix = "dv-remux-"
+    /// The engine's disk window goes here too: up to 6 GB a session, and its
+    /// own sweeps wait hours, to be sure a directory isn't another session's.
+    private static let scratchPrefixes = ["dv-remux-", "aether-"]
     private static let spoolPrefix = "CFNetworkDownload_"
 
     /// Delete every orphaned player scratch directory and network spool file.
@@ -85,7 +87,7 @@ enum PlayerTempSweep {
 
         for entry in entries {
             let name = entry.lastPathComponent
-            if name.hasPrefix(remuxPrefix) {
+            if scratchPrefixes.contains(where: name.hasPrefix) {
                 reclaimed += directorySize(of: entry, fm: fm)
                 try? fm.removeItem(at: entry)
                 directories += 1
@@ -100,7 +102,7 @@ enum PlayerTempSweep {
         }
 
         guard directories > 0 || spools > 0 else { return }
-        NSLog("[CueSweep] reclaimed %.1f MB — %d orphaned remux dirs, %d network spool files",
+        NSLog("[CueSweep] reclaimed %.1f MB — %d orphaned scratch dirs, %d network spool files",
               Double(reclaimed) / (1024 * 1024), directories, spools)
     }
 
