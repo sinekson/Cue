@@ -92,26 +92,35 @@ final class PlayLauncher: ObservableObject {
         let resume: Double?
     }
 
-    /// The next episode and its link: the same release as `current` where the
-    /// add-on says so (`bingeGroup`), else the first, as Play. Nil at the end
-    /// of the show, for one not aired yet, or with no playable link.
-    func next(after meta: MetaItem, _ video: MetaVideo, current: StreamEntry) async -> NextEpisode? {
+    /// The show's episodes that can be played, in play order. Nil: none found.
+    func episodes(of meta: MetaItem) async -> (meta: MetaItem, episodes: [MetaVideo])? {
         guard let context else { return nil }
         let full = meta.videos?.isEmpty == false
             ? meta : await SeriesEpisodes.fullMeta(for: meta, addonManager: context.addonManager)
-        let episodes = SeriesEpisodes.inPlayOrder(full)
-        guard let at = episodes.firstIndex(where: { $0.id == video.id }), at + 1 < episodes.count,
-              episodes[at + 1].hasAired else { return nil }
-        let next = episodes[at + 1]
+        let episodes = SeriesEpisodes.inPlayOrder(full).filter(\.hasAired)
+        return episodes.isEmpty ? nil : (full, episodes)
+    }
 
-        let model = StreamsViewModel(meta: full, video: next)
+    /// The next episode and its link. Nil at the end of the show, for one not
+    /// aired yet, or with no playable link.
+    func next(after meta: MetaItem, _ video: MetaVideo, current: StreamEntry) async -> NextEpisode? {
+        guard let (full, episodes) = await episodes(of: meta),
+              let at = episodes.firstIndex(where: { $0.id == video.id }), at + 1 < episodes.count else { return nil }
+        return await ready(episodes[at + 1], of: full, current: current)
+    }
+
+    /// An episode with its link: the same release as `current` where the add-on
+    /// says so (`bingeGroup`), else the first, as Play.
+    func ready(_ video: MetaVideo, of full: MetaItem, current: StreamEntry) async -> NextEpisode? {
+        guard let context else { return nil }
+        let model = StreamsViewModel(meta: full, video: video)
         await sweep(model, context)
         let links = model.entries.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
         let group = current.stream.behaviorHints?.bingeGroup
         guard let entry = links.first(where: { group != nil && $0.stream.behaviorHints?.bingeGroup == group })
                 ?? links.first else { return nil }
-        let saved = context.progress.progress(for: ProgressStore.key(metaID: full.id, video: next))
-        return NextEpisode(meta: full, video: next, entry: entry, links: model.entries,
+        let saved = context.progress.progress(for: ProgressStore.key(metaID: full.id, video: video))
+        return NextEpisode(meta: full, video: video, entry: entry, links: model.entries,
                            resume: saved?.isStarted == true ? saved?.positionSeconds : nil)
     }
 

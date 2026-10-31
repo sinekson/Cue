@@ -1,3 +1,4 @@
+import os
 import AVKit
 import AetherEngine
 import SwiftUI
@@ -16,8 +17,8 @@ struct PlaybackRequest: Identifiable {
 
 /// The player: AetherEngine's picture, Cue's subtitles, progress to the same
 /// `ProgressStore` calls the sync reads. Remote: select pause, left/right or a
-/// swipe scrub, up the Audio and Subtitles buttons, down back to the timeline,
-/// Back out.
+/// swipe scrub, up the Audio and Subtitles buttons, down the shelf (Details,
+/// Episodes, Sources), Back out.
 struct CuePlayer: UIViewControllerRepresentable {
     let request: PlaybackRequest
     let progress: ProgressStore
@@ -178,6 +179,7 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         return UICollectionView(frame: .zero, collectionViewLayout: layout)
     }()
     private var rows: [Row] = []
+    var picked: () -> Void = {}
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -241,11 +243,649 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         rows[indexPath.item].pick()
+        picked()
     }
 }
 
-/// The bare overlay: what's playing, where it is, which tracks, and a spinner
-/// while the engine waits. Shows nothing that takes focus.
+/// A tab of the shelf: focused a white capsule, the chosen one brighter at rest.
+private final class PanelTab: UIView {
+    private let platter = UIView()
+    private let title = UILabel()
+
+    var chosen = false {
+        didSet { paint() }
+    }
+
+    init(_ text: String) {
+        super.init(frame: .zero)
+        platter.backgroundColor = .white
+        platter.alpha = 0
+        title.text = text
+        title.font = .systemFont(ofSize: 28, weight: .medium)
+        title.textAlignment = .center
+        for sub in [platter, title] as [UIView] { addSubview(sub) }
+        paint()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var canBecomeFocused: Bool { true }
+
+    var width: CGFloat { title.intrinsicContentSize.width + 64 }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        platter.frame = bounds
+        platter.layer.cornerRadius = bounds.height / 2
+        title.frame = bounds
+    }
+
+    private func paint() {
+        title.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
+            : UIColor.white.withAlphaComponent(chosen ? FixedFocusText.primary : FixedFocusText.tertiary)
+        platter.alpha = isFocused ? 1 : 0
+        transform = isFocused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        coordinator.addCoordinatedAnimations { self.paint() }
+    }
+}
+
+/// Glass from the bottom: tabs, and a page under them. The tab follows the
+/// focus; one height for every page, so a switch moves nothing.
+private class PlayerSheet: UIView {
+    fileprivate static let inset: CGFloat = 28
+    private static let tabsGap: CGFloat = 16
+    private static let tabSpacing: CGFloat = 8
+
+    private let clip = UIView()
+    private let glass: GlassBacking
+    private let tabs: [PanelTab]
+    /// One per tab; two tabs may share one.
+    fileprivate var pages: [UIView] = []
+    /// In the gap under the tabs: Down lands on the page's preferred row, not
+    /// the nearest, and Up reaches a tab from anywhere along it.
+    private let guide = UIFocusGuide()
+    private(set) var current = 0
+    private var reachedEdge = Date.distantPast
+
+    private var onTabs: Bool { tabs.contains(where: \.isFocused) }
+
+    init(tabs titles: [String], height: CGFloat) {
+        let radius = TrackCell.height / 2 + Self.inset
+        glass = GlassBacking(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        tabs = titles.map(PanelTab.init)
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: height))
+        isHidden = true
+        clip.clipsToBounds = true
+        clip.layer.cornerRadius = radius
+        clip.layer.cornerCurve = .continuous
+        addSubview(glass)
+        addSubview(clip)
+        for tab in tabs { clip.addSubview(tab) }
+        addLayoutGuide(guide)
+        NSLayoutConstraint.activate([
+            guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            guide.trailingAnchor.constraint(equalTo: trailingAnchor),
+            guide.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset + TrackCell.height),
+            guide.heightAnchor.constraint(equalToConstant: Self.tabsGap)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    fileprivate func add(pages new: [UIView]) {
+        pages = new
+        for page in Set(new) { clip.addSubview(page) }
+        showTab()
+    }
+
+    /// Where the page goes: under the tabs, to the sheet's foot.
+    fileprivate var pageFrame: CGRect {
+        let top = Self.inset + TrackCell.height + Self.tabsGap
+        return CGRect(x: Self.inset, y: top, width: bounds.width - Self.inset * 2, height: bounds.height - top - Self.inset / 2)
+    }
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] { [tabs[current]] }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glass.frame = bounds
+        clip.frame = bounds
+        var x = Self.inset + 8
+        for tab in tabs where !tab.isHidden {
+            tab.frame = CGRect(x: x, y: Self.inset, width: tab.width, height: TrackCell.height)
+            x += tab.width + Self.tabSpacing
+        }
+        for page in pages { page.frame = pageFrame }
+    }
+
+    fileprivate func setTabHidden(_ index: Int, _ hidden: Bool) {
+        tabs[index].isHidden = hidden
+        if hidden, current == index, let other = tabs.firstIndex(where: { !$0.isHidden }) { choose(other) }
+        setNeedsLayout()
+    }
+
+    fileprivate func choose(_ index: Int) {
+        current = index
+        showTab()
+    }
+
+    /// Off the screen and back, never faded: tvOS won't focus into a transparent view.
+    func open() {
+        guard isHidden else { return }
+        pageWillOpen()
+        showTab()
+        isHidden = false
+        transform = awayTransform
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.transform = .identity
+        }
+    }
+
+    func close() {
+        guard !isHidden else { return }
+        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.transform = self.awayTransform
+        } completion: { _ in
+            if self.transform != .identity { self.isHidden = true }
+        }
+    }
+
+    private var awayTransform: CGAffineTransform {
+        CGAffineTransform(translationX: 0, y: (superview?.bounds.height ?? 0) - center.y + bounds.height / 2 + 40)
+    }
+
+    /// Up from the tabs leaves it. A press that climbed to them reaches the
+    /// controller after the focus has moved, so it has to have rested there.
+    var closes: Bool { onTabs && Date().timeIntervalSince(reachedEdge) > 0.2 }
+
+    /// The page as it opens or its tab comes up.
+    fileprivate func showPage(_ index: Int) {}
+    fileprivate func pageWillOpen() {}
+    fileprivate func pageTakesFocus(_ index: Int) -> Bool { true }
+    fileprivate var pageFocus: UIFocusEnvironment { pages[current] }
+
+    private func showTab() {
+        for (index, tab) in tabs.enumerated() { tab.chosen = index == current }
+        for page in pages { page.isHidden = page !== pages[current] }
+        showPage(current)
+        aimGuide()
+    }
+
+    private func aimGuide() {
+        guide.isEnabled = pageTakesFocus(current) || !onTabs
+        guide.preferredFocusEnvironments = onTabs ? [pageFocus] : [tabs[current]]
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        if (context.nextFocusedView is PanelTab) != (context.previouslyFocusedView is PanelTab) { reachedEdge = Date() }
+        if let tab = context.nextFocusedView as? PanelTab, let index = tabs.firstIndex(of: tab), index != current {
+            choose(index)
+        } else {
+            aimGuide()
+        }
+    }
+}
+
+/// One line of text. Too long for its place it runs: a rest, then round through
+/// a second copy in the same label, back where it began.
+private final class RunningLine: UIView {
+    private static let gap = "          "
+    private static let rest: CFTimeInterval = 3
+    private static let speed: Double = 60
+    private static let edge: CGFloat = 40
+
+    private let font: UIFont
+    private let value = UILabel()
+    private let edgeMask = CAGradientLayer()
+    private var fittedWidth: CGFloat = 0
+    private var shift: CGFloat = 0
+
+    var text = "" {
+        didSet {
+            guard text != oldValue else { return }
+            fittedWidth = 0
+            setNeedsLayout()
+        }
+    }
+
+    var color: UIColor? {
+        get { value.textColor }
+        set { value.textColor = newValue }
+    }
+
+    /// Set again, it starts over, so it opens readable.
+    var running = true {
+        didSet { run() }
+    }
+
+    init(font: UIFont) {
+        self.font = font
+        super.init(frame: .zero)
+        value.font = font
+        clipsToBounds = true
+        addSubview(value)
+        edgeMask.startPoint = CGPoint(x: 0, y: 0.5)
+        edgeMask.endPoint = CGPoint(x: 1, y: 0.5)
+        edgeMask.colors = [UIColor.white.cgColor, UIColor.white.cgColor, UIColor.clear.cgColor]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width != fittedWidth else { return }
+        fittedWidth = bounds.width
+        fit()
+        run()
+    }
+
+    private func fit() {
+        let width = (text as NSString).size(withAttributes: [.font: font]).width
+        let long = width > fittedWidth
+        let once = text + Self.gap
+        shift = long ? (once as NSString).size(withAttributes: [.font: font]).width : 0
+        value.text = long ? once + text : text
+        value.sizeToFit()
+        value.frame.origin = CGPoint(x: 0, y: (bounds.height - value.bounds.height) / 2)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        edgeMask.frame = bounds
+        edgeMask.locations = [0, NSNumber(value: Double(1 - Self.edge / max(fittedWidth, 1))), 1]
+        CATransaction.commit()
+        layer.mask = long ? edgeMask : nil
+    }
+
+    private func run() {
+        value.layer.removeAnimation(forKey: "run")
+        guard running, shift > 0 else { return }
+        let moving = Double(shift) / Self.speed
+        let total = Self.rest + moving
+        let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        animation.values = [0, 0, -shift]
+        animation.keyTimes = [0, NSNumber(value: Self.rest / total), 1]
+        animation.duration = total
+        animation.repeatCount = .infinity
+        animation.isRemovedOnCompletion = false
+        value.layer.add(animation, forKey: "run")
+    }
+}
+
+/// What's really going out, in two columns.
+private final class DetailsPage: UIView {
+    struct Fact: Equatable {
+        let label: String
+        let value: String
+    }
+
+    /// One fact.
+    private final class Row: UIView {
+        private static let labelWidth: CGFloat = 170
+        private static let font = UIFont.systemFont(ofSize: 24)
+
+        private let name = UILabel()
+        private let value = RunningLine(font: font)
+        private var fact = Fact(label: "", value: "")
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            name.font = Self.font
+            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+            value.color = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            addSubview(name)
+            addSubview(value)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        func set(_ new: Fact) {
+            guard new != fact else { return }
+            fact = new
+            name.text = new.label
+            value.text = new.value
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            name.frame = CGRect(x: 0, y: 0, width: Self.labelWidth, height: bounds.height)
+            value.frame = CGRect(x: Self.labelWidth, y: 0, width: bounds.width - Self.labelWidth, height: bounds.height)
+        }
+
+        func setRunning(_ running: Bool) { value.running = running }
+    }
+
+    private static let factHeight: CGFloat = 50
+
+    private var rows: [Row] = []
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let column = (bounds.width - 40) / 2
+        let half = (rows.count + 1) / 2
+        for (index, row) in rows.enumerated() {
+            let left = index < half
+            row.frame = CGRect(x: left ? 8 : bounds.midX + 20, y: 12 + CGFloat(left ? index : index - half) * Self.factHeight,
+                               width: column, height: Self.factHeight)
+        }
+    }
+
+    func show(_ new: [Fact]) {
+        while rows.count < new.count {
+            let row = Row()
+            rows.append(row)
+            addSubview(row)
+        }
+        while rows.count > new.count { rows.removeLast().removeFromSuperview() }
+        for (row, fact) in zip(rows, new) { row.set(fact) }
+        setNeedsLayout()
+    }
+
+    func startRunning() {
+        layoutIfNeeded()
+        rows.forEach { $0.setRunning(true) }
+    }
+
+    func stopRunning() { rows.forEach { $0.setRunning(false) } }
+}
+
+/// One link, on the shelf: the add-on's words on the shelf's glass, a pane when focused.
+private final class SourceCard: UICollectionViewCell {
+    static let size = CGSize(width: 680, height: PlayerShelf.cardRow)
+    /// The episode card's growth in points: as a share, a wide card grows too far.
+    private static let lift = PlayerShelf.cardWidth * FixedFocusMetrics.movingFocusLift / size.width
+    private static let lineGap: CGFloat = 15
+    private static let fadeHeight: CGFloat = 56
+    private static let nameFont = UIFont.systemFont(ofSize: 25, weight: .medium)
+    private static let detailFont = UIFont.systemFont(ofSize: 23)
+
+    private let card = UIView()
+    private let frost = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
+    private let edge = UIImageView(image: FixedFocusCardEdge.rim)
+    private let outline = UIView()
+    /// The add-on's lines, one label each with a gap between, so its breaks
+    /// still read when one wraps. Lines past the card fade out.
+    private let text = UIView()
+    private let fade = CAGradientLayer()
+    private var nameLines: [UILabel] = []
+    private var detailLines: [UILabel] = []
+    /// The foot's own line, kept clear of the add-on's text, however long.
+    private let addon = UILabel()
+    private let playing = UILabel()
+    private var isPlaying = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        card.clipsToBounds = true
+        card.layer.cornerRadius = Spotlight.cornerRadius
+        card.layer.cornerCurve = .continuous
+        contentView.addSubview(card)
+        frost.isUserInteractionEnabled = false
+        outline.isUserInteractionEnabled = false
+        outline.layer.borderWidth = FixedFocusRing.width
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
+        outline.layer.cornerRadius = Spotlight.cornerRadius
+        outline.layer.cornerCurve = .continuous
+        contentView.addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
+        text.clipsToBounds = true
+        fade.colors = [UIColor.black.cgColor, UIColor.clear.cgColor]
+        playing.font = Self.detailFont
+        playing.text = "Playing"
+        playing.sizeToFit()
+        addon.font = Self.detailFont
+        for sub in [frost, edge, text, addon, playing] as [UIView] { card.addSubview(sub) }
+        applyFocus(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The add-on's own words, its line breaks kept.
+    func show(_ entry: StreamEntry, addon: String?, playing isPlaying: Bool) {
+        self.addon.text = addon
+        nameLines = lines(entry.displayName, into: nameLines, font: Self.nameFont)
+        detailLines = lines(entry.displayDetail, into: detailLines, font: Self.detailFont)
+        self.isPlaying = isPlaying
+        playing.isHidden = !isPlaying
+        applyFocus(isFocused)
+        setNeedsLayout()
+    }
+
+    private func lines(_ words: String?, into old: [UILabel], font: UIFont) -> [UILabel] {
+        let wanted = (words ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .newlines).filter { !$0.isEmpty }
+        var pool = old
+        while pool.count > wanted.count { pool.removeLast().removeFromSuperview() }
+        while pool.count < wanted.count {
+            let line = UILabel()
+            line.font = font
+            line.numberOfLines = 0
+            line.lineBreakMode = .byWordWrapping
+            text.addSubview(line)
+            pool.append(line)
+        }
+        for (line, words) in zip(pool, wanted) { line.text = words }
+        return pool
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Bounds and centre: they may be grown (transformed).
+        card.bounds = contentView.bounds
+        card.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        frost.frame = card.bounds
+        edge.frame = card.bounds
+        outline.center = card.center
+        sizeOutline()
+        let inner = card.bounds.insetBy(dx: 28, dy: 28)
+        let hasFoot = addon.text != nil || isPlaying
+        let footHeight = playing.bounds.height
+        let footY = inner.maxY - footHeight
+        playing.frame.origin = CGPoint(x: inner.maxX - playing.bounds.width, y: footY)
+        addon.frame = CGRect(x: inner.minX, y: footY, width: inner.width - playing.bounds.width - 20, height: footHeight)
+        let room = hasFoot ? footY - Self.lineGap - inner.minY : inner.height
+        text.frame = CGRect(x: inner.minX, y: inner.minY, width: inner.width,
+                            height: hasFoot ? room : card.bounds.maxY - inner.minY)
+        var y: CGFloat = 0
+        for (index, line) in (nameLines + detailLines).enumerated() {
+            if index > 0 { y += Self.lineGap }
+            let height = ceil(line.sizeThatFits(CGSize(width: inner.width, height: .greatestFiniteMagnitude)).height)
+            line.frame = CGRect(x: 0, y: y, width: inner.width, height: height)
+            y += height
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fade.frame = text.bounds
+        let from = (text.bounds.height - Self.fadeHeight) / max(text.bounds.height, 1)
+        fade.locations = [NSNumber(value: Double(from)), 1]
+        CATransaction.commit()
+        text.layer.mask = y > room ? fade : nil
+    }
+
+    /// Sized, not scaled: its line keeps its width.
+    private func sizeOutline() {
+        let size = contentView.bounds.size
+        outline.bounds = CGRect(origin: .zero, size: CGSize(width: size.width * scale, height: size.height * scale))
+        outline.layer.cornerRadius = Spotlight.cornerRadius * scale
+    }
+
+    private var scale: CGFloat = 1
+    private var pressed = false
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(true) }
+        super.pressesBegan(presses, with: event)
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(false) }
+        super.pressesEnded(presses, with: event)
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(false) }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    private func setPressed(_ new: Bool) {
+        guard new != pressed else { return }
+        pressed = new
+        UIView.animate(withDuration: new ? 0.12 : 0.2, delay: 0,
+                       options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            self.applyFocus(self.isFocused)
+        }
+    }
+
+    /// As `FixedFocusDestinationCell`: the same lift, shadow and text levels.
+    private func applyFocus(_ focused: Bool) {
+        let bright = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : FixedFocusText.secondary)
+        let dim = UIColor.white.withAlphaComponent(focused ? FixedFocusText.secondary : FixedFocusText.tertiary)
+        nameLines.forEach { $0.textColor = bright }
+        detailLines.forEach { $0.textColor = dim }
+        playing.textColor = dim
+        addon.textColor = dim
+        // Only the glass at rest; a pane for what's playing, a blur focused.
+        card.backgroundColor = UIColor.white.withAlphaComponent(!focused && isPlaying ? 0.07 : 0)
+        frost.alpha = focused ? 0.9 : 0
+        edge.alpha = focused ? 1 : 0.5
+        scale = focused ? 1 + Self.lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
+        card.transform = CGAffineTransform(scaleX: scale, y: scale)
+        sizeOutline()
+        outline.alpha = focused ? 1 : 0
+        if focused { superview?.bringSubviewToFront(self) }
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        let focused = isFocused
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
+            self.applyFocus(focused)
+        } completion: { _ in }
+    }
+}
+
+/// Down: the stream's details, the show's episodes, as Home's cards, and the
+/// links, in the add-ons' order. A film has no episodes. Opens on the tabs; a
+/// page's focus starts on what's playing.
+private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UICollectionViewDelegate {
+    struct Episode {
+        let item: MetaItem
+        let subtitle: String?
+        let state: FixedFocusCardState
+        let playing: Bool
+        let pick: () -> Void
+    }
+
+    struct Source {
+        let entry: StreamEntry
+        /// Named only when the links come from more than one.
+        let addon: String?
+        let playing: Bool
+        let pick: () -> Void
+    }
+
+    private enum Tab: Int { case details, episodes, sources }
+
+    private static let card = CGSize(width: 480, height: 270)
+    private static let growth: CGFloat = 15
+    fileprivate static let cardWidth = card.width
+    fileprivate static let cardRow = card.height + FixedFocusMetrics.infoGap + FixedFocusMetrics.captionLineOffset
+        + FixedFocusMetrics.factsHeight
+    static let height = PlayerSheet.inset * 2 + TrackCell.height + 16 + cardRow + growth * 2
+
+    /// Filled as it opens: what's playing may have changed.
+    var fill: () -> (episodes: [Episode], sources: [Source]) = { ([], []) }
+
+    let details = DetailsPage()
+    private let episodesRow = PlayerShelf.row()
+    private let sourcesRow = PlayerShelf.row()
+    private var episodes: [Episode] = []
+    private var sources: [Source] = []
+
+    init() {
+        super.init(tabs: ["Details", "Episodes", "Sources"], height: Self.height)
+        for (row, size) in [(episodesRow, CGSize(width: Self.card.width, height: Self.cardRow)),
+                            (sourcesRow, SourceCard.size)] {
+            (row.collectionViewLayout as? UICollectionViewFlowLayout)?.itemSize = size
+            row.dataSource = self
+            row.delegate = self
+        }
+        episodesRow.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "card")
+        sourcesRow.register(SourceCard.self, forCellWithReuseIdentifier: "card")
+        add(pages: [details, episodesRow, sourcesRow])
+    }
+
+    private static func row() -> UICollectionView {
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.minimumLineSpacing = 24
+        layout.sectionInset = UIEdgeInsets(top: growth, left: 8, bottom: growth, right: 8)
+        let row = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        row.backgroundColor = .clear
+        // The focused card and its shadow reach past the row; the sheet clips.
+        row.clipsToBounds = false
+        row.showsHorizontalScrollIndicator = false
+        row.contentInsetAdjustmentBehavior = .never
+        row.remembersLastFocusedIndexPath = false
+        return row
+    }
+
+    override func pageTakesFocus(_ index: Int) -> Bool { index != Tab.details.rawValue }
+
+    override func pageWillOpen() {
+        (episodes, sources) = fill()
+        setTabHidden(Tab.episodes.rawValue, episodes.isEmpty)
+        layoutIfNeeded()
+        episodesRow.reloadData()
+        sourcesRow.reloadData()
+        for (row, playing) in [(episodesRow, episodes.firstIndex(where: \.playing)),
+                               (sourcesRow, sources.firstIndex(where: \.playing))] {
+            row.layoutIfNeeded()
+            if let playing {
+                row.scrollToItem(at: IndexPath(item: playing, section: 0), at: .centeredHorizontally, animated: false)
+            }
+        }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        collectionView === episodesRow ? episodes.count : sources.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "card", for: indexPath)
+        if let card = cell as? FixedFocusDestinationCell {
+            let episode = episodes[indexPath.item]
+            card.configure(episode.item, subtitle: episode.subtitle, index: indexPath.item, rowCell: nil,
+                           card: Self.card, cardState: episode.state)
+        } else if let card = cell as? SourceCard {
+            let source = sources[indexPath.item]
+            card.show(source.entry, addon: source.addon, playing: source.playing)
+        }
+        return cell
+    }
+
+    func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
+        (collectionView === episodesRow ? episodes.firstIndex(where: \.playing)
+                                        : sources.firstIndex(where: \.playing))
+            .map { IndexPath(item: $0, section: 0) }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        if collectionView === episodesRow {
+            episodes[indexPath.item].pick()
+        } else {
+            sources[indexPath.item].pick()
+        }
+    }
+}
+
+/// The bare overlay: what's playing, where it is, and a spinner while the
+/// engine waits. Shows nothing that takes focus.
 private final class PlayerOverlay: UIView {
     /// A view, so the gradient follows the bounds without its own animation.
     private final class Shade: UIView {
@@ -257,8 +897,7 @@ private final class PlayerOverlay: UIView {
     private let controls = UIView()
     private let shade = Shade()
     private let title = UILabel()
-    private let state = UILabel()
-    private let tracks = UILabel()
+    private let episode = UILabel()
     private let elapsed = UILabel()
     private let remaining = UILabel()
     private let bar = UIView()
@@ -266,13 +905,19 @@ private final class PlayerOverlay: UIView {
     private let fill = UIView()
     private let spinner = UIActivityIndicatorView(style: .large)
     private let preview = UIImageView()
+    private static let previewSize = CGSize(width: 480, height: 270)
+    private let previewHolder = UIView()
+    private let previewGlass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+    private let previewSpinner = UIActivityIndicatorView(style: .medium)
+    private let scrubStart = UIView()
+    private var scrubStartFraction: CGFloat = 0
     private var fraction: CGFloat = 0
+    private var isScrubbing = false
+    private var promptUp = false
     private var heldSpan: (from: CGFloat, to: CGFloat) = (0, 0)
     private static let barHeight: CGFloat = 6
-    /// The timeline with the remote on it.
-    private static let barActive: CGFloat = 1.67
 
-    init(title text: String) {
+    init(title text: String, episode line: String?) {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         controls.alpha = 0
@@ -284,29 +929,51 @@ private final class PlayerOverlay: UIView {
         gradient?.colors = [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.7).cgColor]
         controls.addSubview(shade)
 
+        episode.font = .systemFont(ofSize: 24)
+        episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         title.text = text
+        episode.text = line
         title.font = .systemFont(ofSize: 32, weight: .medium)
         title.textColor = UIColor.white.withAlphaComponent(0.75)
-        for label in [state, tracks, elapsed, remaining] {
+        for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: 24, weight: .regular)
             label.textColor = UIColor.white.withAlphaComponent(0.55)
         }
         remaining.textAlignment = .right
-        state.textAlignment = .right
         bar.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         bar.layer.cornerRadius = Self.barHeight / 2
         bar.clipsToBounds = true
+        bar.transform = CGAffineTransform(scaleX: 1, y: 1.67)
         fill.backgroundColor = UIColor.white.withAlphaComponent(0.75)
         held.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         bar.addSubview(held)
         bar.addSubview(fill)
         preview.contentMode = .scaleAspectFit
         preview.backgroundColor = .black
-        preview.layer.cornerRadius = Spotlight.cornerRadius
-        preview.layer.cornerCurve = .continuous
-        preview.clipsToBounds = true
-        preview.isHidden = true
-        for sub in [title, state, tracks, elapsed, remaining, bar, preview] as [UIView] {
+        let clip = UIView()
+        clip.layer.cornerRadius = Spotlight.cornerRadius
+        clip.layer.cornerCurve = .continuous
+        clip.clipsToBounds = true
+        clip.layer.borderWidth = 1
+        clip.layer.borderColor = UIColor.white.withAlphaComponent(0.2).cgColor
+        clip.frame = CGRect(origin: .zero, size: Self.previewSize)
+        preview.frame = clip.bounds
+        previewGlass.frame = clip.bounds
+        previewSpinner.color = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        previewSpinner.center = CGPoint(x: clip.bounds.midX, y: clip.bounds.midY)
+        clip.addSubview(previewGlass)
+        clip.addSubview(previewSpinner)
+        clip.addSubview(preview)
+        scrubStart.backgroundColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        scrubStart.isHidden = true
+        previewHolder.addSubview(clip)
+        previewHolder.layer.shadowColor = UIColor.black.cgColor
+        previewHolder.layer.shadowOpacity = 0.7
+        previewHolder.layer.shadowRadius = 36
+        previewHolder.layer.shadowOffset = CGSize(width: 0, height: 10)
+        previewHolder.layer.shadowPath = UIBezierPath(roundedRect: clip.bounds, cornerRadius: Spotlight.cornerRadius).cgPath
+        previewHolder.isHidden = true
+        for sub in [title, episode, elapsed, remaining, bar, scrubStart, previewHolder] as [UIView] {
             controls.addSubview(sub)
         }
     }
@@ -320,16 +987,15 @@ private final class PlayerOverlay: UIView {
         let width = bounds.width - inset * 2
         controls.frame = bounds
         shade.frame = CGRect(x: 0, y: bounds.height - 360, width: bounds.width, height: 360)
-        title.frame = CGRect(x: inset, y: bounds.height - 200, width: width - 500, height: 40)
-        state.frame = CGRect(x: inset + width - 400, y: bounds.height - 196, width: 200, height: 32)
+        // Left above the bar, level with the buttons, clear of them.
+        title.frame = CGRect(x: inset, y: bounds.height - 208, width: width - 220, height: 40)
+        episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
         bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
         fill.frame = CGRect(x: 0, y: 0, width: width * fraction, height: Self.barHeight)
         placeHeld()
-        elapsed.frame = CGRect(x: inset, y: bounds.height - 126, width: 200, height: 32)
+        placeElapsed()
         remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 126, width: 200, height: 32)
-        tracks.frame = CGRect(x: inset + 200, y: bounds.height - 126, width: width - 400, height: 32)
-        tracks.textAlignment = .center
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
         placePreview()
     }
@@ -340,27 +1006,82 @@ private final class PlayerOverlay: UIView {
                             width: width * max(heldSpan.to - heldSpan.from, 0), height: Self.barHeight)
     }
 
+    /// Left of the bar; scrubbing, under the marker.
+    private func placeElapsed() {
+        let width = elapsed.intrinsicContentSize.width
+        let marker = bar.frame.minX + bar.bounds.width * fraction - width / 2
+        let x = isScrubbing ? min(max(marker, bar.frame.minX), bar.frame.maxX - width) : bar.frame.minX
+        elapsed.frame = CGRect(x: x, y: bounds.height - 126, width: width, height: 32)
+        scrubStart.frame = CGRect(x: bar.frame.minX + bar.bounds.width * scrubStartFraction - 1,
+                                  y: bar.center.y - 14, width: 2, height: bar.frame.maxY - bar.center.y + 14)
+    }
+
     private func placePreview() {
-        let size = CGSize(width: 480, height: 270)
+        let size = Self.previewSize
         let x = min(max(bar.frame.minX + bar.bounds.width * fraction - size.width / 2, bar.frame.minX),
                     bar.frame.maxX - size.width)
-        preview.frame = CGRect(x: x, y: bounds.height - 250 - size.height, width: size.width, height: size.height)
+        previewHolder.frame = CGRect(x: x, y: bounds.height - 176 - size.height, width: size.width, height: size.height)
     }
 
     /// nil: time only (no still for that spot yet).
     func setPreview(_ image: CGImage?) {
         guard image !== preview.image?.cgImage else { return }
         preview.image = image.map { UIImage(cgImage: $0) }
-        preview.isHidden = image == nil
+        showWaiting(image == nil)
+        previewHolder.isHidden = image == nil
     }
 
-    func setTitle(_ text: String) { title.text = text }
+    private func showWaiting(_ waiting: Bool) {
+        preview.isHidden = waiting
+        previewGlass.isHidden = !waiting
+        if waiting { previewSpinner.startAnimating() } else { previewSpinner.stopAnimating() }
+    }
 
-    func move(time: Double, duration: Double) {
+    func setTitle(_ text: String, episode line: String?) {
+        title.text = text
+        episode.text = line
+    }
+
+    /// A prompt takes the title's place for as long as it's there.
+    func setPromptUp(_ up: Bool) {
+        guard up != promptUp else { return }
+        promptUp = up
+        fadeTitle()
+    }
+
+    private func fadeTitle() {
+        let alpha: CGFloat = isScrubbing || promptUp ? 0 : 1
+        UIView.animate(withDuration: Motion.fadeDuration) {
+            self.title.alpha = alpha
+            self.episode.alpha = alpha
+        }
+    }
+
+    /// How far subtitles have to stay above the bottom of the screen.
+    var subtitleFloor: CGFloat { isShown ? 250 : 90 }
+
+    func setScrubbing(_ scrubbing: Bool) {
+        if scrubbing, previewHolder.isHidden {
+            previewHolder.isHidden = false
+            showWaiting(preview.image == nil)
+        } else if !scrubbing {
+            previewHolder.isHidden = true
+        }
+        guard scrubbing != isScrubbing else { return }
+        scrubStartFraction = fraction
+        scrubStart.isHidden = !scrubbing
+        isScrubbing = scrubbing
+        placeElapsed()
+        fadeTitle()
+        UIView.animate(withDuration: Motion.fadeDuration) { self.remaining.alpha = scrubbing ? 0 : 1 }
+    }
+
+    func move(time: Double, duration: Double, mark: String? = nil) {
         fraction = duration > 0 ? CGFloat(min(max(time / duration, 0), 1)) : 0
         fill.frame.size.width = bar.bounds.width * fraction
         placePreview()
-        elapsed.text = duration > 0 ? Self.clock(time) : nil
+        elapsed.text = duration > 0 ? [mark, Self.clock(time)].compactMap { $0 }.joined(separator: "  ") : nil
+        placeElapsed()
         remaining.text = duration > 0 ? "-" + Self.clock(max(duration - time, 0)) : nil
     }
 
@@ -371,18 +1092,10 @@ private final class PlayerOverlay: UIView {
         placeHeld()
     }
 
-    func update(time: Double, duration: Double, audio: String, subtitle: String, state text: String?, waiting: Bool) {
-        move(time: time, duration: duration)
-        tracks.text = audio.isEmpty ? nil : "\(audio)  ·  \(subtitle)"
-        state.text = text
+    func update(time: Double, duration: Double, mark: String?, waiting: Bool) {
+        move(time: time, duration: duration, mark: mark)
         if waiting != spinner.isAnimating {
             if waiting { spinner.startAnimating() } else { spinner.stopAnimating() }
-        }
-    }
-
-    func setTimelineActive(_ active: Bool) {
-        UIView.animate(withDuration: Motion.focusDuration) {
-            self.bar.transform = active ? CGAffineTransform(scaleX: 1, y: Self.barActive) : .identity
         }
     }
 
@@ -392,7 +1105,7 @@ private final class PlayerOverlay: UIView {
         UIView.animate(withDuration: Motion.fadeDuration) { self.controls.alpha = shown ? 1 : 0 }
     }
 
-    private static func clock(_ seconds: Double) -> String {
+    static func clock(_ seconds: Double) -> String {
         let total = Int(seconds)
         let (hours, minutes, rest) = (total / 3600, total % 3600 / 60, total % 60)
         return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, rest)
@@ -443,11 +1156,14 @@ struct PlayerSegments {
     }
 }
 
-/// Bottom right, above the controls: Skip Intro, or the next episode as a card
-/// with its picture. Glass at rest; focused white with dark content, 5 % larger.
+/// Above the title: Skip Intro and where it ends. Opposite it: the next
+/// episode as a card with its picture. Glass at rest; focused white with dark content, 5 % larger.
 /// The controller takes its Select: no button, so nothing fires twice.
 private final class PlayerPrompt: UIView {
-    private static let pillHeight: CGFloat = 72
+    private static let pillHeight: CGFloat = 88
+    private static let iconSize: CGFloat = 34
+    /// Level with the buttons' feet.
+    fileprivate static let bottom: CGFloat = 168
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
@@ -456,9 +1172,9 @@ private final class PlayerPrompt: UIView {
     override var canBecomeFocused: Bool { takesFocus }
 
     private let glass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-    private let pillGlass = GlassBacking(Capsule())
     private let platter = UIView()
     private let picture = UIImageView()
+    private let icon = UIImageView(image: UIImage(systemName: "forward.end.fill"))
     private let heading = UILabel()
     private let detail = UILabel()
     private var isCard = false
@@ -469,23 +1185,25 @@ private final class PlayerPrompt: UIView {
         platter.backgroundColor = .white
         platter.alpha = 0
         platter.layer.cornerCurve = .continuous
+        platter.layer.cornerRadius = Spotlight.cornerRadius
+        icon.contentMode = .scaleAspectFit
         picture.contentMode = .scaleAspectFill
         picture.clipsToBounds = true
         picture.layer.cornerRadius = Spotlight.cornerRadius - Self.cardPadding / 2
         picture.layer.cornerCurve = .continuous
         heading.font = .systemFont(ofSize: 25, weight: .medium)
         detail.font = .systemFont(ofSize: 24)
-        for sub in [glass, pillGlass, platter, picture, heading, detail] as [UIView] { addSubview(sub) }
+        for sub in [glass, platter, picture, icon, heading, detail] as [UIView] { addSubview(sub) }
         restyle()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func showPill(_ text: String) {
+    func showPill(_ text: String, detail second: String) {
         isCard = false
         heading.text = text
-        detail.text = nil
+        detail.text = second
         picture.image = nil
         place()
     }
@@ -500,36 +1218,35 @@ private final class PlayerPrompt: UIView {
 
     func setHeading(_ text: String) { heading.text = text }
 
-    /// Its bottom right corner stays where it is.
     private func place() {
-        let right = frame.maxX, bottom = frame.maxY
+        guard let page = superview?.bounds else { return }
+        transform = .identity
+        let text = max(heading.intrinsicContentSize.width, detail.intrinsicContentSize.width)
         let size = isCard
             ? CGSize(width: Self.cardWidth, height: Self.cardPadding * 2 + Self.pictureHeight + 86)
-            : CGSize(width: heading.intrinsicContentSize.width + 72, height: Self.pillHeight)
-        transform = .identity
-        frame = CGRect(x: right - size.width, y: bottom - size.height, width: size.width, height: size.height)
-        glass.isHidden = !isCard
-        pillGlass.isHidden = isCard
+            : CGSize(width: text + Self.iconSize + 72, height: Self.pillHeight)
+        frame = CGRect(x: 80, y: page.height - Self.bottom - size.height, width: size.width, height: size.height)
+        if isFocused { transform = CGAffineTransform(scaleX: 1.05, y: 1.05) }
         picture.isHidden = !isCard
-        detail.isHidden = !isCard
+        icon.isHidden = isCard
         setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         glass.frame = bounds
-        pillGlass.frame = bounds
         platter.frame = bounds
-        platter.layer.cornerRadius = isCard ? Spotlight.cornerRadius : bounds.height / 2
         guard isCard else {
-            heading.frame = bounds.insetBy(dx: 36, dy: 0)
-            heading.textAlignment = .center
+            icon.frame = CGRect(x: 24, y: (bounds.height - Self.iconSize) / 2,
+                                width: Self.iconSize, height: Self.iconSize)
+            let x = icon.frame.maxX + 20
+            heading.frame = CGRect(x: x, y: 12, width: bounds.width - x - 24, height: 32)
+            detail.frame = CGRect(x: x, y: heading.frame.maxY, width: bounds.width - x - 24, height: 32)
             return
         }
         let inset = Self.cardPadding
         let width = bounds.width - inset * 2
         picture.frame = CGRect(x: inset, y: inset, width: width, height: Self.pictureHeight)
-        heading.textAlignment = .left
         heading.frame = CGRect(x: inset, y: picture.frame.maxY + 12, width: width, height: 32)
         detail.frame = CGRect(x: inset, y: heading.frame.maxY + 2, width: width, height: 32)
     }
@@ -537,6 +1254,7 @@ private final class PlayerPrompt: UIView {
     private func restyle() {
         heading.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
                                       : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        icon.tintColor = heading.textColor
         detail.textColor = isFocused ? UIColor.black.withAlphaComponent(0.65)
                                      : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
     }
@@ -605,6 +1323,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let audioButton = PlayerButton(icon: "waveform", label: "Audio")
     private let subtitleButton = PlayerButton(icon: "captions.bubble", label: "Subtitles")
     private let trackList = TrackList()
+    private let shelf = PlayerShelf()
     private let promptView = PlayerPrompt()
     private let readout = UILabel()
 
@@ -652,17 +1371,21 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// A press moves the target this far, paused or playing.
     private static let scrubStep: Double = 10
-    /// Paused, a swipe is fine control: about 30 s across the pad, whatever the
+    /// Paused, a swipe is fine control: about 45 s across the pad, whatever the
     /// title's length, so going far stays a job for the scan.
-    private static let swipeSecondsPerPoint: Double = 0.02
+    private static let swipeSecondsPerPoint: Double = 0.03
     /// A swipe lets go with its speed and eases out over this.
+    private static let swipeFastSpeed: Double = 2000
+    private static let swipeMostGain: Double = 4
+    /// A swipe only opens something when it's clearly up or down; the rest scrubs.
+    private static let verticalSwipeRatio: CGFloat = 2
     private static let glideSeconds: Double = 0.25
     private static let glideStop: Double = 1
     /// Playing, a press held this long starts the scan, which goes on by itself.
     private static let scanHoldSeconds: TimeInterval = 0.5
     /// The scan's slider, in seconds of title per second. The picture is paused:
     /// the engine plays 2× at most and never backwards.
-    private static let scanSpeeds: [Double] = [8, 24, 60]
+    private static let scanSpeeds: [Double] = [30, 120, 300]
     /// The seek waits this long after the last input, so a run of inputs is one seek.
     private static let scrubCommitSeconds: TimeInterval = 0.3
     /// The bar follows at this rate; the swipe comes in at twice it.
@@ -670,6 +1393,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private static let stillWidth = 480
     /// Past what's on disk, a still waits for the target to stop.
     private static let stillSettleSeconds: TimeInterval = 0.3
+    private static let stillRestSeconds: TimeInterval = 0.25
 
     /// Where the viewer is scrubbing to; playback goes on until it lands.
     private var scrubTarget: Double?
@@ -684,11 +1408,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var glide: Double = 0
     private var runLink: CADisplayLink?
     private var panning = false
+    private var panVertical = false
     private var panLast: CGFloat = 0
     private var previewBusy = false
     /// Stills for what the engine doesn't hold: its own connection to the link,
     /// made at the first such scrub.
     private var stills: FrameExtractor?
+    private var restWait: Task<Void, Never>?
+    private var exactWanted = false
+    private var exactStale: OSAllocatedUnfairLock<Bool>?
 
     /// A skip left alone goes after this; it's back while the controls are up.
     private static let skipSeconds: TimeInterval = 10
@@ -717,8 +1445,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private enum Menu { case none, buttons, tracks }
     private var menu = Menu.none
-    /// The button to come back to from its list.
     private weak var lastButton: PlayerButton?
+    private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
+    private var shelfOpen = false
+    private var show: (meta: MetaItem, episodes: [MetaVideo])?
+    private var showTask: Task<Void, Never>?
+    /// An episode from the shelf, its link being found.
+    private var episodeTask: Task<Void, Never>?
+    /// Stepped down off the prompt: it stays up, the bar has the remote.
+    private var promptLeft = false
 
     init(request: PlaybackRequest, progress: ProgressStore, settings: PlayerSettings,
          onClose: @escaping () -> Void) {
@@ -733,7 +1468,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         resumeFloor = request.resumePosition ?? 0
         entry = request.entry
         tried = [request.entry.rejectionKey]
-        overlay = PlayerOverlay(title: Self.title(request.meta, request.video))
+        overlay = PlayerOverlay(title: request.meta.name, episode: request.video?.title)
         do {
             engine = try AetherEngine()
         } catch {
@@ -746,11 +1481,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func title(_ meta: MetaItem, _ video: MetaVideo?) -> String {
-        video.map { "\(meta.name)  \($0.seasonEpisodeCode)" } ?? meta.name
-    }
-
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        if shelfOpen { return [shelf] }
         switch menu {
         case .none: return [promptView.takesFocus ? promptView : focusView]
         case .buttons: return [lastButton ?? audioButton]
@@ -762,19 +1494,20 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         super.viewDidLoad()
         view.backgroundColor = .black
         for sub in [focusView, surface, subtitleImage, subtitleText, overlay, audioButton, subtitleButton,
-                    trackList, promptView, readout] as [UIView] {
+                    promptView, trackList, shelf,
+                    readout] as [UIView] {
             view.addSubview(sub)
         }
 
-        for button in [audioButton, subtitleButton] {
-            button.alpha = 0
-            button.addAction(UIAction { [weak self, weak button] _ in
-                guard let self, let button else { return }
-                self.openTracks(from: button)
-            }, for: .primaryActionTriggered)
-        }
         trackList.isHidden = true
-        overlay.setTimelineActive(true)
+        trackList.picked = { [weak self] in self?.setMenu(.none) }
+        for button in buttons {
+            button.alpha = 0
+            button.addTarget(self, action: #selector(buttonPressed), for: .primaryActionTriggered)
+        }
+        shelf.fill = { [weak self] in
+            (self?.shelfEpisodes() ?? [], self?.shelfSources() ?? [])
+        }
 
         let back = UITapGestureRecognizer(target: self, action: #selector(backPressed))
         back.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
@@ -816,15 +1549,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         focusView.frame = view.bounds
         surface.frame = view.bounds
         overlay.frame = view.bounds
-        let bounds = view.bounds
+        // Bounds and center: its transform is what moves it.
         let size = PlayerButton.size
-        subtitleButton.bounds.size = CGSize(width: size, height: size)
-        audioButton.bounds.size = CGSize(width: size, height: size)
-        subtitleButton.center = CGPoint(x: bounds.width - 80 - size / 2, y: bounds.height - 196)
-        audioButton.center = CGPoint(x: bounds.width - 80 - size * 1.5 - 20, y: bounds.height - 196)
-        if promptView.frame.isEmpty {
-            promptView.frame = CGRect(x: bounds.width - 80, y: bounds.height - 250, width: 0, height: 0)
+        let center = view.bounds.height - PlayerPrompt.bottom - size / 2
+        for (index, button) in buttons.reversed().enumerated() {
+            button.bounds.size = CGSize(width: size, height: size)
+            button.center = CGPoint(x: view.bounds.width - 80 - size / 2 - CGFloat(index) * (size + 20), y: center)
         }
+        shelf.bounds.size = CGSize(width: view.bounds.width - 160, height: PlayerShelf.height)
+        shelf.center = CGPoint(x: view.bounds.midX, y: view.bounds.height - 60 - PlayerShelf.height / 2)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -838,6 +1571,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         start()
         loadSegments()
+        loadShow()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -1119,6 +1853,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         linkSearch?.cancel()
         segmentsTask?.cancel()
         nextTask?.cancel()
+        showTask?.cancel()
+        episodeTask?.cancel()
         dropStills()
         engine?.stop()
         Self.isPlaying = false
@@ -1133,53 +1869,91 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             super.pressesBegan(presses, with: event)
             return
         }
-        if press.type == .select, promptView.takesFocus {
+        if press.type == .select, promptView.isFocused {
             promptPressed(engine)
             return
         }
-        showControls()
-        if menu != .none {
+        if shelfOpen {
             switch press.type {
-            case .downArrow where menu == .buttons: setMenu(.none)
+            case .upArrow where shelf.closes: setShelf(false)
+            case .playPause: engine.togglePlayPause()
+            default: super.pressesBegan(presses, with: event)
+            }
+            return
+        }
+        if menu != .none {
+            showControls()
+            switch press.type {
+            case .downArrow where menu == .buttons: stepVertically(down: true, engine)
             case .playPause: engine.togglePlayPause()
             default: super.pressesBegan(presses, with: event)
             }
             return
         }
         switch press.type {
-        case .select where scrubTarget != nil, .playPause where scrubTarget != nil: commitScrub(resume: true)
-        case .select, .playPause: engine.togglePlayPause()
-        case .leftArrow: arrowPressed(-1)
-        case .rightArrow: arrowPressed(1)
-        case .upArrow where scan == nil: setMenu(.buttons)
-        case .downArrow: break
-        default: super.pressesBegan(presses, with: event)
+        case .upArrow: stepVertically(down: false, engine)
+        case .downArrow: stepVertically(down: true, engine)
+        case .select where scrubTarget != nil, .playPause where scrubTarget != nil:
+            showControls()
+            commitScrub(resume: true)
+        case .select, .playPause:
+            showControls()
+            engine.togglePlayPause()
+        case .leftArrow:
+            showControls()
+            arrowPressed(-1)
+        case .rightArrow:
+            showControls()
+            arrowPressed(1)
+        default:
+            showControls()
+            super.pressesBegan(presses, with: event)
         }
+    }
+
+    /// A press or a swipe, the same. Down: off the buttons or the prompt to the
+    /// bar, else the shelf. Up: to a prompt on screen, else the buttons.
+    private func stepVertically(down: Bool, _ engine: AetherEngine) {
+        guard scan == nil, hasPlayed else { return }
+        if menu == .buttons {
+            if down {
+                promptLeft = true
+                setMenu(.none)
+            }
+            return
+        }
+        let toBar = down && promptView.takesFocus
+        let toPrompt = !down && promptView.alpha > 0 && !promptView.takesFocus
+        guard toBar || toPrompt else { return down ? setShelf(true) : setMenu(.buttons) }
+        showControls()
+        promptLeft = down
+        updateOverlay(engine)
+        updatePrompt(engine)
     }
 
     /// A recognizer, not `pressesBegan`: with a button or list focused, the
     /// system takes Back first and dismisses the player.
     @objc private func backPressed() {
+        guard !shelfOpen else { return setShelf(false) }
         switch menu {
-        case .tracks:
-            setMenu(.buttons)
+        case .tracks: return setMenu(.buttons)
         case .buttons:
             setMenu(.none)
+            return hideControls()
+        case .none: break
+        }
+        if scan != nil {
+            commitScrub(resume: true)
+        } else if scrubTarget != nil {
+            endScrub()
+            showControls()
+        } else if hasPlayed, overlay.isShown {
             hideControls()
-        case .none:
-            if scan != nil {
-                commitScrub(resume: true)
-            } else if scrubTarget != nil {
-                endScrub()
-                showControls()
-            } else if hasPlayed, overlay.isShown {
-                hideControls()
-            } else if promptView.alpha > 0, let prompt {
-                dismissedPrompt = prompt
-                if let engine { updatePrompt(engine) }
-            } else {
-                close()
-            }
+        } else if promptView.alpha > 0, let prompt {
+            dismissedPrompt = prompt
+            if let engine { updatePrompt(engine) }
+        } else {
+            close()
         }
     }
 
@@ -1210,10 +1984,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         scrubTarget = min(max(seconds, 0), max(engine.duration - 1, 0))
         scrubCommitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
         guard let target = scrubTarget else { return }
+        overlay.setScrubbing(true)
+        waitForRest()
         loadPreview()
         guard Date().timeIntervalSince(lastScrubDraw) >= Self.scrubDrawInterval else { return }
         lastScrubDraw = Date()
-        overlay.move(time: target, duration: engine.duration)
+        overlay.move(time: target, duration: engine.duration, mark: scanLabel)
     }
 
     private var isFine: Bool { engine?.state == .paused && scan == nil }
@@ -1328,20 +2104,42 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// One still at a time, always for the latest target. What the engine holds
     /// comes first: the disk window, then its sparse stills across the title.
-    private func loadPreview() {
+    /// Moving takes the nearest keyframe, one frame to decode. An exact still
+    /// decodes from there to the frame, too much for a 4K file on every move,
+    /// so it waits for a rest and is dropped as soon as the target moves.
+    private func loadPreview(exact: Bool = false) {
         guard let engine, let target = scrubTarget, !previewBusy else { return }
         previewBusy = true
-        let exact = isFine
+        if exact { exactWanted = false }
+        let stale = OSAllocatedUnfairLock(initialState: false)
+        exactStale = exact ? stale : nil
         Task { [weak self] in
             guard let self else { return }
             let held = await engine.scrubPreviewFrame(atSeconds: target, refined: exact,
-                                                      maxWidth: Self.stillWidth) { false }
+                                                      maxWidth: Self.stillWidth) { stale.withLock { $0 } }
             var image = held?.image
-            if image == nil { image = await self.fetchStill(target, exact: exact) }
+            if image == nil, !stale.withLock({ $0 }) { image = await self.fetchStill(target, exact: exact) }
             self.previewBusy = false
             guard let latest = self.scrubTarget else { return }
             if let image { self.overlay.setPreview(image) }
-            if latest != target { self.loadPreview() }
+            if latest != target {
+                self.loadPreview()
+            } else if self.exactWanted {
+                self.loadPreview(exact: true)
+            }
+        }
+    }
+
+    private func waitForRest() {
+        exactStale?.withLock { $0 = true }
+        exactWanted = false
+        restWait?.cancel()
+        guard isFine, let target = scrubTarget else { return }
+        restWait = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.stillRestSeconds))
+            guard let self, !Task.isCancelled, self.scrubTarget == target, self.isFine else { return }
+            self.exactWanted = true
+            self.loadPreview(exact: true)
         }
     }
 
@@ -1356,10 +2154,28 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
         guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
         let velocity = pan.velocity(in: view)
-        return menu == .none && hasPlayed && isFine && abs(velocity.x) > abs(velocity.y)
+        panVertical = abs(velocity.y) > abs(velocity.x) * Self.verticalSwipeRatio
+        if shelfOpen { return panVertical && velocity.y < 0 && shelf.closes }
+        if menu != .none { return menu == .buttons && panVertical && velocity.y > 0 }
+        guard hasPlayed else { return false }
+        return panVertical ? scan == nil : isFine && abs(velocity.x) > abs(velocity.y)
+    }
+
+    /// Slow stays exact; the gain grows evenly with the speed, so no point in the swipe jumps.
+    private static func swipeSeconds(_ speed: Double) -> Double {
+        swipeSecondsPerPoint * min(1 + abs(speed) / swipeFastSpeed, swipeMostGain)
     }
 
     @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        guard !panVertical else {
+            guard pan.state == .began else { return }
+            if shelfOpen {
+                setShelf(false)
+            } else if let engine {
+                stepVertically(down: pan.velocity(in: view).y > 0, engine)
+            }
+            return
+        }
         switch pan.state {
         case .began:
             panning = true
@@ -1368,11 +2184,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         case .changed:
             let x = pan.translation(in: view).x
             defer { panLast = x }
-            moveScrub(to: (scrubTarget ?? position) + Double(x - panLast) * Self.swipeSecondsPerPoint)
+            let speed = Double(pan.velocity(in: view).x)
+            moveScrub(to: (scrubTarget ?? position) + Double(x - panLast) * Self.swipeSeconds(speed))
             showControls()
         default:
             panning = false
-            glide = Double(pan.velocity(in: view).x) * Self.swipeSecondsPerPoint
+            let speed = Double(pan.velocity(in: view).x)
+            glide = speed * Self.swipeSeconds(speed)
             if abs(glide) >= Self.glideStop { startRun() }
         }
     }
@@ -1417,7 +2235,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func wantedPrompt(_ engine: AetherEngine) -> Prompt? {
-        guard hasPlayed, menu != .tracks, engine.duration > 0 else { return nil }
+        guard hasPlayed, engine.duration > 0 else { return nil }
         let time = landing ?? position
         if nextUp != nil, engine.state == .ended || time >= nextStart(engine) { return .next }
         if let recap = segments?.recap, recap.contains(time) { return .skip("Skip Recap", to: recap.upperBound) }
@@ -1433,30 +2251,35 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if wanted != prompt {
             prompt = wanted
             promptSince = Date()
+            promptLeft = false
             switch wanted {
-            case .skip(let label, _): promptView.showPill(label)
+            case .skip(let label, let end):
+                promptView.showPill(label, detail: "Ends at \(PlayerOverlay.clock(end))")
             case .next:
                 if let nextUp {
-                    let episode = [nextUp.video.seasonEpisodeCode, nextUp.video.title].compactMap { $0 }
-                    promptView.showCard(heading: "Next Episode", detail: episode.joined(separator: "  "),
+                    promptView.showCard(heading: "Next Episode", detail: nextUp.video.title ?? nextUp.meta.name,
                                         picture: nextPicture)
                 }
             case nil: break
             }
         }
-        var shown = wanted != nil && wanted != dismissedPrompt
+        // Scrubbing or paused, Select keeps its usual job, so no prompt.
+        let busy = shelfOpen || menu == .tracks || scrubTarget != nil || scan != nil || engine.state == .paused
+        var shown = wanted != nil && wanted != dismissedPrompt && !busy
         if case .skip = wanted, Date().timeIntervalSince(promptSince) > Self.skipSeconds, !overlay.isShown {
             shown = false
         }
         let alpha: CGFloat = shown ? 1 : 0
+        overlay.setPromptUp(shown)
         if promptView.alpha != alpha {
             UIView.animate(withDuration: Motion.fadeDuration) { self.promptView.alpha = alpha }
         }
-        // Scrubbing or paused, Select keeps its usual job.
-        let focused = shown && menu == .none && scrubTarget == nil && scan == nil && engine.state != .paused
+        // Scrubbing is being on the bar; with the controls gone, nothing holds focus there.
+        if scrubTarget != nil || scan != nil { promptLeft = true } else if !overlay.isShown { promptLeft = false }
+        let focused = shown && (menu == .buttons || (menu == .none && !shelfOpen && !promptLeft))
         guard focused != promptView.takesFocus else { return }
         promptView.takesFocus = focused
-        focusView.takesFocus = !focused && menu == .none
+        focusView.takesFocus = !focused && menu == .none && !shelfOpen
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
     }
@@ -1485,11 +2308,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         promptView.setHeading("Next in \(Int(left.rounded(.up)))")
     }
 
-    /// The same player goes on: new link, new window, as a fresh start.
     private func playNext() {
         guard let next = nextUp else { return }
+        play(next, finished: true)
+    }
+
+    /// The same player goes on: new link, new window, as a fresh start.
+    private func play(_ next: PlayLauncher.NextEpisode, finished: Bool) {
         endScrub()
-        saveFinal(finished: true)
+        saveFinal(finished: finished)
         loadTask?.cancel()
         segmentsTask?.cancel()
         dropStills()
@@ -1521,39 +2348,129 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         nextSearched = false
         endedAt = nil
 
-        overlay.setTitle(Self.title(next.meta, next.video))
+        overlay.setTitle(next.meta.name, episode: next.video.title)
         promptView.alpha = 0
         promptView.takesFocus = false
+        nextTask?.cancel()
+        nextTask = nil
+        setShelf(false)
         setMenu(.none)
         showControls()
         start()
         loadSegments()
     }
 
-    // MARK: Picker
+    // MARK: Panel and shelf
 
-    private func setMenu(_ new: Menu) {
-        if new != .none { commitScrub() }
-        menu = new
-        promptView.takesFocus = false
-        focusView.takesFocus = new == .none
-        for button in [audioButton, subtitleButton] {
-            button.takesFocus = new == .buttons
-            if new != .none { button.alpha = 1 }
+    private func setShelf(_ open: Bool) {
+        if open {
+            commitScrub()
+            overlayUntil = .distantPast
+            if let engine { shelf.details.show(facts(engine)) }
+            shelf.details.startRunning()
+            shelf.open()
+        } else {
+            shelf.details.stopRunning()
+            shelf.close()
         }
-        if new != .tracks { trackList.close() }
-        overlay.setTimelineActive(new == .none)
-        showControls()
+        shelfOpen = open
+        promptView.takesFocus = false
+        focusView.takesFocus = !open && menu == .none
+        if let engine { updateOverlay(engine) }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
     }
 
-    private func openTracks(from button: PlayerButton) {
+    private func setMenu(_ new: Menu) {
+        if new != .none { commitScrub() }
+        menu = new
+        // Left off Audio reaches a prompt.
+        promptView.takesFocus = new == .buttons && promptView.alpha > 0
+        focusView.takesFocus = new == .none && !shelfOpen
+        for button in buttons { button.takesFocus = new == .buttons }
+        if new != .tracks { trackList.close() }
+        showControls()
+        if let engine { updateOverlay(engine) }
+        setNeedsFocusUpdate()
+        updateFocusIfNeeded()
+    }
+
+    @objc private func buttonPressed(_ button: PlayerButton) {
         guard let engine else { return }
         lastButton = button
         trackList.open(button === audioButton ? audioRows(engine) : subtitleRows(engine),
-                       rightEdge: view.bounds.width - 80, bottom: view.bounds.height - 250)
+                       rightEdge: view.bounds.width - 80,
+                       bottom: view.bounds.height - PlayerPrompt.bottom - PlayerButton.size - 24)
         setMenu(.tracks)
+    }
+
+    private func loadShow() {
+        guard video != nil, !isDemo else { return }
+        let meta = meta
+        showTask = Task { [weak self] in
+            let found = await PlayLauncher.shared.episodes(of: meta)
+            guard !Task.isCancelled else { return }
+            self?.show = found
+        }
+    }
+
+    private func shelfEpisodes() -> [PlayerShelf.Episode] {
+        guard let show else { return [] }
+        let hideSpoilers = UserDefaults.standard.bool(forKey: DetailHideSpoilers.key)
+        return show.episodes.map { episode in
+            let saved = progress.progress(for: ProgressStore.key(metaID: show.meta.id, video: episode))
+            let playing = episode.id == video?.id
+            let watched = saved.map { $0.fraction >= 0.95 } ?? false
+            let started = saved?.isStarted == true
+            let state = FixedFocusCardState(
+                label: episode.seasonEpisodeCode, fraction: started ? saved?.fraction : nil,
+                right: playing ? "Playing" : watched ? "Watched" : started ? saved?.remainingTimeText : nil,
+                blurred: hideSpoilers && !watched && !started && !playing)
+            return PlayerShelf.Episode(
+                item: MetaItem(id: episode.id, type: "episode", name: episode.title ?? episode.seasonEpisodeCode,
+                               background: episode.thumbnail ?? show.meta.background),
+                subtitle: nil, state: state, playing: playing
+            ) { [weak self] in self?.pickEpisode(episode, of: show.meta) }
+        }
+    }
+
+    private func shelfSources() -> [PlayerShelf.Source] {
+        let all = (linksOwn ? nil : PlayLauncher.shared.links(meta, video)) ?? links
+        let playable = all.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
+        let several = Set(playable.map(\.sourceAddonName)).count > 1
+        return playable.map { link in
+            PlayerShelf.Source(entry: link, addon: several ? link.sourceAddonName : nil, playing: link.rejectionKey == entry.rejectionKey) { [weak self] in
+                self?.pickSource(link)
+            }
+        }
+    }
+
+    /// What plays goes on until the new one is ready. No link: the source list.
+    private func pickEpisode(_ episode: MetaVideo, of show: MetaItem) {
+        setShelf(false)
+        guard episode.id != video?.id else { return }
+        let current = entry
+        episodeTask?.cancel()
+        episodeTask = Task { [weak self] in
+            let ready = await PlayLauncher.shared.ready(episode, of: show, current: current)
+            guard let self, !Task.isCancelled else { return }
+            self.episodeTask = nil
+            if let ready {
+                self.play(ready, finished: false)
+            } else {
+                self.close()
+                SourcePicker.shared.open(show, episode)
+            }
+        }
+    }
+
+    /// The same spot on another link.
+    private func pickSource(_ link: StreamEntry) {
+        setShelf(false)
+        guard let engine, link.rejectionKey != entry.rejectionKey else { return }
+        if counts { save(engine) }
+        entry = link
+        reload(engine, from: position)
     }
 
     private func audioRows(_ engine: AetherEngine) -> [TrackList.Row] {
@@ -1562,7 +2479,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 self?.audioPicked = true
                 PlaybackMemory.update(self?.meta.id ?? "") { $0.audioLanguage = track.language }
                 Task { try? await engine.selectAudioTrack(index: track.id) }
-                self?.setMenu(.none)
             }
         }
     }
@@ -1572,13 +2488,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let off = TrackList.Row(title: "Off", active: active == nil) { [weak self] in
             engine.clearSubtitle()
             PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = "off" }
-            self?.setMenu(.none)
         }
         return [off] + engine.subtitleTracks.map { track in
             TrackList.Row(title: subtitleTitle(track), active: track.id == active?.id) { [weak self] in
                 engine.selectSubtitleTrack(index: track.id)
                 PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = track.language }
-                self?.setMenu(.none)
             }
         }
     }
@@ -1619,6 +2533,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             updateOverlay(engine)
             findNext(engine)
             updatePrompt(engine)
+            if shelfOpen { shelf.details.show(facts(engine)) }
         }
         let showReadout = failure != nil || PerformanceSettingsStore.shared.settings.showPlayerDiagnostics
         readout.isHidden = !showReadout
@@ -1633,27 +2548,93 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func updateOverlay(_ engine: AetherEngine) {
-        let waiting = !hasPlayed || dryAt != nil || engine.state == .seeking || engine.isBuffering
+        let waiting = !hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering
         overlay.update(
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
-            audio: audioLabel(engine), subtitle: subtitleLabel(engine),
-            state: scanLabel ?? (engine.state == .paused ? "Paused" : nil), waiting: waiting
+            mark: scanLabel, waiting: waiting
         )
         overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
-        let shown = menu != .none || scrubTarget != nil || !hasPlayed
-            || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil))
+        let shown = !shelfOpen && (menu != .none || scrubTarget != nil || !hasPlayed
+            || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
         overlay.setShown(shown)
-        let alpha: CGFloat = shown ? 1 : 0
+        let alpha: CGFloat = shown && scrubTarget == nil && scan == nil ? 1 : 0
         if audioButton.alpha != alpha {
             UIView.animate(withDuration: Motion.fadeDuration) {
-                self.audioButton.alpha = alpha
-                self.subtitleButton.alpha = alpha
+                for button in self.buttons { button.alpha = alpha }
             }
+        }
+        overlay.setScrubbing(scrubTarget != nil || scan != nil)
+    }
+
+    /// What's really playing, to check against what the stream claims.
+    private func facts(_ engine: AetherEngine) -> [DetailsPage.Fact] {
+        typealias Fact = DetailsPage.Fact
+        var out = [Fact(label: "Title", value: meta.name)]
+        if let video, let season = video.season, let episode = video.episode {
+            out.append(Fact(label: "Episode", value: "Season \(season), Episode \(episode)"))
+        }
+        if let file = entry.stream.behaviorHints?.filename, !file.isEmpty {
+            out.append(Fact(label: "File", value: file))
+        }
+        if engine.duration > 0 {
+            let minutes = Int(engine.duration / 60)
+            let length = minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min"
+            out.append(Fact(label: "Length", value: length))
+        }
+        if let label = entry.stream.fileSizeLabel { out.append(Fact(label: "File Size", value: label)) }
+        out.append(Fact(label: "Add-on", value: entry.addonName))
+        if let probe, probe.videoWidth > 0 {
+            let tier = probe.videoWidth >= 3200 ? " (4K)" : probe.videoWidth >= 1800 ? " (1080p)"
+                : probe.videoWidth >= 1200 ? " (720p)" : ""
+            let video = [probe.videoCodecName.map(Self.codecName), "\(probe.videoWidth) × \(probe.videoHeight)\(tier)",
+                         probe.videoFrameRate.map { String(format: "%.3g fps", $0) }]
+            out.append(Fact(label: "Video", value: video.compactMap { $0 }.joined(separator: ", ")))
+            var range = Self.rangeName(engine.videoFormat)
+            if engine.videoFormat != probe.videoFormat {
+                range += " (file: \(Self.rangeName(probe.videoFormat)))"
+            } else if let profile = probe.dvProfile {
+                range += " Profile \(profile)"
+            }
+            out.append(Fact(label: "Range", value: range))
+        }
+        let size = entry.stream.sizeBytes
+        let rate = engine.sourceVideoBitrate > 0 ? engine.sourceVideoBitrate
+            : size.map { engine.duration > 0 ? Int64(Double($0) * 8 / engine.duration) : 0 } ?? 0
+        if rate > 0 { out.append(Fact(label: "Bitrate", value: String(format: "%.0f Mbps", Double(rate) / 1_000_000))) }
+        if let audio = engine.audioTracks.first(where: { $0.id == engine.activeAudioTrackIndex }) {
+            out.append(Fact(label: "Audio", value: audioFact(audio, engine)))
+        }
+        let subtitle = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
+        out.append(Fact(label: "Subtitles", value: subtitle.map { [$0.language, $0.codec].compactMap { $0 }.joined(separator: ", ") } ?? "Off"))
+        out.append(Fact(label: "Route", value: engine.videoRoute.rawValue))
+        return out
+    }
+
+    /// A bridged or decoded track has lost its objects, whatever the file says.
+    private func audioFact(_ track: TrackInfo, _ engine: AetherEngine) -> String {
+        let channels = [1: "Mono", 2: "Stereo", 6: "5.1", 8: "7.1"][track.channels] ?? "\(track.channels) ch"
+        let format = "\(Self.codecName(track.codec)) \(channels)"
+        let objects = track.isAtmos ? "Atmos" : track.isDTSX ? "DTS:X" : nil
+        switch engine.audioDelivery {
+        case .streamCopy: return [format, objects].compactMap { $0 }.joined(separator: " ")
+        case .bridged, .decoded: return format + (objects.map { ", converted, no \($0)" } ?? ", converted")
+        default: return format
         }
     }
 
-    private func audioLabel(_ engine: AetherEngine) -> String {
-        engine.audioTracks.first { $0.id == engine.activeAudioTrackIndex }.map(audioTitle) ?? ""
+    private static func codecName(_ codec: String) -> String {
+        let names = ["h264": "H.264", "eac3": "E-AC-3", "ac3": "AC-3", "truehd": "TrueHD", "opus": "Opus", "flac": "FLAC"]
+        return names[codec.lowercased()] ?? codec.uppercased()
+    }
+
+    private static func rangeName(_ format: VideoFormat) -> String {
+        switch format {
+        case .sdr: return "SDR"
+        case .hdr10: return "HDR10"
+        case .hdr10Plus: return "HDR10+"
+        case .dolbyVision: return "Dolby Vision"
+        case .hlg: return "HLG"
+        }
     }
 
     private func audioTitle(_ track: TrackInfo) -> String {
@@ -1670,13 +2651,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if track.isHearingImpaired { title += ", SDH" }
         if track.isCommentary { title += ", Commentary" }
         return title
-    }
-
-    private func subtitleLabel(_ engine: AetherEngine) -> String {
-        guard let track = engine.subtitleTracks.first(where: { $0.id == engine.activeSubtitleTrackIndex }) else {
-            return "Subtitles off"
-        }
-        return "Subtitles: \(languageName(track.language))"
     }
 
     private func languageName(_ code: String?) -> String {
@@ -1698,7 +2672,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         subtitleText.text = text
         let width = view.bounds.width - 300
         let height = subtitleText.sizeThatFits(CGSize(width: width, height: 400)).height
-        subtitleText.frame = CGRect(x: 150, y: view.bounds.height - (overlay.isShown ? 250 : 90) - height, width: width, height: height)
+        subtitleText.frame = CGRect(x: 150, y: view.bounds.height - overlay.subtitleFloor - height, width: width, height: height)
 
         if let image {
             let bounds = view.bounds

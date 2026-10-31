@@ -213,7 +213,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   playback, subtitles, progress, track choice, failover and scrubbing are in
   (a press is 10 s, presses add up; one seek 0.3 s after the last input,
   playback goes on until then; playing, a press held 0.5 s starts the scan,
-  Apple's: picture paused, the slider runs on by itself at 8, 24 or 60 s a
+  Apple's: picture paused, the slider runs on by itself at 30, 120 or 300 s a
   second (the same way faster, the other way slower, then it turns round;
   Select, Play or Back land there and play). Not real fast-forward: the
   engine plays 2× at most, never backwards. The bar follows at 30 Hz, stills never wait:
@@ -223,14 +223,19 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   stills inside it use no network; `loadPreview` asks
   the engine first, its own connection only for what it doesn't hold);
   the bar shows what's on disk ahead. Paused, with the bar focused: a swipe
-  is fine control, about 30 s across the pad whatever the length, with a
-  glide, exact frames; nothing lands until Select (which plays), Back cancels.
+  is fine control: slow, about 45 s across the pad whatever the length, the
+  gain growing evenly with the speed up to 3 min across, with a glide;
+  keyframe stills while moving, the exact frame 0.25 s after it rests; the preview follows the marker,
+  glass and a spinner until its first still, a line on the bar where the scrub began; nothing lands until Select (which plays), Back cancels.
   Skip (IntroDB, by IMDb id, no key; crowd-sourced, a 5 s intro can be right):
-  glass pill bottom right inside recap, intro or a film's outro, focused so
-  Select skips (paused or scrubbing, Select keeps its job), gone after 10 s,
-  back with the controls, never automatic. Next episode: the link is sought
-  60 s before the card, same `bingeGroup` first, else the first; the card at
-  the outro, else 2 min before the end, only once its link is found. Select
+  glass pill left above the bar, in the title's place while it's up, with where it ends,
+  inside recap, intro or a film's outro, focused so Select skips; paused or
+  scrubbing it goes (Select keeps its job); gone after 10 s, back with the
+  controls, never automatic. A prompt takes focus; Down steps off it to the bar,
+  Up back to it. Scrubbing: the title goes, the time sits under the
+  marker. No track line and no "Paused": codecs are in the diagnostics HUD. Next episode: the link is sought
+  60 s before the card, same `bingeGroup` first, else the first; the card, right
+  above the bar, at the outro, else 2 min before the end, only once its link is found. Select
   plays, Back dismisses it; at the end 5 s "Next in", then it plays in the same
   player. Going on counts as finished, however early.
   Home and back: the engine drops its picture in the background, so a return
@@ -243,13 +248,24 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   signed, then the same `bingeGroup`, then the order), the old list if nothing
   comes. The engine's clock runs on, still
   "playing", over a frozen picture: don't trust it (`dryAt`). Controls are ours, in tvOS's look (the system's player
-  loses the software path): timeline with the remote on it, Up to round glass
-  buttons, a glass panel rising from them (`TrackList`). Back: panel, buttons,
-  a scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the
+  loses the software path): the timeline; left above the bar the episode's name over the show's title (no season or episode number: those are in Details), level with the buttons; round glass Audio and Subtitles
+  buttons above the bar on the right, a glass `TrackList` rising from them
+  (picking closes it). Skip and Next Episode above the bar on the left, level
+  with the buttons. Up: a prompt on screen, then the buttons (Left off Audio
+  reaches the prompt); Down from them: the bar. Swipe or click Down (controls up
+  or not): the shelf, without bar or buttons. A swipe opens only if clearly
+  vertical. All of this but the title and the prompts' spot is still an open question. Back: shelf, list, buttons, a
+  scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the
   setting, then the device's language; E-AC-3 Atmos over TrueHD (the bridge
   drops TrueHD's objects). Sonos' Atmos badge proves nothing: check the readout
   (Developer → Playback diagnostics HUD). Old playback settings stay, inert,
   until then.
+  The shelf (`PlayerShelf`), glass from the bottom: Details (stream info, to check a stream against what it claims: title, episode, file, length, size, add-on, then the stream's facts (a value too long runs: a rest, then round),
+  what's really sent, so a converted track never says Atmos), Episodes and
+  Sources (films: no Episodes), Home's cards; sources: cards 680 wide, as tall as an episode card with its caption (the row centres a shorter one, so the tops would differ), the add-on's own text with its line breaks (it differs per config, so nothing is tuned to one layout: from the top, a long line wraps, a gap between the add-on's lines so its breaks still read; too many lines fade; a foot line of its own, clear of the add-on's text: the add-on's name left (only with links from more than one), Playing right; running lines were tried: cards are for comparing, so all of it shows at rest), a soft rim on the shelf's glass at rest, a faint pane for what's playing, a 90 % blur focused, no white (white over it looked too solid; grey panes and the blurred episode picture looked bad; on dark panes focus barely showed), the same growth in points as an episode card (a side panel with a button beside Subtitles was tried: too wide, the moves looked off); one shelf height for every tab; opens on the tabs, a page on what's
+  playing; Up from the tabs or Back closes. An episode: what plays goes on until
+  its link is found (same `bingeGroup` first), the source list if none. A source:
+  the same spot on that link.
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
   DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio
