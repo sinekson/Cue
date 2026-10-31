@@ -105,10 +105,7 @@ final class PlayLauncher: ObservableObject {
         let next = episodes[at + 1]
 
         let model = StreamsViewModel(meta: full, video: next)
-        let settings = context.settings()
-        await model.load(addonManager: context.addonManager, perTier: settings.sourcesPerSizeTier,
-                         filtersEnabled: settings.sourceFiltersEnabled,
-                         streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+        await sweep(model, context)
         let links = model.entries.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
         let group = current.stream.behaviorHints?.bingeGroup
         guard let entry = links.first(where: { group != nil && $0.stream.behaviorHints?.bingeGroup == group })
@@ -116,6 +113,21 @@ final class PlayLauncher: ObservableObject {
         let saved = context.progress.progress(for: ProgressStore.key(metaID: full.id, video: next))
         return NextEpisode(meta: full, video: next, entry: entry, links: model.entries,
                            resume: saved?.isStarted == true ? saved?.positionSeconds : nil)
+    }
+
+    /// The add-ons asked again, past every cache: the links in hand went bad.
+    func freshLinks(_ meta: MetaItem, _ video: MetaVideo?) async -> [StreamEntry] {
+        guard let context else { return [] }
+        let model = StreamsViewModel(meta: meta, video: video)
+        await sweep(model, context, forceRefresh: true)
+        return model.entries
+    }
+
+    private func sweep(_ model: StreamsViewModel, _ context: Context, forceRefresh: Bool = false) async {
+        let settings = context.settings()
+        await model.load(addonManager: context.addonManager, perTier: settings.sourcesPerSizeTier,
+                         filtersEnabled: settings.sourceFiltersEnabled, forceRefresh: forceRefresh,
+                         streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
     }
 
     /// Back while searching: it stops.
@@ -147,10 +159,7 @@ final class PlayLauncher: ObservableObject {
             self.search = nil
             context.start(meta, video, entry, model.entries, fromStart)
         }
-        let settings = context.settings()
-        await model.load(addonManager: context.addonManager, perTier: settings.sourcesPerSizeTier,
-                         filtersEnabled: settings.sourceFiltersEnabled,
-                         streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+        await sweep(model, context)
         guard !Task.isCancelled, search?.key == key else { return }
         // Nothing playable came in: the picker shows what there is.
         search = nil

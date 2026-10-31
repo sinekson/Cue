@@ -232,7 +232,17 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   60 s before the card, same `bingeGroup` first, else the first; the card at
   the outro, else 2 min before the end, only once its link is found. Select
   plays, Back dismisses it; at the end 5 s "Next in", then it plays in the same
-  player. Going on counts as finished, however early. Controls are ours, in tvOS's look (the system's player
+  player. Going on counts as finished, however early.
+  Home and back: the engine drops its picture in the background, so a return
+  loads the same way, then stops paused with the controls up, the disk window
+  empty; it loads playing but silent, since a paused load draws no picture.
+  A stream lost mid-play (an error, an end 30 s or more short, or 20 s stalled
+  with nothing ahead): the same link from where the picture stopped, then the
+  next links, then the source list. A link is held as long as it works: only
+  a failure with a list over 5 min old searches again (the same file, freshly
+  signed, then the same `bingeGroup`, then the order), the old list if nothing
+  comes. The engine's clock runs on, still
+  "playing", over a frozen picture: don't trust it (`dryAt`). Controls are ours, in tvOS's look (the system's player
   loses the software path): timeline with the remote on it, Up to round glass
   buttons, a glass panel rising from them (`TrackList`). Back: panel, buttons,
   a scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the

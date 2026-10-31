@@ -570,14 +570,27 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private static let saveInterval: TimeInterval = 10
     /// Links tried silently after the first, then the source list.
     private static let maxRetries = 3
+    /// A failure with a list older than this searches again (the Play cache's age).
+    private static let linksFreshSeconds: TimeInterval = 5 * 60
     /// No first frame by then: the link counts as failed.
     private static let firstFrameSeconds: TimeInterval = 20
+    /// Meant to play and getting nowhere this long: the engine's own
+    /// reconnecting has had its turn and the link counts as lost.
+    private static let stuckSeconds: TimeInterval = 20
+    /// Less than this ahead of the playhead, a stalled source has run dry.
+    private static let dryAheadSeconds: Double = 2
+    /// An end further than this from the duration is the stream cutting out.
+    private static let earlyEndSeconds: Double = 30
 
     /// The episode playing: the player stays open from one to the next.
     private var meta: MetaItem
     private var video: MetaVideo?
     private var resume: Double?
     private var links: [StreamEntry]
+    private var linksFound = Date()
+    /// A search of our own replaced the list: the launcher's is the older one.
+    private var linksOwn = false
+    private var linkSearch: Task<Void, Never>?
     private let isDemo: Bool
     private let progress: ProgressStore
     private let settings: PlayerSettings
@@ -619,6 +632,18 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var lastSave = Date.distantPast
     private var saves = 0
     private var audioPicked = false
+    /// The clock's last value, and when it last moved.
+    private var lastClock: Double = 0
+    private var clockMoved = Date()
+    /// Where the picture stopped with the source gone. The engine's clock runs
+    /// on, still "playing", over a frozen picture: it can't be believed.
+    private var dryAt: Double?
+    private var drySince = Date()
+    /// Where a cut-short stream ended: ending there again is the file's real end.
+    private var earlyEnd: Double?
+    private var leftAt: Double = 0
+    private var away = false
+    private var mountPaused = false
     /// How long the overlay stays after a press.
     private static let overlaySeconds: TimeInterval = 4
     private var overlayUntil = Date.distantPast
@@ -774,8 +799,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         readout.layer.cornerRadius = 12
         readout.clipsToBounds = true
 
-        NotificationCenter.default.addObserver(
+        let center = NotificationCenter.default
+        center.addObserver(
             self, selector: #selector(leavingApp), name: UIApplication.willResignActiveNotification, object: nil
+        )
+        center.addObserver(
+            self, selector: #selector(wentAway), name: UIApplication.didEnterBackgroundNotification, object: nil
+        )
+        center.addObserver(
+            self, selector: #selector(cameBack), name: UIApplication.didBecomeActiveNotification, object: nil
         )
     }
 
@@ -850,8 +882,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// Before the first frame, the next link in the add-ons' order, silently;
     /// out of tries or links, the source list.
     private func linkFailed() {
-        guard !closed, !hasPlayed else { return }
-        let links = PlayLauncher.shared.links(meta, video) ?? links
+        guard !closed, !hasPlayed, linkSearch == nil else { return }
+        if Date().timeIntervalSince(linksFound) > Self.linksFreshSeconds {
+            searchAgain()
+            return
+        }
+        let links = (linksOwn ? nil : PlayLauncher.shared.links(meta, video)) ?? links
         let next = links.first {
             !$0.stream.isExternal && !$0.stream.isTorrent && !tried.contains($0.rejectionKey)
         }
@@ -866,6 +902,97 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         loadTask?.cancel()
         dropStills()
         engine?.stop()
+        start()
+    }
+
+    /// The list is old, so its links likely are too. Nothing found: on through
+    /// the old one.
+    private func searchAgain() {
+        loadTask?.cancel()
+        dropStills()
+        engine?.stop()
+        let (meta, video, current) = (meta, video, entry)
+        linkSearch = Task { [weak self] in
+            let found = await PlayLauncher.shared.freshLinks(meta, video)
+            guard let self, !Task.isCancelled else { return }
+            self.linkSearch = nil
+            self.linksFound = Date()
+            if !found.isEmpty {
+                self.links = Self.sameReleaseFirst(found, as: current)
+                self.linksOwn = true
+                self.tried = []
+            }
+            self.linkFailed()
+        }
+    }
+
+    /// The same file, freshly signed, then its release, then the add-ons' order.
+    private static func sameReleaseFirst(_ links: [StreamEntry], as entry: StreamEntry) -> [StreamEntry] {
+        let group = entry.stream.behaviorHints?.bingeGroup
+        func rank(_ link: StreamEntry) -> Int {
+            if link.rejectionKey == entry.rejectionKey { return 0 }
+            return group != nil && link.stream.behaviorHints?.bingeGroup == group ? 1 : 2
+        }
+        return (0...2).flatMap { wanted in links.filter { rank($0) == wanted } }
+    }
+
+    /// Past the first frame: an error, an end well before the duration, or the
+    /// clock stuck while it should run.
+    private func streamLost(_ engine: AetherEngine) -> Bool {
+        guard hasPlayed else { return false }
+        let time = engine.currentTime
+        var lost = false
+        switch engine.state {
+        case .error: lost = true
+        case .ended:
+            let early = engine.duration - time > Self.earlyEndSeconds
+                && earlyEnd.map { abs($0 - time) > Self.earlyEndSeconds } ?? true
+            if early { earlyEnd = time }
+            lost = early
+        case .playing, .seeking:
+            if case .stalled = engine.playbackPhase, engine.bufferedPosition - time < Self.dryAheadSeconds {
+                if dryAt == nil {
+                    dryAt = time
+                    drySince = Date()
+                }
+                lost = Date().timeIntervalSince(drySince) > Self.stuckSeconds
+            } else {
+                dryAt = nil
+                if time != lastClock { clockMoved = Date() }
+                lost = Date().timeIntervalSince(clockMoved) > Self.stuckSeconds
+            }
+        default:
+            dryAt = nil
+            clockMoved = Date()
+        }
+        lastClock = time
+        if lost { recover(engine) }
+        return lost
+    }
+
+    /// The same link again from here, then on through the links as at the
+    /// start (`linkFailed`). What's on screen stays until it plays.
+    private func recover(_ engine: AetherEngine) {
+        if counts { save(engine) }
+        reload(engine, from: position)
+    }
+
+    private func reload(_ engine: AetherEngine, from here: Double) {
+        linkSearch?.cancel()
+        linkSearch = nil
+        dryAt = nil
+        endScrub()
+        hasPlayed = false
+        audioPicked = false
+        if here > 0 {
+            resume = here
+            resumeFloor = here
+        }
+        tried = [entry.rejectionKey]
+        clockMoved = Date()
+        loadTask?.cancel()
+        dropStills()
+        engine.stop()
         start()
     }
 
@@ -908,7 +1035,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     // MARK: Progress
 
     private var position: Double {
-        max(engine?.currentTime ?? 0, resumeFloor)
+        dryAt ?? max(engine?.currentTime ?? 0, resumeFloor)
     }
 
     private var counts: Bool {
@@ -940,7 +1067,26 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         progress.requestSyncPush()
     }
 
-    @objc private func leavingApp() { saveAndPush() }
+    /// Before the engine's teardown, which may take the clock with it.
+    @objc private func leavingApp() {
+        leftAt = position
+        saveAndPush()
+    }
+
+    /// The engine lets go of its picture in the background, and a link may
+    /// expire there, so a return loads again, paused at the spot.
+    @objc private func wentAway() { away = true }
+
+    @objc private func cameBack() {
+        guard away, !closed, let engine else { return }
+        away = false
+        // Silent, because a paused load (`autoplay`) draws no picture, even after a seek.
+        mountPaused = hasPlayed
+        if mountPaused { engine.volume = 0 }
+        controlsDismissed = false
+        reload(engine, from: leftAt)
+        tick()
+    }
 
     /// Publishes, and `update` pushes. The end counts however little was played;
     /// going on to the next episode is the end.
@@ -970,6 +1116,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         endScrub()
         saveFinal()
         loadTask?.cancel()
+        linkSearch?.cancel()
         segmentsTask?.cancel()
         nextTask?.cancel()
         dropStills()
@@ -1352,6 +1499,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         video = next.video
         entry = next.entry
         links = next.links
+        linksFound = Date()
+        linksOwn = false
         resume = next.resume
         resumeFloor = next.resume ?? 0
         tried = [next.entry.rejectionKey]
@@ -1362,6 +1511,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         saves = 0
         audioPicked = false
         landing = nil
+        dryAt = nil
         probe = nil
         segments = nil
         prompt = nil
@@ -1436,7 +1586,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     // MARK: Screen
 
     private func tick() {
+        if away { return }
         if let engine {
+            if streamLost(engine) { return }
             if engine.state == .ended { reachedEnd(engine); return }
             if !hasPlayed {
                 var errored = false
@@ -1450,6 +1602,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             if engine.state == .playing, engine.currentTime > 0, engine.currentTime >= resumeFloor - 5 {
                 hasPlayed = true
                 resumeFloor = 0
+                if mountPaused {
+                    engine.pause()
+                    engine.volume = 1
+                }
+                mountPaused = false
             }
             if hasPlayed, engine.state == .playing { played += Self.tickInterval }
             let paused = engine.state == .paused
@@ -1476,7 +1633,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func updateOverlay(_ engine: AetherEngine) {
-        let waiting = !hasPlayed || engine.state == .seeking || engine.isBuffering
+        let waiting = !hasPlayed || dryAt != nil || engine.state == .seeking || engine.isBuffering
         overlay.update(
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
             audio: audioLabel(engine), subtitle: subtitleLabel(engine),
