@@ -354,6 +354,8 @@ private final class PlayerOverlay: UIView {
         preview.isHidden = image == nil
     }
 
+    func setTitle(_ text: String) { title.text = text }
+
     func move(time: Double, duration: Double) {
         fraction = duration > 0 ? CGFloat(min(max(time / duration, 0), 1)) : 0
         fill.frame.size.width = bar.bounds.width * fraction
@@ -398,6 +400,158 @@ private final class PlayerOverlay: UIView {
     }
 }
 
+/// What IntroDB knows of an episode or film: community timings, by IMDb id.
+struct PlayerSegments {
+    var recap: Range<Double>?
+    var intro: Range<Double>?
+    var outro: Range<Double>?
+
+    static func fetch(meta: MetaItem, video: MetaVideo?) async -> PlayerSegments? {
+        guard let id = ((video?.id ?? meta.id).firstMatch(of: /tt\d{6,}/) ?? meta.id.firstMatch(of: /tt\d{6,}/))
+            .map({ String($0.output) }),
+            var parts = URLComponents(string: "https://api.introdb.app/segments") else { return nil }
+        parts.queryItems = [URLQueryItem(name: "imdb_id", value: id)]
+        if let video {
+            guard let season = video.season, let episode = video.episode else { return nil }
+            parts.queryItems? += [URLQueryItem(name: "season", value: String(season)),
+                                  URLQueryItem(name: "episode", value: String(episode))]
+        } else {
+            parts.queryItems?.append(URLQueryItem(name: "is_movie", value: "true"))
+        }
+        guard let url = parts.url,
+              let (data, reply) = try? await URLSession.shared.data(from: url),
+              (reply as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return PlayerSegments(recap: span(json["recap"]), intro: span(json["intro"]), outro: span(json["outro"]))
+    }
+
+    private static func span(_ value: Any?) -> Range<Double>? {
+        guard let segment = value as? [String: Any],
+              let start = seconds(segment["start_sec"]), let end = seconds(segment["end_sec"]),
+              start < end else { return nil }
+        return start..<end
+    }
+
+    /// A number, or "mm:ss".
+    private static func seconds(_ value: Any?) -> Double? {
+        if let number = value as? Double { return number }
+        guard let text = value as? String else { return nil }
+        return text.split(separator: ":").reduce(0.0 as Double?) { total, part in
+            guard let total, let part = Double(part) else { return nil }
+            return total * 60 + part
+        }
+    }
+}
+
+/// Bottom right, above the controls: Skip Intro, or the next episode as a card
+/// with its picture. Glass at rest; focused white with dark content, 5 % larger.
+/// The controller takes its Select: no button, so nothing fires twice.
+private final class PlayerPrompt: UIView {
+    private static let pillHeight: CGFloat = 72
+    private static let cardWidth: CGFloat = 420
+    private static let cardPadding: CGFloat = 16
+    private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
+
+    var takesFocus = false
+    override var canBecomeFocused: Bool { takesFocus }
+
+    private let glass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+    private let pillGlass = GlassBacking(Capsule())
+    private let platter = UIView()
+    private let picture = UIImageView()
+    private let heading = UILabel()
+    private let detail = UILabel()
+    private var isCard = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        alpha = 0
+        platter.backgroundColor = .white
+        platter.alpha = 0
+        platter.layer.cornerCurve = .continuous
+        picture.contentMode = .scaleAspectFill
+        picture.clipsToBounds = true
+        picture.layer.cornerRadius = Spotlight.cornerRadius - Self.cardPadding / 2
+        picture.layer.cornerCurve = .continuous
+        heading.font = .systemFont(ofSize: 25, weight: .medium)
+        detail.font = .systemFont(ofSize: 24)
+        for sub in [glass, pillGlass, platter, picture, heading, detail] as [UIView] { addSubview(sub) }
+        restyle()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func showPill(_ text: String) {
+        isCard = false
+        heading.text = text
+        detail.text = nil
+        picture.image = nil
+        place()
+    }
+
+    func showCard(heading text: String, detail second: String, picture image: UIImage?) {
+        isCard = true
+        heading.text = text
+        detail.text = second
+        picture.image = image
+        place()
+    }
+
+    func setHeading(_ text: String) { heading.text = text }
+
+    /// Its bottom right corner stays where it is.
+    private func place() {
+        let right = frame.maxX, bottom = frame.maxY
+        let size = isCard
+            ? CGSize(width: Self.cardWidth, height: Self.cardPadding * 2 + Self.pictureHeight + 86)
+            : CGSize(width: heading.intrinsicContentSize.width + 72, height: Self.pillHeight)
+        transform = .identity
+        frame = CGRect(x: right - size.width, y: bottom - size.height, width: size.width, height: size.height)
+        glass.isHidden = !isCard
+        pillGlass.isHidden = isCard
+        picture.isHidden = !isCard
+        detail.isHidden = !isCard
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glass.frame = bounds
+        pillGlass.frame = bounds
+        platter.frame = bounds
+        platter.layer.cornerRadius = isCard ? Spotlight.cornerRadius : bounds.height / 2
+        guard isCard else {
+            heading.frame = bounds.insetBy(dx: 36, dy: 0)
+            heading.textAlignment = .center
+            return
+        }
+        let inset = Self.cardPadding
+        let width = bounds.width - inset * 2
+        picture.frame = CGRect(x: inset, y: inset, width: width, height: Self.pictureHeight)
+        heading.textAlignment = .left
+        heading.frame = CGRect(x: inset, y: picture.frame.maxY + 12, width: width, height: 32)
+        detail.frame = CGRect(x: inset, y: heading.frame.maxY + 2, width: width, height: 32)
+    }
+
+    private func restyle() {
+        heading.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
+                                      : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        detail.textColor = isFocused ? UIColor.black.withAlphaComponent(0.65)
+                                     : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let focused = isFocused
+        coordinator.addCoordinatedAnimations {
+            self.platter.alpha = focused ? 1 : 0
+            self.restyle()
+            self.transform = focused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
+        }
+    }
+}
+
 final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// What's on disk around the playhead: 10 minutes ahead at most, and the
     /// budget (the engine keeps it under a quarter of free space) holds that
@@ -419,7 +573,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// No first frame by then: the link counts as failed.
     private static let firstFrameSeconds: TimeInterval = 20
 
-    private let request: PlaybackRequest
+    /// The episode playing: the player stays open from one to the next.
+    private var meta: MetaItem
+    private var video: MetaVideo?
+    private var resume: Double?
+    private var links: [StreamEntry]
+    private let isDemo: Bool
     private let progress: ProgressStore
     private let settings: PlayerSettings
     private let onClose: () -> Void
@@ -433,6 +592,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let audioButton = PlayerButton(icon: "waveform", label: "Audio")
     private let subtitleButton = PlayerButton(icon: "captions.bubble", label: "Subtitles")
     private let trackList = TrackList()
+    private let promptView = PlayerPrompt()
     private let readout = UILabel()
 
     /// The link playing, once failover has moved on from the request's.
@@ -505,6 +665,31 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// made at the first such scrub.
     private var stills: FrameExtractor?
 
+    /// A skip left alone goes after this; it's back while the controls are up.
+    private static let skipSeconds: TimeInterval = 10
+    /// Without an outro from IntroDB, the next episode comes up this long before the end.
+    private static let nextLeadSeconds: Double = 120
+    /// Its link is looked for this much before it comes up.
+    private static let nextSearchSeconds: Double = 60
+    /// Between the end of the file and the next episode playing by itself.
+    private static let nextCountdown: TimeInterval = 5
+
+    private enum Prompt: Equatable {
+        case skip(String, to: Double)
+        case next
+    }
+
+    private var segments: PlayerSegments?
+    private var segmentsTask: Task<Void, Never>?
+    private var prompt: Prompt?
+    private var promptSince = Date.distantPast
+    private var dismissedPrompt: Prompt?
+    private var nextUp: PlayLauncher.NextEpisode?
+    private var nextPicture: UIImage?
+    private var nextTask: Task<Void, Never>?
+    private var nextSearched = false
+    private var endedAt: Date?
+
     private enum Menu { case none, buttons, tracks }
     private var menu = Menu.none
     /// The button to come back to from its list.
@@ -512,14 +697,18 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     init(request: PlaybackRequest, progress: ProgressStore, settings: PlayerSettings,
          onClose: @escaping () -> Void) {
-        self.request = request
+        meta = request.meta
+        video = request.video
+        resume = request.resumePosition
+        links = request.allEntries
+        isDemo = request.isDemo
         self.progress = progress
         self.settings = settings
         self.onClose = onClose
         resumeFloor = request.resumePosition ?? 0
         entry = request.entry
         tried = [request.entry.rejectionKey]
-        overlay = PlayerOverlay(title: request.video.map { "\(request.meta.name)  \($0.seasonEpisodeCode)" } ?? request.meta.name)
+        overlay = PlayerOverlay(title: Self.title(request.meta, request.video))
         do {
             engine = try AetherEngine()
         } catch {
@@ -532,9 +721,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    private static func title(_ meta: MetaItem, _ video: MetaVideo?) -> String {
+        video.map { "\(meta.name)  \($0.seasonEpisodeCode)" } ?? meta.name
+    }
+
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
         switch menu {
-        case .none: return [focusView]
+        case .none: return [promptView.takesFocus ? promptView : focusView]
         case .buttons: return [lastButton ?? audioButton]
         case .tracks: return [trackList]
         }
@@ -544,7 +737,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         super.viewDidLoad()
         view.backgroundColor = .black
         for sub in [focusView, surface, subtitleImage, subtitleText, overlay, audioButton, subtitleButton,
-                    trackList, readout] as [UIView] {
+                    trackList, promptView, readout] as [UIView] {
             view.addSubview(sub)
         }
 
@@ -597,6 +790,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         audioButton.bounds.size = CGSize(width: size, height: size)
         subtitleButton.center = CGPoint(x: bounds.width - 80 - size / 2, y: bounds.height - 196)
         audioButton.center = CGPoint(x: bounds.width - 80 - size * 1.5 - 20, y: bounds.height - 196)
+        if promptView.frame.isEmpty {
+            promptView.frame = CGRect(x: bounds.width - 80, y: bounds.height - 250, width: 0, height: 0)
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -609,6 +805,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             MainActor.assumeIsolated { self?.tick() }
         }
         start()
+        loadSegments()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -636,7 +833,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         options.softwarePacketCacheStorage = .disk
         options.preferredAudioLanguages = audioLanguages()
         options.preferredSubtitleLanguages = subtitleLanguages()
-        let resume = request.resumePosition
+        let resume = resume
         loadTask = Task { [weak self] in
             do {
                 let probe = try await engine.load(url: url, startPosition: resume, options: options)
@@ -654,12 +851,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// out of tries or links, the source list.
     private func linkFailed() {
         guard !closed, !hasPlayed else { return }
-        let links = PlayLauncher.shared.links(request.meta, request.video) ?? request.allEntries
+        let links = PlayLauncher.shared.links(meta, video) ?? links
         let next = links.first {
             !$0.stream.isExternal && !$0.stream.isTorrent && !tried.contains($0.rejectionKey)
         }
         guard tried.count <= Self.maxRetries, let next else {
-            let (meta, video, fromStart) = (request.meta, request.video, request.resumePosition == nil)
+            let (meta, video, fromStart) = (meta, video, resume == nil)
             close()
             SourcePicker.shared.open(meta, video, fromStart: fromStart)
             return
@@ -678,7 +875,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// device's own language. Never the file's first track: that may be a dub.
     private func audioLanguages() -> [String] {
         let device = Locale.preferredLanguages.first.map { String($0.prefix(2)) }
-        let wanted = [PlaybackMemory.memory(for: request.meta.id)?.audioLanguage,
+        let wanted = [PlaybackMemory.memory(for: meta.id)?.audioLanguage,
                       settings.preferredAudioLanguage, device]
         var out: [String] = []
         for case let language? in wanted where !language.isEmpty && !out.contains(language) {
@@ -688,7 +885,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func subtitleLanguages() -> [String] {
-        if let picked = PlaybackMemory.memory(for: request.meta.id)?.subtitleLanguage {
+        if let picked = PlaybackMemory.memory(for: meta.id)?.subtitleLanguage {
             return picked == "off" ? [] : [picked]
         }
         return settings.subtitlesOnByDefault ? [settings.preferredSubtitleLanguage] : []
@@ -715,14 +912,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private var counts: Bool {
-        hasPlayed && played >= Self.countsAfterSeconds && !request.isDemo
+        hasPlayed && played >= Self.countsAfterSeconds && !isDemo
     }
 
     /// Transient: a publish would redraw Home behind the player.
     private func save(_ engine: AetherEngine) {
         lastSave = Date()
         progress.updateTransient(
-            meta: request.meta, video: request.video, streamURL: entry.stream.url,
+            meta: meta, video: video, streamURL: entry.stream.url,
             position: position, duration: engine.duration,
             signature: entry.stream.signature(addonName: entry.addonName)
         )
@@ -745,13 +942,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     @objc private func leavingApp() { saveAndPush() }
 
-    /// Publishes, and `update` pushes. The end counts however little was played.
-    private func saveFinal() {
-        guard let engine, hasPlayed, !request.isDemo else { return }
-        let ended = engine.state == .ended
+    /// Publishes, and `update` pushes. The end counts however little was played;
+    /// going on to the next episode is the end.
+    private func saveFinal(finished: Bool = false) {
+        guard let engine, hasPlayed, !isDemo else { return }
+        let ended = finished || engine.state == .ended
         guard ended || counts else { return }
         progress.update(
-            meta: request.meta, video: request.video, streamURL: entry.stream.url,
+            meta: meta, video: video, streamURL: entry.stream.url,
             position: ended ? engine.duration : position, duration: engine.duration,
             signature: entry.stream.signature(addonName: entry.addonName)
         )
@@ -772,6 +970,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         endScrub()
         saveFinal()
         loadTask?.cancel()
+        segmentsTask?.cancel()
+        nextTask?.cancel()
         dropStills()
         engine?.stop()
         Self.isPlaying = false
@@ -784,6 +984,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         // Back is `backPressed`'s: here it would bring the controls back up.
         guard press.type != .menu else {
             super.pressesBegan(presses, with: event)
+            return
+        }
+        if press.type == .select, promptView.takesFocus {
+            promptPressed(engine)
             return
         }
         showControls()
@@ -823,6 +1027,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 showControls()
             } else if hasPlayed, overlay.isShown {
                 hideControls()
+            } else if promptView.alpha > 0, let prompt {
+                dismissedPrompt = prompt
+                if let engine { updatePrompt(engine) }
             } else {
                 close()
             }
@@ -1023,11 +1230,162 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    // MARK: Skip and next episode
+
+    private func loadSegments() {
+        guard !isDemo else { return }
+        let (meta, video) = (meta, video)
+        segmentsTask = Task { [weak self] in
+            let found = await PlayerSegments.fetch(meta: meta, video: video)
+            guard !Task.isCancelled else { return }
+            self?.segments = found
+        }
+    }
+
+    /// Where the next episode comes up: the outro, else two minutes before the end.
+    private func nextStart(_ engine: AetherEngine) -> Double {
+        segments?.outro?.lowerBound ?? engine.duration - Self.nextLeadSeconds
+    }
+
+    private func findNext(_ engine: AetherEngine) {
+        guard !nextSearched, !isDemo, hasPlayed, let video, engine.duration > 0,
+              position >= nextStart(engine) - Self.nextSearchSeconds else { return }
+        nextSearched = true
+        let (meta, current) = (meta, entry)
+        nextTask = Task { [weak self] in
+            let next = await PlayLauncher.shared.next(after: meta, video, current: current)
+            var picture: UIImage?
+            if let address = next?.video.thumbnail { picture = await Self.picture(address) }
+            guard !Task.isCancelled else { return }
+            self?.nextUp = next
+            self?.nextPicture = picture
+            self?.nextTask = nil
+        }
+    }
+
+    private static func picture(_ address: String) async -> UIImage? {
+        guard let url = URL(string: address),
+              let data = try? await ImageCache.shared.download(url) else { return nil }
+        return ImageCache.decodeDownsampled(data)
+    }
+
+    private func wantedPrompt(_ engine: AetherEngine) -> Prompt? {
+        guard hasPlayed, menu != .tracks, engine.duration > 0 else { return nil }
+        let time = landing ?? position
+        if nextUp != nil, engine.state == .ended || time >= nextStart(engine) { return .next }
+        if let recap = segments?.recap, recap.contains(time) { return .skip("Skip Recap", to: recap.upperBound) }
+        if let intro = segments?.intro, intro.contains(time) { return .skip("Skip Intro", to: intro.upperBound) }
+        if nextUp == nil, nextTask == nil, let outro = segments?.outro, outro.contains(time) {
+            return .skip("Skip Credits", to: outro.upperBound)
+        }
+        return nil
+    }
+
+    private func updatePrompt(_ engine: AetherEngine) {
+        let wanted = wantedPrompt(engine)
+        if wanted != prompt {
+            prompt = wanted
+            promptSince = Date()
+            switch wanted {
+            case .skip(let label, _): promptView.showPill(label)
+            case .next:
+                if let nextUp {
+                    let episode = [nextUp.video.seasonEpisodeCode, nextUp.video.title].compactMap { $0 }
+                    promptView.showCard(heading: "Next Episode", detail: episode.joined(separator: "  "),
+                                        picture: nextPicture)
+                }
+            case nil: break
+            }
+        }
+        var shown = wanted != nil && wanted != dismissedPrompt
+        if case .skip = wanted, Date().timeIntervalSince(promptSince) > Self.skipSeconds, !overlay.isShown {
+            shown = false
+        }
+        let alpha: CGFloat = shown ? 1 : 0
+        if promptView.alpha != alpha {
+            UIView.animate(withDuration: Motion.fadeDuration) { self.promptView.alpha = alpha }
+        }
+        // Scrubbing or paused, Select keeps its usual job.
+        let focused = shown && menu == .none && scrubTarget == nil && scan == nil && engine.state != .paused
+        guard focused != promptView.takesFocus else { return }
+        promptView.takesFocus = focused
+        focusView.takesFocus = !focused && menu == .none
+        setNeedsFocusUpdate()
+        updateFocusIfNeeded()
+    }
+
+    private func promptPressed(_ engine: AetherEngine) {
+        switch prompt {
+        case .skip(_, let end):
+            scrubTarget = min(end, max(engine.duration - 1, 0))
+            commitScrub()
+        case .next: playNext()
+        case nil: break
+        }
+    }
+
+    /// The next episode plays after a moment, unless Back put it away.
+    private func reachedEnd(_ engine: AetherEngine) {
+        guard dismissedPrompt != .next, !isDemo else { return close() }
+        // Scrubbed to the very end: its link may still be coming.
+        if nextTask != nil { return }
+        guard nextUp != nil else { return close() }
+        let ended = endedAt ?? Date()
+        endedAt = ended
+        updatePrompt(engine)
+        let left = Self.nextCountdown - Date().timeIntervalSince(ended)
+        guard left > 0 else { return playNext() }
+        promptView.setHeading("Next in \(Int(left.rounded(.up)))")
+    }
+
+    /// The same player goes on: new link, new window, as a fresh start.
+    private func playNext() {
+        guard let next = nextUp else { return }
+        endScrub()
+        saveFinal(finished: true)
+        loadTask?.cancel()
+        segmentsTask?.cancel()
+        dropStills()
+        engine?.stop()
+
+        meta = next.meta
+        video = next.video
+        entry = next.entry
+        links = next.links
+        resume = next.resume
+        resumeFloor = next.resume ?? 0
+        tried = [next.entry.rejectionKey]
+        hasPlayed = false
+        played = 0
+        wasPaused = false
+        lastSave = .distantPast
+        saves = 0
+        audioPicked = false
+        landing = nil
+        probe = nil
+        segments = nil
+        prompt = nil
+        dismissedPrompt = nil
+        nextUp = nil
+        nextPicture = nil
+        nextSearched = false
+        endedAt = nil
+
+        overlay.setTitle(Self.title(next.meta, next.video))
+        promptView.alpha = 0
+        promptView.takesFocus = false
+        setMenu(.none)
+        showControls()
+        start()
+        loadSegments()
+    }
+
     // MARK: Picker
 
     private func setMenu(_ new: Menu) {
         if new != .none { commitScrub() }
         menu = new
+        promptView.takesFocus = false
         focusView.takesFocus = new == .none
         for button in [audioButton, subtitleButton] {
             button.takesFocus = new == .buttons
@@ -1052,7 +1410,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         engine.audioTracks.map { track in
             TrackList.Row(title: audioTitle(track), active: track.id == engine.activeAudioTrackIndex) { [weak self] in
                 self?.audioPicked = true
-                PlaybackMemory.update(self?.request.meta.id ?? "") { $0.audioLanguage = track.language }
+                PlaybackMemory.update(self?.meta.id ?? "") { $0.audioLanguage = track.language }
                 Task { try? await engine.selectAudioTrack(index: track.id) }
                 self?.setMenu(.none)
             }
@@ -1063,13 +1421,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let active = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
         let off = TrackList.Row(title: "Off", active: active == nil) { [weak self] in
             engine.clearSubtitle()
-            PlaybackMemory.update(self?.request.meta.id ?? "") { $0.subtitleLanguage = "off" }
+            PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = "off" }
             self?.setMenu(.none)
         }
         return [off] + engine.subtitleTracks.map { track in
             TrackList.Row(title: subtitleTitle(track), active: track.id == active?.id) { [weak self] in
                 engine.selectSubtitleTrack(index: track.id)
-                PlaybackMemory.update(self?.request.meta.id ?? "") { $0.subtitleLanguage = track.language }
+                PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = track.language }
                 self?.setMenu(.none)
             }
         }
@@ -1079,7 +1437,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func tick() {
         if let engine {
-            if engine.state == .ended { close(); return }
+            if engine.state == .ended { reachedEnd(engine); return }
             if !hasPlayed {
                 var errored = false
                 if case .error = engine.state { errored = true }
@@ -1102,6 +1460,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             saveDuringPlayback(engine)
             tickScrub()
             updateOverlay(engine)
+            findNext(engine)
+            updatePrompt(engine)
         }
         let showReadout = failure != nil || PerformanceSettingsStore.shared.settings.showPlayerDiagnostics
         readout.isHidden = !showReadout

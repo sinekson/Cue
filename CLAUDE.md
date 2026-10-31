@@ -224,8 +224,15 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   the engine first, its own connection only for what it doesn't hold);
   the bar shows what's on disk ahead. Paused, with the bar focused: a swipe
   is fine control, about 30 s across the pad whatever the length, with a
-  glide, exact frames; nothing lands until Select (which plays), Back cancels;
-  next episode to come. Controls are ours, in tvOS's look (the system's player
+  glide, exact frames; nothing lands until Select (which plays), Back cancels.
+  Skip (IntroDB, by IMDb id, no key; crowd-sourced, a 5 s intro can be right):
+  glass pill bottom right inside recap, intro or a film's outro, focused so
+  Select skips (paused or scrubbing, Select keeps its job), gone after 10 s,
+  back with the controls, never automatic. Next episode: the link is sought
+  60 s before the card, same `bingeGroup` first, else the first; the card at
+  the outro, else 2 min before the end, only once its link is found. Select
+  plays, Back dismisses it; at the end 5 s "Next in", then it plays in the same
+  player. Going on counts as finished, however early. Controls are ours, in tvOS's look (the system's player
   loses the software path): timeline with the remote on it, Up to round glass
   buttons, a glass panel rising from them (`TrackList`). Back: panel, buttons,
   a scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the

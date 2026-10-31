@@ -83,6 +83,41 @@ final class PlayLauncher: ObservableObject {
         modelKey == Self.key(meta, video) ? model?.entries : nil
     }
 
+    /// The episode after this one, ready to play.
+    struct NextEpisode {
+        let meta: MetaItem
+        let video: MetaVideo
+        let entry: StreamEntry
+        let links: [StreamEntry]
+        let resume: Double?
+    }
+
+    /// The next episode and its link: the same release as `current` where the
+    /// add-on says so (`bingeGroup`), else the first, as Play. Nil at the end
+    /// of the show, for one not aired yet, or with no playable link.
+    func next(after meta: MetaItem, _ video: MetaVideo, current: StreamEntry) async -> NextEpisode? {
+        guard let context else { return nil }
+        let full = meta.videos?.isEmpty == false
+            ? meta : await SeriesEpisodes.fullMeta(for: meta, addonManager: context.addonManager)
+        let episodes = SeriesEpisodes.inPlayOrder(full)
+        guard let at = episodes.firstIndex(where: { $0.id == video.id }), at + 1 < episodes.count,
+              episodes[at + 1].hasAired else { return nil }
+        let next = episodes[at + 1]
+
+        let model = StreamsViewModel(meta: full, video: next)
+        let settings = context.settings()
+        await model.load(addonManager: context.addonManager, perTier: settings.sourcesPerSizeTier,
+                         filtersEnabled: settings.sourceFiltersEnabled,
+                         streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+        let links = model.entries.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
+        let group = current.stream.behaviorHints?.bingeGroup
+        guard let entry = links.first(where: { group != nil && $0.stream.behaviorHints?.bingeGroup == group })
+                ?? links.first else { return nil }
+        let saved = context.progress.progress(for: ProgressStore.key(metaID: full.id, video: next))
+        return NextEpisode(meta: full, video: next, entry: entry, links: model.entries,
+                           resume: saved?.isStarted == true ? saved?.positionSeconds : nil)
+    }
+
     /// Back while searching: it stops.
     func cancel() {
         task?.cancel()
