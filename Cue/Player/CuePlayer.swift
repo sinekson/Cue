@@ -111,10 +111,27 @@ private final class PlayerButton: UIButton {
 /// One track: nothing at rest, focused a white capsule, as the hold menus' rows.
 private final class TrackCell: UICollectionViewCell {
     static let height: CGFloat = 66
+    /// With a value under the title.
+    private static let tallHeight: CGFloat = 92
+    /// The line's room above a row that starts a new part.
+    private static let separation: CGFloat = 20
+    private static let headerHeight: CGFloat = 46
+
+    private static func room(_ separated: Bool, _ header: Bool) -> CGFloat {
+        (separated ? separation : 0) + (header ? headerHeight : 0)
+    }
+
+    static func height(of row: TrackList.Row) -> CGFloat {
+        (row.detail == nil ? height : tallHeight) + room(row.separated, row.header != nil)
+    }
 
     private let platter = UIView()
     private let check = UIImageView()
-    private let title = UILabel()
+    private let title = RunningLine(font: .systemFont(ofSize: 28, weight: .medium), rest: 0.5)
+    private let detail = RunningLine(font: .systemFont(ofSize: 24), rest: 0.5)
+    private let chevron = UIImageView()
+    private let separator = UIView()
+    private let header = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -122,8 +139,14 @@ private final class TrackCell: UICollectionViewCell {
         platter.alpha = 0
         check.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .bold))
         check.contentMode = .center
-        title.font = .systemFont(ofSize: 28, weight: .medium)
-        for sub in [platter, check, title] as [UIView] { contentView.addSubview(sub) }
+        title.running = false
+        detail.running = false
+        chevron.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        chevron.contentMode = .center
+        separator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+        header.font = TrackList.headingFont
+        header.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        for sub in [separator, header, platter, check, title, detail, chevron] as [UIView] { contentView.addSubview(sub) }
         paint(focused: false)
     }
 
@@ -132,22 +155,42 @@ private final class TrackCell: UICollectionViewCell {
 
     func show(_ row: TrackList.Row) {
         title.text = row.title
+        detail.text = row.detail ?? ""
+        detail.isHidden = row.detail == nil
         check.isHidden = !row.active
+        chevron.isHidden = row.page == nil
+        separator.isHidden = !row.separated
+        header.text = row.header
+        header.isHidden = row.header == nil
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        let room = Self.room(!separator.isHidden, !header.isHidden)
         let inner = contentView.bounds.insetBy(dx: 6, dy: 0)
+            .inset(by: UIEdgeInsets(top: room, left: 0, bottom: 0, right: 0))
+        header.frame = CGRect(x: 24, y: room - Self.headerHeight, width: inner.width - 36, height: Self.headerHeight)
+        separator.frame = CGRect(x: inner.minX + 62, y: Self.separation / 2, width: inner.width - 80, height: 1)
         platter.frame = inner
-        platter.layer.cornerRadius = inner.height / 2
-        check.frame = CGRect(x: inner.minX + 18, y: 0, width: 28, height: inner.height)
-        title.frame = CGRect(x: inner.minX + 62, y: 0, width: inner.width - 90, height: inner.height)
+        platter.layer.cornerRadius = min(inner.height, Self.height) / 2
+        check.frame = CGRect(x: inner.minX + 18, y: inner.minY, width: 28, height: inner.height)
+        chevron.frame = CGRect(x: inner.maxX - 54, y: inner.minY, width: 28, height: inner.height)
+        let width = inner.width - 90 - (chevron.isHidden ? 0 : 36)
+        if detail.isHidden {
+            title.frame = CGRect(x: inner.minX + 62, y: inner.minY, width: width, height: inner.height)
+        } else {
+            title.frame = CGRect(x: inner.minX + 62, y: inner.minY + 12, width: width, height: 36)
+            detail.frame = CGRect(x: inner.minX + 62, y: inner.minY + 48, width: width, height: 30)
+        }
     }
 
     private func paint(focused: Bool) {
         let color = focused ? UIColor.black.withAlphaComponent(0.85) : UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        title.textColor = color
+        title.color = color
         check.tintColor = color
+        chevron.tintColor = color
+        detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         platter.alpha = focused ? 1 : 0
         transform = focused ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
     }
@@ -155,36 +198,65 @@ private final class TrackCell: UICollectionViewCell {
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         let focused = isFocused
+        if title.running != focused {
+            title.running = focused
+            detail.running = focused
+        }
         coordinator.addCoordinatedAnimations { self.paint(focused: focused) }
     }
 }
 
-/// The tracks to pick from: a glass panel rising from its button. A collection
-/// view: a tvOS table spaces its rows out and fades its edges.
-private final class TrackList: UIView, UICollectionViewDataSource, UICollectionViewDelegate {
+/// A button's menu: a glass panel rising from it, its title on top, a row can
+/// open a page of its own, Back returns. A collection view: a tvOS table spaces
+/// its rows out and fades its edges.
+private final class TrackList: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     struct Row {
         let title: String
-        let active: Bool
-        let pick: () -> Void
+        var detail: String?
+        var active = false
+        /// A line above it.
+        var separated = false
+        /// A title above it, for a part of the list.
+        var header: String?
+        /// Stays open on a pick, for a setting.
+        var stays = false
+        var page: (() -> Menu)?
+        var pick: () -> Void = {}
+    }
+
+    struct Menu {
+        /// None where the rows' own headers say it all.
+        var title: String?
+        let rows: [Row]
     }
 
     static let width: CGFloat = 620
     private static let inset: CGFloat = 16
+    private static let headingHeight: CGFloat = 44
+    static let headingFont = UIFont.systemFont(ofSize: 24, weight: .medium)
     private static let maxHeight: CGFloat = 640
 
     private let glass = GlassBacking(RoundedRectangle(cornerRadius: TrackCell.height / 2 + inset, style: .continuous))
     private let list: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
-        layout.itemSize = CGSize(width: width - inset * 2, height: TrackCell.height)
         layout.minimumLineSpacing = 0
         return UICollectionView(frame: .zero, collectionViewLayout: layout)
     }()
+    private let heading = UILabel()
+    /// Built anew on the way back, so a row shows what its page changed.
+    private var pages: [(menu: () -> Menu, from: Int)] = []
     private var rows: [Row] = []
+    private var rightEdge: CGFloat = 0
+    private var bottom: CGFloat = 0
+    private var focusedRow: Int?
     var picked: () -> Void = {}
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         addSubview(glass)
+        heading.font = Self.headingFont
+        heading.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        addSubview(heading)
         list.backgroundColor = .clear
         list.contentInsetAdjustmentBehavior = .never
         list.dataSource = self
@@ -202,16 +274,34 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
     override func layoutSubviews() {
         super.layoutSubviews()
         glass.frame = bounds
-        list.frame = bounds.insetBy(dx: Self.inset, dy: Self.inset)
+        heading.frame = CGRect(x: Self.inset + 24, y: Self.inset, width: bounds.width - Self.inset * 2 - 48, height: Self.headingHeight)
+        list.frame = bounds.inset(by: UIEdgeInsets(top: Self.inset + headingRoom, left: Self.inset,
+                                                   bottom: Self.inset, right: Self.inset))
+    }
+
+    private var headingRoom: CGFloat { heading.text == nil ? 0 : Self.headingHeight }
+
+    private func height(of rows: [Row]) -> CGFloat {
+        min(rows.reduce(0) { $0 + TrackCell.height(of: $1) } + Self.inset * 2 + headingRoom, Self.maxHeight)
+    }
+
+    private func panel(height: CGFloat) -> CGRect {
+        CGRect(x: rightEdge - Self.width, y: bottom - height, width: Self.width, height: height)
     }
 
     /// Unfolds out of its bottom right corner. Its alpha lands at 1 at once:
     /// tvOS wouldn't focus into it otherwise.
-    func open(_ rows: [Row], rightEdge: CGFloat, bottom: CGFloat) {
-        self.rows = rows
+    func open(_ menu: @escaping () -> Menu, rightEdge: CGFloat, bottom: CGFloat) {
+        let first = menu()
+        pages = [(menu, 0)]
+        rows = first.rows
+        heading.text = first.title
+        focusedRow = nil
+        self.rightEdge = rightEdge
+        self.bottom = bottom
         transform = .identity
-        let height = min(CGFloat(rows.count) * TrackCell.height + Self.inset * 2, Self.maxHeight)
-        frame = CGRect(x: rightEdge - Self.width, y: bottom - height, width: Self.width, height: height)
+        let height = self.height(of: rows)
+        frame = panel(height: height)
         list.reloadData()
         layoutIfNeeded()
         isHidden = false
@@ -221,6 +311,30 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
             self.alpha = 1
             self.transform = .identity
         }
+    }
+
+    /// Back: a page to the one before it. False on the first.
+    func back() -> Bool {
+        guard pages.count > 1 else { return false }
+        let from = pages.removeLast().from
+        turn(to: pages[pages.count - 1].menu(), focus: from)
+        return true
+    }
+
+    private func turn(to menu: Menu, focus: Int?) {
+        rows = menu.rows
+        heading.text = menu.title
+        focusedRow = focus
+        UIView.transition(with: list, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
+            self.list.reloadData()
+            self.list.contentOffset = .zero
+        }
+        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.frame = self.panel(height: self.height(of: self.rows))
+            self.layoutIfNeeded()
+        }
+        setNeedsFocusUpdate()
+        updateFocusIfNeeded()
     }
 
     func close() {
@@ -238,13 +352,28 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         return cell
     }
 
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
+                        sizeForItemAt indexPath: IndexPath) -> CGSize {
+        CGSize(width: Self.width - Self.inset * 2, height: TrackCell.height(of: rows[indexPath.item]))
+    }
+
     func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
-        rows.firstIndex(where: \.active).map { IndexPath(item: $0, section: 0) }
+        (focusedRow ?? rows.firstIndex(where: \.active)).map { IndexPath(item: $0, section: 0) }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        rows[indexPath.item].pick()
-        picked()
+        let row = rows[indexPath.item]
+        if let page = row.page {
+            pages.append((page, indexPath.item))
+            turn(to: page(), focus: nil)
+            return
+        }
+        row.pick()
+        guard row.stays else { return picked() }
+        rows = pages[pages.count - 1].menu().rows
+        for path in list.indexPathsForVisibleItems {
+            (list.cellForItem(at: path) as? TrackCell)?.show(rows[path.item])
+        }
     }
 }
 
@@ -438,11 +567,11 @@ private class PlayerSheet: UIView {
 /// a second copy in the same label, back where it began.
 private final class RunningLine: UIView {
     private static let gap = "          "
-    private static let rest: CFTimeInterval = 3
     private static let speed: Double = 60
     private static let edge: CGFloat = 40
 
     private let font: UIFont
+    private let rest: CFTimeInterval
     private let value = UILabel()
     private let edgeMask = CAGradientLayer()
     private var fittedWidth: CGFloat = 0
@@ -466,8 +595,9 @@ private final class RunningLine: UIView {
         didSet { run() }
     }
 
-    init(font: UIFont) {
+    init(font: UIFont, rest: CFTimeInterval = 3) {
         self.font = font
+        self.rest = rest
         super.init(frame: .zero)
         value.font = font
         clipsToBounds = true
@@ -508,10 +638,10 @@ private final class RunningLine: UIView {
         value.layer.removeAnimation(forKey: "run")
         guard running, shift > 0 else { return }
         let moving = Double(shift) / Self.speed
-        let total = Self.rest + moving
+        let total = rest + moving
         let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
         animation.values = [0, 0, -shift]
-        animation.keyTimes = [0, NSNumber(value: Self.rest / total), 1]
+        animation.keyTimes = [0, NSNumber(value: rest / total), 1]
         animation.duration = total
         animation.repeatCount = .infinity
         animation.isRemovedOnCompletion = false
@@ -1927,6 +2057,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private static let subtitleClear: CGFloat = 250
     private var menu = Menu.none
     private weak var lastButton: PlayerButton?
+    /// What On turns back on.
+    private var lastSubtitle: Int?
+    private var externalSubtitlesTask: Task<Void, Never>?
+    /// External tracks whose address doesn't say the format.
+    private var unknownFormats: Set<Int> = []
     private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
     private var shelfOpen = false
     private var show: (meta: MetaItem, episodes: [MetaVideo])?
@@ -2087,12 +2222,52 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             do {
                 let probe = try await engine.load(url: url, startPosition: resume, options: options)
                 self?.probe = probe
+                self?.loadExternalSubtitles(engine)
             } catch is CancellationError {
             } catch {
                 if self?.attempt == attempt { self?.linkFailed() }
             }
             // Left mid-load: the load outlives the stop, so stop what it started.
             if self?.closed ?? true { engine.stop() }
+        }
+    }
+
+    /// The subtitle add-ons' files, each a track of its own, once the link plays:
+    /// a slow add-on holds nothing up.
+    private func loadExternalSubtitles(_ engine: AetherEngine) {
+        externalSubtitlesTask?.cancel()
+        unknownFormats = []
+        let (meta, video) = (meta, video)
+        externalSubtitlesTask = Task { [weak self] in
+            var id = meta.id
+            if id.hasPrefix("tmdb:"), let number = Int(id.dropFirst("tmdb:".count)),
+               let imdb = await TMDBService.imdbID(tmdbID: number, isMovie: !meta.isSeries) {
+                id = imdb
+            }
+            if id.hasPrefix("tt"), let season = video?.season, let episode = video?.episode {
+                id = "\(id):\(season):\(episode)"
+            } else {
+                id = video?.id ?? id
+            }
+            let (found, type) = (id, meta.type)
+            let addons = AddonManager.shared?.subtitleAddons.filter { $0.handles(id: found) } ?? []
+            await withTaskGroup(of: (String, [StremioAPI.AddonSubtitle]).self) { group in
+                for addon in addons {
+                    group.addTask {
+                        (addon.displayName, (try? await StremioAPI.subtitles(addon: addon, type: type, id: found)) ?? [])
+                    }
+                }
+                for await (name, files) in group {
+                    guard !Task.isCancelled else { return }
+                    for file in files {
+                        guard let url = URL(string: file.url) else { continue }
+                        let track = engine.addExternalSubtitleTrack(ExternalSubtitleTrack(url: url, name: name, language: file.lang))
+                        if !["srt", "ass", "ssa", "vtt", "sup"].contains(url.pathExtension.lowercased()) {
+                            self?.unknownFormats.insert(track.id)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2335,6 +2510,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         loadTask?.cancel()
         linkSearch?.cancel()
         segmentsTask?.cancel()
+        externalSubtitlesTask?.cancel()
         nextTask?.cancel()
         showTask?.cancel()
         episodeTask?.cancel()
@@ -2426,7 +2602,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     @objc private func backPressed() {
         guard !shelfOpen else { return setShelf(false) }
         switch menu {
-        case .tracks: return setMenu(.buttons)
+        case .tracks:
+            if !trackList.back() { setMenu(.buttons) }
+            return
         case .buttons:
             setMenu(.none)
             return hideControls()
@@ -2814,6 +2992,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         saveFinal(finished: finished)
         loadTask?.cancel()
         segmentsTask?.cancel()
+        externalSubtitlesTask?.cancel()
         dropStills()
         engine?.stop()
 
@@ -2893,7 +3072,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     @objc private func buttonPressed(_ button: PlayerButton) {
         guard let engine else { return }
         lastButton = button
-        trackList.open(button === audioButton ? audioRows(engine) : subtitleRows(engine),
+        let audio = button === audioButton
+        trackList.open({ [unowned self] in
+            audio ? TrackList.Menu(rows: audioRows(engine)) : subtitleMenu(engine)
+        },
                        rightEdge: view.bounds.width - 80,
                        bottom: view.bounds.height - PlayerPrompt.bottom - PlayerButton.size - 24)
         setMenu(.tracks)
@@ -2969,8 +3151,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func audioRows(_ engine: AetherEngine) -> [TrackList.Row] {
-        engine.audioTracks.map { track in
-            TrackList.Row(title: audioTitle(track), active: track.id == engine.activeAudioTrackIndex) { [weak self] in
+        engine.audioTracks.enumerated().map { index, track in
+            TrackList.Row(title: audioTitle(track), detail: audioDetail(track, among: engine.audioTracks), active: track.id == engine.activeAudioTrackIndex,
+                          header: index == 0 ? "Audio Track" : nil) { [weak self] in
                 self?.audioPicked = true
                 PlaybackMemory.update(self?.meta.id ?? "") { $0.audioLanguage = track.language }
                 Task { try? await engine.selectAudioTrack(index: track.id) }
@@ -2978,25 +3161,86 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    private func subtitleRows(_ engine: AetherEngine) -> [TrackList.Row] {
-        let active = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
-        let off = TrackList.Row(title: "Off", active: active == nil) { [weak self] in
+    private func subtitleMenu(_ engine: AetherEngine) -> TrackList.Menu {
+        let tracks = engine.subtitleTracks
+        let active = tracks.first { $0.id == engine.activeSubtitleTrackIndex }
+        if let active { lastSubtitle = active.id }
+        let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
+        let next = active ?? tracks.first { $0.id == lastSubtitle }
+            ?? tracks.first { $0.language?.lowercased().hasPrefix(language) == true } ?? tracks.first
+        var rows: [TrackList.Row] = []
+        if let next {
+            rows.append(TrackList.Row(title: "On", active: active != nil) { [weak self] in self?.pickSubtitle(next, engine) })
+        }
+        rows.append(TrackList.Row(title: "Off", active: active == nil) { [weak self] in
             engine.clearSubtitle()
             PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = "off" }
+        })
+        if let next {
+            rows.append(TrackList.Row(title: "Track", detail: subtitleTitle(next), separated: true, page: { [unowned self] in
+                TrackList.Menu(rows: subtitleTrackRows(tracks, active: active, engine))
+            }))
         }
-        let tracks = engine.subtitleTracks.map { track in
-            TrackList.Row(title: subtitleTitle(track), active: track.id == active?.id) { [weak self] in
-                engine.selectSubtitleTrack(index: track.id)
-                PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = track.language }
+        rows.append(TrackList.Row(title: "Style", detail: SubtitleText.hasBox ? "High Contrast" : "Default",
+                                  separated: next == nil, page: { [unowned self] in subtitleStyleMenu }))
+        return TrackList.Menu(title: "Subtitles", rows: rows)
+    }
+
+    /// What's in the file, then the add-ons', the preferred language first:
+    /// they can be hundreds.
+    private func subtitleTrackRows(_ tracks: [TrackInfo], active: TrackInfo?, _ engine: AetherEngine) -> [TrackList.Row] {
+        let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
+        let external = tracks.filter(\.isExternal)
+        let preferred = external.filter { $0.language?.lowercased().hasPrefix(language) == true }
+        let parts = [("Included", tracks.filter { !$0.isExternal }),
+                     ("External", preferred + external.filter { track in !preferred.contains { $0.id == track.id } })]
+            .filter { !$0.1.isEmpty }
+        return parts.enumerated().flatMap { part, entry in
+            entry.1.enumerated().map { index, track in
+                TrackList.Row(title: subtitleTitle(track), detail: subtitleDetail(track, among: entry.1), active: track.id == active?.id,
+                              separated: part > 0 && index == 0, header: index == 0 ? entry.0 : nil) { [weak self] in
+                    self?.pickSubtitle(track, engine)
+                }
             }
         }
-        let box = TrackList.Row(title: "Black Background", active: SubtitleText.hasBox) { [weak self] in
-            guard let self else { return }
-            SubtitleText.hasBox.toggle()
-            for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }
-            fitSubtitles()
+    }
+
+    /// The format; the add-on, or the file's own title where the list needs it
+    /// to tell two tracks apart ("Full" and "Signs & Songs").
+    private func subtitleDetail(_ track: TrackInfo, among tracks: [TrackInfo]) -> String? {
+        let alike = tracks.filter { subtitleTitle($0) == subtitleTitle(track) && $0.codec == track.codec }.count > 1
+        var parts = track.isExternal || alike ? fileTitle(track).map { [$0] } ?? [] : []
+        if !unknownFormats.contains(track.id) { parts.append(subtitleFormat(track.codec)) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func subtitleFormat(_ codec: String) -> String {
+        switch codec {
+        case "subrip", "srt": "SRT"
+        case "ass", "ssa": "ASS"
+        case "webvtt": "VTT"
+        case "mov_text": "Text"
+        case "hdmv_pgs_subtitle", "pgssub": "PGS"
+        case "dvd_subtitle": "VobSub"
+        case "dvb_subtitle": "DVB"
+        default: codec.uppercased()
         }
-        return [off] + tracks + [box]
+    }
+
+    private func pickSubtitle(_ track: TrackInfo, _ engine: AetherEngine) {
+        engine.selectSubtitleTrack(index: track.id)
+        PlaybackMemory.update(meta.id) { $0.subtitleLanguage = track.language }
+    }
+
+    private var subtitleStyleMenu: TrackList.Menu {
+        TrackList.Menu(title: "Style", rows: [
+            TrackList.Row(title: "High Contrast", active: SubtitleText.hasBox, stays: true) { [weak self] in
+                guard let self else { return }
+                SubtitleText.hasBox.toggle()
+                for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }
+                fitSubtitles()
+            }
+        ])
     }
 
     private func fitSubtitles() {
@@ -3153,11 +3397,42 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func audioTitle(_ track: TrackInfo) -> String {
-        let extra = track.isAtmos ? "Atmos" : track.isDTSX ? "DTS:X" : "\(track.channels) ch"
-        var title = "\(languageName(track.language)), \(track.codec.uppercased()) \(extra)"
+        var title = languageName(track.language)
         if track.isCommentary { title += ", Commentary" }
         if track.isVisualImpaired { title += ", Audio Description" }
         return title
+    }
+
+    /// The format; the file's own title only where two tracks would read the same.
+    private func audioDetail(_ track: TrackInfo, among tracks: [TrackInfo]) -> String {
+        let alike = tracks.filter { audioTitle($0) == audioTitle(track) && audioFormat($0) == audioFormat(track) }.count > 1
+        return ((alike ? fileTitle(track).map { [$0] } ?? [] : []) + [audioFormat(track)]).joined(separator: " · ")
+    }
+
+    private func audioFormat(_ track: TrackInfo) -> String {
+        let codec = switch track.codec {
+        case "eac3": "E-AC-3"
+        case "ac3": "AC-3"
+        case "truehd": "TrueHD"
+        case "flac": "FLAC"
+        case "opus": "Opus"
+        default: track.codec.uppercased()
+        }
+        let channels = switch track.channels {
+        case 1: "Mono"
+        case 2: "Stereo"
+        case 6: "5.1"
+        case 8: "7.1"
+        default: "\(track.channels) ch"
+        }
+        let layout = track.isAtmos ? "Atmos" : track.isDTSX ? "DTS:X" : channels
+        return "\(codec) \(layout)"
+    }
+
+    /// Untitled, the engine makes a name up: "ENG (subrip)".
+    private func fileTitle(_ track: TrackInfo) -> String? {
+        guard track.name != languageName(track.language), !track.name.hasSuffix("(\(track.codec))") else { return nil }
+        return track.name.components(separatedBy: "/").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " · ")
     }
 
     private func subtitleTitle(_ track: TrackInfo) -> String {
