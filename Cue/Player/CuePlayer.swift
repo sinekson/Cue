@@ -892,6 +892,27 @@ private final class PlayerOverlay: UIView {
         override class var layerClass: AnyClass { CAGradientLayer.self }
     }
 
+    /// What goes beside the time, as Apple's.
+    enum Mark: Equatable {
+        case paused
+        case step(forward: Bool)
+        case scan(forward: Bool, level: Int)
+
+        var symbol: String {
+            switch self {
+            case .paused: "pause.circle"
+            case .step(let forward): forward ? "goforward.10" : "gobackward.10"
+            case .scan(let forward, _): forward ? "forward.circle" : "backward.circle"
+            }
+        }
+
+        /// The scan's level, from the second on.
+        var number: String? {
+            if case .scan(_, let level) = self, level > 0 { return String(level + 1) }
+            return nil
+        }
+    }
+
     private(set) var isShown = false
 
     private let controls = UIView()
@@ -903,16 +924,22 @@ private final class PlayerOverlay: UIView {
     private let bar = UIView()
     private let held = UIView()
     private let fill = UIView()
+    private let scrubSpan = UIView()
+    private let scrubStart = UIView()
+    private let scrubMarker = UIView()
+    private let markIcon = UIImageView()
+    private let markNumber = UILabel()
+    private var mark: Mark?
     private let spinner = UIActivityIndicatorView(style: .large)
     private let preview = UIImageView()
     private static let previewSize = CGSize(width: 480, height: 270)
     private let previewHolder = UIView()
     private let previewGlass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
     private let previewSpinner = UIActivityIndicatorView(style: .medium)
-    private let scrubStart = UIView()
     private var scrubStartFraction: CGFloat = 0
     private var fraction: CGFloat = 0
     private var isScrubbing = false
+    private var isDetached = false
     private var promptUp = false
     private var heldSpan: (from: CGFloat, to: CGFloat) = (0, 0)
     private static let barHeight: CGFloat = 6
@@ -937,17 +964,27 @@ private final class PlayerOverlay: UIView {
         title.textColor = UIColor.white.withAlphaComponent(0.75)
         for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: 24, weight: .regular)
-            label.textColor = UIColor.white.withAlphaComponent(0.55)
+            label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         }
         remaining.textAlignment = .right
+        markIcon.tintColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        markIcon.isHidden = true
+        markNumber.font = .monospacedDigitSystemFont(ofSize: 24, weight: .medium)
+        markNumber.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         bar.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         bar.layer.cornerRadius = Self.barHeight / 2
         bar.clipsToBounds = true
         bar.transform = CGAffineTransform(scaleX: 1, y: 1.67)
         fill.backgroundColor = UIColor.white.withAlphaComponent(0.75)
         held.backgroundColor = UIColor.white.withAlphaComponent(0.25)
-        bar.addSubview(held)
-        bar.addSubview(fill)
+        scrubSpan.backgroundColor = held.backgroundColor
+        for sub in [held, scrubSpan, fill, scrubStart, scrubMarker] {
+            bar.addSubview(sub)
+        }
+        for line in [scrubStart, scrubMarker] {
+            line.backgroundColor = .white
+            line.isHidden = true
+        }
         preview.contentMode = .scaleAspectFit
         preview.backgroundColor = .black
         let clip = UIView()
@@ -964,8 +1001,6 @@ private final class PlayerOverlay: UIView {
         clip.addSubview(previewGlass)
         clip.addSubview(previewSpinner)
         clip.addSubview(preview)
-        scrubStart.backgroundColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        scrubStart.isHidden = true
         previewHolder.addSubview(clip)
         previewHolder.layer.shadowColor = UIColor.black.cgColor
         previewHolder.layer.shadowOpacity = 0.7
@@ -973,7 +1008,7 @@ private final class PlayerOverlay: UIView {
         previewHolder.layer.shadowOffset = CGSize(width: 0, height: 10)
         previewHolder.layer.shadowPath = UIBezierPath(roundedRect: clip.bounds, cornerRadius: Spotlight.cornerRadius).cgPath
         previewHolder.isHidden = true
-        for sub in [title, episode, elapsed, remaining, bar, scrubStart, previewHolder] as [UIView] {
+        for sub in [title, episode, elapsed, markIcon, markNumber, remaining, bar, previewHolder] as [UIView] {
             controls.addSubview(sub)
         }
     }
@@ -992,12 +1027,24 @@ private final class PlayerOverlay: UIView {
         episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
         bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
-        fill.frame = CGRect(x: 0, y: 0, width: width * fraction, height: Self.barHeight)
+        placeFill()
         placeHeld()
         placeElapsed()
         remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 126, width: 200, height: 32)
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
         placePreview()
+    }
+
+    /// Detached, the fill stops at the nearer of the two lines, the scrub's
+    /// span between them.
+    private func placeFill() {
+        let (width, height) = (bar.bounds.width, Self.barHeight)
+        let start = isDetached ? scrubStartFraction : fraction
+        let (from, to) = (min(fraction, start), max(fraction, start))
+        fill.frame = CGRect(x: 0, y: 0, width: width * from, height: height)
+        scrubSpan.frame = CGRect(x: width * from, y: 0, width: width * (to - from), height: height)
+        scrubStart.frame = CGRect(x: width * scrubStartFraction - 1, y: 0, width: 2, height: height)
+        scrubMarker.frame = CGRect(x: width * fraction - 1, y: 0, width: 2, height: height)
     }
 
     private func placeHeld() {
@@ -1006,14 +1053,46 @@ private final class PlayerOverlay: UIView {
                             width: width * max(heldSpan.to - heldSpan.from, 0), height: Self.barHeight)
     }
 
-    /// Left of the bar; scrubbing, under the marker.
+    /// Under the marker, always, the mark to its right; the time left makes
+    /// way for them at the end.
     private func placeElapsed() {
         let width = elapsed.intrinsicContentSize.width
+        let extra = markWidth
         let marker = bar.frame.minX + bar.bounds.width * fraction - width / 2
-        let x = isScrubbing ? min(max(marker, bar.frame.minX), bar.frame.maxX - width) : bar.frame.minX
+        let x = min(max(marker, bar.frame.minX), bar.frame.maxX - width - extra)
         elapsed.frame = CGRect(x: x, y: bounds.height - 126, width: width, height: 32)
-        scrubStart.frame = CGRect(x: bar.frame.minX + bar.bounds.width * scrubStartFraction - 1,
-                                  y: bar.center.y - 14, width: 2, height: bar.frame.maxY - bar.center.y + 14)
+        placeMark()
+        let alpha: CGFloat = x + width + extra > bar.frame.maxX - remaining.intrinsicContentSize.width - 24 ? 0 : 1
+        guard remaining.alpha != alpha else { return }
+        UIView.animate(withDuration: Motion.fadeDuration) { self.remaining.alpha = alpha }
+    }
+
+    private var markWidth: CGFloat {
+        guard mark != nil else { return 0 }
+        let number = markNumber.isHidden ? 0 : markNumber.intrinsicContentSize.width + 8
+        return 12 + (markIcon.image?.size.width ?? 0) + number
+    }
+
+    private func placeMark() {
+        let icon = markIcon.image?.size ?? .zero
+        markIcon.frame = CGRect(x: elapsed.frame.maxX + 12, y: elapsed.frame.midY - icon.height / 2,
+                                width: icon.width, height: icon.height)
+        markNumber.frame = CGRect(x: markIcon.frame.maxX + 8, y: elapsed.frame.minY,
+                                  width: markNumber.intrinsicContentSize.width, height: 32)
+    }
+
+    /// Placed at once: a mark coming in doesn't fly in from where it last was.
+    private func setMark(_ new: Mark?) {
+        guard new != mark else { return }
+        mark = new
+        // In the image itself: its size places it, and a configuration on the
+        // view wouldn't change that.
+        let size = UIImage.SymbolConfiguration(pointSize: 28, weight: .medium)
+        markIcon.image = new.map { UIImage(systemName: $0.symbol, withConfiguration: size) } ?? nil
+        markIcon.isHidden = new == nil
+        markNumber.text = new?.number
+        markNumber.isHidden = new?.number == nil
+        placeMark()
     }
 
     private func placePreview() {
@@ -1050,38 +1129,52 @@ private final class PlayerOverlay: UIView {
     }
 
     private func fadeTitle() {
-        let alpha: CGFloat = isScrubbing || promptUp ? 0 : 1
+        let alpha: CGFloat = isDetached || promptUp ? 0 : 1
         UIView.animate(withDuration: Motion.fadeDuration) {
             self.title.alpha = alpha
             self.episode.alpha = alpha
         }
     }
 
-    /// How far subtitles have to stay above the bottom of the screen.
-    var subtitleFloor: CGFloat { isShown ? 250 : 90 }
-
-    func setScrubbing(_ scrubbing: Bool) {
+    /// `detached`: the fill stays behind the marker. A press while playing
+    /// isn't: the two move as one.
+    func setScrubbing(_ scrubbing: Bool, detached: Bool) {
         if scrubbing, previewHolder.isHidden {
             previewHolder.isHidden = false
             showWaiting(preview.image == nil)
         } else if !scrubbing {
             previewHolder.isHidden = true
         }
-        guard scrubbing != isScrubbing else { return }
-        scrubStartFraction = fraction
-        scrubStart.isHidden = !scrubbing
-        isScrubbing = scrubbing
-        placeElapsed()
+        if scrubbing != isScrubbing {
+            scrubStartFraction = fraction
+            scrubMarker.isHidden = !scrubbing
+            isScrubbing = scrubbing
+            placeElapsed()
+        }
+        let detach = scrubbing && detached
+        guard detach != isDetached else { return }
+        isDetached = detach
+        scrubStart.isHidden = !detach
         fadeTitle()
-        UIView.animate(withDuration: Motion.fadeDuration) { self.remaining.alpha = scrubbing ? 0 : 1 }
+        UIView.animate(withDuration: Motion.fadeDuration) { self.held.alpha = detach ? 0 : 1 }
+        glide(placeFill)
     }
 
-    func move(time: Double, duration: Double, mark: String? = nil) {
+    private func glide(_ place: @escaping () -> Void) {
+        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1,
+                       initialSpringVelocity: 0, options: [.beginFromCurrentState], animations: place)
+    }
+
+    func move(time: Double, duration: Double, mark: Mark?, animated: Bool = false) {
         fraction = duration > 0 ? CGFloat(min(max(time / duration, 0), 1)) : 0
-        fill.frame.size.width = bar.bounds.width * fraction
-        placePreview()
-        elapsed.text = duration > 0 ? [mark, Self.clock(time)].compactMap { $0 }.joined(separator: "  ") : nil
-        placeElapsed()
+        elapsed.text = duration > 0 ? Self.clock(time) : nil
+        setMark(duration > 0 ? mark : nil)
+        let place = { [self] in
+            placeFill()
+            placePreview()
+            placeElapsed()
+        }
+        if animated { glide(place) } else { place() }
         remaining.text = duration > 0 ? "-" + Self.clock(max(duration - time, 0)) : nil
     }
 
@@ -1092,7 +1185,7 @@ private final class PlayerOverlay: UIView {
         placeHeld()
     }
 
-    func update(time: Double, duration: Double, mark: String?, waiting: Bool) {
+    func update(time: Double, duration: Double, mark: Mark?, waiting: Bool) {
         move(time: time, duration: duration, mark: mark)
         if waiting != spinner.isAnimating {
             if waiting { spinner.startAnimating() } else { spinner.stopAnimating() }
@@ -1319,6 +1412,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let surface = AetherPlayerView()
     private let subtitleText = UILabel()
     private let subtitleImage = UIImageView()
+    /// Both kinds of subtitle: they make way as the controls come up.
+    private let subtitles = UIView()
+    private var subtitleFloor = PlayerController.subtitleRest
     private let overlay: PlayerOverlay
     private let audioButton = PlayerButton(icon: "waveform", label: "Audio")
     private let subtitleButton = PlayerButton(icon: "captions.bubble", label: "Subtitles")
@@ -1385,7 +1481,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private static let scanHoldSeconds: TimeInterval = 0.5
     /// The scan's slider, in seconds of title per second. The picture is paused:
     /// the engine plays 2× at most and never backwards.
-    private static let scanSpeeds: [Double] = [30, 120, 300]
+    private static let scanSpeeds: [Double] = [30, 120, 300, 600]
     /// The seek waits this long after the last input, so a run of inputs is one seek.
     private static let scrubCommitSeconds: TimeInterval = 0.3
     /// The bar follows at this rate; the swipe comes in at twice it.
@@ -1405,6 +1501,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var holdDirection: Double = 0
     private var holdWait: Task<Void, Never>?
     private var scan: (direction: Double, level: Int)?
+    /// The way of the last arrow press in this scrub; 0 once a swipe took over.
+    private var stepDirection: Double = 0
     private var glide: Double = 0
     private var runLink: CADisplayLink?
     private var panning = false
@@ -1444,6 +1542,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var endedAt: Date?
 
     private enum Menu { case none, buttons, tracks }
+
+    /// Subtitles' foot above the bottom of the screen: at rest, and clear of
+    /// the title and the buttons.
+    private static let subtitleRest: CGFloat = 90
+    private static let subtitleClear: CGFloat = 250
     private var menu = Menu.none
     private weak var lastButton: PlayerButton?
     private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
@@ -1493,11 +1596,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        for sub in [focusView, surface, subtitleImage, subtitleText, overlay, audioButton, subtitleButton,
+        for sub in [focusView, surface, subtitles, overlay, audioButton, subtitleButton,
                     promptView, trackList, shelf,
                     readout] as [UIView] {
             view.addSubview(sub)
         }
+
+        for sub in [subtitleImage, subtitleText] as [UIView] { subtitles.addSubview(sub) }
+        subtitles.isUserInteractionEnabled = false
 
         trackList.isHidden = true
         trackList.picked = { [weak self] in self?.setMenu(.none) }
@@ -1549,6 +1655,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         focusView.frame = view.bounds
         surface.frame = view.bounds
         overlay.frame = view.bounds
+        subtitles.bounds = view.bounds
+        subtitles.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         // Bounds and center: its transform is what moves it.
         let size = PlayerButton.size
         let center = view.bounds.height - PlayerPrompt.bottom - size / 2
@@ -1885,6 +1993,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             showControls()
             switch press.type {
             case .downArrow where menu == .buttons: stepVertically(down: true, engine)
+            case .upArrow where menu == .buttons: stepVertically(down: false, engine)
             case .playPause: engine.togglePlayPause()
             default: super.pressesBegan(presses, with: event)
             }
@@ -1902,6 +2011,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         case .leftArrow:
             showControls()
             arrowPressed(-1)
+        case .rightArrow where promptView.takesFocus:
+            setMenu(.buttons)
         case .rightArrow:
             showControls()
             arrowPressed(1)
@@ -1912,16 +2023,18 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     /// A press or a swipe, the same. Down: off the buttons or the prompt to the
-    /// bar, else the shelf. Up: to a prompt on screen, else the buttons.
+    /// bar, else the shelf. Up: to a prompt on screen, else the buttons; off the
+    /// buttons the controls go; off a prompt, nothing (Right is the way to the
+    /// buttons).
     private func stepVertically(down: Bool, _ engine: AetherEngine) {
         guard scan == nil, hasPlayed else { return }
         if menu == .buttons {
-            if down {
-                promptLeft = true
-                setMenu(.none)
-            }
+            if down { promptLeft = true }
+            setMenu(.none)
+            if !down { hideControls() }
             return
         }
+        if !down && promptView.takesFocus { return }
         let toBar = down && promptView.takesFocus
         let toPrompt = !down && promptView.alpha > 0 && !promptView.takesFocus
         guard toBar || toPrompt else { return down ? setShelf(true) : setMenu(.buttons) }
@@ -1979,20 +2092,22 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: Scrubbing
 
-    private func moveScrub(to seconds: Double) {
+    private func moveScrub(to seconds: Double, press: Bool = false) {
         guard let engine, hasPlayed, engine.duration > 0 else { return }
         scrubTarget = min(max(seconds, 0), max(engine.duration - 1, 0))
         scrubCommitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
         guard let target = scrubTarget else { return }
-        overlay.setScrubbing(true)
+        overlay.setScrubbing(true, detached: isDetached)
         waitForRest()
         loadPreview()
-        guard Date().timeIntervalSince(lastScrubDraw) >= Self.scrubDrawInterval else { return }
+        guard press || Date().timeIntervalSince(lastScrubDraw) >= Self.scrubDrawInterval else { return }
         lastScrubDraw = Date()
-        overlay.move(time: target, duration: engine.duration, mark: scanLabel)
+        overlay.move(time: target, duration: engine.duration, mark: mark, animated: press)
     }
 
     private var isFine: Bool { engine?.state == .paused && scan == nil }
+    /// The scan and anything paused: nothing has landed, so the fill stays.
+    private var isDetached: Bool { scan != nil || isFine }
 
     private func arrowPressed(_ direction: Double) {
         if scan != nil {
@@ -2002,7 +2117,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             commitScrub(resume: true)
         } else {
             glide = 0
-            moveScrub(to: (scrubTarget ?? position) + direction * Self.scrubStep)
+            stepDirection = direction
+            moveScrub(to: (scrubTarget ?? position) + direction * Self.scrubStep, press: true)
             if scrubTarget != nil, !isFine { waitForHold(direction) }
         }
     }
@@ -2092,6 +2208,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         scrubTarget = nil
         stopHold()
         scan = nil
+        stepDirection = 0
         stopRun()
         overlay.setPreview(nil)
     }
@@ -2156,7 +2273,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let velocity = pan.velocity(in: view)
         panVertical = abs(velocity.y) > abs(velocity.x) * Self.verticalSwipeRatio
         if shelfOpen { return panVertical && velocity.y < 0 && shelf.closes }
-        if menu != .none { return menu == .buttons && panVertical && velocity.y > 0 }
+        if menu != .none { return menu == .buttons && panVertical }
         guard hasPlayed else { return false }
         return panVertical ? scan == nil : isFine && abs(velocity.x) > abs(velocity.y)
     }
@@ -2179,6 +2296,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         switch pan.state {
         case .began:
             panning = true
+            stepDirection = 0
             stopRun()
             panLast = pan.translation(in: view).x
         case .changed:
@@ -2543,27 +2661,30 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         readout.frame = CGRect(x: 60, y: 40, width: size.width, height: size.height + 16)
     }
 
-    private var scanLabel: String? {
-        scan.map { String(repeating: $0.direction > 0 ? "▸" : "◂", count: $0.level + 1) }
+    private var mark: PlayerOverlay.Mark? {
+        if let scan { return .scan(forward: scan.direction > 0, level: scan.level) }
+        if stepDirection != 0, scrubTarget != nil { return .step(forward: stepDirection > 0) }
+        return engine?.state == .paused && landing == nil ? .paused : nil
     }
 
     private func updateOverlay(_ engine: AetherEngine) {
         let waiting = !hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering
         overlay.update(
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
-            mark: scanLabel, waiting: waiting
+            mark: mark, waiting: waiting
         )
         overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
         let shown = !shelfOpen && (menu != .none || scrubTarget != nil || !hasPlayed
             || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
         overlay.setShown(shown)
-        let alpha: CGFloat = shown && scrubTarget == nil && scan == nil ? 1 : 0
+        placeSubtitles()
+        let alpha: CGFloat = shown && !(scrubTarget != nil && isDetached) ? 1 : 0
         if audioButton.alpha != alpha {
             UIView.animate(withDuration: Motion.fadeDuration) {
                 for button in self.buttons { button.alpha = alpha }
             }
         }
-        overlay.setScrubbing(scrubTarget != nil || scan != nil)
+        overlay.setScrubbing(scrubTarget != nil || scan != nil, detached: isDetached)
     }
 
     /// What's really playing, to check against what the stream claims.
@@ -2658,6 +2779,27 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         return Locale.current.localizedString(forLanguageCode: code) ?? code
     }
 
+    /// Low at rest; above whatever comes up, on the same spring. Gone while
+    /// scrubbing: the line belongs to a moment left behind.
+    private func placeSubtitles() {
+        var floor = overlay.isShown ? Self.subtitleClear : Self.subtitleRest
+        if shelfOpen {
+            floor = 60 + PlayerShelf.height + 24
+        } else if promptView.alpha > 0 {
+            floor = max(floor, PlayerPrompt.bottom + promptView.bounds.height + 24)
+        }
+        if floor != subtitleFloor {
+            subtitleFloor = floor
+            UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+                self.subtitles.transform = CGAffineTransform(translationX: 0, y: Self.subtitleRest - floor)
+            }
+        }
+        let alpha: CGFloat = scrubTarget != nil || scan != nil ? 0 : 1
+        if subtitles.alpha != alpha {
+            UIView.animate(withDuration: Motion.fadeDuration) { self.subtitles.alpha = alpha }
+        }
+    }
+
     private func showSubtitle(_ engine: AetherEngine) {
         let time = engine.clock.sourceTime
         let cue = engine.subtitleCues.first { $0.startTime <= time && time < $0.endTime }
@@ -2672,7 +2814,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         subtitleText.text = text
         let width = view.bounds.width - 300
         let height = subtitleText.sizeThatFits(CGSize(width: width, height: 400)).height
-        subtitleText.frame = CGRect(x: 150, y: view.bounds.height - overlay.subtitleFloor - height, width: width, height: height)
+        subtitleText.frame = CGRect(x: 150, y: view.bounds.height - Self.subtitleRest - height, width: width, height: height)
 
         if let image {
             let bounds = view.bounds
