@@ -24,6 +24,13 @@ struct PerformanceSettings: View {
                     isOn: s.showPlayerDiagnostics
                 )
 
+                PerfToggleRow(
+                    icon: "pause.circle",
+                    title: "Hold Play on the stage",
+                    subtitle: "Play opens the loading stage and stays there until Back: no search, no stream.",
+                    isOn: s.holdPlayStage
+                )
+
                 // Lived under Playback → Seeking; it's a diagnostic overlay, so
                 // it belongs with the other two.
                 PerfToggleRow(

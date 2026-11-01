@@ -1,11 +1,121 @@
 import SwiftUI
 import UIKit
 
-/// The sources, full screen over the page blurred (as About's panel): the
-/// name and the episode centred, under them in one column the add-ons' tabs,
-/// then the links (plain rows, the white highlight).
-/// Shown over the whole app by `SourcePicker` — from Details (hold Play) and
-/// Continue Watching ("Choose Source"). The links in the add-ons' own order
+/// The stage: a dimmed blur over whatever was on screen at the press, its logo or name in the middle, breathing while it loads, with a
+/// line on what's happening; the source list when there is one, the logo above it.
+/// Back while finding or loading stops it.
+struct PlayStageView<Sources: View>: View {
+    @ObservedObject private var picker = SourcePicker.shared
+    @ObservedObject private var launcher = PlayLauncher.shared
+    let scene: PlayStage.Scene
+    let onBack: () -> Void
+    @ViewBuilder let sources: (SourcePicker.Request) -> Sources
+
+    @State private var breathing = false
+    @State private var statusUp = false
+    /// Holds focus while there's no list, so Back reaches the stage.
+    @FocusState private var holding: Bool
+
+    /// A quick start shows no line at all.
+    private static var statusDelay: Duration { .milliseconds(500) }
+
+    private var listUp: Bool { picker.request != nil && !picker.picked }
+    private var status: String { launcher.searching != nil ? "Searching sources" : "Starting" }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Rectangle()
+                .fill(.regularMaterial)
+                .overlay(Color.black.opacity(Self.dim))
+            header
+                .padding(.top, listUp ? SummaryPanelMetrics.titleTop : 0)
+                .frame(maxHeight: .infinity, alignment: listUp ? .top : .center)
+                .animation(Motion.move, value: listUp)
+            if !listUp {
+                Color.clear
+                    .focusable()
+                    .focused($holding)
+                    .onExitCommand(perform: onBack)
+            }
+            if let request = picker.request {
+                sources(request)
+                    .opacity(listUp ? 1 : 0)
+                    .disabled(!listUp)
+            }
+        }
+        .frame(width: 1920, height: 1080)
+        .ignoresSafeArea()
+        .animation(Motion.fade, value: listUp)
+        // Focus here at once: left where it was (Details' Play, in its own
+        // host, isn't disabled with the page), a Back reached no handler.
+        .onAppear { DispatchQueue.main.async { if !listUp { holding = true } } }
+        .task(id: listUp) {
+            statusUp = false
+            breathing = !listUp
+            guard !listUp else { return }
+            holding = true
+            try? await Task.sleep(for: Self.statusDelay)
+            if !Task.isCancelled { statusUp = true }
+        }
+    }
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            mark
+                .scaleEffect(breathing ? 1.06 : 1)
+                .animation(breathing ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true) : Motion.fade,
+                           value: breathing)
+                // Larger alone in the middle, by a transform so it moves as one.
+                .scaleEffect(listUp ? 1 : Self.middleScale)
+                .animation(Motion.move, value: listUp)
+                .padding(.vertical, listUp ? 0 : Self.middleRoom)
+            if let episode = scene.episode {
+                Text(episode)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: 1400)
+        // Under it, not part of it: the logo stays in the very middle.
+        .overlay(alignment: .bottom) {
+            Text(status)
+                .font(.system(size: 24))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                .id(status)
+                .transition(.opacity)
+                .opacity(statusUp ? 1 : 0)
+                .alignmentGuide(.bottom) { $0[.top] - 20 }
+                .animation(Motion.fade, value: status)
+                .animation(Motion.fade, value: statusUp)
+        }
+    }
+
+    @ViewBuilder private var mark: some View {
+        if let logo = scene.logo {
+            RemoteImage(url: logo, contentMode: .fit, maxDimension: Self.logoSize.width * Self.middleScale * 2,
+                        showsPlaceholder: false)
+                .frame(width: Self.logoSize.width, height: Self.logoSize.height)
+        } else {
+            Text(scene.title)
+                .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .lineLimit(1)
+        }
+    }
+
+    /// Over the blur, so the list reads over any page.
+    private static var dim: Double { 0.6 }
+    private static var logoSize: CGSize { CGSize(width: 520, height: 96) }
+    private static var middleScale: CGFloat { 1.4 }
+    /// Keeps what's under the logo clear of it at its largest.
+    private static var middleRoom: CGFloat { 28 }
+}
+
+/// The sources on the stage: in one column the add-ons' tabs, then the links
+/// (plain rows, a blur for focus, as the shelf's cards).
+/// Shown by `SourcePicker` — from Details (hold Play) and Continue Watching
+/// ("Choose Source"), and when Play finds nothing. The links in the add-ons' own order
 /// (an aggregator like AIOStreams has sorted and filtered them), their labels'
 /// line breaks kept, nothing filtered or re-sorted. Every enabled add-on is
 /// searched; the pills only show one add-on's links. Search Again asks them
@@ -15,6 +125,7 @@ struct SourcePanel: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @EnvironmentObject private var streamBadges: StreamBadgeStore
+    @ObservedObject private var picker = SourcePicker.shared
     @StateObject private var model: StreamsViewModel
     let onPlay: (StreamEntry, [StreamEntry]) -> Void
     let onClose: () -> Void
@@ -27,9 +138,11 @@ struct SourcePanel: View {
     @FocusState private var focused: UUID?
     /// Search Again: where focus starts, until the first link is in.
     @FocusState private var again: Bool
+    /// The link picked, for focus when Back comes back from its loading.
+    @State private var pickedID: UUID?
 
     /// Wide: an aggregator's long lines on as few lines as can be.
-    private static let width: CGFloat = 1100
+    private static let width = SourcePanelMetrics.width
     /// The list fades out over this at the screen's foot.
     private static let fade: CGFloat = 60
 
@@ -51,17 +164,12 @@ struct SourcePanel: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            FullScreenBlur()
-            header
-                .padding(.top, SummaryPanelMetrics.titleTop)
-            VStack(alignment: .leading, spacing: 18) {
-                controls
-                list
-            }
-            .frame(width: Self.width)
-            .padding(.top, SummaryPanelMetrics.columnTop)
+        VStack(alignment: .leading, spacing: 18) {
+            controls
+            list
         }
+        .frame(width: Self.width)
+        .padding(.top, SummaryPanelMetrics.columnTop)
         .frame(width: 1920, height: 1080)
         .ignoresSafeArea()
             .focusSection()
@@ -74,6 +182,9 @@ struct SourcePanel: View {
             }
             .onChange(of: tab) { _, name in
                 if let name { addon = name }
+            }
+            .onChange(of: picker.picked) { _, picked in
+                if !picked, let pickedID { focused = pickedID }
             }
             .task {
                 let settings = playerSettings.settings
@@ -91,24 +202,6 @@ struct SourcePanel: View {
             } message: {
                 Text(problem ?? "")
             }
-    }
-
-    /// As the About panel's: the name, under it the episode.
-    private var header: some View {
-        VStack(spacing: 6) {
-            Text(model.meta.name)
-                .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                .lineLimit(1)
-            if let video = model.video, !video.seasonEpisodeCode.isEmpty {
-                Text([video.seasonEpisodeCode, video.title].compactMap { $0 }
-                        .filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 1400)
     }
 
     /// Search Again, the add-ons' tabs, and when the list was found.
@@ -198,7 +291,8 @@ struct SourcePanel: View {
                 LazyVStack(spacing: 4) {
                     ForEach(shown) { entry in
                         Button { play(entry) } label: {
-                            SourceRow(entry: entry, badges: streamBadges.badges(for: entry))
+                            SourceRow(entry: entry, badges: streamBadges.badges(for: entry),
+                                      showsAddon: model.addonNames.count > 1)
                         }
                         .buttonStyle(SourceRowStyle())
                         .focused($focused, equals: entry.id)
@@ -230,22 +324,22 @@ struct SourcePanel: View {
             problem = "This source is a raw torrent, which Cue can't play. Configure debrid in the add-on itself."
             return
         }
+        pickedID = entry.id
         onPlay(entry, model.entries)
     }
 }
 
 /// One source: the add-on's label and its description, each with their own
-/// line breaks; the badges and quality below; the add-on's name.
+/// line breaks; the badges and quality below; the add-on's name, with more
+/// than one.
 private struct SourceRow: View {
-    @Environment(\.isFocused) private var isFocused
     let entry: StreamEntry
     let badges: [StreamBadge]
+    let showsAddon: Bool
 
     var body: some View {
-        let primary = isFocused ? Color.black : Color.white.opacity(FixedFocusText.primary)
-        // Focused, near-black (at 70 % it read grey on the white); at rest
-        // text to read.
-        let secondary = isFocused ? Color.black.opacity(0.85) : Color.white.opacity(FixedFocusText.body)
+        let primary = Color.white.opacity(FixedFocusText.primary)
+        let secondary = Color.white.opacity(FixedFocusText.body)
         VStack(alignment: .leading, spacing: 8) {
             Text(entry.displayName)
                 .font(.system(size: 26, weight: .semibold))
@@ -262,10 +356,12 @@ private struct SourceRow: View {
                 if let resolution = entry.stream.resolutionLabel { tag(resolution) }
                 if !badges.isEmpty { StreamBadgeChips(badges: badges) }
                 Spacer(minLength: 8)
-                Text(entry.addonName)
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(secondary)
-                    .lineLimit(1)
+                if showsAddon {
+                    Text(entry.addonName)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.horizontal, 22)
@@ -278,18 +374,20 @@ private struct SourceRow: View {
     private func tag(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.95))
+            .foregroundStyle(Color.white.opacity(0.95))
             .padding(.horizontal, 10)
             .frame(height: 32)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill((isFocused ? Color.black : Color.white).opacity(0.14)))
+                .fill(Color.white.opacity(0.14)))
     }
 }
 
-/// A source row as a menu row: nothing at rest, the white highlight when
-/// focused.
+/// A source row: nothing at rest; focused, a blur and a little growth, as the
+/// shelf's cards. No white: it fought the add-ons' colours.
 private struct SourceRowStyle: ButtonStyle {
     static let corner: CGFloat = 30
+    /// In points, as the shelf's cards: a share of a wide row is a big jump.
+    private static let growth: CGFloat = 12
 
     func makeBody(configuration: Configuration) -> some View { Platter(configuration: configuration) }
 
@@ -298,46 +396,18 @@ private struct SourceRowStyle: ButtonStyle {
         let configuration: ButtonStyle.Configuration
 
         var body: some View {
-            // Only the fill changes (growing a tall row on every step made
-            // the scrolling stutter).
             configuration.label
-                .background(RoundedRectangle(cornerRadius: SourceRowStyle.corner, style: .continuous)
-                    .fill(isFocused ? FlatControl.focus : Color.clear))
-                .animation(.easeOut(duration: 0.12), value: isFocused)
+                .background {
+                    RoundedRectangle(cornerRadius: SourceRowStyle.corner, style: .continuous)
+                        .fill(.regularMaterial)
+                        .opacity(isFocused ? 0.9 : 0)
+                }
+                .scaleEffect(isFocused ? 1 + SourceRowStyle.growth / SourcePanelMetrics.width : 1)
+                .animation(.easeOut(duration: 0.2), value: isFocused)
         }
     }
 }
 
-/// Play from a card or an episode: finding its source, in the picker's
-/// glass (`PlayLauncher`'s overlay). Cancel or Back stops it.
-struct FindingSourceCard: View {
-    let search: PlayLauncher.Search
-    let onCancel: () -> Void
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 44, style: .continuous)
-        VStack(spacing: 22) {
-            LoadingSpinner()
-            VStack(spacing: 6) {
-                Text("Finding a source…")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-                Text([search.title, search.episode].compactMap { $0 }.joined(separator: " · "))
-                    .font(.system(size: 22))
-                    .foregroundStyle(Color.white.opacity(0.6))
-                    .lineLimit(1)
-            }
-            Button("Cancel", action: onCancel)
-                .buttonStyle(PillButtonStyle())
-        }
-        .padding(.horizontal, 48)
-        .padding(.vertical, 36)
-        .frame(minWidth: 560)
-        .background {
-            Color.clear
-                .liquidGlass(in: shape)
-        }
-        .focusSection()
-        .onExitCommand(perform: onCancel)
-    }
+private enum SourcePanelMetrics {
+    static let width: CGFloat = 1100
 }

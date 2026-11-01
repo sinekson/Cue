@@ -20,11 +20,14 @@ final class PerformanceSettingsStore: ObservableObject {
         /// bitrate, buffer depth. Answers "why is this stuttering" on the
         /// couch, without a Mac attached.
         var showPlayerDiagnostics = false
+        /// Play stops on the stage: no search, no stream, until Back. To
+        /// look at the stage for as long as it takes.
+        var holdPlayStage = false
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics
+            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -34,6 +37,7 @@ final class PerformanceSettingsStore: ObservableObject {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
+            holdPlayStage = (try? c.decode(Bool.self, forKey: .holdPlayStage)) ?? false
         }
     }
 

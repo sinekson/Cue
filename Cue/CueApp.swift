@@ -298,7 +298,7 @@ struct RootView: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var sourcePicker = SourcePicker.shared
-    @ObservedObject private var launcher = PlayLauncher.shared
+    @ObservedObject private var stage = PlayStage.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
@@ -400,9 +400,9 @@ struct RootView: View {
 
     var body: some View {
         content
-            // While the source picker (or a search) is up, nothing under it
-            // takes focus — nor under the launch screen.
-            .disabled(sourcePicker.request != nil || launcher.search?.overlay == true || launch.curtain)
+            // While the stage is up, nothing under it takes focus — nor
+            // under the launch screen.
+            .disabled(stage.scene != nil || launch.curtain)
             // THE LAUNCH (docs/LOADING-PLAN.md §4): over everything on a cold
             // start while the closest things get ready; Home is built under
             // it.
@@ -412,27 +412,19 @@ struct RootView: View {
             // The welcome screen up: it covers it — no curtain on top (the
             // preload carries on behind). The profile gate is on the curtain.
             .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
-            // Play from a card or an episode: finding its source, over the
-            // app (Back cancels — see `PlayLauncher`).
+            // The way into the player, over everything (`PlayStage`): the
+            // player's cover is clear until its first frame, so this stays
+            // under it. Back cancels; the list plays what's picked.
             .overlay {
-                if let search = launcher.search, search.overlay {
-                    ZStack {
-                        Color.black.opacity(0.45).ignoresSafeArea()
-                        FindingSourceCard(search: search) { launcher.cancel() }
-                            .transition(.scale(scale: 0.96).combined(with: .opacity))
-                    }
-                    .transition(.opacity)
+                if let scene = stage.scene {
+                    PlayStageView(scene: scene, onBack: {
+                        PlayLauncher.shared.cancel()
+                        stage.clear()
+                    }) { request in sources(request) }
+                    .transition(.asymmetric(insertion: .opacity.animation(PlayStage.fadeIn), removal: .opacity))
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: launcher.search?.overlay == true)
-            // The source picker, over everything (`SourcePicker`): pops in
-            // like a menu over the app; plays what's picked.
-            .overlay {
-                if let request = sourcePicker.request {
-                    sources(request).transition(.opacity)
-                }
-            }
-            .animation(Motion.fade, value: sourcePicker.request?.id)
+            .animation(Motion.fade, value: stage.scene != nil)
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -839,10 +831,10 @@ struct RootView: View {
             let dead = (1...4).map { entry("http://127.0.0.1:9/dead\($0).mkv") }
             entries = args.contains("-playerDemoDead") ? dead : Array(dead.prefix(3)) + [good]
         }
-        playback = PlaybackRequest(
+        startPlayback(PlaybackRequest(
             meta: meta, video: nil, entry: entries[0],
             allEntries: entries, resumePosition: nil, isDemo: true
-        )
+        ))
     }
 
     /// Dev-only: `-detailDemo` jumps straight to a Detail screen for a known
@@ -908,13 +900,15 @@ struct RootView: View {
         // App-wide toast (Fusion): Added to Library / Marked Watched / etc.
         .overlay { FusionToastHost() }
         // Playing: no billboard trailer under it.
-        .onChange(of: playback == nil) { _, none in TrailerGate.shared.playerUp = !none }
+        .onChange(of: playback == nil && stage.scene == nil) { _, none in TrailerGate.shared.playerUp = !none }
+        .onChange(of: playback == nil) { _, none in if none { playerClosed() } }
         .onChange(of: launch.gate != nil || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
         .fullScreenCover(item: $playback) { request in
-            CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings) {
-                playback = nil
-            }
+            CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings,
+                      onShown: { sourcePicker.close() },
+                      onClose: { setPlayback(nil) })
                 .ignoresSafeArea()
+                .presentationBackground(.clear)
         }
         // Deep-link add-on install confirmation. A tvOS alert is fully
         // focusable and remote-navigable, and Cancel carries the `.cancel`
@@ -1447,8 +1441,6 @@ struct RootView: View {
                     // a pushed screen — tvOS sometimes delivers a lingering
                     // second Menu, which would spuriously open the rail.
                     if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
-                    // The billboard's Play finding a source: it stops.
-                    if launcher.search != nil { launcher.cancel(); return }
                     // Below the billboard: up to it first.
                     if HomeBack.shared.handle() { return }
                     focusSidebar(tab.rawValue)
@@ -1849,8 +1841,22 @@ struct RootView: View {
                                       resumePosition: fromStart ? nil : progressStore.progress(for: key)?.positionSeconds))
     }
 
+    /// In and out at once: the fades are the stage's and the player's own.
     private func startPlayback(_ request: PlaybackRequest) {
-        playback = request
+        PlayStage.shared.show(request.meta, request.video)
+        setPlayback(request)
+    }
+
+    private func setPlayback(_ request: PlaybackRequest?) {
+        var quiet = Transaction()
+        quiet.disablesAnimations = true
+        withTransaction(quiet) { playback = request }
+    }
+
+    /// Before its first frame the stage is still under the player: Back from
+    /// a picked link lands on the list, else it goes.
+    private func playerClosed() {
+        if sourcePicker.request != nil { sourcePicker.picked = false } else { stage.clear() }
     }
 
     /// Route an incoming `cue://` / `stremio://` deep link.
@@ -1930,11 +1936,11 @@ struct RootView: View {
         PlayLauncher.shared.play(meta, video, fromStart: fromBeginning)
     }
 
-    /// The source picker's screen: full screen over the page blurred.
+    /// The source list on the stage.
     private func sources(_ request: SourcePicker.Request) -> some View {
         SourcePanel(meta: request.meta, video: request.video,
                     onPlay: { entry, all in
-            sourcePicker.close()
+            sourcePicker.picked = true
             play(request.meta, request.video, entry, all, fromStart: request.fromStart)
         }, onClose: { sourcePicker.close() })
         .id(request.id)

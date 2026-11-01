@@ -461,18 +461,17 @@ struct DetailView: View {
     @EnvironmentObject private var profiles: ProfileStore
     @StateObject private var viewModel: DetailViewModel
 
-    /// Play: finds the first source IN PLACE (the button says so — see
-    /// `PlayLauncher`) and the player opens.
+    /// Play: the stage, the first source found on it (`PlayLauncher`), the player.
     @ObservedObject private var launcher = PlayLauncher.shared
 
-    private func play(_ video: MetaVideo?, fromStart: Bool = false, onButton: Bool = false) {
-        launcher.play(viewModel.meta, video, fromStart: fromStart, overlay: !onButton)
+    private func play(_ video: MetaVideo?, fromStart: Bool = false) {
+        launcher.play(viewModel.meta, video, fromStart: fromStart, art: viewModel.backdropURL)
     }
 
-    /// Hold Play (or an episode's "Choose Source"): the source picker, over
-    /// the app (`SourcePicker`).
+    /// Hold Play (or an episode's "Choose Source"): the source list, on the
+    /// stage (`SourcePicker`).
     private func openSources(_ video: MetaVideo?) {
-        SourcePicker.shared.open(viewModel.meta, video)
+        SourcePicker.shared.open(viewModel.meta, video, art: viewModel.backdropURL)
     }
     var onSelectItem: (MetaItem) -> Void = { _ in }
     /// The pages opened from here (a person, a studio, a genre, a tag) get
@@ -656,7 +655,7 @@ struct DetailView: View {
             guard let pending = pendingSeriesPlay, let target = seriesPlayTarget else { return }
             pendingSeriesPlay = nil
             switch pending {
-            case .auto: play(target, onButton: true)
+            case .auto: play(target)
             case .manual: openSources(target)
             }
         }
@@ -1146,7 +1145,7 @@ struct DetailView: View {
         case .play:
             let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
             if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
-            else { play(target, onButton: true) }
+            else { play(target) }
         case .back:
             backToBillboard()
         case .down:
@@ -1233,16 +1232,15 @@ struct DetailView: View {
                 // lost: `pendingSeriesPlay` fires once the target lands.
                 //
                 let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
-                let finding = launcher.searching == PlayLauncher.key(viewModel.meta, target)
                 // "Play" — a show's episode under it while focused (a film:
                 // nothing).
                 DetailActionButton(
                     icon: "play.fill", title: "Play",
-                    isPrimary: true, lit: litAction == .play, busy: finding,
-                    caption: finding ? "Finding a source…" : target.map(seriesPlayTitle),
+                    isPrimary: true, lit: litAction == .play,
+                    caption: target.map(seriesPlayTitle),
                     action: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
-                        else { play(target, onButton: true) }
+                        else { play(target) }
                     },
                     // Hold Select: straight to the source list.
                     onHold: {
@@ -1518,10 +1516,7 @@ struct DetailActionButton: View {
     let title: String
     let isPrimary: Bool
     let lit: Bool
-    /// Working (Play finding a source): a spinner instead of the icon.
-    var busy = false
-    /// The primary button's line under it while focused (Play: "Finding a
-    /// source…").
+    /// The primary button's line under it while focused (a show's episode).
     var caption: String? = nil
     /// Only its icon (its name under it while focused) — all but Play.
     var bare = false
@@ -1641,25 +1636,17 @@ struct DetailActionButton: View {
         // (Back's scroll up to these buttons running: dropped.)
         Button(action: { if !held, !FixedFocusRowsController.backScrolling { action() } }) {
             HStack(spacing: 10) {
-                // A labelled button: its name alone — while it works, a
-                // spinner in its place, the name's width kept (the row never
-                // moves); an icon button: its icon.
+                // A labelled button: its name alone; an icon button: its icon.
                 if bare {
-                    Group {
-                        if busy {
-                            LoadingSpinner(size: 28, color: shownLit ? UIColor.black.withAlphaComponent(0.85) : nil)
-                        } else {
-                            Image(systemName: shownIcon)
-                                .font(.system(size: iconSize, weight: .bold))
-                                // (Into Details in place: › becomes About's;
-                                // set from another host — no transaction.)
-                                .contentTransition(["plus", "checkmark"].contains(shownIcon)
-                                    ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
-                                    : .opacity)
-                                .animation(Motion.move, value: shownIcon)
-                        }
-                    }
-                    .frame(width: Self.iconBox, height: Self.iconBox)
+                    Image(systemName: shownIcon)
+                        .font(.system(size: iconSize, weight: .bold))
+                        // (Into Details in place: › becomes About's;
+                        // set from another host — no transaction.)
+                        .contentTransition(["plus", "checkmark"].contains(shownIcon)
+                            ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
+                            : .opacity)
+                        .animation(Motion.move, value: shownIcon)
+                        .frame(width: Self.iconBox, height: Self.iconBox)
                 } else {
                     // (Into Details in place: Details becomes Play — the
                     // two names crossfade, centred, as the width goes from
@@ -1676,10 +1663,6 @@ struct DetailActionButton: View {
                     .frame(width: Self.labelWidth(shownTitle))
                     // (Set from another host — no transaction reaches it.)
                     .animation(Motion.move, value: shownTitle)
-                    .opacity(busy ? 0 : 1)
-                        .overlay {
-                            if busy { LoadingSpinner(size: 28, color: shownLit ? UIColor.black.withAlphaComponent(0.85) : nil) }
-                        }
                 }
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
@@ -1687,7 +1670,7 @@ struct DetailActionButton: View {
             .modifier(ActionFace(lit: shownLit, pill: !(worn?.plain ?? plain), dimmed: openingDimmed))
             .animation(Motion.move, value: worn?.plain ?? plain)
             // Under it while focused (outside its frame: the row never moves
-            // for it): Play's search, the bare button's name.
+            // for it): a show's episode, the bare button's name.
             .overlay(alignment: .top) {
                 if let text = isPrimary ? caption : bare ? shownTitle : nil {
                     Text(text)

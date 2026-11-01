@@ -1,29 +1,16 @@
 import Foundation
 
-/// Play, seamless: a source is found IN PLACE and the player opens as soon
-/// as the first link is in (the first add-on in order that has one; an
-/// aggregator like AIOStreams has already sorted and filtered them). None
-/// found: the source picker opens (`SourcePicker`).
-///
-/// Details' Play says it's searching on its own button; from anywhere else
-/// (a card's menu, an episode's) the root shows it over the app
-/// (`search.overlay`), Back cancelling.
+/// Play, seamless: a source is found on the stage (`PlayStage`) and the player
+/// opens as soon as the first link is in (the first add-on in order that has
+/// one; an aggregator like AIOStreams has already sorted and filtered them).
+/// None found: the source list comes up on the stage (`SourcePicker`). Back
+/// cancels.
 @MainActor
 final class PlayLauncher: ObservableObject {
     static let shared = PlayLauncher()
 
-    struct Search: Equatable {
-        /// The title / episode a source is being found for (`key`).
-        var key: String
-        /// What the overlay names: the title, and the episode once known.
-        let title: String
-        var episode: String?
-        /// Shown over the app (else the caller shows it, as Details' Play).
-        let overlay: Bool
-    }
-
-    @Published private(set) var search: Search?
-    var searching: String? { search?.key }
+    /// The title / episode a source is being found for (`key`).
+    @Published private(set) var searching: String?
 
     /// What finding and playing needs from the app, set once at launch.
     struct Context {
@@ -45,34 +32,37 @@ final class PlayLauncher: ObservableObject {
     static func key(_ meta: MetaItem, _ video: MetaVideo?) -> String { meta.id + "|" + (video?.id ?? "") }
 
     /// This title or episode.
-    func play(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, overlay: Bool = true) {
+    func play(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, art: String? = nil) {
         cancel()
-        search = Search(key: Self.key(meta, video), title: meta.name,
-                        episode: video?.seasonEpisodeCode, overlay: overlay)
+        PlayStage.shared.show(meta, video, art: art)
+        searching = Self.key(meta, video)
+        guard !PerformanceSettingsStore.shared.settings.holdPlayStage else { return }
         task = Task { [weak self] in await self?.find(meta, video, fromStart: fromStart) }
     }
 
     /// A title from its card: a show plays the episode Details' Play would.
-    /// (`overlay` false: the caller shows it — the billboard's Play.)
-    func play(title item: MetaItem, fromStart: Bool = false, overlay: Bool = true) {
+    func play(title item: MetaItem, fromStart: Bool = false) {
         cancel()
-        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: overlay)
+        PlayStage.shared.show(item, nil)
+        searching = Self.key(item, nil)
+        guard !PerformanceSettingsStore.shared.settings.holdPlayStage else { return }
         task = Task { [weak self] in
             guard let self, let (meta, video) = await self.target(item) else { return }
-            self.search?.key = Self.key(meta, video)
-            self.search?.episode = video?.seasonEpisodeCode
+            self.searching = Self.key(meta, video)
+            PlayStage.shared.show(meta, video)
             await self.find(meta, video, fromStart: fromStart)
         }
     }
 
     /// The source picker for a title (a show: the episode Play would start).
-    func chooseSource(title item: MetaItem, overlay: Bool = true) {
+    func chooseSource(title item: MetaItem) {
         guard item.isSeries else { SourcePicker.shared.open(item, nil); return }
         cancel()
-        search = Search(key: Self.key(item, nil), title: item.name, episode: nil, overlay: overlay)
+        PlayStage.shared.show(item, nil)
+        searching = Self.key(item, nil)
         task = Task { [weak self] in
             guard let self, let (meta, video) = await self.target(item) else { return }
-            self.search = nil
+            self.searching = nil
             SourcePicker.shared.open(meta, video)
         }
     }
@@ -144,7 +134,8 @@ final class PlayLauncher: ObservableObject {
         task?.cancel()
         task = nil
         model = nil
-        search = nil
+        if searching != nil { PlayStage.shared.clear() }
+        searching = nil
     }
 
     /// The title with the episode to play (nil for a film); nil if cancelled.
@@ -164,14 +155,14 @@ final class PlayLauncher: ObservableObject {
         self.model = model
         modelKey = key
         model.onFirstLink = { [weak self, weak model] entry in
-            guard let self, let model, self.search?.key == key else { return }
-            self.search = nil
+            guard let self, let model, self.searching == key else { return }
+            self.searching = nil
             context.start(meta, video, entry, model.entries, fromStart)
         }
         await sweep(model, context)
-        guard !Task.isCancelled, search?.key == key else { return }
-        // Nothing playable came in: the picker shows what there is.
-        search = nil
+        guard !Task.isCancelled, searching == key else { return }
+        // Nothing playable came in: the list shows what there is.
+        searching = nil
         SourcePicker.shared.open(meta, video, fromStart: fromStart)
     }
 }

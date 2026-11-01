@@ -24,10 +24,12 @@ struct CuePlayer: UIViewControllerRepresentable {
     let request: PlaybackRequest
     let progress: ProgressStore
     let settings: PlayerSettings
+    /// The first frame has come up over the stage.
+    let onShown: () -> Void
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> PlayerController {
-        PlayerController(request: request, progress: progress, settings: settings, onClose: onClose)
+        PlayerController(request: request, progress: progress, settings: settings, onShown: onShown, onClose: onClose)
     }
 
     func updateUIViewController(_ controller: PlayerController, context: Context) {}
@@ -2115,6 +2117,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let isDemo: Bool
     private let progress: ProgressStore
     private let settings: PlayerSettings
+    private let onShown: () -> Void
     private let onClose: () -> Void
     private let engine: AetherEngine?
 
@@ -2154,6 +2157,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// The first frame has played: only then does the clock mean anything.
     private var hasPlayed = false
+    /// The first frame has come up over the stage. Until then the view is
+    /// clear, and all there is to see is the stage.
+    private var revealed = false
+    private var closing = false
     /// Time actually played this session, seeks not included.
     private var played: Double = 0
     private var wasPaused = false
@@ -2290,7 +2297,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var promptLeft = false
 
     init(request: PlaybackRequest, progress: ProgressStore, settings: PlayerSettings,
-         onClose: @escaping () -> Void) {
+         onShown: @escaping () -> Void, onClose: @escaping () -> Void) {
         meta = request.meta
         video = request.video
         resume = request.resumePosition
@@ -2298,6 +2305,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         isDemo = request.isDemo
         self.progress = progress
         self.settings = settings
+        self.onShown = onShown
         self.onClose = onClose
         resumeFloor = request.resumePosition ?? 0
         entry = request.entry
@@ -2326,7 +2334,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        surface.alpha = 0
         for sub in [focusView, surface, subtitles, fixedSubtitles, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,
                     readout] as [UIView] {
@@ -2708,9 +2716,31 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         )
     }
 
+    /// With a picture up, it fades back to the page; the engine stops after.
     private func close() {
-        teardown()
-        onClose()
+        guard !closing else { return }
+        closing = true
+        guard revealed else {
+            teardown()
+            return onClose()
+        }
+        UIView.animate(withDuration: Motion.fadeDuration) {
+            self.view.alpha = 0
+        } completion: { _ in
+            self.teardown()
+            self.onClose()
+        }
+    }
+
+    private func reveal() {
+        guard !revealed else { return }
+        revealed = true
+        UIView.animate(withDuration: Motion.fadeDuration) {
+            self.surface.alpha = 1
+        } completion: { _ in
+            self.view.backgroundColor = .black
+            self.onShown()
+        }
     }
 
     /// Runs however the player goes: its own Back, or the system dismissing it
@@ -3574,6 +3604,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             // A resume reads near zero until its seek lands.
             if engine.state == .playing, engine.currentTime > 0, engine.currentTime >= resumeFloor - 5 {
                 hasPlayed = true
+                reveal()
                 resumeFloor = 0
                 if mountPaused {
                     engine.pause()
@@ -3614,14 +3645,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func updateOverlay(_ engine: AetherEngine) {
-        let waiting = !hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering
+        let waiting = revealed && (!hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering)
         overlay.setBarFocused(barHasFocus)
         overlay.update(
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
             mark: mark, waiting: waiting
         )
         overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
-        let shown = !shelfOpen && (menu != .none || scrubTarget != nil || !hasPlayed
+        let shown = !shelfOpen && (menu != .none || scrubTarget != nil || revealed && !hasPlayed
             || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
         if overlay.isShown, !shown, !controlsDismissed, menu == .none, !shelfOpen {
             backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)

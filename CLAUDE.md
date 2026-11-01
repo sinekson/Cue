@@ -72,7 +72,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - `Cue/Components/TitleBlock.swift` (`ModeSwap`, shared title parts),
   `Components.swift` (glass, `GlassPill`, flat controls).
 - `Cue/Core/`: services (Stremio, TMDB, MDBList), stores, `BillboardPicks`,
-  `MenuEntry.swift` (HoldMenu), `SourcePicker.swift`.
+  `MenuEntry.swift` (HoldMenu), `SourcePicker.swift` (with `PlayStage`).
 
 ## Design rules
 
@@ -143,10 +143,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer` through the player rework.
-- **Sources**: no sorting or filtering, the add-ons' order; Play, Resume and Start Over
+- **Sources**: no sorting or filtering of the links themselves, the add-ons' order (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
   take the first link (`PlayLauncher`); a link that fails or shows
   no frame in 20 s: the next, silently, up to 3 times, then the source list; 5-min cache; none remembered. Hold Play: the source list
   (`SourcePanel`).
+- **The stage** (`PlayStage`, `PlayStageView`): every way into the player goes
+  through a dimmed blur over the screen as it was at the press (on trial; the
+  title's blurred backdrop was the first try), its logo over it (the name where
+  there's none), a 0.7 s fade in (0.25 s was too abrupt). Play: the logo in the middle, growing and shrinking gently (no dots; the name fading in and out was tried), a status line
+  under it after 0.5 s (Searching sources, Starting), film; no list; Back returns to the
+  page. Choose Source: the same stage with the logo at the top and the list (wide rows, focus a blur
+  pane as the shelf's, no white, the add-on's name only with more than one).
+  After a pick the list fades and the logo moves to the middle; Back returns to the list. All links
+  failing brings the list up on the stage. The player's cover is clear so the
+  stage stays under it until the first frame fades in; leaving is one fade
+  straight to the page.
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.
@@ -179,7 +190,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
 - Ask before touching the Nuvio sync.
 - Rejected mechanisms: tvOS's own sidebar, the system's context menus, SwiftUI
   scrolling for the rows, the add-ons' catalogs for Search, sorting or
-  filtering sources, a remembered source.
+  filtering links by content (the add-on pills and refresh are fine), a remembered source.
 - Rejected looks: glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
   Left/Right: a full page scroll (too much movement), the text's parts
