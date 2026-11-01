@@ -1,5 +1,6 @@
 import os
 import AVKit
+import SwiftAssRenderer
 import AetherEngine
 import SwiftUI
 import UIKit
@@ -884,21 +885,253 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
     }
 }
 
-/// A subtitle's text, one style for all: SF medium, a solid off-white (content,
-/// not interface) on a tight, soft shadow, and a faint edge for bright frames,
-/// drawn under the fill so the letters keep their weight.
+/// An ASS track, sorted: dialogue goes to `SubtitleText`, in Cue's one style;
+/// whatever depends on its place or motion (signs, karaoke) stays as its authors
+/// drew it, through libass, in a layer of its own.
+private final class AssTrack {
+    private struct Key: Hashable {
+        let id: Int
+        let start: Double
+    }
+
+    private struct Line {
+        let runs: [SubtitleText.Run]
+        let top: Bool
+    }
+
+    private struct Style {
+        var italic = false
+        var top = false
+    }
+
+    /// In an override block: placed, moved, clipped, turned, sheared, drawn, animated or karaoke.
+    private static let signTags = "\\{[^}]*\\\\(pos|move|org|i?clip|fr[xyz]?-?[0-9.]|fa[xy]|t\\(|p[1-9]|k[fo]?[0-9]|K[0-9])[^}]*\\}"
+    /// A style's name, for signs and songs that need no tag.
+    private static let signStyles = ["sign", "song", "kara", "lyric", "romaji", "typeset", "title", "opening", "ending"]
+
+    let trackID: Int
+    private let builder: ASSScriptBuilder
+    private let styles: [String: Style]
+    private let fonts: [FontAttachment]
+    private let host: UIView
+    private let time: () -> Double
+    private let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("cue-ass-fonts", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    private var lines: [Key: [Line]] = [:]
+    private var renderer: AssSubtitlesRenderer?
+    private let picture = UIImageView()
+    private var link: CADisplayLink?
+    private var starting = false
+    private var stopped = false
+    private var dirty = false
+    private var busy = false
+
+    init(trackID: Int, header: String, fonts: [FontAttachment], host: UIView, time: @escaping () -> Double) {
+        self.trackID = trackID
+        self.fonts = fonts
+        self.host = host
+        self.time = time
+        builder = ASSScriptBuilder(header: header)
+        styles = Self.styles(in: header)
+    }
+
+    func stop() {
+        stopped = true
+        link?.invalidate()
+        link = nil
+        renderer = nil
+        picture.removeFromSuperview()
+        let folder = folder
+        DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: folder) }
+    }
+
+    /// What's dialogue right now, at the bottom and at the top. Signs among
+    /// new cues go to libass on the way.
+    func dialogue(in cues: [SubtitleCue], at time: Double) -> (bottom: [SubtitleText.Run], top: [SubtitleText.Run]) {
+        var bottom: [[SubtitleText.Run]] = []
+        var top: [[SubtitleText.Run]] = []
+        for cue in cues {
+            let key = Key(id: cue.id, start: cue.startTime)
+            let found = lines[key] ?? sort(cue)
+            lines[key] = found
+            guard cue.startTime <= time, time < cue.endTime else { continue }
+            for line in found where !(bottom + top).contains(line.runs) {
+                if line.top { top.append(line.runs) } else { bottom.append(line.runs) }
+            }
+        }
+        if dirty { load() }
+        return (SubtitleText.joined(bottom), SubtitleText.joined(top))
+    }
+
+    private func sort(_ cue: SubtitleCue) -> [Line] {
+        guard case .text(let raw) = cue.body else { return [] }
+        var out: [Line] = []
+        for event in raw.split(separator: "\n", omittingEmptySubsequences: true) {
+            // ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+            let fields = event.split(separator: ",", maxSplits: 8, omittingEmptySubsequences: false)
+            guard fields.count == 9 else { continue }
+            let name = fields[2].replacingOccurrences(of: "*", with: "")
+            let text = String(fields[8])
+            if Self.isSign(style: name, effect: fields[7], text: text) {
+                if builder.add(rawEventText: String(event), start: cue.startTime, end: cue.endTime) { dirty = true }
+            } else {
+                let line = Self.dialogue(text, style: styles[name] ?? Style())
+                if !line.runs.isEmpty { out.append(line) }
+            }
+        }
+        return out
+    }
+
+    private static func isSign(style: String, effect: Substring, text: String) -> Bool {
+        if !effect.isEmpty || text.range(of: signTags, options: .regularExpression) != nil { return true }
+        let name = style.lowercased().replacingOccurrences(of: "subtitle", with: "")
+        return name == "op" || name == "ed" || signStyles.contains { name.contains($0) }
+    }
+
+    /// The text without its tags, keeping what `SubtitleText` keeps: italics,
+    /// and a line asking for the top.
+    private static func dialogue(_ text: String, style: Style) -> Line {
+        var italic = style.italic
+        var top = style.top
+        var runs: [SubtitleText.Run] = []
+        func add(_ part: Substring) {
+            let plain = part.replacingOccurrences(of: "\\N", with: "\n")
+                .replacingOccurrences(of: "\\n", with: "\n")
+                .replacingOccurrences(of: "\\h", with: " ")
+            if !plain.isEmpty { runs.append(.init(text: plain, italic: italic)) }
+        }
+        var rest = Substring(text)
+        while let open = rest.firstIndex(of: "{"), let close = rest[open...].firstIndex(of: "}") {
+            add(rest[..<open])
+            let tags = rest[open...close]
+            if tags.contains("\\r") { italic = style.italic }
+            if let flag = tags.range(of: "\\\\i[01]", options: .regularExpression) { italic = tags[flag].last == "1" }
+            if let place = tags.range(of: "\\\\an[1-9]", options: .regularExpression) { top = tags[place].last! >= "7" }
+            rest = rest[rest.index(after: close)...]
+        }
+        add(rest)
+        return Line(runs: runs, top: top)
+    }
+
+    /// Italic and Alignment of each style, by the header's own Format line.
+    private static func styles(in header: String) -> [String: Style] {
+        var columns: [String] = []
+        var out: [String: Style] = [:]
+        for line in header.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("Format:"), line.contains("Alignment") {
+                columns = line.dropFirst(7).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            } else if line.hasPrefix("Style:") {
+                let values = line.dropFirst(6).split(separator: ",", omittingEmptySubsequences: false)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                func value(_ name: String) -> String? {
+                    columns.firstIndex(of: name).flatMap { $0 < values.count ? values[$0] : nil }
+                }
+                guard let name = value("Name") else { continue }
+                out[name.replacingOccurrences(of: "*", with: "")] = Style(italic: value("Italic") == "-1",
+                                                                          top: (value("Alignment").flatMap(Int.init) ?? 2) >= 7)
+            }
+        }
+        return out
+    }
+
+    /// Only a track with signs pays for libass; the fonts go to disk off the
+    /// main thread. The whole script again on each new sign: libass parses it
+    /// in milliseconds, and the package has no way to add a line.
+    private func load() {
+        guard !starting, !busy, !stopped else { return }
+        guard let renderer else {
+            starting = true
+            let (fonts, folder) = (fonts, folder)
+            DispatchQueue.global(qos: .userInitiated).async {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                for font in fonts {
+                    try? font.data.write(to: folder.appendingPathComponent((font.filename as NSString).lastPathComponent))
+                }
+                DispatchQueue.main.async { [weak self] in self?.start() }
+            }
+            return
+        }
+        dirty = false
+        renderer.loadTrack(content: builder.script())
+        draw()
+    }
+
+    private func start() {
+        starting = false
+        guard !stopped else { return }
+        let renderer = AssSubtitlesRenderer(fontConfig: FontConfig(fontsPath: folder, fontProvider: .coreText))
+        renderer.setCanvasSize(host.bounds.size, scale: UIScreen.main.scale)
+        self.renderer = renderer
+        host.insertSubview(picture, at: 0)
+        let link = CADisplayLink(target: self, selector: #selector(draw))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+        load()
+    }
+
+    /// From the frame's completion, not the package's publisher: a load empties
+    /// that first, and the sign on screen would blink.
+    @objc private func draw() {
+        guard !busy, let renderer else { return }
+        busy = true
+        renderer.loadFrame(offset: time()) { [weak self] frame in
+            DispatchQueue.main.async { self?.show(frame) }
+        }
+    }
+
+    private func show(_ frame: ProcessedImage?) {
+        busy = false
+        guard !stopped else { return }
+        if picture.image?.cgImage !== frame?.image {
+            picture.image = frame.map { UIImage(cgImage: $0.image) }
+        }
+        picture.frame = frame?.imageRect ?? .zero
+    }
+}
+
+/// A subtitle's text, one style for all: SF medium, a warm white (content, not
+/// interface), a solid black edge drawn under the fill so the letters keep
+/// their weight. Dialogue only: signs stay as drawn. The one option, for
+/// accessibility, swaps the edge for a black bar behind each line.
 private final class SubtitleText: UIView {
     struct Run: Equatable {
         let text: String
         let italic: Bool
     }
 
-    private static let size: CGFloat = 48
-    /// Half of it under the fill: 1.25 pt shows.
-    private static let stroke: CGFloat = 2.5
-    /// Room for the edge and an italic's overhang.
-    private static let inset: CGFloat = 4
+    private static let font = UIFont.systemFont(ofSize: 48, weight: .medium)
+    private static let color = UIColor(red: 1, green: 249 / 255, blue: 230 / 255, alpha: 1)
+    /// What shows of the edge: as much again is under the fill.
+    private static let edgeWidth: CGFloat = 3.5
+    /// How far a bar reaches past its line: as much above the capitals as
+    /// under the baseline, with room left for g, p and y.
+    private static let boxTop: CGFloat = 2
+    private static let boxBottom: CGFloat = 4
+    /// What leaves 4 pt between two bars.
+    private static let boxLineSpacing: CGFloat = 10
+    private static let boxKey = "cue.subtitle.blackBackground"
+    private static let boxOpacity: CGFloat = 0.8
+    private static let boxRadius: CGFloat = 10
+    /// Room for the edge and an italic's overhang, or the box's padding.
+    private static var inset: CGSize {
+        hasBox ? CGSize(width: 10, height: boxBottom + 2) : CGSize(width: edgeWidth + 2, height: edgeWidth + 2)
+    }
     private static let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+    static var hasBox = UserDefaults.standard.bool(forKey: boxKey) {
+        didSet { UserDefaults.standard.set(hasBox, forKey: boxKey) }
+    }
+
+    /// Lines on screen together, each on its own.
+    static func joined(_ lines: [[Run]]) -> [Run] {
+        var out: [Run] = []
+        for (index, line) in lines.enumerated() {
+            if index > 0 { out.append(Run(text: "\n", italic: false)) }
+            out += line
+        }
+        return out
+    }
 
     private var runs: [Run] = []
     private var fill = NSAttributedString()
@@ -910,13 +1143,6 @@ private final class SubtitleText: UIView {
         isOpaque = false
         isUserInteractionEnabled = false
         contentMode = .redraw
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.8
-        layer.shadowRadius = 3
-        layer.shadowOffset = CGSize(width: 0, height: 1)
-        // It moves with the controls, over video.
-        layer.shouldRasterize = true
-        layer.rasterizationScale = UIScreen.main.scale
     }
 
     @available(*, unavailable)
@@ -927,25 +1153,31 @@ private final class SubtitleText: UIView {
         guard new != runs else { return false }
         runs = new
         isHidden = new.isEmpty
-        fill = text(.foregroundColor, UIColor(red: 242 / 255, green: 240 / 255, blue: 239 / 255, alpha: 1))
+        render(within: width)
+        return true
+    }
+
+    func render(within width: CGFloat) {
+        fill = text(.foregroundColor, Self.color)
         let edged = NSMutableAttributedString(attributedString: fill)
-        edged.addAttributes([.strokeColor: UIColor.black.withAlphaComponent(0.6), .strokeWidth: Self.stroke / Self.size * 100],
+        edged.addAttributes([.strokeColor: UIColor.black, .strokeWidth: Self.edgeWidth * 2 / Self.font.pointSize * 100],
                             range: NSRange(location: 0, length: edged.length))
         edge = edged
         fitted = balanced(within: width)
         setNeedsDisplay()
-        return true
     }
 
     private func text(_ key: NSAttributedString.Key, _ value: Any) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byWordWrapping
-        let upright = UIFont.systemFont(ofSize: Self.size, weight: .medium)
+        paragraph.lineSpacing = Self.hasBox ? Self.boxLineSpacing : 0
+        let upright = Self.font
         let out = NSMutableAttributedString()
         for run in runs {
-            let slanted = upright.fontDescriptor.withSymbolicTraits(.traitItalic)
-                .map { UIFont(descriptor: $0, size: Self.size) }
+            // With the upright's traits, or a bold line loses its weight.
+            let slanted = upright.fontDescriptor.withSymbolicTraits(upright.fontDescriptor.symbolicTraits.union(.traitItalic))
+                .map { UIFont(descriptor: $0, size: upright.pointSize) }
             out.append(NSAttributedString(string: run.text, attributes: [
                 key: value, .paragraphStyle: paragraph, .font: run.italic ? slanted ?? upright : upright
             ]))
@@ -967,14 +1199,53 @@ private final class SubtitleText: UIView {
             if measure(middle).height > height { low = middle } else { high = middle }
         }
         let size = measure(high)
-        return CGSize(width: ceil(size.width) + Self.inset * 2, height: ceil(size.height) + Self.inset * 2)
+        return CGSize(width: ceil(size.width) + Self.inset.width * 2, height: ceil(size.height) + Self.inset.height * 2)
     }
 
     override func draw(_ rect: CGRect) {
-        let area = bounds.insetBy(dx: Self.inset, dy: Self.inset)
-        UIGraphicsGetCurrentContext()?.setLineJoin(.round)
-        edge.draw(with: area, options: Self.options, context: nil)
-        fill.draw(with: area, options: Self.options, context: nil)
+        let area = bounds.insetBy(dx: Self.inset.width, dy: Self.inset.height)
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        if Self.hasBox {
+            drawBox(in: area, context)
+        } else {
+            context.setLineJoin(.round)
+            edge.draw(with: area, options: Self.options, context: nil)
+            fill.draw(with: area, options: Self.options, context: nil)
+        }
+    }
+
+    /// Through TextKit, so the bars and the text share one layout.
+    private func drawBox(in area: CGRect, _ context: CGContext) {
+        let storage = NSTextStorage(attributedString: fill)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: area.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        let glyphs = layout.glyphRange(for: container)
+        let string = fill.string as NSString
+        var lines: [CGRect] = []
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, range, _ in
+            // Without the space a wrapped line ends on, or the bar leans right.
+            var characters = layout.characterRange(forGlyphRange: range, actualGlyphRange: nil)
+            while characters.length > 0, CharacterSet.whitespacesAndNewlines.contains(
+                UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? "x") {
+                characters.length -= 1
+            }
+            guard characters.length > 0 else { return }
+            let visible = layout.glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
+            lines.append(layout.boundingRect(forGlyphRange: visible, in: container)
+                .offsetBy(dx: area.minX, dy: area.minY))
+        }
+        for line in lines {
+            let bar = CGRect(x: line.minX - Self.inset.width, y: line.minY - Self.boxTop,
+                             width: line.width + Self.inset.width * 2,
+                             height: Self.font.lineHeight + Self.boxTop + Self.boxBottom)
+            context.addPath(UIBezierPath(roundedRect: bar, cornerRadius: Self.boxRadius).cgPath)
+        }
+        context.setFillColor(UIColor.black.withAlphaComponent(Self.boxOpacity).cgColor)
+        context.fillPath()
+        layout.drawGlyphs(forGlyphRange: glyphs, at: area.origin)
     }
 }
 
@@ -1513,6 +1784,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let surface = AetherPlayerView()
     private let subtitleText = SubtitleText()
     private let subtitleImage = UIImageView()
+    private let subtitleTop = SubtitleText()
+    /// What stays where it is when the controls come up: signs, and lines
+    /// asking for the top.
+    private let fixedSubtitles = UIView()
+    private var assTrack: AssTrack?
     /// Both kinds of subtitle: they make way as the controls come up.
     private let subtitles = UIView()
     private var subtitleFloor = PlayerController.subtitleRest
@@ -1647,6 +1923,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// Subtitles' foot above the bottom of the screen: at rest, and clear of
     /// the title and the buttons.
     private static let subtitleRest: CGFloat = 90
+    private static let subtitleTopInset: CGFloat = 60
     private static let subtitleClear: CGFloat = 250
     private var menu = Menu.none
     private weak var lastButton: PlayerButton?
@@ -1697,7 +1974,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        for sub in [focusView, surface, subtitles, overlay.shadeView, audioButton, subtitleButton, overlay,
+        for sub in [focusView, surface, subtitles, fixedSubtitles, overlay.shadeView, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,
                     readout] as [UIView] {
             view.addSubview(sub)
@@ -1705,6 +1982,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
         for sub in [subtitleImage, subtitleText] as [UIView] { subtitles.addSubview(sub) }
         subtitles.isUserInteractionEnabled = false
+        fixedSubtitles.addSubview(subtitleTop)
+        fixedSubtitles.isUserInteractionEnabled = false
 
         trackList.isHidden = true
         trackList.picked = { [weak self] in self?.setMenu(.none) }
@@ -1751,6 +2030,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         overlay.frame = view.bounds
         subtitles.bounds = view.bounds
         subtitles.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        fixedSubtitles.frame = view.bounds
         // Bounds and center: its transform is what moves it.
         let size = PlayerButton.size
         let center = view.bounds.height - PlayerPrompt.bottom - size / 2
@@ -1801,6 +2081,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         options.softwarePacketCacheStorage = .disk
         options.preferredAudioLanguages = audioLanguages()
         options.preferredSubtitleLanguages = subtitleLanguages()
+        options.preserveASSMarkup = true
         let resume = resume
         loadTask = Task { [weak self] in
             do {
@@ -2058,6 +2339,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         showTask?.cancel()
         episodeTask?.cancel()
         dropStills()
+        assTrack?.stop()
+        assTrack = nil
         engine?.stop()
         Self.isPlaying = false
     }
@@ -2701,12 +2984,29 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             engine.clearSubtitle()
             PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = "off" }
         }
-        return [off] + engine.subtitleTracks.map { track in
+        let tracks = engine.subtitleTracks.map { track in
             TrackList.Row(title: subtitleTitle(track), active: track.id == active?.id) { [weak self] in
                 engine.selectSubtitleTrack(index: track.id)
                 PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = track.language }
             }
         }
+        let box = TrackList.Row(title: "Black Background", active: SubtitleText.hasBox) { [weak self] in
+            guard let self else { return }
+            SubtitleText.hasBox.toggle()
+            for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }
+            fitSubtitles()
+        }
+        return [off] + tracks + [box]
+    }
+
+    private func fitSubtitles() {
+        let bounds = view.bounds
+        let size = subtitleText.fitted
+        subtitleText.frame = CGRect(x: (bounds.width - size.width) / 2, y: bounds.height - Self.subtitleRest - size.height,
+                                    width: size.width, height: size.height)
+        let top = subtitleTop.fitted
+        subtitleTop.frame = CGRect(x: (bounds.width - top.width) / 2, y: Self.subtitleTopInset,
+                                   width: top.width, height: top.height)
     }
 
     // MARK: Screen
@@ -2890,28 +3190,55 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         let alpha: CGFloat = scrubTarget != nil || scan != nil ? 0 : 1
         if subtitles.alpha != alpha {
-            UIView.animate(withDuration: Motion.fadeDuration) { self.subtitles.alpha = alpha }
+            UIView.animate(withDuration: Motion.fadeDuration) {
+                self.subtitles.alpha = alpha
+                self.fixedSubtitles.alpha = alpha
+            }
         }
+    }
+
+    /// The ASS track on, kept across ticks; nil on anything else.
+    private func updateAssTrack(_ engine: AetherEngine) -> AssTrack? {
+        let track = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
+        guard let track, let header = track.assHeader ?? engine.sidecarASSHeader else {
+            assTrack?.stop()
+            assTrack = nil
+            return nil
+        }
+        if assTrack?.trackID != track.id {
+            assTrack?.stop()
+            assTrack = AssTrack(trackID: track.id, header: header, fonts: engine.fontAttachments, host: fixedSubtitles) { [weak engine] in
+                engine?.clock.sourceTime ?? 0
+            }
+        }
+        return assTrack
     }
 
     private func showSubtitle(_ engine: AetherEngine) {
         let time = engine.clock.sourceTime
-        let cue = engine.subtitleCues.first { $0.startTime <= time && time < $0.endTime }
-        var runs: [SubtitleText.Run] = []
-        var image: SubtitleImage?
-        switch cue?.body {
-        case .image(let picture): image = picture
-        case .richText(let parts): runs = parts.map { .init(text: $0.text, italic: $0.isItalic) }
-        case .text(let line): runs = [.init(text: Self.plain(line), italic: false)]
-        case nil: break
+        let cues = engine.subtitleCues.filter { $0.startTime <= time && time < $0.endTime }
+        var runs: [SubtitleText.Run]
+        var top: [SubtitleText.Run] = []
+        if let ass = updateAssTrack(engine) {
+            (runs, top) = ass.dialogue(in: engine.subtitleCues, at: time)
+        } else {
+            runs = SubtitleText.joined(cues.compactMap { cue -> [SubtitleText.Run]? in
+                switch cue.body {
+                case .richText(let parts): parts.map { .init(text: $0.text, italic: $0.isItalic) }
+                case .text(let line): [.init(text: Self.plain(line), italic: false)]
+                case .image: nil
+                }
+            })
         }
+        let image = cues.lazy.compactMap { cue -> SubtitleImage? in
+            if case .image(let picture) = cue.body { return picture }
+            return nil
+        }.first
 
         let bounds = view.bounds
-        if subtitleText.show(runs, within: bounds.width * 0.7) {
-            let size = subtitleText.fitted
-            subtitleText.frame = CGRect(x: (bounds.width - size.width) / 2, y: bounds.height - Self.subtitleRest - size.height,
-                                        width: size.width, height: size.height)
-        }
+        let bottomChanged = subtitleText.show(runs, within: bounds.width * 0.7)
+        let topChanged = subtitleTop.show(top, within: bounds.width * 0.7)
+        if bottomChanged || topChanged { fitSubtitles() }
 
         if let image {
             subtitleImage.image = UIImage(cgImage: image.cgImage)

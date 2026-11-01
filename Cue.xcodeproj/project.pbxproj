@@ -60,6 +60,7 @@
 		797BADDA750CA06F437E6709 /* ATVSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E2AA54994F2EEFCB7172538 /* ATVSettingsView.swift */; };
 		7E58E4EDE00F2D9FB6C801D7 /* FPSOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04B527BB0670656CB223AD52 /* FPSOverlay.swift */; };
 		8361939032B8D0F372BAC1CC /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68ECE890FFEBF1D3EA964188 /* FolderView.swift */; };
+		862DFBD0817FD88823C61B10 /* SwiftAssRenderer in Frameworks */ = {isa = PBXBuildFile; productRef = 39C35D70FAB1F94C84B5794B /* SwiftAssRenderer */; };
 		8A528A8674DA8255C41E9CFC /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BFF6963EAAD2C29809A7AB /* LibraryView.swift */; };
 		8AACEF3BA291CC13376D89D3 /* FixedFocusRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC317497DF9AA68207E5A654 /* FixedFocusRows.swift */; };
 		93A87DE56F5855D2C0ABFD2F /* TopShelfProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A324DBCCDD1DEFB66AC24EC /* TopShelfProvider.swift */; };
@@ -239,6 +240,7 @@
 			files = (
 				75A3EAE28B242A70D87CED4A /* YouTubeKit in Frameworks */,
 				006EDB97CF180106CA7F0E9C /* AetherEngine in Frameworks */,
+				862DFBD0817FD88823C61B10 /* SwiftAssRenderer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -468,6 +470,7 @@
 			packageProductDependencies = (
 				3A76C9122AF6F83D22C892E4 /* YouTubeKit */,
 				7A87E24348D06C4E08F9E345 /* AetherEngine */,
+				39C35D70FAB1F94C84B5794B /* SwiftAssRenderer */,
 			);
 			productName = Cue;
 			productReference = 6E55D9E0F8198923EEBD3D31 /* Cue.app */;
@@ -503,6 +506,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				9392292B2D879285F8F32E75 /* XCRemoteSwiftPackageReference "AetherEngine" */,
+				9D24BA6EF8DB8D5F5CF17C88 /* XCRemoteSwiftPackageReference "swift-ass-renderer" */,
 				CC92B44E82BF2FAD0C1242DB /* XCLocalSwiftPackageReference "Vendor/YouTubeKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -901,9 +905,22 @@
 				version = 7.53.0;
 			};
 		};
+		9D24BA6EF8DB8D5F5CF17C88 /* XCRemoteSwiftPackageReference "swift-ass-renderer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mihai8804858/swift-ass-renderer";
+			requirement = {
+				kind = revision;
+				revision = 28919f6b5ddd896d327b0283f8d97624902236e6;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		39C35D70FAB1F94C84B5794B /* SwiftAssRenderer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9D24BA6EF8DB8D5F5CF17C88 /* XCRemoteSwiftPackageReference "swift-ass-renderer" */;
+			productName = SwiftAssRenderer;
+		};
 		3A76C9122AF6F83D22C892E4 /* YouTubeKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = YouTubeKit;

@@ -252,7 +252,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   (picking closes it). Skip and Next Episode above the bar on the left, level
   with the buttons. Up: a prompt on screen, else the buttons (Right off the prompt
   reaches them, Left off Audio the prompt; Up off the prompt does nothing); Down from them: the bar; Up off them: the controls go, a way out that can't close the player. Swipe or click Down (controls up
-  or not): the shelf, without bar or buttons. The shelf is its own thing (decided; attached to the bar as YouTube's was tried: it left subtitles no room). Subtitles: one style, no options (`SubtitleText`): SF medium 48 pt, a solid off-white, F2F0EF (content, so past the text limit), a tight soft shadow (80 %, 3 pt) and a 1.25 pt edge at 60 % (2 pt was too heavy; none at all was harder to read), centred in 70 % of the width, the file's line breaks kept, a long line wrapped into even ones, the file's italics. Low at rest, up on the controls' spring to clear what comes up (title and buttons, a prompt, the shelf), gone while scrubbing. A swipe opens only if clearly
+  or not): the shelf, without bar or buttons. The shelf is its own thing (decided; attached to the bar as YouTube's was tried: it left subtitles no room). Subtitles: one style, no options (`SubtitleText`; a styler with fonts and a Settings page was tried and removed once this was found): SF medium 48 pt, FFF9E6 (content, so past the text limit), a solid black 3.5 pt edge, no shadow (one accessibility option, Black Background, last in the Subtitles list and kept: no edge, a bar behind each line, 4 pt apart, 80 % black (70 and 75 tried), tight to the text; one block looked heavy, no blur), centred in 70 % of the width, the file's line breaks kept, a long line wrapped into even ones, the file's italics. ASS (`AssTrack`): dialogue is ours, the file's fonts and colours ignored, a line asking for the top stays there; a line with placement, motion, clipping, rotation, drawing or karaoke tags, an Effect, or a sign or song style goes to libass (`swift-ass-renderer`, pinned; 4K fine on the TV) with the file's fonts, in a layer that doesn't rise with the controls. Every active cue shows. Low at rest, up on the controls' spring to clear what comes up (title and buttons, a prompt, the shelf), gone while scrubbing. A swipe opens only if clearly
   vertical. All of this but the title and the prompts' spot is still an open question. Back: shelf, list, buttons, a
   scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the
   setting, then the device's language; E-AC-3 Atmos over TrueHD (the bridge
@@ -272,6 +272,5 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   add only what we decide is important. It replaces today's five paths (KSPlayer's AVPlayer and
   FFmpeg, VLC, `DVSampleEngine`, the loopback remux) and their timer
   failovers; no engine setting. Needs tvOS 18 (we target 17). To watch:
-  memory over a long film (the loopback path's leak), styled ASS (it
-  hands raw ASS; we draw it). A fallback engine only if Aether shows a
+  memory over a long film (the loopback path's leak), A fallback engine only if Aether shows a
   real gap. Trailers keep their own `AVPlayer`.

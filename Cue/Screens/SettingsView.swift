@@ -561,9 +561,13 @@ private struct AboutLicensesPage: View {
             .background(alignment: .top) { SettingsFocusHolder() }
             SettingsSection(title: "Built With") {
                 VStack(spacing: 0) {
-                    SettingsInfoRow(title: "KSPlayer", value: "GPLv3")
+                    SettingsInfoRow(title: "AetherEngine", value: "LGPLv3")
                     SettingsInfoRow(title: "FFmpeg", value: "LGPLv2.1")
-                    SettingsInfoRow(title: "VLCKit", value: "LGPLv2.1")
+                    SettingsInfoRow(title: "libass", value: "ISC")
+                    SettingsInfoRow(title: "FriBidi", value: "LGPLv2.1")
+                    SettingsInfoRow(title: "HarfBuzz", value: "MIT")
+                    SettingsInfoRow(title: "FreeType", value: "FTL")
+                    SettingsInfoRow(title: "Fontconfig", value: "MIT")
                     SettingsInfoRow(title: "YouTubeKit", value: "MIT")
                     SettingsInfoRow(title: "libdovi", value: "MIT")
                 }

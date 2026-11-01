@@ -10,6 +10,15 @@
       }
     },
     {
+      "identity" : "combine-schedulers",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/combine-schedulers",
+      "state" : {
+        "revision" : "114354e8c1667a2edc4993700fb9fa4f90157b56",
+        "version" : "1.2.2"
+      }
+    },
+    {
       "identity" : "ffmpegbuild",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/superuser404notfound/FFmpegBuild",
@@ -34,6 +43,41 @@
       "state" : {
         "revision" : "e636c2b2458930770932a36d311ec9d478575b90",
         "version" : "0.3.1"
+      }
+    },
+    {
+      "identity" : "swift-ass-renderer",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mihai8804858/swift-ass-renderer",
+      "state" : {
+        "revision" : "28919f6b5ddd896d327b0283f8d97624902236e6"
+      }
+    },
+    {
+      "identity" : "swift-concurrency-extras",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/swift-concurrency-extras",
+      "state" : {
+        "revision" : "8a4260f7373493435bd21194585c95b72bfdd401",
+        "version" : "1.4.3"
+      }
+    },
+    {
+      "identity" : "swift-issue-reporting",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/swift-issue-reporting",
+      "state" : {
+        "revision" : "b23bb4493c439d3e05152bc167014235ba3d47fc",
+        "version" : "2.1.2"
+      }
+    },
+    {
+      "identity" : "swift-libass",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mihai8804858/swift-libass",
+      "state" : {
+        "revision" : "6513c488e377a26c06db327fb2acfc2653a041d5",
+        "version" : "1.4.0"
       }
     }
   ],

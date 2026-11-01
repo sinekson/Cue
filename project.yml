@@ -21,6 +21,9 @@ packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
     exactVersion: 7.53.0
+  SwiftAssRenderer:
+    url: https://github.com/mihai8804858/swift-ass-renderer
+    revision: 28919f6b5ddd896d327b0283f8d97624902236e6
 targets:
   Cue:
     type: application
@@ -31,6 +34,7 @@ targets:
       - package: YouTubeKit
       - package: AetherEngine
         product: AetherEngine
+      - package: SwiftAssRenderer
       # ─── Top Shelf (Continue Watching on the tvOS home screen) ───
       # Needs the app group `group.app.cue.tv`. AppGroupResolver reads the
       # group from the LIVE entitlement at runtime, so a re-signing tool that
