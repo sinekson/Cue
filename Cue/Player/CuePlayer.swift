@@ -1891,7 +1891,7 @@ private final class PlayerPrompt: UIView {
     private static let pillHeight: CGFloat = 88
     private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
-    fileprivate static let bottom: CGFloat = 168
+    fileprivate static let bottom: CGFloat = 176
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
@@ -2104,8 +2104,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var away = false
     private var mountPaused = false
     /// How long the overlay stays after a press.
-    private static let overlaySeconds: TimeInterval = 4
+    private static let overlaySeconds: TimeInterval = 3
     private var overlayUntil = Date.distantPast
+    /// Back in this long after the controls hid by themselves was meant for them.
+    private static let backGuardSeconds: TimeInterval = 1
+    private var backGuardUntil = Date.distantPast
     /// Back put them away: they stay gone, even paused, until the next press.
     private var controlsDismissed = false
 
@@ -2731,9 +2734,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     /// A press, or a swipe off the buttons or a prompt. Down: off them to the
-    /// bar, else the shelf. Up: to a prompt on screen, else the buttons; off the
-    /// buttons the controls go; off a prompt, nothing (Right is the way to the
-    /// buttons).
+    /// bar, else the shelf. Up: to a prompt on screen, else the buttons; off
+    /// either the controls go (Right is the way from a prompt to the buttons).
     private func stepVertically(down: Bool, _ engine: AetherEngine) {
         guard scan == nil, hasPlayed else { return }
         if menu == .buttons {
@@ -2742,7 +2744,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             if !down { hideControls() }
             return
         }
-        if !down && promptView.takesFocus { return }
+        if !down && promptView.takesFocus {
+            hideControls()
+            return updatePrompt(engine)
+        }
         let toBar = down && promptView.takesFocus
         let toPrompt = !down && promptView.alpha > 0 && !promptView.takesFocus
         guard toBar || toPrompt else {
@@ -2776,6 +2781,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             showControls()
         } else if hasPlayed, overlay.isShown {
             hideControls()
+        } else if Date() < backGuardUntil {
+            return
         } else if promptView.alpha > 0, let prompt {
             dismissedPrompt = prompt
             if let engine { updatePrompt(engine) }
@@ -3517,6 +3524,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
         let shown = !shelfOpen && (menu != .none || scrubTarget != nil || !hasPlayed
             || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
+        if overlay.isShown, !shown, !controlsDismissed, menu == .none, !shelfOpen {
+            backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)
+        }
         overlay.setShown(shown)
         placeSubtitles()
         let alpha: CGFloat = shown && !(scrubTarget != nil && isDetached) ? 1 : 0
