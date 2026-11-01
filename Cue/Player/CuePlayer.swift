@@ -421,6 +421,10 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
 
 /// A tab of the shelf: focused a white capsule, the chosen one brighter at rest.
 private final class PanelTab: UIView {
+    static let height: CGFloat = 56
+    /// The word's distance from the pill's edge.
+    static let padding: CGFloat = 24
+
     private let platter = UIView()
     private let title = UILabel()
 
@@ -433,8 +437,11 @@ private final class PanelTab: UIView {
         platter.backgroundColor = .white
         platter.alpha = 0
         title.text = text
-        title.font = .systemFont(ofSize: 28, weight: .medium)
+        title.font = .systemFont(ofSize: 26, weight: .medium)
         title.textAlignment = .center
+        title.layer.shadowColor = UIColor.black.cgColor
+        title.layer.shadowOffset = .zero
+        title.layer.shadowRadius = 8
         for sub in [platter, title] as [UIView] { addSubview(sub) }
         paint()
     }
@@ -444,7 +451,7 @@ private final class PanelTab: UIView {
 
     override var canBecomeFocused: Bool { true }
 
-    var width: CGFloat { title.intrinsicContentSize.width + 64 }
+    var width: CGFloat { title.intrinsicContentSize.width + Self.padding * 2 }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -455,30 +462,32 @@ private final class PanelTab: UIView {
 
     private func paint() {
         title.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
-            : UIColor.white.withAlphaComponent(chosen ? FixedFocusText.primary : FixedFocusText.tertiary)
+            : UIColor.white.withAlphaComponent(chosen ? FixedFocusText.primary : FixedFocusText.body)
+        title.layer.shadowOpacity = isFocused ? 0 : 0.8
         platter.alpha = isFocused ? 1 : 0
         transform = isFocused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        coordinator.addCoordinatedAnimations { self.paint() }
+        focusChange(duration: 0.2) { self.paint() }
     }
 }
 
-/// Glass from the bottom: tabs, and a page under them. The tab follows the
-/// focus; one height for every page, so a switch moves nothing.
+/// From the bottom: tabs, plain words, over a page of glass. The tab follows
+/// the focus; one height for every page, so a switch moves nothing.
 private class PlayerSheet: UIView {
     enum Place { case away, peek, open }
 
     fileprivate static let inset: CGFloat = 28
-    private static let tabsGap: CGFloat = 16
-    /// The tabs, whole, and a little under them.
-    private static let peek: CGFloat = 100
+    private static let tabsGap: CGFloat = 24
+    /// The tabs and the gap under them; the page starts past the screen's edge.
+    fileprivate static let tabRow = PanelTab.height + tabsGap
     private static let tabSpacing: CGFloat = 8
 
     private let clip = UIView()
     private let glass: GlassBacking
+    private let tabRow = UIView()
     private let tabs: [PanelTab]
     /// One per tab; two tabs may share one.
     fileprivate var pages: [UIView] = []
@@ -503,12 +512,14 @@ private class PlayerSheet: UIView {
         clip.layer.cornerCurve = .continuous
         addSubview(glass)
         addSubview(clip)
-        for tab in tabs { clip.addSubview(tab) }
+        addSubview(tabRow)
+        for tab in tabs { tabRow.addSubview(tab) }
+        tabRow.transform = rowTransform(for: place)
         addLayoutGuide(guide)
         NSLayoutConstraint.activate([
             guide.leadingAnchor.constraint(equalTo: leadingAnchor),
             guide.trailingAnchor.constraint(equalTo: trailingAnchor),
-            guide.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset + TrackCell.height),
+            guide.topAnchor.constraint(equalTo: topAnchor, constant: PanelTab.height),
             guide.heightAnchor.constraint(equalToConstant: Self.tabsGap)
         ])
     }
@@ -524,19 +535,22 @@ private class PlayerSheet: UIView {
 
     /// Where the page goes: under the tabs, to the sheet's foot.
     fileprivate var pageFrame: CGRect {
-        let top = Self.inset + TrackCell.height + Self.tabsGap
-        return CGRect(x: Self.inset, y: top, width: bounds.width - Self.inset * 2, height: bounds.height - top - Self.inset / 2)
+        CGRect(x: Self.inset, y: Self.inset, width: bounds.width - Self.inset * 2,
+               height: bounds.height - Self.tabRow - Self.inset * 1.5)
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] { [tabs[current]] }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glass.frame = bounds
-        clip.frame = bounds
-        var x = Self.inset + 8
+        let panel = bounds.inset(by: UIEdgeInsets(top: Self.tabRow, left: 0, bottom: 0, right: 0))
+        tabRow.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: PanelTab.height)
+        tabRow.center = CGPoint(x: bounds.midX, y: PanelTab.height / 2)
+        glass.frame = panel
+        clip.frame = panel
+        var x: CGFloat = 0
         for tab in tabs where !tab.isHidden {
-            tab.frame = CGRect(x: x, y: Self.inset, width: tab.width, height: TrackCell.height)
+            tab.frame = CGRect(x: x, y: 0, width: tab.width, height: PanelTab.height)
             x += tab.width + Self.tabSpacing
         }
         for page in pages { page.frame = pageFrame }
@@ -570,6 +584,7 @@ private class PlayerSheet: UIView {
         isUserInteractionEnabled = new == .open
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.transform = self.transform(for: new)
+            self.tabRow.transform = self.rowTransform(for: new)
         } completion: { _ in
             if self.place == .away { self.isHidden = true }
         }
@@ -580,9 +595,14 @@ private class PlayerSheet: UIView {
         let top = center.y - bounds.height / 2
         switch place {
         case .open: return .identity
-        case .peek: return CGAffineTransform(translationX: 0, y: page - Self.peek - top)
+        case .peek: return CGAffineTransform(translationX: 0, y: page - Self.tabRow - top)
         case .away: return CGAffineTransform(translationX: 0, y: page + 40 - top)
         }
+    }
+
+    /// Peeking, the words line up with the bar; open, the pills with the page.
+    private func rowTransform(for place: Place) -> CGAffineTransform {
+        place == .open ? .identity : CGAffineTransform(translationX: -PanelTab.padding, y: 0)
     }
 
     /// How far it rises from the peek when it opens.
@@ -988,7 +1008,7 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
     fileprivate static let cardWidth = card.width
     fileprivate static let cardRow = card.height + FixedFocusMetrics.infoGap + FixedFocusMetrics.captionLineOffset
         + FixedFocusMetrics.factsHeight
-    static let height = PlayerSheet.inset * 2 + TrackCell.height + 16 + cardRow + growth * 2
+    static let height = PlayerSheet.tabRow + PlayerSheet.inset * 2 + cardRow + growth * 2
 
     /// Filled as it opens: what's playing may have changed.
     var fill: () -> (episodes: [Episode], sources: [Source]) = { ([], []) }
@@ -1665,17 +1685,17 @@ private final class PlayerOverlay: UIView {
         controls.bounds = bounds
         controls.center = CGPoint(x: bounds.midX, y: bounds.midY)
         // Left above the bar, level with the buttons, clear of them.
-        title.frame = CGRect(x: inset, y: bounds.height - 232, width: width - 220, height: 40)
-        episode.frame = CGRect(x: inset, y: bounds.height - 264, width: width - 220, height: 30)
+        title.frame = CGRect(x: inset, y: bounds.height - 208, width: width - 220, height: 40)
+        episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
-        bar.center = CGPoint(x: bounds.midX, y: bounds.height - 167)
+        bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
         barShadow.bounds = bar.bounds
         barShadow.center = bar.center
         barShadow.layer.shadowPath = UIBezierPath(roundedRect: bar.bounds, cornerRadius: Self.barHeight / 2).cgPath
         placeFill()
         placeHeld()
         placeElapsed()
-        remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 150, width: 200, height: 32)
+        remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 126, width: 200, height: 32)
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
         placePreview()
     }
@@ -1716,7 +1736,7 @@ private final class PlayerOverlay: UIView {
         let extra = markWidth
         let marker = bar.frame.minX + bar.bounds.width * fraction - width / 2
         let x = min(max(marker, bar.frame.minX), bar.frame.maxX - width - extra)
-        elapsed.frame = CGRect(x: x, y: bounds.height - 150, width: width, height: 32)
+        elapsed.frame = CGRect(x: x, y: bounds.height - 126, width: width, height: 32)
         placeMark()
         let alpha: CGFloat = x + width + extra > bar.frame.maxX - remaining.intrinsicContentSize.width - 24 ? 0 : 1
         guard remaining.alpha != alpha else { return }
@@ -1755,7 +1775,7 @@ private final class PlayerOverlay: UIView {
         let size = Self.previewSize
         let x = min(max(bar.frame.minX + bar.bounds.width * fraction - size.width / 2, bar.frame.minX),
                     bar.frame.maxX - size.width)
-        previewHolder.frame = CGRect(x: x, y: bounds.height - 200 - size.height, width: size.width, height: size.height)
+        previewHolder.frame = CGRect(x: x, y: bounds.height - 176 - size.height, width: size.width, height: size.height)
     }
 
     /// nil: time only (no still for that spot yet).
@@ -1924,7 +1944,7 @@ private final class PlayerPrompt: UIView {
     private static let pillHeight: CGFloat = 88
     private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
-    fileprivate static let bottom: CGFloat = 200
+    fileprivate static let bottom: CGFloat = 176
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
@@ -2226,7 +2246,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// the title and the buttons.
     private static let subtitleRest: CGFloat = 90
     private static let subtitleTopInset: CGFloat = 60
-    private static let subtitleClear: CGFloat = 274
+    private static let subtitleClear: CGFloat = 250
     private var menu = Menu.none
     private weak var lastButton: PlayerButton?
     /// What On turns back on.
