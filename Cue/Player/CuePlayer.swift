@@ -469,8 +469,12 @@ private final class PanelTab: UIView {
 /// Glass from the bottom: tabs, and a page under them. The tab follows the
 /// focus; one height for every page, so a switch moves nothing.
 private class PlayerSheet: UIView {
+    enum Place { case away, peek, open }
+
     fileprivate static let inset: CGFloat = 28
     private static let tabsGap: CGFloat = 16
+    /// The tabs, whole, and a little under them.
+    private static let peek: CGFloat = 100
     private static let tabSpacing: CGFloat = 8
 
     private let clip = UIView()
@@ -482,6 +486,7 @@ private class PlayerSheet: UIView {
     /// the nearest, and Up reaches a tab from anywhere along it.
     private let guide = UIFocusGuide()
     private(set) var current = 0
+    private(set) var place = Place.away
     private var reachedEdge = Date.distantPast
 
     private var onTabs: Bool { tabs.contains(where: \.isFocused) }
@@ -492,6 +497,7 @@ private class PlayerSheet: UIView {
         tabs = titles.map(PanelTab.init)
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: height))
         isHidden = true
+        isUserInteractionEnabled = false
         clip.clipsToBounds = true
         clip.layer.cornerRadius = radius
         clip.layer.cornerCurve = .continuous
@@ -547,30 +553,42 @@ private class PlayerSheet: UIView {
         showTab()
     }
 
-    /// Off the screen and back, never faded: tvOS won't focus into a transparent view.
-    func open() {
-        guard isHidden else { return }
-        pageWillOpen()
-        showTab()
-        isHidden = false
-        transform = awayTransform
+    /// Off the screen, its tabs up the bottom edge with the controls, or open.
+    /// Moved, never faded: tvOS won't focus into a transparent view.
+    func move(to new: Place) {
+        guard new != place else { return }
+        if new == .open {
+            pageWillOpen()
+            showTab()
+        }
+        if isHidden {
+            pageWillPeek()
+            isHidden = false
+            transform = transform(for: .away)
+        }
+        place = new
+        isUserInteractionEnabled = new == .open
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-            self.transform = .identity
-        }
-    }
-
-    func close() {
-        guard !isHidden else { return }
-        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-            self.transform = self.awayTransform
+            self.transform = self.transform(for: new)
         } completion: { _ in
-            if self.transform != .identity { self.isHidden = true }
+            if self.place == .away { self.isHidden = true }
         }
     }
 
-    private var awayTransform: CGAffineTransform {
-        CGAffineTransform(translationX: 0, y: (superview?.bounds.height ?? 0) - center.y + bounds.height / 2 + 40)
+    private func transform(for place: Place) -> CGAffineTransform {
+        let page = superview?.bounds.height ?? 0
+        let top = center.y - bounds.height / 2
+        switch place {
+        case .open: return .identity
+        case .peek: return CGAffineTransform(translationX: 0, y: page - Self.peek - top)
+        case .away: return CGAffineTransform(translationX: 0, y: page + 40 - top)
+        }
     }
+
+    /// How far it rises from the peek when it opens.
+    var rise: CGFloat { transform(for: .peek).ty }
+    /// How far it falls from the peek when it goes.
+    var drop: CGFloat { transform(for: .away).ty - transform(for: .peek).ty }
 
     /// Up from the tabs leaves it. A press that climbed to them reaches the
     /// controller after the focus has moved, so it has to have rested there.
@@ -578,6 +596,7 @@ private class PlayerSheet: UIView {
 
     /// The page as it opens or its tab comes up.
     fileprivate func showPage(_ index: Int) {}
+    fileprivate func pageWillPeek() {}
     fileprivate func pageWillOpen() {}
     fileprivate func pageTakesFocus(_ index: Int) -> Bool { true }
     fileprivate var pageFocus: UIFocusEnvironment { pages[current] }
@@ -1009,6 +1028,11 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
     }
 
     override func pageTakesFocus(_ index: Int) -> Bool { index != Tab.details.rawValue }
+
+    /// Its tabs show from here, so they have to be right.
+    override func pageWillPeek() {
+        setTabHidden(Tab.episodes.rawValue, fill().episodes.isEmpty)
+    }
 
     override func pageWillOpen() {
         (episodes, sources) = fill()
@@ -1637,19 +1661,21 @@ private final class PlayerOverlay: UIView {
         super.layoutSubviews()
         let inset: CGFloat = 80
         let width = bounds.width - inset * 2
-        controls.frame = bounds
+        // Bounds and center: its transform is what the shelf pushes.
+        controls.bounds = bounds
+        controls.center = CGPoint(x: bounds.midX, y: bounds.midY)
         // Left above the bar, level with the buttons, clear of them.
-        title.frame = CGRect(x: inset, y: bounds.height - 208, width: width - 220, height: 40)
-        episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
+        title.frame = CGRect(x: inset, y: bounds.height - 232, width: width - 220, height: 40)
+        episode.frame = CGRect(x: inset, y: bounds.height - 264, width: width - 220, height: 30)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
-        bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
+        bar.center = CGPoint(x: bounds.midX, y: bounds.height - 167)
         barShadow.bounds = bar.bounds
         barShadow.center = bar.center
         barShadow.layer.shadowPath = UIBezierPath(roundedRect: bar.bounds, cornerRadius: Self.barHeight / 2).cgPath
         placeFill()
         placeHeld()
         placeElapsed()
-        remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 126, width: 200, height: 32)
+        remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 150, width: 200, height: 32)
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
         placePreview()
     }
@@ -1690,7 +1716,7 @@ private final class PlayerOverlay: UIView {
         let extra = markWidth
         let marker = bar.frame.minX + bar.bounds.width * fraction - width / 2
         let x = min(max(marker, bar.frame.minX), bar.frame.maxX - width - extra)
-        elapsed.frame = CGRect(x: x, y: bounds.height - 126, width: width, height: 32)
+        elapsed.frame = CGRect(x: x, y: bounds.height - 150, width: width, height: 32)
         placeMark()
         let alpha: CGFloat = x + width + extra > bar.frame.maxX - remaining.intrinsicContentSize.width - 24 ? 0 : 1
         guard remaining.alpha != alpha else { return }
@@ -1729,7 +1755,7 @@ private final class PlayerOverlay: UIView {
         let size = Self.previewSize
         let x = min(max(bar.frame.minX + bar.bounds.width * fraction - size.width / 2, bar.frame.minX),
                     bar.frame.maxX - size.width)
-        previewHolder.frame = CGRect(x: x, y: bounds.height - 176 - size.height, width: size.width, height: size.height)
+        previewHolder.frame = CGRect(x: x, y: bounds.height - 200 - size.height, width: size.width, height: size.height)
     }
 
     /// nil: time only (no still for that spot yet).
@@ -1832,6 +1858,13 @@ private final class PlayerOverlay: UIView {
         }
     }
 
+    /// They move with the shelf as they fade: in and out with its peek, up as it opens.
+    func setShift(_ shift: CGFloat) {
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.controls.transform = CGAffineTransform(translationX: 0, y: shift)
+        }
+    }
+
     static func clock(_ seconds: Double) -> String {
         let total = Int(seconds)
         let (hours, minutes, rest) = (total / 3600, total % 3600 / 60, total % 60)
@@ -1891,7 +1924,7 @@ private final class PlayerPrompt: UIView {
     private static let pillHeight: CGFloat = 88
     private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
-    fileprivate static let bottom: CGFloat = 176
+    fileprivate static let bottom: CGFloat = 200
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
@@ -2193,7 +2226,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// the title and the buttons.
     private static let subtitleRest: CGFloat = 90
     private static let subtitleTopInset: CGFloat = 60
-    private static let subtitleClear: CGFloat = 250
+    private static let subtitleClear: CGFloat = 274
     private var menu = Menu.none
     private weak var lastButton: PlayerButton?
     /// What On turns back on.
@@ -2210,6 +2243,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var unknownFormats: Set<Int> = []
     private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
     private var shelfOpen = false
+    private var controlsShift: CGFloat = 0
     private var show: (meta: MetaItem, episodes: [MetaVideo])?
     private var showTask: Task<Void, Never>?
     /// An episode from the shelf, its link being found.
@@ -2312,13 +2346,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         subtitles.bounds = view.bounds
         subtitles.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         fixedSubtitles.frame = view.bounds
-        // Bounds and center: its transform is what moves it.
-        let size = PlayerButton.size
-        let center = view.bounds.height - PlayerPrompt.bottom - size / 2
-        for (index, button) in buttons.reversed().enumerated() {
-            button.bounds.size = CGSize(width: size, height: size)
-            button.center = CGPoint(x: view.bounds.width - 80 - size / 2 - CGFloat(index) * (size + 20), y: center)
-        }
+        placeButtons()
         shelf.bounds.size = CGSize(width: view.bounds.width - 160, height: PlayerShelf.height)
         shelf.center = CGPoint(x: view.bounds.midX, y: view.bounds.height - 60 - PlayerShelf.height / 2)
     }
@@ -2687,7 +2715,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         if shelfOpen {
             switch press.type {
-            case .upArrow where shelf.closes: setShelf(false)
+            case .upArrow where shelf.closes:
+                promptLeft = true
+                showControls()
+                setShelf(false)
             case .playPause: engine.togglePlayPause()
             default: super.pressesBegan(presses, with: event)
             }
@@ -2734,8 +2765,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     /// A press, or a swipe off the buttons or a prompt. Down: off them to the
-    /// bar, else the shelf. Up: to a prompt on screen, else the buttons; off
+    /// bar, then the shelf. Up: to a prompt on screen, else the buttons; off
     /// either the controls go (Right is the way from a prompt to the buttons).
+    /// With the controls gone, either brings them back and does nothing else.
     private func stepVertically(down: Bool, _ engine: AetherEngine) {
         guard scan == nil, hasPlayed else { return }
         if menu == .buttons {
@@ -2751,9 +2783,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let toBar = down && promptView.takesFocus
         let toPrompt = !down && promptView.alpha > 0 && !promptView.takesFocus
         guard toBar || toPrompt else {
-            if down { return setShelf(true) }
-            // With the controls gone, Up brings them back on the bar.
-            return overlay.isShown ? setMenu(.buttons) : showControls()
+            if overlay.isShown { return down ? setShelf(true) : setMenu(.buttons) }
+            promptLeft = true
+            showControls()
+            updateOverlay(engine)
+            return updatePrompt(engine)
         }
         showControls()
         promptLeft = down
@@ -2764,7 +2798,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// A recognizer, not `pressesBegan`: with a button or list focused, the
     /// system takes Back first and dismisses the player.
     @objc private func backPressed() {
-        guard !shelfOpen else { return setShelf(false) }
+        guard !shelfOpen else {
+            controlsDismissed = true
+            return setShelf(false)
+        }
         switch menu {
         case .tracks:
             if !trackList.back() { setMenu(.buttons) }
@@ -3200,16 +3237,36 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: Panel and shelf
 
+    /// Bounds and center: its transform is its focus.
+    private func placeButtons() {
+        let size = PlayerButton.size
+        let center = view.bounds.height - PlayerPrompt.bottom - size / 2 + controlsShift
+        for (index, button) in buttons.reversed().enumerated() {
+            button.bounds.size = CGSize(width: size, height: size)
+            button.center = CGPoint(x: view.bounds.width - 80 - size / 2 - CGFloat(index) * (size + 20), y: center)
+        }
+    }
+
+    /// Bar, title and buttons as one, with the shelf.
+    private func moveControls() {
+        let shift = shelfOpen ? -shelf.rise : overlay.isShown ? 0 : shelf.drop
+        guard shift != controlsShift else { return }
+        controlsShift = shift
+        overlay.setShift(shift)
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.placeButtons()
+        }
+    }
+
     private func setShelf(_ open: Bool) {
         if open {
             commitScrub()
             overlayUntil = .distantPast
             if let engine { shelf.details.show(facts(engine)) }
             shelf.details.startRunning()
-            shelf.open()
+            shelf.move(to: .open)
         } else {
             shelf.details.stopRunning()
-            shelf.close()
         }
         shelfOpen = open
         promptView.takesFocus = false
@@ -3528,6 +3585,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)
         }
         overlay.setShown(shown)
+        moveControls()
         placeSubtitles()
         let alpha: CGFloat = shown && !(scrubTarget != nil && isDetached) ? 1 : 0
         if audioButton.alpha != alpha {
@@ -3535,6 +3593,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 for button in self.buttons { button.alpha = alpha }
             }
         }
+        if !shelfOpen { shelf.move(to: alpha > 0 && hasPlayed ? .peek : .away) }
         overlay.setScrubbing(scrubTarget != nil || scan != nil, detached: isDetached)
     }
 
