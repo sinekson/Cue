@@ -370,7 +370,9 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         }
         row.pick()
         guard row.stays else { return picked() }
-        rows = pages[pages.count - 1].menu().rows
+        let menu = pages[pages.count - 1].menu()
+        rows = menu.rows
+        heading.text = menu.title
         for path in list.indexPathsForVisibleItems {
             (list.cellForItem(at: path) as? TrackCell)?.show(rows[path.item])
         }
@@ -1876,6 +1878,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private(set) static var isPlaying = false
 
     private static let tickInterval: TimeInterval = 0.2
+    /// How far the subtitles' time runs on past the engine's, which it updates
+    /// ten times a second. A stall stops it here.
+    private static let subtitleClockReach: CFTimeInterval = 0.25
+    private static let subtitleDelayStep = 0.25
     /// Played this long in a session, it counts. Until then nothing is saved,
     /// so a Start Over keeps its old position.
     private static let countsAfterSeconds: Double = 30
@@ -2060,6 +2066,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// What On turns back on.
     private var lastSubtitle: Int?
     private var externalSubtitlesTask: Task<Void, Never>?
+    /// Seconds a track shows later, for a file out of sync. Until the track or
+    /// the episode changes.
+    private var subtitleDelay: Double = 0
+    private var subtitleClock: (time: Double, at: CFTimeInterval, shown: Double) = (0, 0, 0)
+    private var subtitleLink: CADisplayLink?
+    /// The next start or end of a cue: the frame that changes what's up.
+    private var nextSubtitleEdge = Double.infinity
     /// External tracks whose address doesn't say the format.
     private var unknownFormats: Set<Int> = []
     private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
@@ -2186,6 +2199,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        let link = CADisplayLink(target: self, selector: #selector(subtitleFrame))
+        link.add(to: .main, forMode: .common)
+        subtitleLink = link
         start()
         loadSegments()
         loadShow()
@@ -2505,6 +2521,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         closed = true
         timer?.invalidate()
         timer = nil
+        subtitleLink?.invalidate()
+        subtitleLink = nil
         endScrub()
         saveFinal()
         loadTask?.cancel()
@@ -2997,6 +3015,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         engine?.stop()
 
         meta = next.meta
+        subtitleDelay = 0
         video = next.video
         entry = next.entry
         links = next.links
@@ -3180,6 +3199,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             rows.append(TrackList.Row(title: "Track", detail: subtitleTitle(next), separated: true, page: { [unowned self] in
                 TrackList.Menu(rows: subtitleTrackRows(tracks, active: active, engine))
             }))
+            rows.append(TrackList.Row(title: "Delay", detail: subtitleDelayText ?? "None", page: { [unowned self] in
+                subtitleDelayMenu(engine)
+            }))
         }
         rows.append(TrackList.Row(title: "Style", detail: SubtitleText.hasBox ? "High Contrast" : "Default",
                                   separated: next == nil, page: { [unowned self] in subtitleStyleMenu }))
@@ -3227,7 +3249,28 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    private var subtitleDelayText: String? {
+        guard subtitleDelay != 0 else { return nil }
+        return String(format: "%g s %@", abs(subtitleDelay), subtitleDelay > 0 ? "Later" : "Earlier")
+    }
+
+    private func subtitleDelayMenu(_ engine: AetherEngine) -> TrackList.Menu {
+        func row(_ title: String, _ delay: @escaping (Double) -> Double, active: Bool = false, separated: Bool = false) -> TrackList.Row {
+            TrackList.Row(title: title, active: active, separated: separated, stays: true) { [weak self] in
+                guard let self else { return }
+                subtitleDelay = delay(subtitleDelay)
+                showSubtitle(engine)
+            }
+        }
+        return TrackList.Menu(title: subtitleDelayText ?? "Delay", rows: [
+            row("Earlier") { $0 - Self.subtitleDelayStep },
+            row("Later") { $0 + Self.subtitleDelayStep },
+            row("No Delay", { _ in 0 }, active: subtitleDelay == 0, separated: true)
+        ])
+    }
+
     private func pickSubtitle(_ track: TrackInfo, _ engine: AetherEngine) {
+        subtitleDelay = 0
         engine.selectSubtitleTrack(index: track.id)
         PlaybackMemory.update(meta.id) { $0.subtitleLanguage = track.language }
     }
@@ -3482,15 +3525,36 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         if assTrack?.trackID != track.id {
             assTrack?.stop()
-            assTrack = AssTrack(trackID: track.id, header: header, fonts: engine.fontAttachments, host: fixedSubtitles) { [weak engine] in
-                engine?.clock.sourceTime ?? 0
+            assTrack = AssTrack(trackID: track.id, header: header, fonts: engine.fontAttachments, host: fixedSubtitles) { [weak self, weak engine] in
+                engine.flatMap { self?.subtitleTime($0) } ?? 0
             }
         }
         return assTrack
     }
 
+    /// The engine's time, run on between its updates, with the delay.
+    private func subtitleTime(_ engine: AetherEngine) -> Double {
+        let source = engine.clock.sourceTime
+        let now = CACurrentMediaTime()
+        if source != subtitleClock.time { (subtitleClock.time, subtitleClock.at) = (source, now) }
+        var time = source
+        if engine.state == .playing { time += min(now - subtitleClock.at, Self.subtitleClockReach) }
+        // An update landing just behind isn't a step back; a seek is.
+        if time < subtitleClock.shown, subtitleClock.shown - time < Self.subtitleClockReach { time = subtitleClock.shown }
+        subtitleClock.shown = time
+        return time - subtitleDelay
+    }
+
+    @objc private func subtitleFrame() {
+        guard let engine, subtitleTime(engine) >= nextSubtitleEdge else { return }
+        showSubtitle(engine)
+    }
+
     private func showSubtitle(_ engine: AetherEngine) {
-        let time = engine.clock.sourceTime
+        let time = subtitleTime(engine)
+        nextSubtitleEdge = engine.subtitleCues.reduce(.infinity) { edge, cue in
+            min(edge, cue.startTime > time ? cue.startTime : .infinity, cue.endTime > time ? cue.endTime : .infinity)
+        }
         let cues = engine.subtitleCues.filter { $0.startTime <= time && time < $0.endTime }
         var runs: [SubtitleText.Run]
         var top: [SubtitleText.Run] = []
