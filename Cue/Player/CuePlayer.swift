@@ -480,6 +480,8 @@ private class PlayerSheet: UIView {
     enum Place { case away, peek, open }
 
     fileprivate static let inset: CGFloat = 28
+    /// How much lower the controls, its peek and a prompt rest with the controls gone.
+    fileprivate static let drop: CGFloat = 24
     private static let tabsGap: CGFloat = 24
     /// The tabs and the gap under them; the page starts past the screen's edge.
     fileprivate static let tabRow = PanelTab.height + tabsGap
@@ -567,8 +569,8 @@ private class PlayerSheet: UIView {
         showTab()
     }
 
-    /// Off the screen, its tabs up the bottom edge with the controls, or open.
-    /// Moved, never faded: tvOS won't focus into a transparent view.
+    /// Gone, its tabs up the bottom edge with the controls, or open. The peek
+    /// fades and moves a little as they do.
     func move(to new: Place) {
         guard new != place else { return }
         if new == .open {
@@ -578,6 +580,7 @@ private class PlayerSheet: UIView {
         if isHidden {
             pageWillPeek()
             isHidden = false
+            alpha = 0
             transform = transform(for: .away)
         }
         place = new
@@ -585,6 +588,9 @@ private class PlayerSheet: UIView {
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.transform = self.transform(for: new)
             self.tabRow.transform = self.rowTransform(for: new)
+        }
+        UIView.animate(withDuration: Motion.fadeDuration) {
+            self.alpha = new == .away ? 0 : 1
         } completion: { _ in
             if self.place == .away { self.isHidden = true }
         }
@@ -596,7 +602,7 @@ private class PlayerSheet: UIView {
         switch place {
         case .open: return .identity
         case .peek: return CGAffineTransform(translationX: 0, y: page - Self.tabRow - top)
-        case .away: return CGAffineTransform(translationX: 0, y: page + 40 - top)
+        case .away: return CGAffineTransform(translationX: 0, y: page - Self.tabRow - top + Self.drop)
         }
     }
 
@@ -607,8 +613,6 @@ private class PlayerSheet: UIView {
 
     /// How far it rises from the peek when it opens.
     var rise: CGFloat { transform(for: .peek).ty }
-    /// How far it falls from the peek when it goes.
-    var drop: CGFloat { transform(for: .away).ty - transform(for: .peek).ty }
 
     /// Up from the tabs leaves it. A press that climbed to them reaches the
     /// controller after the focus has moved, so it has to have rested there.
@@ -1602,10 +1606,11 @@ private final class PlayerOverlay: UIView {
     private var isDetached = false
     private var promptUp = false
     private var heldSpan: (from: CGFloat, to: CGFloat) = (0, 0)
-    private static let barHeight: CGFloat = 6
-    private static let restingFill: CGFloat = 0.75
-    /// To 10 pt, focused.
-    private static let barGrowth = CGAffineTransform(scaleX: 1, y: 1.67)
+    private static let barHeight: CGFloat = 8
+    private static let restingFill: CGFloat = 0.56
+    private static let focusedFill: CGFloat = 0.85
+    /// To 12 pt, focused.
+    private static let barGrowth = CGAffineTransform(scaleX: 1, y: 1.5)
 
     init(title text: String, episode line: String?) {
         super.init(frame: .zero)
@@ -1643,7 +1648,7 @@ private final class PlayerOverlay: UIView {
         barShadow.layer.shadowOpacity = 0.4
         barShadow.layer.shadowRadius = 10
         barShadow.layer.shadowOffset = .zero
-        fill.backgroundColor = UIColor.white.withAlphaComponent(0.75)
+        fill.backgroundColor = .white
         fill.alpha = Self.restingFill
         held.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         scrubSpan.backgroundColor = held.backgroundColor
@@ -1713,7 +1718,7 @@ private final class PlayerOverlay: UIView {
                        initialSpringVelocity: 0, options: [.beginFromCurrentState]) { [self] in
             bar.transform = focused ? Self.barGrowth : .identity
             barShadow.transform = bar.transform
-            fill.alpha = focused ? 1 : Self.restingFill
+            fill.alpha = focused ? Self.focusedFill : Self.restingFill
         }
     }
 
@@ -1884,7 +1889,7 @@ private final class PlayerOverlay: UIView {
         }
     }
 
-    /// They move with the shelf as they fade: in and out with its peek, up as it opens.
+    /// Up as the shelf opens; in and out with no shelf, a short way as they fade.
     func setShift(_ shift: CGFloat) {
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.controls.transform = CGAffineTransform(translationX: 0, y: shift)
@@ -1951,6 +1956,7 @@ private final class PlayerPrompt: UIView {
     private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
     fileprivate static let bottom: CGFloat = 172
+    private var shift: CGFloat = 0
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
@@ -2003,6 +2009,12 @@ private final class PlayerPrompt: UIView {
 
     func setHeading(_ text: String) { heading.text = text }
 
+    /// Center, not transform: its transform is its focus.
+    func setShift(_ shift: CGFloat) {
+        center.y += shift - self.shift
+        self.shift = shift
+    }
+
     private func place() {
         guard let page = superview?.bounds else { return }
         transform = .identity
@@ -2010,7 +2022,7 @@ private final class PlayerPrompt: UIView {
         let size = isCard
             ? CGSize(width: Self.cardWidth, height: Self.cardPadding * 2 + Self.pictureHeight + 86)
             : CGSize(width: text + Self.pillPadding * 2, height: Self.pillHeight)
-        frame = CGRect(x: 80, y: page.height - Self.bottom - size.height, width: size.width, height: size.height)
+        frame = CGRect(x: 80, y: page.height - Self.bottom + shift - size.height, width: size.width, height: size.height)
         if isFocused { transform = focusGrowth }
         picture.isHidden = !isCard
         setNeedsLayout()
@@ -3275,12 +3287,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// Bar, title and buttons as one, with the shelf.
     private func moveControls() {
-        let shift = shelfOpen ? -shelf.rise : overlay.isShown ? 0 : shelf.drop
+        let shift = shelfOpen ? -shelf.rise : overlay.isShown ? 0 : PlayerSheet.drop
         guard shift != controlsShift else { return }
         controlsShift = shift
         overlay.setShift(shift)
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.placeButtons()
+            self.promptView.setShift(shift)
         }
     }
 
@@ -3297,7 +3310,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         shelfOpen = open
         promptView.takesFocus = false
         focusView.takesFocus = !open && menu == .none
-        if let engine { updateOverlay(engine) }
+        if let engine {
+            updateOverlay(engine)
+            updatePrompt(engine)
+        }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
     }
@@ -3753,7 +3769,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if shelfOpen {
             floor = 60 + PlayerShelf.height + 24
         } else if promptView.alpha > 0 {
-            floor = max(floor, PlayerPrompt.bottom + promptView.bounds.height + 24)
+            floor = max(floor, PlayerPrompt.bottom - controlsShift + promptView.bounds.height + 24)
         }
         if floor != subtitleFloor {
             subtitleFloor = floor
