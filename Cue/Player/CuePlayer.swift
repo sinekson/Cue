@@ -33,6 +33,22 @@ struct CuePlayer: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: PlayerController, context: Context) {}
 }
 
+/// A change of focus, as the hold menus' rows: quick both ways, not the system's
+/// slow way out.
+private func focusChange(duration: TimeInterval = 0.12, _ changes: @escaping () -> Void) {
+    UIView.animate(withDuration: duration, delay: 0,
+                   options: [.curveEaseOut, .beginFromCurrentState, .overrideInheritedDuration, .overrideInheritedCurve],
+                   animations: changes)
+}
+
+/// The hold menus' lift under a focused platter; it fades with the platter.
+private func liftShadow(_ view: UIView) {
+    view.layer.shadowColor = UIColor.black.cgColor
+    view.layer.shadowOpacity = 0.25
+    view.layer.shadowRadius = 12
+    view.layer.shadowOffset = CGSize(width: 0, height: 6)
+}
+
 /// Takes focus, so the remote's presses reach the controller.
 private final class PlayerFocusView: UIView {
     var takesFocus = true
@@ -44,7 +60,10 @@ private final class GlassBacking: UIView {
     private let host: UIViewController
 
     init<S: Shape>(_ shape: S) {
-        host = UIHostingController(rootView: Color.clear.liquidGlass(in: shape))
+        let host = UIHostingController(rootView: Color.clear.liquidGlass(in: shape))
+        // Near the screen's edge the safe area would push the glass off its bounds.
+        host.safeAreaRegions = []
+        self.host = host
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         host.view.backgroundColor = .clear
@@ -79,6 +98,7 @@ private final class PlayerButton: UIButton {
         platter.backgroundColor = .white
         platter.alpha = 0
         platter.isUserInteractionEnabled = false
+        liftShadow(platter)
         insertSubview(glass, at: 0)
         insertSubview(platter, at: 1)
     }
@@ -88,23 +108,30 @@ private final class PlayerButton: UIButton {
 
     override var canBecomeFocused: Bool { takesFocus && super.canBecomeFocused }
 
+    override var isHighlighted: Bool {
+        didSet { focusChange { self.paint() } }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         glass.frame = bounds
         platter.frame = bounds
         platter.layer.cornerRadius = bounds.width / 2
+        platter.layer.shadowPath = UIBezierPath(ovalIn: platter.bounds).cgPath
         imageView.map(bringSubviewToFront)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        let focused = isFocused
-        coordinator.addCoordinatedAnimations {
-            self.platter.alpha = focused ? 1 : 0
-            self.tintColor = focused ? UIColor.black.withAlphaComponent(0.85)
-                                     : UIColor.white.withAlphaComponent(FixedFocusText.primary)
-            self.transform = focused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
-        }
+        focusChange { self.paint() }
+    }
+
+    private func paint() {
+        platter.alpha = isFocused ? 1 : 0
+        tintColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
+                              : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        let scale: CGFloat = isHighlighted ? 0.97 : isFocused ? 1.05 : 1
+        transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 }
 
@@ -125,6 +152,8 @@ private final class TrackCell: UICollectionViewCell {
         (row.detail == nil ? height : tallHeight) + room(row.separated, row.header != nil)
     }
 
+    /// What grows with focus; the line and header above it stay put.
+    private let face = UIView()
     private let platter = UIView()
     private let check = UIImageView()
     private let title = RunningLine(font: .systemFont(ofSize: 28, weight: .medium), rest: 0.5)
@@ -137,6 +166,7 @@ private final class TrackCell: UICollectionViewCell {
         super.init(frame: frame)
         platter.backgroundColor = .white
         platter.alpha = 0
+        liftShadow(platter)
         check.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .bold))
         check.contentMode = .center
         title.running = false
@@ -146,12 +176,17 @@ private final class TrackCell: UICollectionViewCell {
         separator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
         header.font = TrackList.headingFont
         header.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        for sub in [separator, header, platter, check, title, detail, chevron] as [UIView] { contentView.addSubview(sub) }
-        paint(focused: false)
+        for sub in [separator, header, face] as [UIView] { contentView.addSubview(sub) }
+        for sub in [platter, check, title, detail, chevron] as [UIView] { face.addSubview(sub) }
+        paint()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    override var isHighlighted: Bool {
+        didSet { focusChange { self.paint() } }
+    }
 
     func show(_ row: TrackList.Row) {
         title.text = row.title
@@ -172,27 +207,32 @@ private final class TrackCell: UICollectionViewCell {
             .inset(by: UIEdgeInsets(top: room, left: 0, bottom: 0, right: 0))
         header.frame = CGRect(x: 24, y: room - Self.headerHeight, width: inner.width - 36, height: Self.headerHeight)
         separator.frame = CGRect(x: inner.minX + 62, y: Self.separation / 2, width: inner.width - 80, height: 1)
-        platter.frame = inner
+        face.bounds = CGRect(origin: .zero, size: inner.size)
+        face.center = CGPoint(x: inner.midX, y: inner.midY)
+        platter.frame = face.bounds
         platter.layer.cornerRadius = min(inner.height, Self.height) / 2
-        check.frame = CGRect(x: inner.minX + 18, y: inner.minY, width: 28, height: inner.height)
-        chevron.frame = CGRect(x: inner.maxX - 54, y: inner.minY, width: 28, height: inner.height)
+        platter.layer.shadowPath = UIBezierPath(roundedRect: platter.bounds, cornerRadius: platter.layer.cornerRadius).cgPath
+        check.frame = CGRect(x: 18, y: 0, width: 28, height: inner.height)
+        chevron.frame = CGRect(x: inner.width - 54, y: 0, width: 28, height: inner.height)
         let width = inner.width - 90 - (chevron.isHidden ? 0 : 36)
         if detail.isHidden {
-            title.frame = CGRect(x: inner.minX + 62, y: inner.minY, width: width, height: inner.height)
+            title.frame = CGRect(x: 62, y: 0, width: width, height: inner.height)
         } else {
-            title.frame = CGRect(x: inner.minX + 62, y: inner.minY + 12, width: width, height: 36)
-            detail.frame = CGRect(x: inner.minX + 62, y: inner.minY + 48, width: width, height: 30)
+            title.frame = CGRect(x: 62, y: 12, width: width, height: 36)
+            detail.frame = CGRect(x: 62, y: 48, width: width, height: 30)
         }
     }
 
-    private func paint(focused: Bool) {
+    private func paint() {
+        let focused = isFocused
         let color = focused ? UIColor.black.withAlphaComponent(0.85) : UIColor.white.withAlphaComponent(FixedFocusText.primary)
         title.color = color
         check.tintColor = color
         chevron.tintColor = color
         detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         platter.alpha = focused ? 1 : 0
-        transform = focused ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
+        let scale: CGFloat = isHighlighted ? 0.97 : focused ? 1.02 : 1
+        face.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -202,7 +242,7 @@ private final class TrackCell: UICollectionViewCell {
             title.running = focused
             detail.running = focused
         }
-        coordinator.addCoordinatedAnimations { self.paint(focused: focused) }
+        focusChange { self.paint() }
     }
 }
 
@@ -1466,10 +1506,6 @@ private final class SubtitleText: UIView {
 /// engine waits. Shows nothing that takes focus.
 private final class PlayerOverlay: UIView {
     /// A view, so the gradient follows the bounds without its own animation.
-    private final class Shade: UIView {
-        override class var layerClass: AnyClass { CAGradientLayer.self }
-    }
-
     /// What goes beside the time, as Apple's.
     enum Mark: Equatable {
         case paused
@@ -1494,15 +1530,14 @@ private final class PlayerOverlay: UIView {
     private(set) var isShown = false
 
     private let controls = UIView()
-    private let shade = Shade()
-    /// In the player, under the buttons; the rest of this goes over them, so
-    /// the preview covers the buttons a press leaves up.
-    var shadeView: UIView { shade }
     private let title = UILabel()
     private let episode = UILabel()
     private let elapsed = UILabel()
     private let remaining = UILabel()
     private let bar = UIView()
+    /// Its own view: the bar clips.
+    private let barShadow = UIView()
+    private var barFocused = false
     private let held = UIView()
     private let fill = UIView()
     private let scrubSpan = UIView()
@@ -1524,6 +1559,9 @@ private final class PlayerOverlay: UIView {
     private var promptUp = false
     private var heldSpan: (from: CGFloat, to: CGFloat) = (0, 0)
     private static let barHeight: CGFloat = 6
+    private static let restingFill: CGFloat = 0.75
+    /// To 10 pt, focused.
+    private static let barGrowth = CGAffineTransform(scaleX: 1, y: 1.67)
 
     init(title text: String, episode line: String?) {
         super.init(frame: .zero)
@@ -1533,10 +1571,6 @@ private final class PlayerOverlay: UIView {
         addSubview(spinner)
         spinner.color = UIColor.white.withAlphaComponent(0.75)
 
-        let gradient = shade.layer as? CAGradientLayer
-        gradient?.colors = [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.7).cgColor]
-        shade.isUserInteractionEnabled = false
-        shade.alpha = 0
 
         episode.font = .systemFont(ofSize: 24)
         episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
@@ -1556,8 +1590,12 @@ private final class PlayerOverlay: UIView {
         bar.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         bar.layer.cornerRadius = Self.barHeight / 2
         bar.clipsToBounds = true
-        bar.transform = CGAffineTransform(scaleX: 1, y: 1.67)
+        barShadow.layer.shadowColor = UIColor.black.cgColor
+        barShadow.layer.shadowOpacity = 0.4
+        barShadow.layer.shadowRadius = 10
+        barShadow.layer.shadowOffset = .zero
         fill.backgroundColor = UIColor.white.withAlphaComponent(0.75)
+        fill.alpha = Self.restingFill
         held.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         scrubSpan.backgroundColor = held.backgroundColor
         for sub in [held, scrubSpan, fill, scrubStart, scrubMarker] {
@@ -1585,12 +1623,11 @@ private final class PlayerOverlay: UIView {
         clip.addSubview(preview)
         previewHolder.addSubview(clip)
         previewHolder.layer.shadowColor = UIColor.black.cgColor
-        previewHolder.layer.shadowOpacity = 0.7
         previewHolder.layer.shadowRadius = 36
         previewHolder.layer.shadowOffset = CGSize(width: 0, height: 10)
         previewHolder.layer.shadowPath = UIBezierPath(roundedRect: clip.bounds, cornerRadius: Spotlight.cornerRadius).cgPath
         previewHolder.isHidden = true
-        for sub in [title, episode, elapsed, markIcon, markNumber, remaining, bar, previewHolder] as [UIView] {
+        for sub in [title, episode, elapsed, markIcon, markNumber, remaining, barShadow, bar, previewHolder] as [UIView] {
             controls.addSubview(sub)
         }
     }
@@ -1603,18 +1640,31 @@ private final class PlayerOverlay: UIView {
         let inset: CGFloat = 80
         let width = bounds.width - inset * 2
         controls.frame = bounds
-        shade.frame = CGRect(x: 0, y: bounds.height - 360, width: bounds.width, height: 360)
         // Left above the bar, level with the buttons, clear of them.
         title.frame = CGRect(x: inset, y: bounds.height - 208, width: width - 220, height: 40)
         episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
         bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
+        barShadow.bounds = bar.bounds
+        barShadow.center = bar.center
+        barShadow.layer.shadowPath = UIBezierPath(roundedRect: bar.bounds, cornerRadius: Self.barHeight / 2).cgPath
         placeFill()
         placeHeld()
         placeElapsed()
         remaining.frame = CGRect(x: inset + width - 200, y: bounds.height - 126, width: 200, height: 32)
         spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
         placePreview()
+    }
+
+    func setBarFocused(_ focused: Bool) {
+        guard focused != barFocused else { return }
+        barFocused = focused
+        UIView.animate(withDuration: Motion.focusDuration, delay: 0, usingSpringWithDamping: 1,
+                       initialSpringVelocity: 0, options: [.beginFromCurrentState]) { [self] in
+            bar.transform = focused ? Self.barGrowth : .identity
+            barShadow.transform = bar.transform
+            fill.alpha = focused ? 1 : Self.restingFill
+        }
     }
 
     /// Detached, the fill stops at the nearer of the two lines, the scrub's
@@ -1695,6 +1745,8 @@ private final class PlayerOverlay: UIView {
     private func showWaiting(_ waiting: Bool) {
         preview.isHidden = waiting
         previewGlass.isHidden = !waiting
+        // A shadow falls under its shape too, and would darken the glass.
+        previewHolder.layer.shadowOpacity = waiting ? 0 : 0.7
         if waiting { previewSpinner.startAnimating() } else { previewSpinner.stopAnimating() }
     }
 
@@ -1779,7 +1831,6 @@ private final class PlayerOverlay: UIView {
         isShown = shown
         UIView.animate(withDuration: Motion.fadeDuration) {
             self.controls.alpha = shown ? 1 : 0
-            self.shade.alpha = shown ? 1 : 0
         }
     }
 
@@ -1835,11 +1886,12 @@ struct PlayerSegments {
 }
 
 /// Above the title: Skip Intro and where it ends. Opposite it: the next
-/// episode as a card with its picture. Glass at rest; focused white with dark content, 5 % larger.
+/// episode as a card with its picture. Glass at rest; focused white with dark
+/// content, 12 pt wider.
 /// The controller takes its Select: no button, so nothing fires twice.
 private final class PlayerPrompt: UIView {
     private static let pillHeight: CGFloat = 88
-    private static let iconSize: CGFloat = 34
+    private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
     fileprivate static let bottom: CGFloat = 168
     private static let cardWidth: CGFloat = 420
@@ -1849,10 +1901,9 @@ private final class PlayerPrompt: UIView {
     var takesFocus = false
     override var canBecomeFocused: Bool { takesFocus }
 
-    private let glass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+    private let glass = GlassBacking(RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous))
     private let platter = UIView()
     private let picture = UIImageView()
-    private let icon = UIImageView(image: UIImage(systemName: "forward.end.fill"))
     private let heading = UILabel()
     private let detail = UILabel()
     private var isCard = false
@@ -1863,15 +1914,14 @@ private final class PlayerPrompt: UIView {
         platter.backgroundColor = .white
         platter.alpha = 0
         platter.layer.cornerCurve = .continuous
-        platter.layer.cornerRadius = Spotlight.cornerRadius
-        icon.contentMode = .scaleAspectFit
+        platter.layer.cornerRadius = SettingsMetrics.tallRowRadius
         picture.contentMode = .scaleAspectFill
         picture.clipsToBounds = true
-        picture.layer.cornerRadius = Spotlight.cornerRadius - Self.cardPadding / 2
+        picture.layer.cornerRadius = SettingsMetrics.tallRowRadius - Self.cardPadding
         picture.layer.cornerCurve = .continuous
         heading.font = .systemFont(ofSize: 25, weight: .medium)
         detail.font = .systemFont(ofSize: 24)
-        for sub in [glass, platter, picture, icon, heading, detail] as [UIView] { addSubview(sub) }
+        for sub in [glass, platter, picture, heading, detail] as [UIView] { addSubview(sub) }
         restyle()
     }
 
@@ -1902,11 +1952,10 @@ private final class PlayerPrompt: UIView {
         let text = max(heading.intrinsicContentSize.width, detail.intrinsicContentSize.width)
         let size = isCard
             ? CGSize(width: Self.cardWidth, height: Self.cardPadding * 2 + Self.pictureHeight + 86)
-            : CGSize(width: text + Self.iconSize + 72, height: Self.pillHeight)
+            : CGSize(width: text + Self.pillPadding * 2, height: Self.pillHeight)
         frame = CGRect(x: 80, y: page.height - Self.bottom - size.height, width: size.width, height: size.height)
-        if isFocused { transform = CGAffineTransform(scaleX: 1.05, y: 1.05) }
+        if isFocused { transform = focusGrowth }
         picture.isHidden = !isCard
-        icon.isHidden = isCard
         setNeedsLayout()
     }
 
@@ -1915,11 +1964,9 @@ private final class PlayerPrompt: UIView {
         glass.frame = bounds
         platter.frame = bounds
         guard isCard else {
-            icon.frame = CGRect(x: 24, y: (bounds.height - Self.iconSize) / 2,
-                                width: Self.iconSize, height: Self.iconSize)
-            let x = icon.frame.maxX + 20
-            heading.frame = CGRect(x: x, y: 12, width: bounds.width - x - 24, height: 32)
-            detail.frame = CGRect(x: x, y: heading.frame.maxY, width: bounds.width - x - 24, height: 32)
+            let width = bounds.width - Self.pillPadding * 2
+            heading.frame = CGRect(x: Self.pillPadding, y: 12, width: width, height: 32)
+            detail.frame = CGRect(x: Self.pillPadding, y: heading.frame.maxY, width: width, height: 32)
             return
         }
         let inset = Self.cardPadding
@@ -1929,10 +1976,15 @@ private final class PlayerPrompt: UIView {
         detail.frame = CGRect(x: inset, y: heading.frame.maxY + 2, width: width, height: 32)
     }
 
+    /// In points, as a menu's rows: a share of a wide card is a big jump.
+    private var focusGrowth: CGAffineTransform {
+        let scale = (bounds.width + 12) / max(bounds.width, 1)
+        return CGAffineTransform(scaleX: scale, y: scale)
+    }
+
     private func restyle() {
         heading.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
                                       : UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        icon.tintColor = heading.textColor
         detail.textColor = isFocused ? UIColor.black.withAlphaComponent(0.65)
                                      : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
     }
@@ -1940,10 +1992,10 @@ private final class PlayerPrompt: UIView {
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         let focused = isFocused
-        coordinator.addCoordinatedAnimations {
+        focusChange(duration: 0.2) {
             self.platter.alpha = focused ? 1 : 0
             self.restyle()
-            self.transform = focused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
+            self.transform = focused ? self.focusGrowth : .identity
         }
     }
 }
@@ -2110,14 +2162,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var exactWanted = false
     private var exactStale: OSAllocatedUnfairLock<Bool>?
 
-    /// A skip left alone goes after this; it's back while the controls are up.
-    private static let skipSeconds: TimeInterval = 10
     /// Without an outro from IntroDB, the next episode comes up this long before the end.
     private static let nextLeadSeconds: Double = 120
     /// Its link is looked for this much before it comes up.
     private static let nextSearchSeconds: Double = 60
     /// Between the end of the file and the next episode playing by itself.
     private static let nextCountdown: TimeInterval = 5
+    /// Skip goes this long before what it skips ends: by then there's nothing left to save.
+    private static let skipGoneSeconds: Double = 3
 
     private enum Prompt: Equatable {
         case skip(String, to: Double)
@@ -2127,7 +2179,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var segments: PlayerSegments?
     private var segmentsTask: Task<Void, Never>?
     private var prompt: Prompt?
-    private var promptSince = Date.distantPast
     private var dismissedPrompt: Prompt?
     private var nextUp: PlayLauncher.NextEpisode?
     private var nextPicture: UIImage?
@@ -2203,7 +2254,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        for sub in [focusView, surface, subtitles, fixedSubtitles, overlay.shadeView, audioButton, subtitleButton, overlay,
+        for sub in [focusView, surface, subtitles, fixedSubtitles, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,
                     readout] as [UIView] {
             view.addSubview(sub)
@@ -2651,6 +2702,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             }
             return
         }
+        // With the controls gone a prompt holds no focus: Up or Select brings them up on it.
+        if !overlay.isShown, promptView.alpha > 0, press.type == .upArrow || press.type == .select {
+            showControls()
+            updateOverlay(engine)
+            updatePrompt(engine)
+            return
+        }
         switch press.type {
         case .upArrow: stepVertically(down: false, engine)
         case .downArrow: stepVertically(down: true, engine)
@@ -2674,7 +2732,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    /// A press or a swipe, the same. Down: off the buttons or the prompt to the
+    /// A press, or a swipe off the buttons or a prompt. Down: off them to the
     /// bar, else the shelf. Up: to a prompt on screen, else the buttons; off the
     /// buttons the controls go; off a prompt, nothing (Right is the way to the
     /// buttons).
@@ -2689,7 +2747,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if !down && promptView.takesFocus { return }
         let toBar = down && promptView.takesFocus
         let toPrompt = !down && promptView.alpha > 0 && !promptView.takesFocus
-        guard toBar || toPrompt else { return down ? setShelf(true) : setMenu(.buttons) }
+        guard toBar || toPrompt else {
+            if down { return setShelf(true) }
+            // With the controls gone, Up brings them back on the bar.
+            return overlay.isShown ? setMenu(.buttons) : showControls()
+        }
         showControls()
         promptLeft = down
         updateOverlay(engine)
@@ -2926,7 +2988,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
         let velocity = pan.velocity(in: view)
         panVertical = abs(velocity.y) > abs(velocity.x) * Self.verticalSwipeRatio
-        if shelfOpen { return panVertical && velocity.y < 0 && shelf.closes }
+        if shelfOpen { return false }
         if menu != .none { return menu == .buttons && panVertical }
         guard hasPlayed else { return false }
         return panVertical ? scan == nil : isFine && abs(velocity.x) > abs(velocity.y)
@@ -2940,9 +3002,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     @objc private func panned(_ pan: UIPanGestureRecognizer) {
         guard !panVertical else {
             guard pan.state == .began else { return }
-            if shelfOpen {
-                setShelf(false)
-            } else if let engine {
+            // Never the shelf: a stray touch shouldn't cover the picture.
+            if menu != .none || promptView.takesFocus, let engine {
                 stepVertically(down: pan.velocity(in: view).y > 0, engine)
             }
             return
@@ -3009,10 +3070,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func wantedPrompt(_ engine: AetherEngine) -> Prompt? {
         guard hasPlayed, engine.duration > 0 else { return nil }
         let time = landing ?? position
+        let gone = time + Self.skipGoneSeconds
         if nextUp != nil, engine.state == .ended || time >= nextStart(engine) { return .next }
-        if let recap = segments?.recap, recap.contains(time) { return .skip("Skip Recap", to: recap.upperBound) }
-        if let intro = segments?.intro, intro.contains(time) { return .skip("Skip Intro", to: intro.upperBound) }
-        if nextUp == nil, nextTask == nil, let outro = segments?.outro, outro.contains(time) {
+        if let recap = segments?.recap, recap.contains(time), recap.contains(gone) { return .skip("Skip Recap", to: recap.upperBound) }
+        if let intro = segments?.intro, intro.contains(time), intro.contains(gone) { return .skip("Skip Intro", to: intro.upperBound) }
+        if nextUp == nil, nextTask == nil, let outro = segments?.outro, outro.contains(time), outro.contains(gone) {
             return .skip("Skip Credits", to: outro.upperBound)
         }
         return nil
@@ -3022,7 +3084,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let wanted = wantedPrompt(engine)
         if wanted != prompt {
             prompt = wanted
-            promptSince = Date()
             promptLeft = false
             switch wanted {
             case .skip(let label, let end):
@@ -3037,10 +3098,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         // Scrubbing or paused, Select keeps its usual job, so no prompt.
         let busy = shelfOpen || menu == .tracks || scrubTarget != nil || scan != nil || engine.state == .paused
-        var shown = wanted != nil && wanted != dismissedPrompt && !busy
-        if case .skip = wanted, Date().timeIntervalSince(promptSince) > Self.skipSeconds, !overlay.isShown {
-            shown = false
-        }
+        let shown = wanted != nil && wanted != dismissedPrompt && !busy
         let alpha: CGFloat = shown ? 1 : 0
         overlay.setPromptUp(shown)
         if promptView.alpha != alpha {
@@ -3048,10 +3106,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         // Scrubbing is being on the bar; with the controls gone, nothing holds focus there.
         if scrubTarget != nil || scan != nil { promptLeft = true } else if !overlay.isShown { promptLeft = false }
-        let focused = shown && (menu == .buttons || (menu == .none && !shelfOpen && !promptLeft))
+        let focused = shown && overlay.isShown && (menu == .buttons || (menu == .none && !shelfOpen && !promptLeft))
         guard focused != promptView.takesFocus else { return }
         promptView.takesFocus = focused
         focusView.takesFocus = !focused && menu == .none && !shelfOpen
+        overlay.setBarFocused(barHasFocus)
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
     }
@@ -3157,6 +3216,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func setMenu(_ new: Menu) {
         if new != .none { commitScrub() }
+        // Audio first; the button a list opened from only when the list closes.
+        if menu == .none { lastButton = nil }
         menu = new
         // Left off Audio reaches a prompt.
         promptView.takesFocus = new == .buttons && promptView.alpha > 0
@@ -3443,8 +3504,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         return engine?.state == .paused && landing == nil ? .paused : nil
     }
 
+    /// A prompt keeps its claim while the controls are gone, so they come up on it.
+    private var barHasFocus: Bool {
+        menu == .none && !shelfOpen && (promptView.alpha == 0 || promptLeft)
+    }
+
     private func updateOverlay(_ engine: AetherEngine) {
         let waiting = !hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering
+        overlay.setBarFocused(barHasFocus)
         overlay.update(
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
             mark: mark, waiting: waiting
