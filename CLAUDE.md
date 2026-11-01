@@ -97,6 +97,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (pages, Details) presses are dropped until the page is whole. Long journeys
   (Back's scroll to the top) go at their own pace; a press in their first part
   is dropped.
+- **Loading**: one symbol everywhere, three dots rising and falling one after
+  the other, the light going with them, a brief rest between rounds
+  (`LoadingSymbol`, `LoadingSpinner` in SwiftUI), 64 pt on a page, the text's
+  white. A turning ring, a ripple, dots standing still and a pulsing dot were tried.
 - Never alpha 0 on a focusable list (tvOS skips transparent views); hide cell
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
@@ -209,6 +213,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
   Collections row stays a count with no page (talked over, not built: a
   list as the add-ons', then ready-made presets, then the editor).
+- The loading symbol, talked over, not built: only in the player and on buttons, after 0.5 s; the title's logo at a stream's start, Cue's play for the rest.
 - Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
   are gone there (a second FFmpeg can take the engine's calls, so they can't
   sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):

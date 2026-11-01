@@ -1546,12 +1546,12 @@ private final class PlayerOverlay: UIView {
     private let markIcon = UIImageView()
     private let markNumber = UILabel()
     private var mark: Mark?
-    private let spinner = UIActivityIndicatorView(style: .large)
+    private let spinner = LoadingSymbol(size: 64)
     private let preview = UIImageView()
     private static let previewSize = CGSize(width: 480, height: 270)
     private let previewHolder = UIView()
     private let previewGlass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-    private let previewSpinner = UIActivityIndicatorView(style: .medium)
+    private let previewSpinner = LoadingSymbol(size: 44)
     private var scrubStartFraction: CGFloat = 0
     private var fraction: CGFloat = 0
     private var isScrubbing = false
@@ -1569,7 +1569,6 @@ private final class PlayerOverlay: UIView {
         controls.alpha = 0
         addSubview(controls)
         addSubview(spinner)
-        spinner.color = UIColor.white.withAlphaComponent(0.75)
 
 
         episode.font = .systemFont(ofSize: 24)
@@ -1616,7 +1615,6 @@ private final class PlayerOverlay: UIView {
         clip.frame = CGRect(origin: .zero, size: Self.previewSize)
         preview.frame = clip.bounds
         previewGlass.frame = clip.bounds
-        previewSpinner.color = UIColor.white.withAlphaComponent(FixedFocusText.primary)
         previewSpinner.center = CGPoint(x: clip.bounds.midX, y: clip.bounds.midY)
         clip.addSubview(previewGlass)
         clip.addSubview(previewSpinner)

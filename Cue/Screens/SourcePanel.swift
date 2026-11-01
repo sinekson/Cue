@@ -162,7 +162,7 @@ struct SourcePanel: View {
         HStack(spacing: 10) {
             Text(name)
             if !model.finishedAddonNames.contains(name) {
-                ProgressView().scaleEffect(0.6).frame(width: 24, height: 24)
+                LoadingSpinner(size: 22)
             } else {
                 let count = model.entries.filter { $0.addonName == name }.count
                 Text(count > 0 ? "\(count)" : "–").opacity(0.6)
@@ -183,7 +183,7 @@ struct SourcePanel: View {
     @ViewBuilder private var list: some View {
         if shown.isEmpty {
             Group {
-                if model.isLoading { ProgressView() }
+                if model.isLoading { LoadingSpinner() }
                 else {
                     Text("No add-on has a source for this.")
                         .font(.system(size: 24))
@@ -317,7 +317,7 @@ struct FindingSourceCard: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 44, style: .continuous)
         VStack(spacing: 22) {
-            ProgressView()
+            LoadingSpinner()
             VStack(spacing: 6) {
                 Text("Finding a source…")
                     .font(.system(size: 30, weight: .semibold))

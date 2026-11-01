@@ -1012,6 +1012,112 @@ extension View {
     }
 }
 
+/// The one loading symbol: three dots rising and falling one after the other,
+/// the light going with them, a brief rest between rounds. Hidden until it runs. Only layers move, so it costs playback nothing.
+final class LoadingSymbol: UIView {
+    private var dots: [CALayer] = []
+    private(set) var isAnimating = false
+
+    var color: UIColor = UIColor.white.withAlphaComponent(FixedFocusText.primary) {
+        didSet { paint() }
+    }
+
+    init(size: CGFloat) {
+        super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
+        isHidden = true
+        isUserInteractionEnabled = false
+        let diameter = (size * 0.22).rounded()
+        let gap = diameter * 0.7
+        let row = 3 * diameter + 2 * gap
+        dots = (0..<3).map { index in
+            let dot = CALayer()
+            dot.frame = CGRect(x: (size - row) / 2 + CGFloat(index) * (diameter + gap), y: (size - diameter) / 2 + diameter * 0.4,
+                               width: diameter, height: diameter)
+            dot.cornerRadius = diameter / 2
+            dot.opacity = 0.3
+            layer.addSublayer(dot)
+            return dot
+        }
+        paint()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func paint() {
+        for dot in dots { dot.backgroundColor = color.cgColor }
+    }
+
+    func startAnimating() {
+        isAnimating = true
+        isHidden = false
+        run()
+    }
+
+    func stopAnimating() {
+        isAnimating = false
+        isHidden = true
+        halt()
+    }
+
+    private func halt() {
+        for dot in dots { dot.removeAnimation(forKey: "loading") }
+    }
+
+    /// Core Animation drops it when the view leaves the window.
+    private func run() {
+        halt()
+        for (index, dot) in dots.enumerated() {
+            let rise = CABasicAnimation(keyPath: "transform.translation.y")
+            rise.toValue = -dot.bounds.height * 0.8
+            let light = CABasicAnimation(keyPath: "opacity")
+            light.toValue = 1
+            for part in [rise, light] {
+                part.beginTime = Double(index) * 0.2
+                part.duration = 0.3
+                part.autoreverses = true
+                part.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            }
+            let round = CAAnimationGroup()
+            round.animations = [rise, light]
+            round.duration = 1.15
+            round.repeatCount = .infinity
+            round.isRemovedOnCompletion = false
+            dot.add(round, forKey: "loading")
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if isAnimating, window != nil { run() }
+    }
+}
+
+/// `LoadingSymbol` for SwiftUI.
+struct LoadingSpinner: View {
+    var size: CGFloat = 64
+    var color: UIColor?
+
+    private struct Ring: UIViewRepresentable {
+        let size: CGFloat
+        let color: UIColor?
+
+        func makeUIView(context: Context) -> LoadingSymbol {
+            let ring = LoadingSymbol(size: size)
+            ring.startAnimating()
+            return ring
+        }
+
+        func updateUIView(_ ring: LoadingSymbol, context: Context) {
+            if let color { ring.color = color }
+        }
+    }
+
+    var body: some View {
+        Ring(size: size, color: color).frame(width: size, height: size)
+    }
+}
+
 /// `liquidGlass`: Liquid Glass — or, Surfaces set to Flat, the app's flat
 /// surface (it follows the setting live).
 private struct GlassSurface<S: Shape>: ViewModifier {
@@ -1671,9 +1777,7 @@ struct CueLoadingView: View {
     var body: some View {
         VStack(spacing: CueSpacing.lg) {
             if holdsFocus { FocusAnchor() }
-            ProgressView()
-                .tint(theme.palette.secondary)
-                .scaleEffect(1.4)
+            LoadingSpinner()
             Text(label)
                 .font(.system(size: 24))
                 .foregroundStyle(theme.palette.textSecondary)

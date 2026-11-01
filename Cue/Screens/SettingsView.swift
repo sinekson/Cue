@@ -448,7 +448,7 @@ struct StreamBadgeSettings: View {
                     }
                 } label: {
                     if badgeImporting {
-                        ProgressView()
+                        LoadingSpinner(size: 28)
                     } else {
                         Text("Import")
                             .font(.system(size: 22, weight: .semibold))

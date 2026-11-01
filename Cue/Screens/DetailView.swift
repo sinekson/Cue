@@ -1647,7 +1647,7 @@ struct DetailActionButton: View {
                 if bare {
                     Group {
                         if busy {
-                            ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
+                            LoadingSpinner(size: 28, color: shownLit ? UIColor.black.withAlphaComponent(0.85) : nil)
                         } else {
                             Image(systemName: shownIcon)
                                 .font(.system(size: iconSize, weight: .bold))
@@ -1678,7 +1678,7 @@ struct DetailActionButton: View {
                     .animation(Motion.move, value: shownTitle)
                     .opacity(busy ? 0 : 1)
                         .overlay {
-                            if busy { ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8) }
+                            if busy { LoadingSpinner(size: 28, color: shownLit ? UIColor.black.withAlphaComponent(0.85) : nil) }
                         }
                 }
             }
