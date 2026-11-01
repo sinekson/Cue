@@ -1615,12 +1615,18 @@ private final class PlayerOverlay: UIView {
         addSubview(spinner)
 
 
-        episode.font = .systemFont(ofSize: 24)
-        episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        episode.font = .systemFont(ofSize: 26, weight: .medium)
+        episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
         title.text = text
         episode.text = line
         title.font = .systemFont(ofSize: 32, weight: .medium)
-        title.textColor = UIColor.white.withAlphaComponent(0.75)
+        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        for label in [title, episode] {
+            label.layer.shadowColor = UIColor.black.cgColor
+            label.layer.shadowOffset = .zero
+            label.layer.shadowRadius = 8
+            label.layer.shadowOpacity = 0.8
+        }
         for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: 24, weight: .regular)
             label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
@@ -1686,7 +1692,7 @@ private final class PlayerOverlay: UIView {
         controls.center = CGPoint(x: bounds.midX, y: bounds.midY)
         // Left above the bar, level with the buttons, clear of them.
         title.frame = CGRect(x: inset, y: bounds.height - 208, width: width - 220, height: 40)
-        episode.frame = CGRect(x: inset, y: bounds.height - 240, width: width - 220, height: 30)
+        episode.frame = CGRect(x: inset, y: bounds.height - 242, width: width - 220, height: 32)
         bar.bounds = CGRect(x: 0, y: 0, width: width, height: Self.barHeight)
         bar.center = CGPoint(x: bounds.midX, y: bounds.height - 143)
         barShadow.bounds = bar.bounds
@@ -1944,7 +1950,7 @@ private final class PlayerPrompt: UIView {
     private static let pillHeight: CGFloat = 88
     private static let pillPadding: CGFloat = 44
     /// Level with the buttons' feet.
-    fileprivate static let bottom: CGFloat = 176
+    fileprivate static let bottom: CGFloat = 172
     private static let cardWidth: CGFloat = 420
     private static let cardPadding: CGFloat = 16
     private static let pictureHeight: CGFloat = (cardWidth - cardPadding * 2) * 9 / 16
