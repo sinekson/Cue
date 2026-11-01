@@ -564,6 +564,7 @@ private struct AboutLicensesPage: View {
                     SettingsInfoRow(title: "AetherEngine", value: "LGPLv3")
                     SettingsInfoRow(title: "FFmpeg", value: "LGPLv2.1")
                     SettingsInfoRow(title: "libass", value: "ISC")
+                    SettingsInfoRow(title: "Inter", value: "SIL OFL 1.1")
                     SettingsInfoRow(title: "FriBidi", value: "LGPLv2.1")
                     SettingsInfoRow(title: "HarfBuzz", value: "MIT")
                     SettingsInfoRow(title: "FreeType", value: "FTL")

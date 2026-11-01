@@ -1222,38 +1222,112 @@ private final class AssTrack {
     }
 }
 
-/// A subtitle's text, one style for all: SF medium, a warm white (content, not
-/// interface), a solid black edge drawn under the fill so the letters keep
-/// their weight. Dialogue only: signs stay as drawn. The one option, for
-/// accessibility, swaps the edge for a black bar behind each line.
+/// One setting of a subtitle's look, under Style: a few named options, the
+/// viewer's own, kept across launches.
+private protocol SubtitleChoice: AnyObject {
+    var title: String { get }
+    var names: [String] { get }
+    var name: String { get set }
+    var isStandard: Bool { get }
+}
+
+private final class SubtitleOption<Value>: SubtitleChoice {
+    let title: String
+    private let key: String
+    private let options: [(name: String, value: Value)]
+    private let standard: String
+
+    init(_ title: String, key: String, standard: String, _ options: [(name: String, value: Value)]) {
+        self.title = title
+        self.key = "cue.subtitle." + key
+        self.standard = standard
+        self.options = options
+    }
+
+    var names: [String] { options.map(\.name) }
+
+    var name: String {
+        get {
+            let saved = UserDefaults.standard.string(forKey: key)
+            return names.contains { $0 == saved } ? saved ?? standard : standard
+        }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+
+    var isStandard: Bool { name == standard }
+
+    var value: Value {
+        let name = name
+        return options.first { $0.name == name }?.value ?? options[0].value
+    }
+}
+
+/// A subtitle's text: a solid edge drawn under the fill so the letters keep
+/// their weight, a bar behind each line if asked for. The colours are content,
+/// not interface. Dialogue only: signs stay as drawn.
 private final class SubtitleText: UIView {
     struct Run: Equatable {
         let text: String
         let italic: Bool
     }
 
-    private static let font = UIFont.systemFont(ofSize: 48, weight: .medium)
-    private static let color = UIColor(red: 1, green: 249 / 255, blue: 230 / 255, alpha: 1)
+    private static let face = SubtitleOption("Font", key: "font", standard: "SF Pro", [
+        ("SF Pro", false), ("Inter", true)
+    ])
+    /// With Inter's name for each.
+    private static let weight = SubtitleOption("Weight", key: "weight", standard: "Medium", [
+        ("Regular", (UIFont.Weight.regular, "Regular")), ("Medium", (.medium, "Medium")),
+        ("Semibold", (.semibold, "SemiBold")), ("Bold", (.bold, "Bold"))
+    ])
+    private static let size = SubtitleOption<CGFloat>("Size", key: "size", standard: "Medium", [
+        ("Small", 40), ("Medium", 48), ("Large", 56), ("Largest", 64)
+    ])
+    private static let color = SubtitleOption("Colour", key: "color", standard: "Warm", [
+        ("Pure", UIColor.white),
+        ("Soft", UIColor(red: 242 / 255, green: 240 / 255, blue: 239 / 255, alpha: 1)),
+        ("Warm", UIColor(red: 1, green: 249 / 255, blue: 230 / 255, alpha: 1))
+    ])
     /// What shows of the edge: as much again is under the fill.
-    private static let edgeWidth: CGFloat = 3.5
+    private static let edge = SubtitleOption<CGFloat>("Outline", key: "outline", standard: "Thick", [
+        ("Off", 0), ("Thin", 1.5), ("Medium", 2.5), ("Thick", 3.5), ("Heavy", 4)
+    ])
+    private static let edgeOpacity = SubtitleOption<CGFloat>("Outline Opacity", key: "outlineOpacity", standard: "Solid", [
+        ("Light", 0.5), ("Medium", 0.75), ("Solid", 1)
+    ])
+    private static let background = SubtitleOption<CGFloat>("Background", key: "background", standard: "Off", [
+        ("Off", 0), ("Light", 0.5), ("Medium", 0.65), ("Dark", 0.8)
+    ])
+
+    /// Style's page, in order; no opacity for an outline that's off.
+    static var choices: [any SubtitleChoice] {
+        [face, weight, size, color, edge] + (edge.value > 0 ? [edgeOpacity] : []) + [background]
+    }
+
+    static var isStandard: Bool {
+        ([face, weight, size, color, edge, edgeOpacity, background] as [any SubtitleChoice]).allSatisfy(\.isStandard)
+    }
+
+    private static var font: UIFont {
+        let (system, inter) = weight.value
+        return face.value ? UIFont(name: "Inter-\(inter)", size: size.value) ?? .systemFont(ofSize: size.value, weight: system)
+                          : .systemFont(ofSize: size.value, weight: system)
+    }
+
+    private static var hasBox: Bool { background.value > 0 }
     /// How far a bar reaches past its line: as much above the capitals as
     /// under the baseline, with room left for g, p and y.
     private static let boxTop: CGFloat = 2
     private static let boxBottom: CGFloat = 4
+    private static let boxSide: CGFloat = 10
     /// What leaves 4 pt between two bars.
     private static let boxLineSpacing: CGFloat = 10
-    private static let boxKey = "cue.subtitle.blackBackground"
-    private static let boxOpacity: CGFloat = 0.8
     private static let boxRadius: CGFloat = 10
-    /// Room for the edge and an italic's overhang, or the box's padding.
+    /// Room for the edge and an italic's overhang, and the box's padding.
     private static var inset: CGSize {
-        hasBox ? CGSize(width: 10, height: boxBottom + 2) : CGSize(width: edgeWidth + 2, height: edgeWidth + 2)
+        let edged = edge.value + 2
+        return hasBox ? CGSize(width: max(boxSide, edged), height: max(boxBottom + 2, edged)) : CGSize(width: edged, height: edged)
     }
     private static let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
-
-    static var hasBox = UserDefaults.standard.bool(forKey: boxKey) {
-        didSet { UserDefaults.standard.set(hasBox, forKey: boxKey) }
-    }
 
     /// Lines on screen together, each on its own.
     static func joined(_ lines: [[Run]]) -> [Run] {
@@ -1267,7 +1341,7 @@ private final class SubtitleText: UIView {
 
     private var runs: [Run] = []
     private var fill = NSAttributedString()
-    private var edge = NSAttributedString()
+    private var outline = NSAttributedString()
     private(set) var fitted = CGSize.zero
 
     override init(frame: CGRect) {
@@ -1290,11 +1364,12 @@ private final class SubtitleText: UIView {
     }
 
     func render(within width: CGFloat) {
-        fill = text(.foregroundColor, Self.color)
+        fill = text(.foregroundColor, Self.color.value)
         let edged = NSMutableAttributedString(attributedString: fill)
-        edged.addAttributes([.strokeColor: UIColor.black, .strokeWidth: Self.edgeWidth * 2 / Self.font.pointSize * 100],
+        edged.addAttributes([.strokeColor: UIColor.black.withAlphaComponent(Self.edgeOpacity.value),
+                             .strokeWidth: Self.edge.value * 2 / Self.font.pointSize * 100],
                             range: NSRange(location: 0, length: edged.length))
-        edge = edged
+        outline = edged
         fitted = balanced(within: width)
         setNeedsDisplay()
     }
@@ -1341,7 +1416,7 @@ private final class SubtitleText: UIView {
             drawBox(in: area, context)
         } else {
             context.setLineJoin(.round)
-            edge.draw(with: area, options: Self.options, context: nil)
+            if Self.edge.value > 0 { outline.draw(with: area, options: Self.options, context: nil) }
             fill.draw(with: area, options: Self.options, context: nil)
         }
     }
@@ -1370,13 +1445,19 @@ private final class SubtitleText: UIView {
                 .offsetBy(dx: area.minX, dy: area.minY))
         }
         for line in lines {
-            let bar = CGRect(x: line.minX - Self.inset.width, y: line.minY - Self.boxTop,
-                             width: line.width + Self.inset.width * 2,
+            let bar = CGRect(x: line.minX - Self.boxSide, y: line.minY - Self.boxTop,
+                             width: line.width + Self.boxSide * 2,
                              height: Self.font.lineHeight + Self.boxTop + Self.boxBottom)
             context.addPath(UIBezierPath(roundedRect: bar, cornerRadius: Self.boxRadius).cgPath)
         }
-        context.setFillColor(UIColor.black.withAlphaComponent(Self.boxOpacity).cgColor)
+        context.setFillColor(UIColor.black.withAlphaComponent(Self.background.value).cgColor)
         context.fillPath()
+        context.setLineJoin(.round)
+        if Self.edge.value > 0 {
+            storage.setAttributedString(outline)
+            layout.drawGlyphs(forGlyphRange: glyphs, at: area.origin)
+            storage.setAttributedString(fill)
+        }
         layout.drawGlyphs(forGlyphRange: glyphs, at: area.origin)
     }
 }
@@ -3203,7 +3284,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 subtitleDelayMenu(engine)
             }))
         }
-        rows.append(TrackList.Row(title: "Style", detail: SubtitleText.hasBox ? "High Contrast" : "Default",
+        rows.append(TrackList.Row(title: "Style", detail: styleDetail(active),
                                   separated: next == nil, page: { [unowned self] in subtitleStyleMenu }))
         return TrackList.Menu(title: "Subtitles", rows: rows)
     }
@@ -3234,6 +3315,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         var parts = track.isExternal || alike ? fileTitle(track).map { [$0] } ?? [] : []
         if !unknownFormats.contains(track.id) { parts.append(subtitleFormat(track.codec)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// A picture track is drawn as its authors drew it: Style can't reach it.
+    private func styleDetail(_ active: TrackInfo?) -> String {
+        if let active, ["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvb_subtitle"].contains(active.codec) {
+            return "Not used by \(subtitleFormat(active.codec))"
+        }
+        return SubtitleText.isStandard ? "Default" : "Custom"
     }
 
     private func subtitleFormat(_ codec: String) -> String {
@@ -3276,14 +3365,20 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private var subtitleStyleMenu: TrackList.Menu {
-        TrackList.Menu(title: "Style", rows: [
-            TrackList.Row(title: "High Contrast", active: SubtitleText.hasBox, stays: true) { [weak self] in
+        TrackList.Menu(title: "Style", rows: SubtitleText.choices.map { choice in
+            TrackList.Row(title: choice.title, detail: choice.name, page: { [unowned self] in subtitleChoiceMenu(choice) })
+        })
+    }
+
+    private func subtitleChoiceMenu(_ choice: any SubtitleChoice) -> TrackList.Menu {
+        TrackList.Menu(title: choice.title, rows: choice.names.map { name in
+            TrackList.Row(title: name, active: name == choice.name, stays: true) { [weak self] in
                 guard let self else { return }
-                SubtitleText.hasBox.toggle()
+                choice.name = name
                 for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }
                 fitSubtitles()
             }
-        ])
+        })
     }
 
     private func fitSubtitles() {
