@@ -917,6 +917,9 @@ private final class PlayerOverlay: UIView {
 
     private let controls = UIView()
     private let shade = Shade()
+    /// In the player, under the buttons; the rest of this goes over them, so
+    /// the preview covers the buttons a press leaves up.
+    var shadeView: UIView { shade }
     private let title = UILabel()
     private let episode = UILabel()
     private let elapsed = UILabel()
@@ -954,7 +957,8 @@ private final class PlayerOverlay: UIView {
 
         let gradient = shade.layer as? CAGradientLayer
         gradient?.colors = [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.7).cgColor]
-        controls.addSubview(shade)
+        shade.isUserInteractionEnabled = false
+        shade.alpha = 0
 
         episode.font = .systemFont(ofSize: 24)
         episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
@@ -1195,7 +1199,10 @@ private final class PlayerOverlay: UIView {
     func setShown(_ shown: Bool) {
         guard shown != isShown else { return }
         isShown = shown
-        UIView.animate(withDuration: Motion.fadeDuration) { self.controls.alpha = shown ? 1 : 0 }
+        UIView.animate(withDuration: Motion.fadeDuration) {
+            self.controls.alpha = shown ? 1 : 0
+            self.shade.alpha = shown ? 1 : 0
+        }
     }
 
     static func clock(_ seconds: Double) -> String {
@@ -1596,7 +1603,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        for sub in [focusView, surface, subtitles, overlay, audioButton, subtitleButton,
+        for sub in [focusView, surface, subtitles, overlay.shadeView, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,
                     readout] as [UIView] {
             view.addSubview(sub)
