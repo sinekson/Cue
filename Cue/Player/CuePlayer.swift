@@ -884,6 +884,100 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
     }
 }
 
+/// A subtitle's text, one style for all: SF medium, a solid off-white (content,
+/// not interface) on a tight, soft shadow, and a faint edge for bright frames,
+/// drawn under the fill so the letters keep their weight.
+private final class SubtitleText: UIView {
+    struct Run: Equatable {
+        let text: String
+        let italic: Bool
+    }
+
+    private static let size: CGFloat = 48
+    /// Half of it under the fill: 1.25 pt shows.
+    private static let stroke: CGFloat = 2.5
+    /// Room for the edge and an italic's overhang.
+    private static let inset: CGFloat = 4
+    private static let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+
+    private var runs: [Run] = []
+    private var fill = NSAttributedString()
+    private var edge = NSAttributedString()
+    private(set) var fitted = CGSize.zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        isUserInteractionEnabled = false
+        contentMode = .redraw
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.8
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        // It moves with the controls, over video.
+        layer.shouldRasterize = true
+        layer.rasterizationScale = UIScreen.main.scale
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// False when it's what already shows.
+    func show(_ new: [Run], within width: CGFloat) -> Bool {
+        guard new != runs else { return false }
+        runs = new
+        isHidden = new.isEmpty
+        fill = text(.foregroundColor, UIColor(red: 242 / 255, green: 240 / 255, blue: 239 / 255, alpha: 1))
+        let edged = NSMutableAttributedString(attributedString: fill)
+        edged.addAttributes([.strokeColor: UIColor.black.withAlphaComponent(0.6), .strokeWidth: Self.stroke / Self.size * 100],
+                            range: NSRange(location: 0, length: edged.length))
+        edge = edged
+        fitted = balanced(within: width)
+        setNeedsDisplay()
+        return true
+    }
+
+    private func text(_ key: NSAttributedString.Key, _ value: Any) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byWordWrapping
+        let upright = UIFont.systemFont(ofSize: Self.size, weight: .medium)
+        let out = NSMutableAttributedString()
+        for run in runs {
+            let slanted = upright.fontDescriptor.withSymbolicTraits(.traitItalic)
+                .map { UIFont(descriptor: $0, size: Self.size) }
+            out.append(NSAttributedString(string: run.text, attributes: [
+                key: value, .paragraphStyle: paragraph, .font: run.italic ? slanted ?? upright : upright
+            ]))
+        }
+        return out
+    }
+
+    /// The narrowest width with the same number of lines: a long line wraps
+    /// into even ones, never one word alone.
+    private func balanced(within width: CGFloat) -> CGSize {
+        func measure(_ width: CGFloat) -> CGSize {
+            fill.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                              options: Self.options, context: nil).size
+        }
+        let height = measure(width).height
+        var (low, high) = (CGFloat(0), width)
+        while high - low > 4 {
+            let middle = (low + high) / 2
+            if measure(middle).height > height { low = middle } else { high = middle }
+        }
+        let size = measure(high)
+        return CGSize(width: ceil(size.width) + Self.inset * 2, height: ceil(size.height) + Self.inset * 2)
+    }
+
+    override func draw(_ rect: CGRect) {
+        let area = bounds.insetBy(dx: Self.inset, dy: Self.inset)
+        UIGraphicsGetCurrentContext()?.setLineJoin(.round)
+        edge.draw(with: area, options: Self.options, context: nil)
+        fill.draw(with: area, options: Self.options, context: nil)
+    }
+}
+
 /// The bare overlay: what's playing, where it is, and a spinner while the
 /// engine waits. Shows nothing that takes focus.
 private final class PlayerOverlay: UIView {
@@ -1417,7 +1511,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private let focusView = PlayerFocusView()
     private let surface = AetherPlayerView()
-    private let subtitleText = UILabel()
+    private let subtitleText = SubtitleText()
     private let subtitleImage = UIImageView()
     /// Both kinds of subtitle: they make way as the controls come up.
     private let subtitles = UIView()
@@ -1630,13 +1724,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
         pan.delegate = self
         view.addGestureRecognizer(pan)
-
-        subtitleText.numberOfLines = 0
-        subtitleText.textAlignment = .center
-        subtitleText.textColor = .white
-        subtitleText.font = .systemFont(ofSize: CGFloat(settings.subtitleSize), weight: .medium)
-        subtitleText.shadowColor = .black
-        subtitleText.shadowOffset = CGSize(width: 0, height: 2)
 
         readout.numberOfLines = 0
         readout.textColor = .white
@@ -2810,21 +2897,23 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func showSubtitle(_ engine: AetherEngine) {
         let time = engine.clock.sourceTime
         let cue = engine.subtitleCues.first { $0.startTime <= time && time < $0.endTime }
-        var text: String?
+        var runs: [SubtitleText.Run] = []
         var image: SubtitleImage?
         switch cue?.body {
         case .image(let picture): image = picture
-        case .some: text = cue?.text
+        case .richText(let parts): runs = parts.map { .init(text: $0.text, italic: $0.isItalic) }
+        case .text(let line): runs = [.init(text: Self.plain(line), italic: false)]
         case nil: break
         }
 
-        subtitleText.text = text
-        let width = view.bounds.width - 300
-        let height = subtitleText.sizeThatFits(CGSize(width: width, height: 400)).height
-        subtitleText.frame = CGRect(x: 150, y: view.bounds.height - Self.subtitleRest - height, width: width, height: height)
+        let bounds = view.bounds
+        if subtitleText.show(runs, within: bounds.width * 0.7) {
+            let size = subtitleText.fitted
+            subtitleText.frame = CGRect(x: (bounds.width - size.width) / 2, y: bounds.height - Self.subtitleRest - size.height,
+                                        width: size.width, height: size.height)
+        }
 
         if let image {
-            let bounds = view.bounds
             subtitleImage.image = UIImage(cgImage: image.cgImage)
             subtitleImage.frame = CGRect(
                 x: image.position.minX * bounds.width, y: image.position.minY * bounds.height,
@@ -2833,6 +2922,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         } else {
             subtitleImage.image = nil
         }
+    }
+
+    /// A line as it reads: no leftover tags.
+    private static func plain(_ line: String) -> String {
+        line.replacingOccurrences(of: "<[^>]+>|\\{\\\\[^}]*\\}", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\N", with: "\n")
     }
 
     private func lines() -> [String] {

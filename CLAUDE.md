@@ -252,7 +252,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   (picking closes it). Skip and Next Episode above the bar on the left, level
   with the buttons. Up: a prompt on screen, else the buttons (Right off the prompt
   reaches them, Left off Audio the prompt; Up off the prompt does nothing); Down from them: the bar; Up off them: the controls go, a way out that can't close the player. Swipe or click Down (controls up
-  or not): the shelf, without bar or buttons. The shelf is its own thing (decided; attached to the bar as YouTube's was tried: it left subtitles no room). Subtitles: low at rest, up on the controls' spring to clear what comes up (title and buttons, a prompt, the shelf), gone while scrubbing. A swipe opens only if clearly
+  or not): the shelf, without bar or buttons. The shelf is its own thing (decided; attached to the bar as YouTube's was tried: it left subtitles no room). Subtitles: one style, no options (`SubtitleText`): SF medium 48 pt, a solid off-white, F2F0EF (content, so past the text limit), a tight soft shadow (80 %, 3 pt) and a 1.25 pt edge at 60 % (2 pt was too heavy; none at all was harder to read), centred in 70 % of the width, the file's line breaks kept, a long line wrapped into even ones, the file's italics. Low at rest, up on the controls' spring to clear what comes up (title and buttons, a prompt, the shelf), gone while scrubbing. A swipe opens only if clearly
   vertical. All of this but the title and the prompts' spot is still an open question. Back: shelf, list, buttons, a
   scrub, the controls, one at a time; only with nothing up does it close. Audio default: picked by hand for the title, then the
   setting, then the device's language; E-AC-3 Atmos over TrueHD (the bridge
