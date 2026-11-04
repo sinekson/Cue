@@ -748,13 +748,8 @@ struct Stream: Codable, Hashable {
     /// Tracker/DHT sources for building a magnet URI (Stremio torrent streams).
     let sources: [String]?
     let behaviorHints: StreamBehaviorHints?
-    /// Stremio's `externalUrl`: a link the client opens/hands off rather than
-    /// plays in-app. "Cast" addons (DMM Cast etc.) use it for their cast
-    /// action, so a stream can carry this INSTEAD of a playable `url`.
-    let externalUrl: String?
-
     private enum CodingKeys: String, CodingKey {
-        case name, title, description, url, infoHash, fileIdx, sources, behaviorHints, externalUrl
+        case name, title, description, url, infoHash, fileIdx, sources, behaviorHints
     }
 
     /// Tolerant decode: addons in the wild bend the spec (numbers where
@@ -780,13 +775,12 @@ struct Stream: Codable, Hashable {
         fileIdx = decodedFileIdx
         sources = (try? c.decodeIfPresent([String].self, forKey: .sources)) ?? nil
         behaviorHints = (try? c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)) ?? nil
-        externalUrl = (try? c.decodeIfPresent(String.self, forKey: .externalUrl)) ?? nil
     }
 
     init(
         name: String?, title: String?, description: String?, url: String?,
         infoHash: String?, fileIdx: Int? = nil, sources: [String]? = nil,
-        behaviorHints: StreamBehaviorHints?, externalUrl: String? = nil
+        behaviorHints: StreamBehaviorHints?
     ) {
         self.name = name
         self.title = title
@@ -796,7 +790,6 @@ struct Stream: Codable, Hashable {
         self.fileIdx = fileIdx
         self.sources = sources
         self.behaviorHints = behaviorHints
-        self.externalUrl = externalUrl
     }
 
     var isPlayable: Bool {
@@ -844,11 +837,6 @@ struct Stream: Codable, Hashable {
         }
     }
 
-    /// A cast / open-externally stream (e.g. DMM Cast): no in-app-playable url
-    /// and no torrent, but a link to hand off to the system / an external app.
-    var isExternal: Bool {
-        !isPlayable && !isTorrent && !(externalUrl?.isEmpty ?? true)
-    }
 
     /// Debrid-cached marker, e.g. "[RD+]", "[TB+]", "PM+" — the convention
     /// Torrentio/Comet/MediaFusion use for torrents the provider already has
@@ -912,17 +900,24 @@ struct Stream: Codable, Hashable {
     var isCached: Bool {
         let raw = "\(name ?? "") \(title ?? "") \(description ?? "")"
         let lower = raw.lowercased()
+        if let stated = statedCached(in: raw) { return stated }
+        // An unmarked torrent is never instant; a debrid URL without a cached
+        // marker is a download-on-access link (NOT cached). Only a genuine
+        // direct link with no debrid context counts as instant.
+        if isTorrent { return false }
+        return isPlayable && !mentionsDebrid(lower)
+    }
+
+    /// What the add-on's own text says about being cached, nil if it says nothing.
+    func statedCached(in raw: String) -> Bool? {
+        let lower = raw.lowercased()
         if isUncachedMarked(lower) { return false }
         // Positive cached markers used across the common addons.
         if raw.contains("⚡") || raw.contains("✅") { return true }
         if lower.contains("cached") || lower.contains("instant") { return true }
         if let regex = Self.cachedMarkerRegex,   // "[RD+]" / "[PM+]" style tags
            regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)) != nil { return true }
-        // An unmarked torrent is never instant; a debrid URL without a cached
-        // marker is a download-on-access link (NOT cached). Only a genuine
-        // direct link with no debrid context counts as instant.
-        if isTorrent { return false }
-        return isPlayable && !mentionsDebrid(lower)
+        return nil
     }
 
     private var searchHaystack: String { "\(name ?? "") \(title ?? "") \(description ?? "")".lowercased() }
@@ -1085,11 +1080,12 @@ struct Stream: Codable, Hashable {
     /// row bodies, never directly per render.
     var fileSizeLabel: String? {
         if let bytes = behaviorHints?.videoSize, bytes > 0 {
-            let gb = Double(bytes) / 1_073_741_824
+            // Decimal, as the add-ons and Apple count.
+            let gb = Double(bytes) / 1_000_000_000
             if gb >= 1 {
-                return String(format: gb >= 100 ? "%.0f GB" : "%.1f GB", gb)
+                return String(format: gb >= 100 ? "%.0f GB" : "%.2f GB", gb)
             }
-            let mb = Double(bytes) / 1_048_576
+            let mb = Double(bytes) / 1_000_000
             return String(format: "%.0f MB", mb)
         }
         let haystack = "\(name ?? "") \(title ?? "") \(description ?? "")"
@@ -1121,7 +1117,7 @@ struct Stream: Codable, Hashable {
               let unitRange = Range(match.range(at: 2), in: haystack),
               let value = Double(haystack[numberRange]) else { return nil }
         let multiplier: Double = haystack[unitRange].lowercased().hasPrefix("m")
-            ? 1_048_576 : 1_073_741_824
+            ? 1_000_000 : 1_000_000_000
         // `Int64(Double)` TRAPS past 2^63. The digits come from addon text
         // (`\d+` is unbounded), so a long numeric id glued to "GB" in a
         // release title was a remote crash while the Sources list was built.
@@ -1244,6 +1240,8 @@ struct StreamEntry: Identifiable, Hashable {
     /// Quality score for ranking within a resolution tier (see
     /// Stream.qualityScore). Includes the dominant cached/instant bonus.
     let sourceScore: Int
+    /// What the link's text says, for the styled source cards.
+    let facts: StreamFacts
 
     init(addonName: String, stream: Stream) {
         self.addonName = addonName
@@ -1257,10 +1255,178 @@ struct StreamEntry: Identifiable, Hashable {
         sourceScore = stream.qualityScore(
             isInstant: isInstant, sizeBytes: sizeBytes, resolutionLabel: resolutionLabel
         )
+        facts = StreamFacts(stream)
     }
 
     static func == (lhs: StreamEntry, rhs: StreamEntry) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+/// The key facts of a link, read by known words, not positions: add-ons' text
+/// differs per config. AIOStreams' formatters like Unicode small caps, so the
+/// text is made plain first. The file name fills in what the text leaves out;
+/// what neither says stays nil.
+struct StreamFacts: Hashable {
+    let resolution: String?
+    /// "Bluray Remux"
+    let quality: String?
+    let size: String?
+    let bitrate: String?
+    /// "German, English", "German, English, French +3"
+    let language: String?
+    /// As the add-on says, nil if it doesn't.
+    let cached: Bool?
+    /// "DV · HDR10+ · HEVC"
+    let video: String?
+    /// "TrueHD Atmos · 7.1"
+    let audio: String?
+    /// The release group or provider, and any editions.
+    let origin: [String]
+    /// With AIOStreams, the add-on behind the link: the template's last line starts with it.
+    let gatheredFrom: String?
+
+    init(_ stream: Stream) {
+        let text = Self.plain("\(stream.name ?? "") \(stream.title ?? "") \(stream.description ?? "")")
+        let file = Self.plain(stream.behaviorHints?.filename ?? "")
+        let all = text + " " + file
+        resolution = Self.first(Self.resolutions, in: all)
+        quality = Self.first(Self.qualities, in: all)
+        size = Self.size(of: stream, in: text)
+        bitrate = Self.bitrate(in: text)
+        language = Self.language(in: text)
+        cached = stream.statedCached(in: text)
+        video = Self.video(in: all)
+        audio = Self.audio(in: all)
+        let editions = Self.editions.filter { Self.matches($0.0, all) }.map(\.1)
+        origin = [Self.group(of: stream, file: file)].compactMap { $0 } + editions
+        let lastLine = (stream.description ?? "").components(separatedBy: .newlines).last { !$0.isEmpty }
+        let lastParts = (lastLine ?? "").components(separatedBy: "·")
+        gatheredFrom = lastLine == nil ? nil : lastParts[0].trimmingCharacters(in: .whitespaces)
+    }
+
+    private static let smallCaps: [Character: Character] = [
+        "ᴀ": "A", "ʙ": "B", "ᴄ": "C", "ᴅ": "D", "ᴇ": "E", "ꜰ": "F", "ғ": "F", "ɢ": "G", "ʜ": "H",
+        "ɪ": "I", "ᴊ": "J", "ᴋ": "K", "ʟ": "L", "ᴍ": "M", "ɴ": "N", "ᴏ": "O", "ᴘ": "P", "ǫ": "Q",
+        "ʀ": "R", "ꜱ": "S", "ᴛ": "T", "ᴜ": "U", "ᴠ": "V", "ᴡ": "W", "ʏ": "Y", "ᴢ": "Z"
+    ]
+
+    /// The compatibility mapping takes care of the mathematical alphabets.
+    private static func plain(_ text: String) -> String {
+        String(text.precomposedStringWithCompatibilityMapping.map { smallCaps[$0] ?? ($0 == "_" ? " " : $0) })
+    }
+
+    private static func regex(_ pattern: String) -> NSRegularExpression? {
+        try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }
+
+    /// Best first, each a whole word; a digit may follow ("DDP5.1").
+    private static func table(_ words: [(String, String)]) -> [(NSRegularExpression?, String)] {
+        words.map { (regex("(?<![a-z0-9])(?:\($0.0))(?![a-z])"), $0.1) }
+    }
+
+    private static let resolutions = table([
+        ("2160p|4k|uhd", "2160p"), ("1440p", "1440p"), ("1080p|fhd", "1080p"),
+        ("720p", "720p"), ("576p", "576p"), ("480p", "480p")
+    ])
+    private static let qualities = table([
+        ("remux", "Bluray Remux"), ("blu-?ray|bdrip|brrip", "Bluray"), ("web-?dl", "Web-dl"), ("web-?rip", "Webrip"),
+        ("web", "Web"), ("hdtv", "HDTV"), ("dvd(?:rip)?", "DVD"), ("hd-?cam|cam(?:rip)?|telesync|hd-?ts", "Cam")
+    ])
+    private static let pictures = table([
+        ("dv|dovi|dolby[ .]?vision", "DV"), ("hdr10\\+|hdr10plus", "HDR10+"), ("hdr(?:10)?", "HDR")
+    ])
+    private static let codecs = table([
+        ("hevc|x\\.?265|h\\.?265", "HEVC"), ("av1", "AV1"), ("vp9", "VP9"), ("avc|x\\.?264|h\\.?264", "AVC")
+    ])
+    private static let languages = table([
+        ("english", "English"), ("german", "German"), ("french", "French"), ("spanish", "Spanish"), ("latino", "Latino"),
+        ("italian", "Italian"), ("portuguese", "Portuguese"), ("dutch", "Dutch"), ("russian", "Russian"),
+        ("ukrainian", "Ukrainian"), ("polish", "Polish"), ("czech", "Czech"), ("turkish", "Turkish"),
+        ("swedish", "Swedish"), ("norwegian", "Norwegian"), ("danish", "Danish"), ("finnish", "Finnish"),
+        ("greek", "Greek"), ("hungarian", "Hungarian"), ("romanian", "Romanian"), ("arabic", "Arabic"),
+        ("hindi", "Hindi"), ("tamil", "Tamil"), ("telugu", "Telugu"), ("japanese", "Japanese"), ("korean", "Korean"),
+        ("chinese", "Chinese"), ("thai", "Thai"), ("vietnamese", "Vietnamese")
+    ])
+    private static let audios = table([
+        ("truehd", "TrueHD"), ("dts[:.\\- ]?x", "DTS:X"), ("dts-?hd[ .-]?ma", "DTS-HD MA"), ("dts-?hd", "DTS-HD"),
+        ("dd\\+|ddp|e-?ac-?3", "DD+"), ("dts", "DTS"), ("dd|ac-?3", "DD"), ("flac", "FLAC"), ("aac", "AAC"), ("opus", "Opus")
+    ])
+    private static let editions = table([
+        ("extended", "Extended"), ("director'?s?[ .]?cut", "Director's Cut"), ("theatrical", "Theatrical"),
+        ("unrated", "Unrated"), ("uncut", "Uncut"), ("imax", "IMAX"), ("remaster(?:ed)?", "Remastered"),
+        ("criterion", "Criterion")
+    ])
+    private static let atmos = regex("(?<![a-z0-9])atmos(?![a-z])")
+    private static let channels = regex(#"(?<![\d.])[2567]\.[01](?![\d.])"#)
+    private static let sizes = regex(#"(\d+(?:\.\d+)?)\s*(TB|GB|GiB|MB|MiB)(?![a-z])"#)
+    private static let bitrates = regex(#"(\d+(?:\.\d+)?)\s*Mbps"#)
+    private static let groups = regex(#"-([a-z0-9]+)(?:\.[a-z0-9]{2,4})?\s*$"#)
+
+    private static func matches(_ regex: NSRegularExpression?, _ text: String) -> Bool {
+        regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    private static func first(_ table: [(NSRegularExpression?, String)], in text: String) -> String? {
+        table.first { matches($0.0, text) }?.1
+    }
+
+    /// The whole match, then its groups.
+    private static func parts(_ regex: NSRegularExpression?, in text: String) -> [String]? {
+        guard let match = regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        return (0..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: text).map { String(text[$0]) } }
+    }
+
+    /// Whatever there is, nil if nothing.
+    private static func listed(_ parts: [String?]) -> String? {
+        let found = parts.compactMap { $0 }
+        return found.isEmpty ? nil : found.joined(separator: " · ")
+    }
+
+    private static func video(in text: String) -> String? {
+        let pictures = pictures.filter { matches($0.0, text) }.map(\.1)
+        // "HDR" also matches inside "HDR10+".
+        let picture = pictures.contains("HDR10+") ? pictures.filter { $0 != "HDR" } : pictures
+        return listed(picture + [first(codecs, in: text)])
+    }
+
+    private static func audio(in text: String) -> String? {
+        let codec = first(audios, in: text)
+        let format = matches(atmos, text) ? [codec, "Atmos"].compactMap { $0 }.joined(separator: " ") : codec
+        return listed([format, parts(channels, in: text)?.first])
+    }
+
+    private static func size(of stream: Stream, in text: String) -> String? {
+        // The add-on's own figure; the file's bytes only where its text has none.
+        if let found = parts(sizes, in: text), found.count == 3 {
+            return "\(found[1]) \(found[2].prefix(1).uppercased())B"
+        }
+        if let bytes = stream.behaviorHints?.videoSize, bytes > 0 { return stream.fileSizeLabel }
+        return nil
+    }
+
+    private static func bitrate(in text: String) -> String? {
+        guard let found = parts(bitrates, in: text), found.count == 2 else { return nil }
+        return "\(found[1]) Mbps"
+    }
+
+    /// In the order the text names them.
+    private static func language(in text: String) -> String? {
+        let found = languages.compactMap { entry -> (Int, String)? in
+            entry.0?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)).map { ($0.range.location, entry.1) }
+        }.sorted { $0.0 < $1.0 }
+        guard !found.isEmpty else { return nil }
+        let shown = found.prefix(3).map(\.1).joined(separator: ", ")
+        return found.count > 3 ? "\(shown) +\(found.count - 3)" : shown
+    }
+
+    /// The release group: the end of AIOStreams' binge group, else of a scene
+    /// file name.
+    private static func group(of stream: Stream, file: String) -> String? {
+        let binge = stream.behaviorHints?.bingeGroup?.components(separatedBy: "|") ?? []
+        if binge.count > 3, let last = binge.last, !last.isEmpty { return last }
+        guard let found = parts(groups, in: file), found.count == 2, Int(found[1]) == nil else { return nil }
+        return found[1]
+    }
 }
 
 // MARK: - API response envelopes

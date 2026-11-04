@@ -414,12 +414,15 @@ struct RootView: View {
             .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
             // The way into the player, over everything (`PlayStage`): the
             // player's cover is clear until its first frame, so this stays
-            // under it. Back cancels; the list plays what's picked.
+            // under it, and holds focus until then. Back cancels; the list
+            // plays what's picked.
             .overlay {
                 if let scene = stage.scene {
                     PlayStageView(scene: scene, onBack: {
                         PlayLauncher.shared.cancel()
-                        stage.clear()
+                        // A link already loading goes too, or it would come up later.
+                        setPlayback(nil)
+                        playerClosed()
                     }) { request in sources(request) }
                     .transition(.asymmetric(insertion: .opacity.animation(PlayStage.fadeIn), removal: .opacity))
                 }

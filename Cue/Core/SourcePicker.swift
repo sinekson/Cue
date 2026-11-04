@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The stage: the screen at the press blurred and dimmed, the logo or name over it.
+/// The stage: the title's backdrop, the logo or name over it.
 /// Every way into the player goes through it, from the press until the film's
 /// first frame has come up over it. The root shows it while `scene` is set.
 @MainActor
@@ -34,7 +34,7 @@ final class PlayStage: ObservableObject {
     func clear() { scene = nil }
 }
 
-/// The source list (`SourcePanel`), on the stage, not tied to a screen:
+/// The source row (`SourcePanel`), on the stage, not tied to a screen:
 /// Details opens it (hold Play; Play finding nothing), Continue Watching too
 /// ("Choose Source"). The root shows it while `request` is set and plays
 /// what's picked; `picked` while that loads, the list hidden, for Back to
@@ -53,16 +53,25 @@ final class SourcePicker: ObservableObject {
 
     @Published private(set) var request: Request?
     @Published var picked = false
+    /// The list has nothing to show yet: the stage waits as for Play.
+    @Published var searching = false
+    /// The stage's holding view has had focus: it goes, and focus falls into
+    /// the list (`PlayStageView`).
+    @Published var listShown = false
 
     func open(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, art: String? = nil) {
         PlayStage.shared.show(meta, video, art: art)
         picked = false
+        searching = false
+        listShown = false
         request = Request(meta: meta, video: video, fromStart: fromStart)
     }
 
     func close() {
         request = nil
         picked = false
+        searching = false
+        listShown = false
         PlayStage.shared.clear()
     }
 }

@@ -1720,6 +1720,24 @@ final class FixedFocusProgressView: UIView {
 /// cells' size changes.
 @MainActor
 enum FixedFocusMotion {
+    /// Cards whose content is new (Search's results, the shelf's links after
+    /// Refresh) swell a little and settle — the Apple TV app's sign that
+    /// they changed — all at once, no cascade; on the cards' content, so a
+    /// focused card's growth stays.
+    static func pulse(_ cells: [UICollectionViewCell]) {
+        let swell = CAKeyframeAnimation(keyPath: "transform.scale")
+        swell.values = [1, pulseScale, 1]
+        swell.keyTimes = [0, 0.4, 1]
+        swell.duration = pulseDuration
+        swell.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        for cell in cells {
+            cell.contentView.layer.add(swell, forKey: "pulse")
+        }
+    }
+
+    private static let pulseScale: CGFloat = 1.02
+    private static let pulseDuration: CFTimeInterval = 0.35
+
     /// A focus movement (Left/Right and Up/Down alike) on UIKit's own
     /// spring (duration + bounce 0): a new press during the move carries
     /// its speed on instead of starting from rest. (Always UIView.animate:

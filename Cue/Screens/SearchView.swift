@@ -782,23 +782,11 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         if newBatch { pulse() }
     }
 
-    /// New results in place of others: the cards swell a little and settle
-    /// (the Apple TV app's sign that they changed) — all at once, no
-    /// cascade; on the cards' content, so a focused card's growth stays.
+    /// New results in place of others: the cards swell a little and settle.
     private func pulse() {
         collectionView.layoutIfNeeded()
-        let swell = CAKeyframeAnimation(keyPath: "transform.scale")
-        swell.values = [1, Self.pulseScale, 1]
-        swell.keyTimes = [0, 0.4, 1]
-        swell.duration = Self.pulseDuration
-        swell.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
-        for cell in collectionView.visibleCells {
-            cell.contentView.layer.add(swell, forKey: "pulse")
-        }
+        FixedFocusMotion.pulse(collectionView.visibleCells)
     }
-
-    private static let pulseScale: CGFloat = 1.02
-    private static let pulseDuration: CFTimeInterval = 0.35
 
     /// 2:3 cards as tall as the room holds.
     private func applyCardSize() {

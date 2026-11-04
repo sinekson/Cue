@@ -138,7 +138,7 @@ final class StreamsViewModel: ObservableObject {
         guard let onFirstLink, !firstLinkFired else { return }
         for name in queriedAddonNames {
             guard finishedAddonNames.contains(name) else { return }   // an earlier add-on comes first
-            if let first = pool.first(where: { $0.addonName == name && !$0.stream.isExternal && !$0.stream.isTorrent }) {
+            if let first = pool.first(where: { $0.addonName == name && !$0.stream.isTorrent }) {
                 firstLinkFired = true
                 onFirstLink(first)
                 return
@@ -416,7 +416,6 @@ final class StreamsViewModel: ObservableObject {
             // playable links sitting right there. `bestResumeMatch` has
             // always excluded these; the selector and the global auto-play
             // (below) must too. Manual taps still offer them.
-            if entry.stream.isExternal { return false }
             // An addon that answered a byte-range request with an HTTP error
             // cannot be cached OR seeked — the proxy fails open so the film
             // plays, and the cache, the scrub previews and seeking are all dead
@@ -466,7 +465,6 @@ final class StreamsViewModel: ObservableObject {
         // Same name check the Auto Link Selector uses: an auto-play that
         // starts the wrong episode is worse than one that starts nothing.
         return autoRanked(titleFiltered(allEntries)).first { entry in
-            if entry.stream.isExternal { return false }   // see autoLinkPool
             if Stream.RangeRefusingAddons.contains(entry.addonName) { return false }
             if excluding.contains(entry.rejectionKey) { return false }
             if cachedOnly && !entry.stream.isCached { return false }
@@ -635,7 +633,7 @@ final class StreamsViewModel: ObservableObject {
                     do {
                         let streams = try await StremioAPI.streams(addon: addon, type: meta.type, id: fetchID, timeout: streamTimeout)
                         let entries = streams
-                            .filter { $0.isPlayable || $0.isExternal }
+                            .filter(\.isPlayable)
                             .map { StreamEntry(addonName: addon.manifest.name, stream: $0) }
                         return (addon.manifest.name, entries, nil)
                     } catch {

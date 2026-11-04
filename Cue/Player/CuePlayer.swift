@@ -58,7 +58,7 @@ private final class PlayerFocusView: UIView {
 }
 
 /// The app's one glass, as a backing for UIKit controls.
-private final class GlassBacking: UIView {
+final class GlassBacking: UIView {
     private let host: UIViewController
 
     init<S: Shape>(_ shape: S) {
@@ -426,15 +426,91 @@ private final class PanelTab: UIView {
     static let height: CGFloat = 56
     /// The word's distance from the pill's edge.
     static let padding: CGFloat = 24
+    /// `FlatControl.selected`.
+    private static let chosenFill: CGFloat = 0.28
 
     private let platter = UIView()
     private let title = UILabel()
+    private let icon = UIImageView()
+    let text: String
+    /// Select's job, for a tab that's a button (Refresh).
+    var action: (() -> Void)?
+    /// A button looks like one at rest, as Audio and Subtitles: it needs a
+    /// press, where a tab acts on focus.
+    private var glass: GlassBacking?
+    private var pressed = false
+    /// The symbol turns while it works, as the loading dots: a half turn (it
+    /// looks the same there), a brief rest, again; stopped, it settles on its
+    /// next half turn, never longer than a quick settle.
+    var busy = false {
+        didSet {
+            guard busy != oldValue else { return }
+            busy ? turn() : stopTurning()
+        }
+    }
+    private static let halfTurn: CFTimeInterval = 0.7
+    private static let turnRest: CFTimeInterval = 0.3
+    private static let settleDuration: CFTimeInterval = 0.4
+
+    private func turn() {
+        let spin = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        spin.values = [0, CGFloat.pi, CGFloat.pi]
+        spin.keyTimes = [0, NSNumber(value: Self.halfTurn / (Self.halfTurn + Self.turnRest)), 1]
+        spin.timingFunctions = [CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .linear)]
+        spin.duration = Self.halfTurn + Self.turnRest
+        spin.isCumulative = true
+        spin.repeatCount = .infinity
+        icon.layer.add(spin, forKey: "turn")
+    }
+
+    private func stopTurning() {
+        guard icon.layer.animation(forKey: "turn") != nil else { return }
+        var angle = (icon.layer.presentation()?.value(forKeyPath: "transform.rotation.z") as? CGFloat) ?? 0
+        if angle < 0 { angle += .pi * 2 }
+        let target = (angle / .pi).rounded(.up) * .pi
+        let rest = CABasicAnimation(keyPath: "transform.rotation.z")
+        rest.fromValue = angle
+        rest.toValue = target
+        rest.duration = min(Self.halfTurn * Double((target - angle) / .pi), Self.settleDuration)
+        rest.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        icon.layer.add(rest, forKey: "turn")
+    }
 
     var chosen = false {
         didSet { paint() }
     }
 
+    /// The chosen one keeps a pill at rest, as Details' season: the flat
+    /// control's selected fill. Not while the shelf only peeks.
+    var marksChosen = true {
+        didSet { paint() }
+    }
+
+    /// Folded away it can't take focus.
+    var available = true
+
+    /// Asks every add-on again, past the caches.
+    static func refresh() -> PanelTab { PanelTab(symbol: "arrow.trianglehead.2.clockwise.rotate.90", named: "Refresh") }
+
+    /// A symbol in place of the word: a round glass button.
+    convenience init(symbol: String, named text: String) {
+        self.init(text)
+        title.text = nil
+        let glass = GlassBacking(Circle())
+        insertSubview(glass, at: 0)
+        self.glass = glass
+        liftShadow(platter)
+        icon.image = UIImage(systemName: symbol,
+                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .medium))
+        icon.contentMode = .center
+        icon.layer.shadowColor = UIColor.black.cgColor
+        icon.layer.shadowOffset = .zero
+        icon.layer.shadowRadius = 8
+        paint()
+    }
+
     init(_ text: String) {
+        self.text = text
         super.init(frame: .zero)
         platter.backgroundColor = .white
         platter.alpha = 0
@@ -444,30 +520,61 @@ private final class PanelTab: UIView {
         title.layer.shadowColor = UIColor.black.cgColor
         title.layer.shadowOffset = .zero
         title.layer.shadowRadius = 8
-        for sub in [platter, title] as [UIView] { addSubview(sub) }
+        for sub in [platter, title, icon] as [UIView] { addSubview(sub) }
         paint()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    override var canBecomeFocused: Bool { true }
+    override var canBecomeFocused: Bool { available }
 
-    var width: CGFloat { title.intrinsicContentSize.width + Self.padding * 2 }
+    var width: CGFloat { icon.image == nil ? title.intrinsicContentSize.width + Self.padding * 2 : Self.height }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         platter.frame = bounds
         platter.layer.cornerRadius = bounds.height / 2
         title.frame = bounds
+        icon.frame = bounds
+        glass?.frame = bounds
+        platter.layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard action != nil, presses.contains(where: { $0.type == .select }) else {
+            return super.pressesBegan(presses, with: event)
+        }
+        setPressed(true)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let action, presses.contains(where: { $0.type == .select }) else {
+            return super.pressesEnded(presses, with: event)
+        }
+        setPressed(false)
+        action()
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        setPressed(false)
+        super.pressesCancelled(presses, with: event)
+    }
+
+    private func setPressed(_ down: Bool) {
+        pressed = down
+        focusChange { self.paint() }
     }
 
     private func paint() {
         title.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
-            : UIColor.white.withAlphaComponent(chosen ? FixedFocusText.primary : FixedFocusText.body)
+            : UIColor.white.withAlphaComponent(chosen || glass != nil ? FixedFocusText.primary : FixedFocusText.body)
+        icon.tintColor = title.textColor
         title.layer.shadowOpacity = isFocused ? 0 : 0.8
-        platter.alpha = isFocused ? 1 : 0
-        transform = isFocused ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
+        icon.layer.shadowOpacity = title.layer.shadowOpacity
+        platter.alpha = isFocused ? 1 : chosen && marksChosen && glass == nil ? Self.chosenFill : 0
+        let scale: CGFloat = isFocused ? (pressed ? 0.97 : 1.05) : 1
+        transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -478,7 +585,7 @@ private final class PanelTab: UIView {
 
 /// From the bottom: tabs, plain words, over a page of glass. The tab follows
 /// the focus; one height for every page, so a switch moves nothing.
-private class PlayerSheet: UIView {
+class PlayerSheet: UIView {
     enum Place { case away, peek, open }
 
     fileprivate static let inset: CGFloat = 28
@@ -487,12 +594,90 @@ private class PlayerSheet: UIView {
     private static let tabsGap: CGFloat = 24
     /// The tabs and the gap under them; the page starts past the screen's edge.
     fileprivate static let tabRow = PanelTab.height + tabsGap
-    private static let tabSpacing: CGFloat = 8
+    fileprivate static let tabSpacing: CGFloat = 8
 
     private let clip = UIView()
-    private let glass: GlassBacking
-    private let tabRow = UIView()
-    private let tabs: [PanelTab]
+    fileprivate let glass: GlassBacking
+    fileprivate let tabRow = UIView()
+    private var tabs: [PanelTab]
+    /// Tabs that unfold from one (Sources into its add-ons) while one of them
+    /// is chosen, in its place; they share its page.
+    private var fold: (tab: Int, extras: Range<Int>)?
+    /// Where focus goes on the folded tab: the last one chosen.
+    private var lastExtra: Int?
+    /// Unfolded as the sheet closed: it folds, and opens unfolded on this one.
+    private var heldExtra: String?
+    /// The stage's: the fold is all there is, unfolded for good, nothing before it.
+    fileprivate var foldOnly = false
+    private var unfolded: Bool { foldOnly || fold?.extras.contains(current) == true }
+    /// On the folded tab or one it unfolded into, open: Refresh and when the
+    /// links were found come out after them.
+    private var inFold: Bool {
+        place == .open && (fold.map { $0.tab == current || $0.extras.contains(current) } ?? false)
+    }
+    fileprivate let again = PanelTab.refresh()
+    fileprivate let found = PlayerSheet.foundLabel()
+    fileprivate static let foundGap: CGFloat = 16
+    /// Unfolded, they stand a little apart from the tabs before them.
+    private static let foldGap: CGFloat = 32
+    /// Refresh's distance from the last of them.
+    fileprivate static let refreshGap: CGFloat = 16
+
+    /// When the links in hand were found, beside Refresh: body level, the tabs' shadow.
+    fileprivate static func foundLabel() -> UILabel {
+        let found = UILabel()
+        found.font = .systemFont(ofSize: 24, weight: .medium)
+        found.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        found.layer.shadowColor = UIColor.black.cgColor
+        found.layer.shadowOffset = .zero
+        found.layer.shadowRadius = 8
+        found.layer.shadowOpacity = 0.8
+        return found
+    }
+
+    /// When the links in hand were found, beside Refresh.
+    var foundAt: Date? {
+        didSet { showFound() }
+    }
+
+    /// Refresh's arrow turning and "Searching" while the add-ons are asked again.
+    var searching = false {
+        didSet {
+            again.busy = searching
+            showFound()
+            // Done: the cards say so.
+            if oldValue, !searching, let row = linksRow, !row.isHidden {
+                row.layoutIfNeeded()
+                FixedFocusMotion.pulse(row.visibleCells)
+            }
+        }
+    }
+
+    /// The links' row: it pulses when a search ends.
+    fileprivate var linksRow: ShelfRow?
+    private var clock: Timer?
+
+    fileprivate func showFound() { found.text = Self.foundText(searching: searching, at: foundAt) }
+
+    /// New links swap in one fade; the same links stay put.
+    fileprivate func swapLinks(_ change: () -> Void) {
+        guard let row = linksRow, !row.isHidden, let page = row.superview,
+              let before = row.snapshotView(afterScreenUpdates: false) else { return change() }
+        change()
+        before.frame = row.frame
+        before.alpha = row.alpha
+        page.insertSubview(before, aboveSubview: row)
+        UIView.animate(withDuration: Motion.fadeDuration, delay: 0, options: [.curveEaseInOut]) {
+            before.alpha = 0
+        } completion: { _ in before.removeFromSuperview() }
+    }
+
+    fileprivate static func foundText(searching: Bool, at foundAt: Date?) -> String? {
+        if searching { return "Searching" }
+        guard let foundAt else { return nil }
+        let minutes = Int(Date().timeIntervalSince(foundAt) / 60)
+        return minutes < 1 ? "Found just now" : "Found \(minutes) min ago"
+    }
     /// One per tab; two tabs may share one.
     fileprivate var pages: [UIView] = []
     /// In the gap under the tabs: Down lands on the page's preferred row, not
@@ -502,10 +687,10 @@ private class PlayerSheet: UIView {
     private(set) var place = Place.away
     private var reachedEdge = Date.distantPast
 
-    private var onTabs: Bool { tabs.contains(where: \.isFocused) }
+    private var onTabs: Bool { tabs.contains(where: \.isFocused) || again.isFocused }
 
     init(tabs titles: [String], height: CGFloat) {
-        let radius = TrackCell.height / 2 + Self.inset
+        let radius = FixedFocusMetrics.panelRadius
         glass = GlassBacking(RoundedRectangle(cornerRadius: radius, style: .continuous))
         tabs = titles.map(PanelTab.init)
         super.init(frame: CGRect(x: 0, y: 0, width: 0, height: height))
@@ -517,7 +702,11 @@ private class PlayerSheet: UIView {
         addSubview(glass)
         addSubview(clip)
         addSubview(tabRow)
-        for tab in tabs { tabRow.addSubview(tab) }
+        for tab in tabs + [again] { tabRow.addSubview(tab) }
+        again.alpha = 0
+        again.available = false
+        found.alpha = 0
+        tabRow.addSubview(found)
         tabRow.transform = rowTransform(for: place)
         addLayoutGuide(guide)
         NSLayoutConstraint.activate([
@@ -540,7 +729,7 @@ private class PlayerSheet: UIView {
     /// Where the page goes: under the tabs, to the sheet's foot.
     fileprivate var pageFrame: CGRect {
         CGRect(x: Self.inset, y: Self.inset, width: bounds.width - Self.inset * 2,
-               height: bounds.height - Self.tabRow - Self.inset * 1.5)
+               height: bounds.height - Self.tabRow - Self.inset * 2)
     }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] { [tabs[current]] }
@@ -553,11 +742,81 @@ private class PlayerSheet: UIView {
         glass.frame = panel
         clip.frame = panel
         var x: CGFloat = 0
-        for tab in tabs where !tab.isHidden {
+        for (index, tab) in tabs.enumerated() where !tab.isHidden && fold?.extras.contains(index) != true {
             tab.frame = CGRect(x: x, y: 0, width: tab.width, height: PanelTab.height)
-            x += tab.width + Self.tabSpacing
+            guard let fold, index == fold.tab else {
+                x += tab.width + Self.tabSpacing
+                continue
+            }
+            // Folded, they wait in its place, so they unfold from it.
+            let start = x
+            x += foldOnly ? 0 : unfolded ? Self.foldGap : tab.width + Self.tabSpacing
+            for extra in fold.extras {
+                let width = tabs[extra].width
+                tabs[extra].frame = CGRect(x: unfolded ? x : start, y: 0, width: width, height: PanelTab.height)
+                if unfolded { x += width + Self.tabSpacing }
+            }
+            let end = !inFold || fold.extras.isEmpty ? start : x - Self.tabSpacing + Self.refreshGap
+            again.frame = CGRect(x: end, y: 0, width: PanelTab.height, height: PanelTab.height)
+            let after = end + PanelTab.height + Self.foundGap
+            found.frame = CGRect(x: after, y: 0, width: max(bounds.width - after, 0), height: PanelTab.height)
+            x = end + PanelTab.height + Self.tabSpacing
         }
-        for page in pages { page.frame = pageFrame }
+        for page in pages {
+            page.frame = page is ShelfRow ? pageFrame.insetBy(dx: -ShelfRow.over, dy: 0) : pageFrame
+        }
+    }
+
+    /// One tab unfolds into these; `preferred` is where it opens.
+    fileprivate func setFold(_ tab: Int, into titles: [String], preferred: Int?) {
+        let old = fold.map { tabs[$0.extras].map(\.text) } ?? []
+        if old != titles {
+            let chosen = unfolded ? tabs[current].text : nil
+            if let fold {
+                for extra in tabs[fold.extras] { extra.removeFromSuperview() }
+                tabs.removeSubrange(fold.extras)
+                pages.removeSubrange(fold.extras)
+            }
+            let start = tabs.count
+            for title in titles {
+                let extra = PanelTab(title)
+                tabRow.insertSubview(extra, belowSubview: again)
+                tabs.append(extra)
+                pages.append(pages[tab])
+            }
+            fold = (tab, start..<tabs.count)
+            if current >= tabs.count || (chosen != nil && titles.isEmpty) { current = tab }
+            if let chosen, let fold, let same = tabs[fold.extras].firstIndex(where: { $0.text == chosen }) {
+                current = same
+            }
+        }
+        lastExtra = fold.flatMap { fold in
+            fold.extras.isEmpty ? nil : preferred.map { fold.extras.lowerBound + $0 } ?? fold.extras.lowerBound
+        }
+        // Nothing to fold back to: on the first add-on as it comes.
+        if foldOnly, current == tab, let lastExtra { current = lastExtra }
+        showFold()
+        showTab()
+        setNeedsLayout()
+    }
+
+    /// The add-on behind a tab of the fold, by its place in it.
+    fileprivate func extra(_ index: Int) -> Int? {
+        guard let fold, fold.extras.contains(index) else { return nil }
+        return index - fold.extras.lowerBound
+    }
+
+    private func showFold() {
+        guard let fold else { return }
+        again.alpha = inFold ? 1 : 0
+        again.available = inFold
+        found.alpha = again.alpha
+        tabs[fold.tab].alpha = unfolded ? 0 : 1
+        tabs[fold.tab].available = !unfolded
+        for extra in fold.extras {
+            tabs[extra].alpha = unfolded ? 1 : 0
+            tabs[extra].available = unfolded
+        }
     }
 
     fileprivate func setTabHidden(_ index: Int, _ hidden: Bool) {
@@ -567,8 +826,23 @@ private class PlayerSheet: UIView {
     }
 
     fileprivate func choose(_ index: Int) {
+        let was = (unfolded, inFold)
         current = index
+        if unfolded { lastExtra = index }
+        if was != (unfolded, inFold) {
+            showFound()
+            showFoldMoving()
+        }
         showTab()
+    }
+
+    private func showFoldMoving() {
+        UIView.animate(withDuration: Motion.focusDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0,
+                       options: [.beginFromCurrentState, .overrideInheritedDuration, .overrideInheritedCurve]) {
+            self.showFold()
+            self.setNeedsLayout()
+            self.layoutIfNeeded()
+        }
     }
 
     /// Gone, its tabs up the bottom edge with the controls, or open. The peek
@@ -577,7 +851,30 @@ private class PlayerSheet: UIView {
         guard new != place else { return }
         if new == .open {
             pageWillOpen()
+            // The minutes go on while it's open.
+            clock?.invalidate()
+            clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] timer in
+                MainActor.assumeIsolated {
+                    guard let self, self.place == .open else { return timer.invalidate() }
+                    self.showFound()
+                }
+            }
+            // Focus lands on the folded tab and passes on to it, unfolding.
+            if let held = heldExtra, let fold, let index = tabs[fold.extras].firstIndex(where: { $0.text == held }) {
+                lastExtra = index
+            }
+            heldExtra = nil
             showTab()
+        } else if place == .open, unfolded, let fold {
+            // Folded as it goes; the page keeps its links until it's gone.
+            heldExtra = tabs[current].text
+            lastExtra = current
+            current = fold.tab
+            place = new
+            for (index, tab) in tabs.enumerated() { tab.chosen = index == current }
+            showFound()
+            showFoldMoving()
+            aimGuide()
         }
         if isHidden {
             pageWillPeek()
@@ -587,6 +884,7 @@ private class PlayerSheet: UIView {
         }
         place = new
         isUserInteractionEnabled = new == .open
+        for tab in tabs { tab.marksChosen = new == .open }
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.transform = self.transform(for: new)
             self.tabRow.transform = self.rowTransform(for: new)
@@ -642,7 +940,14 @@ private class PlayerSheet: UIView {
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         if (context.nextFocusedView is PanelTab) != (context.previouslyFocusedView is PanelTab) { reachedEdge = Date() }
-        if let tab = context.nextFocusedView as? PanelTab, let index = tabs.firstIndex(of: tab), index != current {
+        if let tab = context.nextFocusedView as? PanelTab, let fold, !fold.extras.isEmpty, tab === tabs[fold.tab] {
+            // The folded tab passes its focus on to the one it unfolds into.
+            choose(lastExtra ?? fold.extras.lowerBound)
+            DispatchQueue.main.async {
+                self.setNeedsFocusUpdate()
+                self.updateFocusIfNeeded()
+            }
+        } else if let tab = context.nextFocusedView as? PanelTab, let index = tabs.firstIndex(of: tab), index != current {
             choose(index)
         } else {
             aimGuide()
@@ -746,7 +1051,7 @@ private final class DetailsPage: UIView {
     /// One fact.
     private final class Row: UIView {
         private static let labelWidth: CGFloat = 170
-        private static let font = UIFont.systemFont(ofSize: 24)
+        fileprivate static let font = UIFont.systemFont(ofSize: 24)
 
         private let name = UILabel()
         private let value = RunningLine(font: font)
@@ -780,22 +1085,32 @@ private final class DetailsPage: UIView {
         func setRunning(_ running: Bool) { value.running = running }
     }
 
-    private static let factHeight: CGFloat = 50
-
     private var rows: [Row] = []
 
     override func layoutSubviews() {
         super.layoutSubviews()
         let column = (bounds.width - 40) / 2
-        let half = (rows.count + 1) / 2
+        // As the other tabs' cards: the first line's capitals level with the
+        // cards' tops, the longer column's last baseline with their caption's.
+        let font = Row.font
+        let lines = max(leftCount, rows.count - leftCount)
+        let pitch = (PlayerShelf.cardRow - font.capHeight) / CGFloat(max(lines - 1, 1))
+        let capTop = (pitch - font.lineHeight) / 2 + font.ascender - font.capHeight
+        let top = ShelfShape.rowInsets.top - capTop
         for (index, row) in rows.enumerated() {
-            let left = index < half
-            row.frame = CGRect(x: left ? 8 : bounds.midX + 20, y: 12 + CGFloat(left ? index : index - half) * Self.factHeight,
-                               width: column, height: Self.factHeight)
+            let left = index < leftCount
+            row.frame = CGRect(x: left ? ShelfShape.rowInsets.left : bounds.midX + 20,
+                               y: top + CGFloat(left ? index : index - leftCount) * pitch,
+                               width: column, height: pitch)
         }
     }
 
-    func show(_ new: [Fact]) {
+    private var leftCount = 0
+
+    /// The file on the left, what plays on the right.
+    func show(left: [Fact], right: [Fact]) {
+        let new = left + right
+        leftCount = left.count
         while rows.count < new.count {
             let row = Row()
             rows.append(row)
@@ -814,65 +1129,210 @@ private final class DetailsPage: UIView {
     func stopRunning() { rows.forEach { $0.setRunning(false) } }
 }
 
-/// One link, on the shelf: the add-on's words on the shelf's glass, a pane when focused.
-private final class SourceCard: UICollectionViewCell {
-    static let size = CGSize(width: 680, height: PlayerShelf.cardRow)
+/// Settings → Appearance → Source Cards.
+enum SourceCardStyle: String, CaseIterable {
+    case styled, raw
+
+    static let key = "cue.appearance.sourceCards"
+    static var current: Self { UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .styled }
+
+    var label: String { self == .styled ? "Styled" : "Raw" }
+}
+
+/// The resolution on a source card, shaped as the billboard's `TitleBadge`,
+/// larger: an off-white outline, the words dark on a plate of that colour.
+private final class SourceBadge: UIView {
+    let height: CGFloat = 44
+    private static let padding: CGFloat = 15
+    private static let colour = UIColor(white: 1, alpha: FixedFocusText.primary)
+    private let plate = UIView()
+    private let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        layer.borderColor = Self.colour.cgColor
+        layer.borderWidth = 2
+        layer.cornerRadius = 11
+        layer.cornerCurve = .continuous
+        plate.backgroundColor = Self.colour
+        plate.layer.cornerRadius = 6
+        plate.layer.cornerCurve = .continuous
+        label.font = .systemFont(ofSize: 23, weight: .heavy)
+        label.textColor = .black
+        addSubview(plate)
+        addSubview(label)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    var words: String? {
+        didSet {
+            label.text = words
+            isHidden = words == nil
+        }
+    }
+
+    func width(upTo limit: CGFloat) -> CGFloat {
+        min(label.sizeThatFits(.zero).width + Self.padding * 2, limit)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        plate.frame = bounds.insetBy(dx: 7, dy: 7)
+        label.frame = bounds.insetBy(dx: Self.padding, dy: 0)
+    }
+}
+
+/// One link, on the shelf and the stage: at rest its words on the shelf's
+/// glass, barely a card; focused, lifted on a see-through white.
+/// Styled: every fact has one fixed place, and a place with nothing to show
+/// stays clear, so a row can be scanned. Raw: the add-on's own text, its first
+/// line large.
+final class SourceCard: UICollectionViewCell {
+    /// Styled: an episode card, the cell keeping its caption room so the tops line up.
+    private static let face = PlayerShelf.card
+    /// Raw: down to the episodes' caption baseline and 16:9, room for the
+    /// add-on's text.
+    static let rawFace = CGSize(width: FixedFocusMetrics.landscapeWidth(height: PlayerShelf.cardRow), height: PlayerShelf.cardRow)
+    static var size: CGSize {
+        SourceCardStyle.current == .raw ? rawFace : CGSize(width: face.width, height: PlayerShelf.cardRow)
+    }
+    private var faceSize: CGSize { isRaw ? Self.rawFace : Self.face }
     /// The episode card's growth in points: as a share, a wide card grows too far.
-    private static let lift = PlayerShelf.cardWidth * FixedFocusMetrics.movingFocusLift / size.width
-    private static let lineGap: CGFloat = 15
+    private var lift: CGFloat { PlayerShelf.cardWidth * FixedFocusMetrics.movingFocusLift / faceSize.width }
+    private static let inset: CGFloat = 28
+    private static let lineGap: CGFloat = 6
+    private static let footGap: CGFloat = 14
     private static let fadeHeight: CGFloat = 56
-    private static let nameFont = UIFont.systemFont(ofSize: 25, weight: .medium)
-    private static let detailFont = UIFont.systemFont(ofSize: 23)
+    /// A line of facts, at Details' size.
+    private static let rowHeight: CGFloat = 30
+    /// Language and cached share the line above the rule.
+    private static let ruleGap: CGFloat = 10
+    /// Room for "Not cached".
+    private static let cachedRoom: CGFloat = 150
+    /// The foot stops short of the score at its end.
+    private static let scoreRoom: CGFloat = 110
+    /// Clear of the resolution, however long.
+    private static let playingEnd: CGFloat = 140
+    private static let nameFont = UIFont.systemFont(ofSize: 32, weight: .bold)
+    /// Raw's first line: leading the card, not shouting.
+    private static let rawNameFont = UIFont.systemFont(ofSize: 26, weight: .semibold)
+    /// Details' size.
+    private static let detailFont = UIFont.systemFont(ofSize: 24)
+    /// Raw's lines: the text's floor, add-ons' descriptions run long.
+    private static let rawDetailFont = UIFont.systemFont(ofSize: 23)
+    private static let footFont = UIFont.systemFont(ofSize: 23, weight: .semibold)
+    private static let footKern: CGFloat = 3
+    /// At rest the card is barely there: its words on the shelf's glass.
+    private static let restFill: CGFloat = 0.05
+    private static let playingFill: CGFloat = 0.09
+    /// Focused: lifted, a see-through white.
+    private static let focusFill: CGFloat = 0.18
 
     private let card = UIView()
-    private let frost = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
-    private let edge = UIImageView(image: FixedFocusCardEdge.rim)
-    private let outline = UIView()
-    /// The add-on's lines, one label each with a gap between, so its breaks
+    private let shadow = UIView()
+    /// Styled's places.
+    private let styled = UIView()
+    private let title = UILabel()
+    private let resolution = SourceBadge()
+    /// Size and bitrate.
+    private let weight = UILabel()
+    private let language = UILabel()
+    private let cached = UILabel()
+    private let video = UILabel()
+    private let audio = UILabel()
+    private let rule = UIView()
+    private let score = UILabel()
+    /// Raw's lines: one label a line with a gap between, so the add-on's breaks
     /// still read when one wraps. Lines past the card fade out.
     private let text = UIView()
     private let fade = CAGradientLayer()
     private var nameLines: [UILabel] = []
     private var detailLines: [UILabel] = []
     /// The foot's own line, kept clear of the add-on's text, however long.
-    private let addon = UILabel()
+    private let foot = UILabel()
     private let playing = UILabel()
     private var isPlaying = false
+    private var isRaw = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        shadow.isUserInteractionEnabled = false
+        contentView.addSubview(shadow)
+        FixedFocusRing.attachShadow(to: shadow)
         card.clipsToBounds = true
         card.layer.cornerRadius = Spotlight.cornerRadius
         card.layer.cornerCurve = .continuous
         contentView.addSubview(card)
-        frost.isUserInteractionEnabled = false
-        outline.isUserInteractionEnabled = false
-        outline.layer.borderWidth = FixedFocusRing.width
-        outline.layer.borderColor = FixedFocusRing.color.cgColor
-        outline.layer.cornerRadius = Spotlight.cornerRadius
-        outline.layer.cornerCurve = .continuous
-        contentView.addSubview(outline)
-        FixedFocusRing.attachShadow(to: outline)
+        title.font = Self.nameFont
+        title.textColor = UIColor.white.withAlphaComponent(0.95)
+        for (labels, alpha) in [([weight, language], 0.85), ([video, audio], 0.72)] {
+            for label in labels {
+                label.font = Self.detailFont
+                label.textColor = UIColor.white.withAlphaComponent(alpha)
+            }
+        }
+        cached.font = Self.detailFont
+        cached.textAlignment = .right
+        rule.backgroundColor = UIColor.white.withAlphaComponent(0.3)
+        score.font = .systemFont(ofSize: 26, weight: .semibold)
+        score.textColor = UIColor.white.withAlphaComponent(0.95)
+        score.textAlignment = .right
+        for sub in [title, resolution, weight, language, cached, video, audio, rule, score] as [UIView] {
+            styled.addSubview(sub)
+        }
         text.clipsToBounds = true
         fade.colors = [UIColor.black.cgColor, UIColor.clear.cgColor]
-        playing.font = Self.detailFont
+        // A quiet note, not a label: the card's own brighter rest says it too.
+        playing.font = .systemFont(ofSize: 23)
+        playing.textColor = UIColor.white.withAlphaComponent(0.55)
         playing.text = "Playing"
         playing.sizeToFit()
-        addon.font = Self.detailFont
-        for sub in [frost, edge, text, addon, playing] as [UIView] { card.addSubview(sub) }
+        for sub in [styled, text, foot, playing] as [UIView] { card.addSubview(sub) }
         applyFocus(false)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The add-on's own words, its line breaks kept.
-    func show(_ entry: StreamEntry, addon: String?, playing isPlaying: Bool) {
-        self.addon.text = addon
-        nameLines = lines(entry.displayName, into: nameLines, font: Self.nameFont)
-        detailLines = lines(entry.displayDetail, into: detailLines, font: Self.detailFont)
+    private static func footText(_ words: String) -> NSAttributedString {
+        NSAttributedString(string: words.uppercased(), attributes: [
+            .font: footFont, .kern: footKern, .foregroundColor: UIColor.white.withAlphaComponent(0.7),
+        ])
+    }
+
+    func show(_ entry: StreamEntry, playing isPlaying: Bool) {
+        isRaw = SourceCardStyle.current == .raw
+        styled.isHidden = isRaw
+        text.isHidden = !isRaw
         self.isPlaying = isPlaying
         playing.isHidden = !isPlaying
+        if isRaw {
+            let words = (entry.displayName + "\n" + entry.displayDetail)
+                .components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            nameLines = lines(words.first, into: nameLines, font: Self.rawNameFont)
+            detailLines = lines(words.dropFirst().joined(separator: "\n"), into: detailLines, font: Self.rawDetailFont)
+            foot.attributedText = nil
+        } else {
+            let found = entry.facts
+            title.text = found.quality
+            resolution.words = found.resolution
+            weight.text = [found.size, found.bitrate].compactMap { $0 }.joined(separator: " at ")
+            language.text = found.language
+            cached.text = found.cached.map { $0 ? "Cached" : "Not cached" }
+            cached.textColor = UIColor.white.withAlphaComponent(found.cached == true ? 0.85 : 0.55)
+            video.text = found.video
+            audio.text = found.audio
+            // A score starts the add-on's first line, where there is one.
+            let leading = entry.displayName.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+            score.text = leading.flatMap { Double($0) == nil ? nil : $0 }
+            // AIOStreams gathers other add-ons: the one that found this link.
+            let isGathered = entry.sourceAddonName.localizedCaseInsensitiveContains("aiostreams")
+            let source = (isGathered ? found.gatheredFrom : nil) ?? entry.sourceAddonName
+            let origin = found.origin.filter { $0.caseInsensitiveCompare(source) != .orderedSame }
+            foot.attributedText = Self.footText(([source] + origin).joined(separator: " · "))
+        }
         applyFocus(isFocused)
         setNeedsLayout()
     }
@@ -884,34 +1344,59 @@ private final class SourceCard: UICollectionViewCell {
         while pool.count > wanted.count { pool.removeLast().removeFromSuperview() }
         while pool.count < wanted.count {
             let line = UILabel()
-            line.font = font
             line.numberOfLines = 0
             line.lineBreakMode = .byWordWrapping
             text.addSubview(line)
             pool.append(line)
         }
-        for (line, words) in zip(pool, wanted) { line.text = words }
+        for (line, words) in zip(pool, wanted) {
+            line.font = font
+            line.text = words
+        }
         return pool
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         // Bounds and centre: they may be grown (transformed).
-        card.bounds = contentView.bounds
-        card.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        frost.frame = card.bounds
-        edge.frame = card.bounds
-        outline.center = card.center
-        sizeOutline()
-        let inner = card.bounds.insetBy(dx: 28, dy: 28)
-        let hasFoot = addon.text != nil || isPlaying
+        card.bounds = CGRect(origin: .zero, size: faceSize)
+        card.center = CGPoint(x: bounds.midX, y: faceSize.height / 2)
+        styled.frame = card.bounds
+        shadow.center = card.center
+        sizeShadow()
+        let inner = card.bounds.insetBy(dx: Self.inset, dy: Self.inset)
         let footHeight = playing.bounds.height
         let footY = inner.maxY - footHeight
-        playing.frame.origin = CGPoint(x: inner.maxX - playing.bounds.width, y: footY)
-        addon.frame = CGRect(x: inner.minX, y: footY, width: inner.width - playing.bounds.width - 20, height: footHeight)
-        let room = hasFoot ? footY - Self.lineGap - inner.minY : inner.height
-        text.frame = CGRect(x: inner.minX, y: inner.minY, width: inner.width,
-                            height: hasFoot ? room : card.bounds.maxY - inner.minY)
+        if isRaw {
+            playing.frame.origin = CGPoint(x: inner.maxX - playing.bounds.width, y: footY)
+            foot.frame = .zero
+            // The tabs name the add-on; the foot is only for Playing.
+            layoutRaw(in: inner, bottom: isPlaying ? footY - Self.footGap : inner.maxY)
+        } else {
+            playing.frame.origin = CGPoint(x: inner.maxX - Self.playingEnd - playing.bounds.width, y: inner.minY + 8)
+            foot.frame = CGRect(x: inner.minX, y: footY, width: inner.width - Self.scoreRoom, height: footHeight)
+            rule.frame = CGRect(x: inner.minX, y: footY - Self.footGap - 2, width: inner.width, height: 2)
+            score.frame = CGRect(x: inner.maxX - Self.scoreRoom, y: foot.frame.midY - 20, width: Self.scoreRoom, height: 40)
+            layoutStyled(in: inner)
+        }
+    }
+
+    private func layoutStyled(in inner: CGRect) {
+        let pill = resolution.width(upTo: Self.playingEnd)
+        resolution.frame = CGRect(x: inner.maxX - pill, y: inner.minY, width: pill, height: resolution.height)
+        // Quality and its size from the top; the rest stacked on the rule, the
+        // room left between them.
+        title.frame = CGRect(x: inner.minX, y: inner.minY - 2, width: inner.width - Self.playingEnd - playing.bounds.width - 20,
+                             height: ceil(Self.nameFont.lineHeight))
+        weight.frame = CGRect(x: inner.minX, y: title.frame.maxY, width: inner.width, height: Self.rowHeight)
+        let lastY = rule.frame.minY - Self.ruleGap - Self.rowHeight
+        language.frame = CGRect(x: inner.minX, y: lastY, width: inner.width - Self.cachedRoom, height: Self.rowHeight)
+        cached.frame = CGRect(x: inner.maxX - Self.cachedRoom, y: lastY, width: Self.cachedRoom, height: Self.rowHeight)
+        audio.frame = CGRect(x: inner.minX, y: lastY - Self.rowHeight, width: inner.width, height: Self.rowHeight)
+        video.frame = audio.frame.offsetBy(dx: 0, dy: -Self.rowHeight)
+    }
+
+    private func layoutRaw(in inner: CGRect, bottom: CGFloat) {
         var y: CGFloat = 0
         for (index, line) in (nameLines + detailLines).enumerated() {
             if index > 0 { y += Self.lineGap }
@@ -919,20 +1404,20 @@ private final class SourceCard: UICollectionViewCell {
             line.frame = CGRect(x: 0, y: y, width: inner.width, height: height)
             y += height
         }
+        text.frame = CGRect(x: inner.minX, y: inner.minY, width: inner.width, height: bottom - inner.minY)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fade.frame = text.bounds
         let from = (text.bounds.height - Self.fadeHeight) / max(text.bounds.height, 1)
         fade.locations = [NSNumber(value: Double(from)), 1]
         CATransaction.commit()
-        text.layer.mask = y > room ? fade : nil
+        text.layer.mask = y > text.bounds.height ? fade : nil
     }
 
-    /// Sized, not scaled: its line keeps its width.
-    private func sizeOutline() {
-        let size = contentView.bounds.size
-        outline.bounds = CGRect(origin: .zero, size: CGSize(width: size.width * scale, height: size.height * scale))
-        outline.layer.cornerRadius = Spotlight.cornerRadius * scale
+    /// Sized, not scaled, as the focus ring.
+    private func sizeShadow() {
+        let size = faceSize
+        shadow.bounds = CGRect(origin: .zero, size: CGSize(width: size.width * scale, height: size.height * scale))
     }
 
     private var scale: CGFloat = 1
@@ -960,22 +1445,15 @@ private final class SourceCard: UICollectionViewCell {
         }
     }
 
-    /// As `FixedFocusDestinationCell`: the same lift, shadow and text levels.
+    /// As `FixedFocusDestinationCell`: the same lift and shadow.
     private func applyFocus(_ focused: Bool) {
-        let bright = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : FixedFocusText.secondary)
-        let dim = UIColor.white.withAlphaComponent(focused ? FixedFocusText.secondary : FixedFocusText.tertiary)
-        nameLines.forEach { $0.textColor = bright }
-        detailLines.forEach { $0.textColor = dim }
-        playing.textColor = dim
-        addon.textColor = dim
-        // Only the glass at rest; a pane for what's playing, a blur focused.
-        card.backgroundColor = UIColor.white.withAlphaComponent(!focused && isPlaying ? 0.07 : 0)
-        frost.alpha = focused ? 0.9 : 0
-        edge.alpha = focused ? 1 : 0.5
-        scale = focused ? 1 + Self.lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
+        nameLines.forEach { $0.textColor = UIColor.white.withAlphaComponent(0.95) }
+        detailLines.forEach { $0.textColor = UIColor.white.withAlphaComponent(0.8) }
+        card.backgroundColor = UIColor(white: 1, alpha: focused ? Self.focusFill : isPlaying ? Self.playingFill : Self.restFill)
+        scale = focused ? 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
         card.transform = CGAffineTransform(scaleX: scale, y: scale)
-        sizeOutline()
-        outline.alpha = focused ? 1 : 0
+        sizeShadow()
+        shadow.alpha = focused ? 1 : 0
         if focused { superview?.bringSubviewToFront(self) }
     }
 
@@ -985,6 +1463,258 @@ private final class SourceCard: UICollectionViewCell {
             self.applyFocus(focused)
         } completion: { _ in }
     }
+}
+
+/// A row of the shelf's cards, as Details' rows: their gap, and their way of
+/// scrolling (`FixedFocusRowCell.windowOffset`): as many cards in full as fit,
+/// once it has moved a sliver of the one before and after, moved on the move
+/// spring as focus goes, never by the system.
+class ShelfRow: UICollectionView {
+    /// Details' gap, whatever the card's width.
+    static let gap: CGFloat = 40
+    /// The row reaches a card past the page on both sides (the widest, Raw's),
+    /// so the cards leaving are still drawn as they slide under the glass's
+    /// edge (a collection view drops cells outside its bounds).
+    static let over = SourceCard.rawFace.width + gap
+
+    init(item: CGSize) {
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.itemSize = item
+        layout.minimumLineSpacing = Self.gap
+        var insets = ShelfShape.rowInsets
+        insets.left += Self.over
+        insets.right += Self.over
+        layout.sectionInset = insets
+        super.init(frame: .zero, collectionViewLayout: layout)
+        backgroundColor = .clear
+        // The focused card and its shadow reach past the row; the shelf clips.
+        clipsToBounds = false
+        showsHorizontalScrollIndicator = false
+        contentInsetAdjustmentBehavior = .never
+        remembersLastFocusedIndexPath = false
+        isScrollEnabled = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The first card shown in full.
+    private var windowStart = 0
+
+    /// Focus on `index`: the row follows.
+    func follow(_ index: Int) {
+        let offset = windowOffset(focusing: index)
+        guard offset != contentOffset.x else { return }
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
+            self.contentOffset = CGPoint(x: offset, y: 0)
+        } completion: { _ in }
+    }
+
+    /// `index` first in view, at once (opening on what plays).
+    func show(_ index: Int) {
+        windowStart = index
+        layoutIfNeeded()
+        contentOffset = CGPoint(x: windowOffset(focusing: index), y: 0)
+    }
+
+    private func windowOffset(focusing index: Int) -> CGFloat {
+        let count = numberOfItems(inSection: 0)
+        let card = (collectionViewLayout as? UICollectionViewFlowLayout)?.itemSize.width ?? 0
+        let gap = Self.gap
+        let pitch = card + gap
+        // The page's width, without the reach past it.
+        let width = bounds.width - Self.over * 2
+        let room = width - 2 * (gap + FixedFocusMetrics.destinationSliver)
+        let shown = max(1, Int((room + gap) / pitch))
+        if index < windowStart { windowStart = index }
+        if index > windowStart + shown - 1 { windowStart = index - shown + 1 }
+        windowStart = min(windowStart, max(0, count - shown))
+        guard windowStart > 0 else { return 0 }
+        let insets = ShelfShape.rowInsets
+        let edge = (width - CGFloat(shown) * card - CGFloat(shown - 1) * gap) / 2
+        let content = insets.left + insets.right + CGFloat(count) * pitch - gap
+        return min(insets.left + CGFloat(windowStart) * pitch - edge, max(0, content - width))
+    }
+}
+
+/// The shelf's measures, for the stage's: it has the same shelf for the links.
+/// The stage's source list: the player's sheet, open, its Sources the whole
+/// row of tabs (the add-ons, Refresh, when they were found) over the links.
+final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionViewDelegate {
+    var onPick: (StreamEntry) -> Void = { _ in }
+    var onRefresh: () -> Void = {}
+    var onBack: () -> Void = {}
+
+    private let row = ShelfRow(item: SourceCard.size)
+    private let empty = UILabel()
+    private var entries: [StreamEntry] = []
+    private var addons: [String] = []
+    private var shown: [StreamEntry] = []
+    /// The card last on, else the first.
+    private var preferred: UUID?
+    /// Where focus starts, until the first link is in.
+    private var waitsOnRefresh = true
+    /// Focus has come in from the stage once.
+    private var entered = false
+    /// A card to focus once its add-on's page is in.
+    private var pendingFocus = false
+
+    init() {
+        super.init(tabs: ["Sources"], height: PlayerShelf.height)
+        foldOnly = true
+        row.dataSource = self
+        row.delegate = self
+        row.register(SourceCard.self, forCellWithReuseIdentifier: "card")
+        add(pages: [row])
+        linksRow = row
+        again.action = { [weak self] in self?.onRefresh() }
+        empty.text = "No add-on has a source for this."
+        empty.font = .systemFont(ofSize: 24)
+        empty.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        empty.textAlignment = .center
+        empty.isHidden = true
+        glass.alpha = 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, place != .open else { return }
+        // Open from the start: the stage fades in as a whole.
+        UIView.performWithoutAnimation { move(to: .open) }
+    }
+
+    /// The links as they come; the glass with the first.
+    func update(entries new: [StreamEntry], addons names: [String], loading: Bool, active: Bool) {
+        row.isUserInteractionEnabled = active
+        empty.isHidden = !(new.isEmpty && !loading)
+        let waiting = loading && new.isEmpty
+        UIView.animate(withDuration: Motion.fadeDuration) { self.glass.alpha = waiting ? 0 : 1 }
+        guard new.map(\.id) != entries.map(\.id) || names != addons else { return }
+        let first = entries.isEmpty
+        let change = {
+            self.entries = new
+            self.addons = names
+            self.setFold(0, into: names, preferred: nil)
+            self.showPage(self.current)
+        }
+        if first {
+            change()
+            // The first links fade in with the glass; only the picture, so
+            // focus can land on them meanwhile.
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.duration = Motion.fadeDuration
+            row.layer.add(fade, forKey: "fade")
+        } else {
+            swapLinks(change)
+        }
+        // The first link in: focus on it, once, unless focus is already on a card.
+        if waitsOnRefresh, let link = new.first {
+            waitsOnRefresh = false
+            let focused = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView
+            if !(focused?.isDescendant(of: row) ?? false) { focus(on: link.id) }
+        }
+    }
+
+    /// Focus on a link: the first as it comes, the one picked when Back returns.
+    /// SwiftUI's host above refuses UIKit's focus requests, so the tabs are
+    /// out of focus for a moment and focus falls to the row's preferred card.
+    func focus(on id: UUID) {
+        preferred = id
+        DispatchQueue.main.async { [self] in
+            // The add-ons' names can come after the links: their page first.
+            guard let index = shown.firstIndex(where: { $0.id == id }) else {
+                pendingFocus = true
+                return
+            }
+            pendingFocus = false
+            row.show(index)
+            guard let focused = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView,
+                  focused.isDescendant(of: tabRow) else { return }
+            tabRow.isUserInteractionEnabled = false
+            setNeedsFocusUpdate()
+            // Back once focus has left them (`didUpdateFocus`), or in any case soon.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { tabRow.isUserInteractionEnabled = true }
+        }
+    }
+
+    /// Focus falls in from the stage where SwiftUI likes (a tab): on to the
+    /// card it should be on.
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        if !tabRow.isUserInteractionEnabled, let next = context.nextFocusedView, !next.isDescendant(of: tabRow) {
+            tabRow.isUserInteractionEnabled = true
+        }
+        guard !entered, let next = context.nextFocusedView, next.isDescendant(of: self) else { return }
+        entered = true
+        if !waitsOnRefresh, let id = shown.first(where: { $0.id == preferred })?.id ?? shown.first?.id ?? preferred {
+            focus(on: id)
+        }
+    }
+
+    /// Refresh first, while there's nothing else.
+    override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        waitsOnRefresh || addons.isEmpty ? [again] : [row]
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if empty.superview == nil { row.superview?.addSubview(empty) }
+        empty.frame = pageFrame
+    }
+
+    /// The chosen add-on's links, on the card last on, else from the start.
+    override func showPage(_ index: Int) {
+        let addon = extra(index).map { addons[$0] }
+        shown = addon.map { addon in entries.filter { $0.addonName == addon } } ?? []
+        row.reloadData()
+        row.show(shown.firstIndex { $0.id == preferred } ?? 0)
+        // The link asked for, else this page's first (the first link can be another add-on's).
+        if pendingFocus, let id = shown.first(where: { $0.id == preferred })?.id ?? shown.first?.id { focus(on: id) }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { shown.count }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "card", for: indexPath)
+        (cell as? SourceCard)?.show(shown[indexPath.item], playing: false)
+        return cell
+    }
+
+    func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
+        shown.isEmpty ? nil : IndexPath(item: shown.firstIndex { $0.id == preferred } ?? 0, section: 0)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
+                        with coordinator: UIFocusAnimationCoordinator) {
+        guard let next = context.nextFocusedIndexPath else { return }
+        preferred = shown[next.item].id
+        row.follow(next.item)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        onPick(shown[indexPath.item])
+    }
+
+    /// Back here never reaches SwiftUI's handler.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .menu }) { onBack() } else { super.pressesBegan(presses, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !presses.contains(where: { $0.type == .menu }) { super.pressesEnded(presses, with: event) }
+    }
+}
+
+enum ShelfShape {
+    static let width: CGFloat = 1920 - 160
+    /// Its top, tabs included; it ends `margin` above the screen's foot.
+    static let top: CGFloat = 1080 - PlayerShelf.margin - PlayerShelf.height
+    static let height = PlayerShelf.height
+    static let rowInsets = PlayerShelf.rowInsets
 }
 
 /// Down: the stream's details, the show's episodes, as Home's cards, and the
@@ -1001,82 +1731,110 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
 
     struct Source {
         let entry: StreamEntry
-        /// Named only when the links come from more than one.
-        let addon: String?
+        let addon: String
         let playing: Bool
         let pick: () -> Void
+
+        /// The same link, whoever's copy: refreshed entries are new values.
+        var key: String {
+            "\(entry.stream.url ?? entry.stream.infoHash ?? "")|\(entry.stream.title ?? "")|\(playing)"
+        }
     }
 
     private enum Tab: Int { case details, episodes, sources }
 
-    private static let card = CGSize(width: 480, height: 270)
+    /// A little smaller than Details' episode cards (300 tall): three in full
+    /// and the next one peeking, and once moved three with slivers.
+    private static let cardHeight: CGFloat = 280
+    fileprivate static let card = CGSize(width: FixedFocusMetrics.landscapeWidth(height: cardHeight), height: cardHeight)
     private static let growth: CGFloat = 15
+    fileprivate static let rowInsets = UIEdgeInsets(top: growth, left: 8, bottom: growth, right: 8)
     fileprivate static let cardWidth = card.width
-    fileprivate static let cardRow = card.height + FixedFocusMetrics.infoGap + FixedFocusMetrics.captionLineOffset
-        + FixedFocusMetrics.factsHeight
+    /// A card and its one caption line (an episode's name), to the line's
+    /// baseline: what shows, so it sits centred in the page.
+    fileprivate static let cardRow = card.height + FixedFocusMetrics.infoGap + captionBaseline
+    /// The caption's baseline below its line's top (`FixedFocusDestinationCell`:
+    /// a 30 pt line, the text centred in it).
+    private static let captionBaseline: CGFloat = {
+        let font = UIFont.systemFont(ofSize: FixedFocusMetrics.captionSize)
+        return ((30 - font.lineHeight) / 2 + font.ascender).rounded()
+    }()
     static let height = PlayerSheet.tabRow + PlayerSheet.inset * 2 + cardRow + growth * 2
+    /// Its foot above the screen's.
+    static let margin: CGFloat = 30
 
     /// Filled as it opens: what's playing may have changed.
     var fill: () -> (episodes: [Episode], sources: [Source]) = { ([], []) }
 
     let details = DetailsPage()
-    private let episodesRow = PlayerShelf.row()
-    private let sourcesRow = PlayerShelf.row()
+    private let episodesRow = ShelfRow(item: CGSize(width: PlayerShelf.card.width, height: PlayerShelf.cardRow))
+    private let sourcesRow = ShelfRow(item: SourceCard.size)
     private var episodes: [Episode] = []
     private var sources: [Source] = []
+    /// The chosen add-on's: Sources unfolds into the add-ons.
+    private var shown: [Source] = []
+    private var addons: [String] = []
 
     init() {
         super.init(tabs: ["Details", "Episodes", "Sources"], height: Self.height)
-        for (row, size) in [(episodesRow, CGSize(width: Self.card.width, height: Self.cardRow)),
-                            (sourcesRow, SourceCard.size)] {
-            (row.collectionViewLayout as? UICollectionViewFlowLayout)?.itemSize = size
+        for row in [episodesRow, sourcesRow] {
             row.dataSource = self
             row.delegate = self
         }
         episodesRow.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "card")
         sourcesRow.register(SourceCard.self, forCellWithReuseIdentifier: "card")
         add(pages: [details, episodesRow, sourcesRow])
-    }
-
-    private static func row() -> UICollectionView {
-        let layout = UICollectionViewFlowLayout()
-        layout.scrollDirection = .horizontal
-        layout.minimumLineSpacing = 24
-        layout.sectionInset = UIEdgeInsets(top: growth, left: 8, bottom: growth, right: 8)
-        let row = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        row.backgroundColor = .clear
-        // The focused card and its shadow reach past the row; the sheet clips.
-        row.clipsToBounds = false
-        row.showsHorizontalScrollIndicator = false
-        row.contentInsetAdjustmentBehavior = .never
-        row.remembersLastFocusedIndexPath = false
-        return row
+        linksRow = sourcesRow
     }
 
     override func pageTakesFocus(_ index: Int) -> Bool { index != Tab.details.rawValue }
 
     /// Its tabs show from here, so they have to be right.
     override func pageWillPeek() {
-        setTabHidden(Tab.episodes.rawValue, fill().episodes.isEmpty)
+        let filled = fill()
+        setTabHidden(Tab.episodes.rawValue, filled.episodes.isEmpty)
+        unfold(filled.sources)
     }
 
     override func pageWillOpen() {
         (episodes, sources) = fill()
         setTabHidden(Tab.episodes.rawValue, episodes.isEmpty)
+        unfold(sources)
         layoutIfNeeded()
         episodesRow.reloadData()
-        sourcesRow.reloadData()
-        for (row, playing) in [(episodesRow, episodes.firstIndex(where: \.playing)),
-                               (sourcesRow, sources.firstIndex(where: \.playing))] {
-            row.layoutIfNeeded()
-            if let playing {
-                row.scrollToItem(at: IndexPath(item: playing, section: 0), at: .centeredHorizontally, animated: false)
-            }
+        episodesRow.show(episodes.firstIndex(where: \.playing) ?? 0)
+    }
+
+    /// Refresh's links, found while it's open: changed, the page swaps them in
+    /// one fade; the same links stay put.
+    func refreshSources() {
+        let fresh = fill().sources
+        guard fresh.map(\.key) != sources.map(\.key) else { return }
+        swapLinks {
+            sources = fresh
+            unfold(sources)
         }
     }
 
+    /// The add-ons in their order, opening on the one that's playing.
+    private func unfold(_ sources: [Source]) {
+        var seen = Set<String>()
+        addons = sources.map(\.addon).filter { seen.insert($0).inserted }
+        let playing = sources.first(where: \.playing).flatMap { addons.firstIndex(of: $0.addon) }
+        setFold(Tab.sources.rawValue, into: addons, preferred: playing)
+    }
+
+    /// The links of the chosen add-on, on what's playing, else from the start.
+    override func showPage(_ index: Int) {
+        guard index == Tab.sources.rawValue || extra(index) != nil else { return }
+        let addon = extra(index).map { addons[$0] }
+        shown = addon.map { addon in sources.filter { $0.addon == addon } } ?? sources
+        sourcesRow.reloadData()
+        sourcesRow.show(shown.firstIndex(where: \.playing) ?? 0)
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        collectionView === episodesRow ? episodes.count : sources.count
+        collectionView === episodesRow ? episodes.count : shown.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
@@ -1086,23 +1844,28 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
             card.configure(episode.item, subtitle: episode.subtitle, index: indexPath.item, rowCell: nil,
                            card: Self.card, cardState: episode.state)
         } else if let card = cell as? SourceCard {
-            let source = sources[indexPath.item]
-            card.show(source.entry, addon: source.addon, playing: source.playing)
+            let source = shown[indexPath.item]
+            card.show(source.entry, playing: source.playing)
         }
         return cell
     }
 
     func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
         (collectionView === episodesRow ? episodes.firstIndex(where: \.playing)
-                                        : sources.firstIndex(where: \.playing))
+                                        : shown.firstIndex(where: \.playing))
             .map { IndexPath(item: $0, section: 0) }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
+                        with coordinator: UIFocusAnimationCoordinator) {
+        if let next = context.nextFocusedIndexPath { (collectionView as? ShelfRow)?.follow(next.item) }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if collectionView === episodesRow {
             episodes[indexPath.item].pick()
         } else {
-            sources[indexPath.item].pick()
+            shown[indexPath.item].pick()
         }
     }
 }
@@ -2114,6 +2877,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// A search of our own replaced the list: the launcher's is the older one.
     private var linksOwn = false
     private var linkSearch: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshID: UUID?
     private let isDemo: Bool
     private let progress: ProgressStore
     private let settings: PlayerSettings
@@ -2355,6 +3120,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         shelf.fill = { [weak self] in
             (self?.shelfEpisodes() ?? [], self?.shelfSources() ?? [])
         }
+        shelf.again.action = { [weak self] in self?.refreshLinks() }
 
         let back = UITapGestureRecognizer(target: self, action: #selector(backPressed))
         back.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
@@ -2394,7 +3160,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         fixedSubtitles.frame = view.bounds
         placeButtons()
         shelf.bounds.size = CGSize(width: view.bounds.width - 160, height: PlayerShelf.height)
-        shelf.center = CGPoint(x: view.bounds.midX, y: view.bounds.height - 60 - PlayerShelf.height / 2)
+        shelf.center = CGPoint(x: view.bounds.midX, y: view.bounds.height - PlayerShelf.margin - PlayerShelf.height / 2)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -2504,7 +3270,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         let links = (linksOwn ? nil : PlayLauncher.shared.links(meta, video)) ?? links
         let next = links.first {
-            !$0.stream.isExternal && !$0.stream.isTorrent && !tried.contains($0.rejectionKey)
+            !$0.stream.isTorrent && !tried.contains($0.rejectionKey)
         }
         guard tried.count <= Self.maxRetries, let next else {
             let (meta, video, fromStart) = (meta, video, resume == nil)
@@ -2539,6 +3305,45 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             }
             self.linkFailed()
         }
+    }
+
+    /// The shelf's Refresh: every add-on asked again, past the caches; what
+    /// plays goes on.
+    private func refreshLinks() {
+        refreshTask?.cancel()
+        shelf.searching = true
+        let (meta, video, id) = (meta, video, UUID())
+        refreshID = id
+        refreshTask = Task { [weak self] in
+            let found = await PlayLauncher.shared.freshLinks(meta, video) { [weak self] fresh, answered in
+                guard let self, self.refreshID == id, self.meta.id == meta.id, self.video?.id == video?.id else { return }
+                self.takeFresh(fresh, answered: answered)
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.refreshTask = nil
+            defer { self.shelf.searching = false }
+            guard !found.isEmpty, self.meta.id == meta.id, self.video?.id == video?.id else { return }
+            self.links = found
+            self.linksOwn = true
+            self.linksFound = Date()
+            self.tried = []
+            self.shelf.foundAt = self.linksFound
+            self.shelf.refreshSources()
+        }
+    }
+
+    /// Refresh's links as the add-ons answer: theirs replace what they gave
+    /// before, the rest stay, in the add-ons' order.
+    private func takeFresh(_ fresh: [StreamEntry], answered: Set<String>) {
+        let old = (linksOwn ? nil : PlayLauncher.shared.links(meta, video)) ?? links
+        var names: [String] = []
+        for name in (old + fresh).map(\.sourceAddonName) where !names.contains(name) { names.append(name) }
+        links = names.flatMap { name in
+            let new = fresh.filter { $0.sourceAddonName == name }
+            return !new.isEmpty || answered.contains(name) ? new : old.filter { $0.sourceAddonName == name }
+        }
+        linksOwn = true
+        shelf.refreshSources()
     }
 
     /// The same file, freshly signed, then its release, then the add-ons' order.
@@ -2756,6 +3561,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         saveFinal()
         loadTask?.cancel()
         linkSearch?.cancel()
+        refreshTask?.cancel()
         segmentsTask?.cancel()
         externalSubtitlesTask?.cancel()
         nextTask?.cancel()
@@ -3331,7 +4137,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if open {
             commitScrub()
             overlayUntil = .distantPast
-            if let engine { shelf.details.show(facts(engine)) }
+            if let engine { showFacts(engine) }
+            shelf.foundAt = linksFound
             shelf.details.startRunning()
             shelf.move(to: .open)
         } else {
@@ -3408,10 +4215,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func shelfSources() -> [PlayerShelf.Source] {
         let all = (linksOwn ? nil : PlayLauncher.shared.links(meta, video)) ?? links
-        let playable = all.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
-        let several = Set(playable.map(\.sourceAddonName)).count > 1
+        let playable = all.filter { !$0.stream.isTorrent }
         return playable.map { link in
-            PlayerShelf.Source(entry: link, addon: several ? link.sourceAddonName : nil, playing: link.rejectionKey == entry.rejectionKey) { [weak self] in
+            PlayerShelf.Source(entry: link, addon: link.sourceAddonName, playing: link.rejectionKey == entry.rejectionKey) { [weak self] in
                 self?.pickSource(link)
             }
         }
@@ -3623,7 +4429,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             updateOverlay(engine)
             findNext(engine)
             updatePrompt(engine)
-            if shelfOpen { shelf.details.show(facts(engine)) }
+            if shelfOpen { showFacts(engine) }
         }
         let showReadout = failure != nil || PerformanceSettingsStore.shared.settings.showPlayerDiagnostics
         readout.isHidden = !showReadout
@@ -3671,47 +4477,80 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     /// What's really playing, to check against what the stream claims.
-    private func facts(_ engine: AetherEngine) -> [DetailsPage.Fact] {
+    private func showFacts(_ engine: AetherEngine) {
         typealias Fact = DetailsPage.Fact
-        var out = [Fact(label: "Title", value: meta.name)]
+        var left = [Fact(label: "Title", value: meta.name)]
         if let video, let season = video.season, let episode = video.episode {
-            out.append(Fact(label: "Episode", value: "Season \(season), Episode \(episode)"))
+            left.append(Fact(label: "Episode", value: "Season \(season), Episode \(episode)"))
         }
+        left.append(Fact(label: "Add-on", value: entry.addonName))
         if let file = entry.stream.behaviorHints?.filename, !file.isEmpty {
-            out.append(Fact(label: "File", value: file))
+            left.append(Fact(label: "File", value: file))
         }
         if engine.duration > 0 {
             let minutes = Int(engine.duration / 60)
             let length = minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min"
-            out.append(Fact(label: "Length", value: length))
+            left.append(Fact(label: "Length", value: length))
         }
-        if let label = entry.stream.fileSizeLabel { out.append(Fact(label: "File Size", value: label)) }
-        out.append(Fact(label: "Add-on", value: entry.addonName))
+        // As the source card says them.
+        if let size = entry.facts.size { left.append(Fact(label: "File Size", value: size)) }
+        let bytes = entry.stream.sizeBytes ?? 0
+        let rate = entry.facts.bitrate
+            ?? (bytes > 0 && engine.duration > 0 ? String(format: "%.2f Mbps", Double(bytes) * 8 / engine.duration / 1_000_000) : nil)
+            ?? (engine.sourceVideoBitrate > 0 ? String(format: "%.2f Mbps", Double(engine.sourceVideoBitrate) / 1_000_000) : nil)
+        if let rate { left.append(Fact(label: "Bitrate", value: rate)) }
+
+        var right: [Fact] = []
         if let probe, probe.videoWidth > 0 {
             let tier = probe.videoWidth >= 3200 ? " (4K)" : probe.videoWidth >= 1800 ? " (1080p)"
                 : probe.videoWidth >= 1200 ? " (720p)" : ""
             let video = [probe.videoCodecName.map(Self.codecName), "\(probe.videoWidth) × \(probe.videoHeight)\(tier)",
                          probe.videoFrameRate.map { String(format: "%.3g fps", $0) }]
-            out.append(Fact(label: "Video", value: video.compactMap { $0 }.joined(separator: ", ")))
+            right.append(Fact(label: "Video", value: video.compactMap { $0 }.joined(separator: " · ")))
             var range = Self.rangeName(engine.videoFormat)
             if engine.videoFormat != probe.videoFormat {
                 range += " (file: \(Self.rangeName(probe.videoFormat)))"
             } else if let profile = probe.dvProfile {
                 range += " Profile \(profile)"
             }
-            out.append(Fact(label: "Range", value: range))
+            right.append(Fact(label: "Range", value: range))
         }
-        let size = entry.stream.sizeBytes
-        let rate = engine.sourceVideoBitrate > 0 ? engine.sourceVideoBitrate
-            : size.map { engine.duration > 0 ? Int64(Double($0) * 8 / engine.duration) : 0 } ?? 0
-        if rate > 0 { out.append(Fact(label: "Bitrate", value: String(format: "%.0f Mbps", Double(rate) / 1_000_000))) }
         if let audio = engine.audioTracks.first(where: { $0.id == engine.activeAudioTrackIndex }) {
-            out.append(Fact(label: "Audio", value: audioFact(audio, engine)))
+            right.append(Fact(label: "Audio", value: audioFact(audio, engine)))
         }
+        if let output = Self.audioOutput() { right.append(Fact(label: "Output", value: output)) }
         let subtitle = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
-        out.append(Fact(label: "Subtitles", value: subtitle.map { [$0.language, $0.codec].compactMap { $0 }.joined(separator: ", ") } ?? "Off"))
-        out.append(Fact(label: "Route", value: engine.videoRoute.rawValue))
-        return out
+        right.append(Fact(label: "Subtitles", value: subtitle.map { "\(languageName($0.language)) · \(subtitleFormat($0.codec))" } ?? "Off"))
+        if let container = engine.sourceContainerFormat.map(Self.containerName)
+            ?? (engine.videoRoute == .remoteBypass ? "HLS" : nil) {
+            right.append(Fact(label: "Container", value: container))
+        }
+        switch engine.videoRoute {
+        case .software: right.append(Fact(label: "Decoding", value: "Software"))
+        case .loopback, .remoteBypass: right.append(Fact(label: "Decoding", value: "Hardware"))
+        default: break
+        }
+        shelf.details.show(left: left, right: right)
+    }
+
+    /// Where the sound goes, and as how many channels.
+    private static func audioOutput() -> String? {
+        let session = AVAudioSession.sharedInstance()
+        guard let port = session.currentRoute.outputs.first else { return nil }
+        let channels = session.outputNumberOfChannels
+        let layout = [1: "Mono", 2: "Stereo", 6: "5.1", 8: "7.1"][channels] ?? "\(channels) ch"
+        switch port.portType {
+        case .HDMI: return "HDMI · \(layout)"
+        case .airPlay: return "AirPlay · \(port.portName)"
+        default: return "\(port.portName) · \(layout)"
+        }
+    }
+
+    /// libavformat's names ("matroska,webm") as people know them.
+    private static func containerName(_ format: String) -> String {
+        let first = format.split(separator: ",").first.map(String.init) ?? format
+        let names = ["matroska": "MKV", "mov": "MP4", "mpegts": "MPEG-TS", "avi": "AVI", "hls": "HLS", "flv": "FLV"]
+        return names[first] ?? first.uppercased()
     }
 
     /// A bridged or decoded track has lost its objects, whatever the file says.
@@ -3798,7 +4637,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func placeSubtitles() {
         var floor = overlay.isShown ? Self.subtitleClear : Self.subtitleRest
         if shelfOpen {
-            floor = 60 + PlayerShelf.height + 24
+            floor = PlayerShelf.margin + PlayerShelf.height + 24
         } else if promptView.alpha > 0 {
             floor = max(floor, PlayerPrompt.bottom - controlsShift + promptView.bounds.height + 24)
         }

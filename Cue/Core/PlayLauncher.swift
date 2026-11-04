@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Play, seamless: a source is found on the stage (`PlayStage`) and the player
@@ -105,7 +106,7 @@ final class PlayLauncher: ObservableObject {
         guard let context else { return nil }
         let model = StreamsViewModel(meta: full, video: video)
         await sweep(model, context)
-        let links = model.entries.filter { !$0.stream.isExternal && !$0.stream.isTorrent }
+        let links = model.entries.filter { !$0.stream.isTorrent }
         let group = current.stream.behaviorHints?.bingeGroup
         guard let entry = links.first(where: { group != nil && $0.stream.behaviorHints?.bingeGroup == group })
                 ?? links.first else { return nil }
@@ -114,11 +115,19 @@ final class PlayLauncher: ObservableObject {
                            resume: saved?.isStarted == true ? saved?.positionSeconds : nil)
     }
 
-    /// The add-ons asked again, past every cache: the links in hand went bad.
-    func freshLinks(_ meta: MetaItem, _ video: MetaVideo?) async -> [StreamEntry] {
+    /// The add-ons asked again, past every cache: the links in hand went bad,
+    /// or Refresh. `update` has the links so far and the add-ons that answered.
+    func freshLinks(_ meta: MetaItem, _ video: MetaVideo?,
+                    update: (([StreamEntry], Set<String>) -> Void)? = nil) async -> [StreamEntry] {
         guard let context else { return [] }
         let model = StreamsViewModel(meta: meta, video: video)
+        let watching = update.map { update in
+            model.$entries.dropFirst().sink { [weak model] entries in
+                update(entries, model?.finishedAddonNames ?? [])
+            }
+        }
         await sweep(model, context, forceRefresh: true)
+        watching?.cancel()
         return model.entries
     }
 

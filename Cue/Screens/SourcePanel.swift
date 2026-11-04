@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// The stage: a dimmed blur over whatever was on screen at the press, its logo or name in the middle, breathing while it loads, with a
-/// line on what's happening; the source list when there is one, the logo above it.
+/// The stage: the title's backdrop as under Details' rows, the logo
+/// or name in one spot for every way in, never moving, breathing while it waits,
+/// with a line on what's happening; the player's shelf of links under it when there is one.
 /// Back while finding or loading stops it.
 struct PlayStageView<Sources: View>: View {
     @ObservedObject private var picker = SourcePicker.shared
@@ -20,18 +21,20 @@ struct PlayStageView<Sources: View>: View {
     private static var statusDelay: Duration { .milliseconds(500) }
 
     private var listUp: Bool { picker.request != nil && !picker.picked }
-    private var status: String { launcher.searching != nil ? "Searching sources" : "Starting" }
+    private var waiting: Bool { !listUp || picker.searching }
+    private var status: String {
+        launcher.searching != nil || picker.searching ? "Searching sources" : "Starting"
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
-            Rectangle()
-                .fill(.regularMaterial)
-                .overlay(Color.black.opacity(Self.dim))
+            DetailsBackdropBackground(url: scene.art)
             header
-                .padding(.top, listUp ? SummaryPanelMetrics.titleTop : 0)
-                .frame(maxHeight: .infinity, alignment: listUp ? .top : .center)
-                .animation(Motion.move, value: listUp)
-            if !listUp {
+                .padding(.top, Self.logoTop)
+            // With the list too, until it has taken focus from Details' Play
+            // behind the stage: then it goes, and focus falls into the list
+            // (SwiftUI's host refuses UIKit's own requests).
+            if !listUp || !picker.listShown {
                 Color.clear
                     .focusable()
                     .focused($holding)
@@ -48,27 +51,25 @@ struct PlayStageView<Sources: View>: View {
         .animation(Motion.fade, value: listUp)
         // Focus here at once: left where it was (Details' Play, in its own
         // host, isn't disabled with the page), a Back reached no handler.
-        .onAppear { DispatchQueue.main.async { if !listUp { holding = true } } }
-        .task(id: listUp) {
+        .onAppear { DispatchQueue.main.async { holding = true } }
+        .onChange(of: listUp) { _, up in if !up { holding = true } }
+        .onChange(of: holding) { _, on in if on, listUp { picker.listShown = true } }
+        .task(id: waiting) {
             statusUp = false
-            breathing = !listUp
-            guard !listUp else { return }
-            holding = true
+            breathing = waiting
+            guard waiting else { return }
             try? await Task.sleep(for: Self.statusDelay)
             if !Task.isCancelled { statusUp = true }
         }
     }
 
     private var header: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             mark
+                .frame(width: Self.logoSize.width, height: Self.logoSize.height)
                 .scaleEffect(breathing ? 1.06 : 1)
                 .animation(breathing ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true) : Motion.fade,
                            value: breathing)
-                // Larger alone in the middle, by a transform so it moves as one.
-                .scaleEffect(listUp ? 1 : Self.middleScale)
-                .animation(Motion.move, value: listUp)
-                .padding(.vertical, listUp ? 0 : Self.middleRoom)
             if let episode = scene.episode {
                 Text(episode)
                     .font(.system(size: 24, weight: .medium))
@@ -77,7 +78,7 @@ struct PlayStageView<Sources: View>: View {
             }
         }
         .frame(width: 1400)
-        // Under it, not part of it: the logo stays in the very middle.
+        // Under it, not part of it: the logo's spot doesn't depend on it.
         .overlay(alignment: .bottom) {
             Text(status)
                 .font(.system(size: 24))
@@ -93,9 +94,7 @@ struct PlayStageView<Sources: View>: View {
 
     @ViewBuilder private var mark: some View {
         if let logo = scene.logo {
-            RemoteImage(url: logo, contentMode: .fit, maxDimension: Self.logoSize.width * Self.middleScale * 2,
-                        showsPlaceholder: false)
-                .frame(width: Self.logoSize.width, height: Self.logoSize.height)
+            RemoteImage(url: logo, contentMode: .fit, maxDimension: Self.logoSize.width * 2, showsPlaceholder: false)
         } else {
             Text(scene.title)
                 .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
@@ -104,47 +103,32 @@ struct PlayStageView<Sources: View>: View {
         }
     }
 
-    /// Over the blur, so the list reads over any page.
-    private static var dim: Double { 0.6 }
-    private static var logoSize: CGSize { CGSize(width: 520, height: 96) }
-    private static var middleScale: CGFloat { 1.4 }
-    /// Keeps what's under the logo clear of it at its largest.
-    private static var middleRoom: CGFloat { 28 }
+    private static var logoSize: CGSize { CGSize(width: 728, height: 140) }
+    /// Above the shelf's tabs, with the episode and the status line.
+    private static var logoTop: CGFloat { 250 }
 }
 
-/// The sources on the stage: in one column the add-ons' tabs, then the links
-/// (plain rows, a blur for focus, as the shelf's cards).
+/// The sources on the stage, under the logo: the player's shelf with Sources
+/// unfolded: its add-on tabs, Refresh and when they were found, its place,
+/// glass and cards.
 /// Shown by `SourcePicker` — from Details (hold Play) and Continue Watching
 /// ("Choose Source"), and when Play finds nothing. The links in the add-ons' own order
-/// (an aggregator like AIOStreams has sorted and filtered them), their labels'
-/// line breaks kept, nothing filtered or re-sorted. Every enabled add-on is
-/// searched; the pills only show one add-on's links. Search Again asks them
-/// all again.
+/// (an aggregator like AIOStreams has sorted and filtered them), nothing
+/// filtered or re-sorted. Every enabled add-on is searched; a tab only shows
+/// one add-on's links. Refresh asks them all again.
 /// Select plays; Back closes.
 struct SourcePanel: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
-    @EnvironmentObject private var streamBadges: StreamBadgeStore
     @ObservedObject private var picker = SourcePicker.shared
     @StateObject private var model: StreamsViewModel
     let onPlay: (StreamEntry, [StreamEntry]) -> Void
     let onClose: () -> Void
 
-    /// The add-on shown — the one whose tab had focus last (nil: the first
-    /// link's).
-    @State private var addon: String?
-    @FocusState private var tab: String?
     @State private var problem: String?
-    @FocusState private var focused: UUID?
-    /// Search Again: where focus starts, until the first link is in.
-    @FocusState private var again: Bool
     /// The link picked, for focus when Back comes back from its loading.
     @State private var pickedID: UUID?
-
-    /// Wide: an aggregator's long lines on as few lines as can be.
-    private static let width = SourcePanelMetrics.width
-    /// The list fades out over this at the screen's foot.
-    private static let fade: CGFloat = 60
+    @State private var focusRequest: StageSources.FocusRequest?
 
     init(meta: MetaItem, video: MetaVideo?, onPlay: @escaping (StreamEntry, [StreamEntry]) -> Void,
          onClose: @escaping () -> Void) {
@@ -153,48 +137,24 @@ struct SourcePanel: View {
         self.onClose = onClose
     }
 
-    /// The add-on shown: the one picked, else the first link's.
-    private var current: String? {
-        addon ?? model.entries.first?.addonName ?? model.addonNames.first
-    }
-
-    /// The links shown: one add-on's.
-    private var shown: [StreamEntry] {
-        model.entries.filter { $0.addonName == current }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            controls
-            list
-        }
-        .frame(width: Self.width)
-        .padding(.top, SummaryPanelMetrics.columnTop)
-        .frame(width: 1920, height: 1080)
-        .ignoresSafeArea()
-            .focusSection()
+        StageSources(entries: model.entries, addons: model.addonNames, loading: model.isLoading,
+                     foundAt: model.foundAt, active: !picker.picked, focusRequest: focusRequest,
+                     onPick: play, onRefresh: searchAgain, onBack: onClose)
+            .frame(width: ShelfShape.width, height: ShelfShape.height)
+            .padding(.top, ShelfShape.top)
+            .frame(width: 1920, height: 1080, alignment: .top)
+            .ignoresSafeArea()
             .onExitCommand(perform: onClose)
-            // Focus into the panel at once: left where it was (Details' Play,
-            // in its own host, isn't disabled with the page), a Back reached
-            // no handler.
-            .onAppear {
-                DispatchQueue.main.async { if focused == nil, tab == nil { again = true } }
-            }
-            .onChange(of: tab) { _, name in
-                if let name { addon = name }
-            }
             .onChange(of: picker.picked) { _, picked in
-                if !picked, let pickedID { focused = pickedID }
+                if !picked, let pickedID { focusRequest = .init(entry: pickedID) }
             }
+            .onChange(of: model.isLoading && model.entries.isEmpty, initial: true) { _, waiting in picker.searching = waiting }
             .task {
                 let settings = playerSettings.settings
                 await model.load(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
                                  filtersEnabled: settings.sourceFiltersEnabled,
                                  streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
-            }
-            .onChange(of: model.entries.first?.id) { _, first in
-                // The first link in: focus on it (once).
-                if focused == nil, let first { focused = first }
             }
             .alert("Can't play this source", isPresented: Binding(get: { problem != nil },
                                                                   set: { if !$0 { problem = nil } })) {
@@ -204,67 +164,7 @@ struct SourcePanel: View {
             }
     }
 
-    /// Search Again, the add-ons' tabs, and when the list was found.
-    private var controls: some View {
-        HStack(spacing: 16) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 12) {
-                    // Ask every add-on again — also mid-search (one add-on
-                    // hanging). Icon only, before the add-ons.
-                    Button { searchAgain() } label: {
-                        Image(systemName: "arrow.clockwise").fontWeight(.semibold)
-                    }
-                    .buttonStyle(PillButtonStyle(selected: false))
-                    .focused($again)
-                    .accessibilityLabel("Search Again")
-                    // A tab shows its add-on's links as focus reaches it.
-                    ForEach(model.addonNames, id: \.self) { name in
-                        Button { addon = name } label: { addonLabel(name) }
-                            .buttonStyle(PillButtonStyle(selected: current == name))
-                            .focused($tab, equals: name)
-                    }
-                }
-                .padding(.vertical, 8)
-                .padding(.leading, 22)
-            }
-            .scrollClipDisabled()
-            .focusSection()
-            // Kept current while open (the minutes go on).
-            TimelineView(.periodic(from: .now, by: 30)) { context in
-                Text(found(at: context.date))
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
-                    .lineLimit(1)
-            }
-            .padding(.trailing, 22)
-        }
-    }
-
-    /// "Found just now" / "Found 4 min ago" — the last search's end, or the
-    /// cached list's.
-    private func found(at now: Date) -> String {
-        if model.isLoading { return "Searching…" }
-        guard let foundAt = model.foundAt else { return "" }
-        let minutes = Int(now.timeIntervalSince(foundAt) / 60)
-        return minutes < 1 ? "Found just now" : "Found \(minutes) min ago"
-    }
-
-    /// An add-on's pill: its name and how many links it gave — a spinner
-    /// while it's searching, "–" when it gave none (or failed).
-    private func addonLabel(_ name: String) -> some View {
-        HStack(spacing: 10) {
-            Text(name)
-            if !model.finishedAddonNames.contains(name) {
-                LoadingSpinner(size: 22)
-            } else {
-                let count = model.entries.filter { $0.addonName == name }.count
-                Text(count > 0 ? "\(count)" : "–").opacity(0.6)
-            }
-        }
-    }
-
     private func searchAgain() {
-        focused = nil
         let settings = playerSettings.settings
         Task {
             await model.reload(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
@@ -273,53 +173,7 @@ struct SourcePanel: View {
         }
     }
 
-    @ViewBuilder private var list: some View {
-        if shown.isEmpty {
-            Group {
-                if model.isLoading { LoadingSpinner() }
-                else {
-                    Text("No add-on has a source for this.")
-                        .font(.system(size: 24))
-                        .foregroundStyle(Color.white.opacity(0.6))
-                        // Something to hold focus (Back has to reach the panel).
-                        .focusable()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView(.vertical) {
-                LazyVStack(spacing: 4) {
-                    ForEach(shown) { entry in
-                        Button { play(entry) } label: {
-                            SourceRow(entry: entry, badges: streamBadges.badges(for: entry),
-                                      showsAddon: model.addonNames.count > 1)
-                        }
-                        .buttonStyle(SourceRowStyle())
-                        .focused($focused, equals: entry.id)
-                    }
-                }
-                .padding(.top, 2)
-                .padding(.bottom, Self.fade)
-            }
-            .mask {
-                VStack(spacing: 0) {
-                    Color.black
-                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: Self.fade)
-                }
-            }
-            .focusSection()
-        }
-    }
-
     private func play(_ entry: StreamEntry) {
-        // A cast link (DMM Cast): the system opens it, not the player.
-        if entry.stream.isExternal, let link = entry.stream.externalUrl, let url = URL(string: link) {
-            UIApplication.shared.open(url, options: [:]) { opened in
-                if !opened { problem = "Apple TV can't open this cast link directly." }
-            }
-            return
-        }
         guard !entry.stream.isTorrent else {
             problem = "This source is a raw torrent, which Cue can't play. Configure debrid in the add-on itself."
             return
@@ -329,85 +183,50 @@ struct SourcePanel: View {
     }
 }
 
-/// One source: the add-on's label and its description, each with their own
-/// line breaks; the badges and quality below; the add-on's name, with more
-/// than one.
-private struct SourceRow: View {
-    let entry: StreamEntry
-    let badges: [StreamBadge]
-    let showsAddon: Bool
-
-    var body: some View {
-        let primary = Color.white.opacity(FixedFocusText.primary)
-        let secondary = Color.white.opacity(FixedFocusText.body)
-        VStack(alignment: .leading, spacing: 8) {
-            Text(entry.displayName)
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(primary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !entry.displayDetail.isEmpty {
-                Text(entry.displayDetail)
-                    .font(.system(size: 24))
-                    .lineSpacing(3)
-                    .foregroundStyle(secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 10) {
-                if let resolution = entry.stream.resolutionLabel { tag(resolution) }
-                if !badges.isEmpty { StreamBadgeChips(badges: badges) }
-                Spacer(minLength: 8)
-                if showsAddon {
-                    Text(entry.addonName)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(secondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // As tall as its lines need (a last line was cut off).
-        .fixedSize(horizontal: false, vertical: true)
+/// The player's sheet on the stage (`StageSheet`).
+private struct StageSources: UIViewControllerRepresentable {
+    struct FocusRequest: Equatable {
+        let id = UUID()
+        let entry: UUID
     }
 
-    private func tag(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(0.95))
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.white.opacity(0.14)))
+    let entries: [StreamEntry]
+    let addons: [String]
+    let loading: Bool
+    let foundAt: Date?
+    /// False while what's picked loads: no focus for what's hidden.
+    let active: Bool
+    let focusRequest: FocusRequest?
+    let onPick: (StreamEntry) -> Void
+    let onRefresh: () -> Void
+    let onBack: () -> Void
+
+    final class Coordinator {
+        var served: FocusRequest?
     }
-}
 
-/// A source row: nothing at rest; focused, a blur and a little growth, as the
-/// shelf's cards. No white: it fought the add-ons' colours.
-private struct SourceRowStyle: ButtonStyle {
-    static let corner: CGFloat = 30
-    /// In points, as the shelf's cards: a share of a wide row is a big jump.
-    private static let growth: CGFloat = 12
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeBody(configuration: Configuration) -> some View { Platter(configuration: configuration) }
-
-    private struct Platter: View {
-        @Environment(\.isFocused) private var isFocused
-        let configuration: ButtonStyle.Configuration
-
-        var body: some View {
-            configuration.label
-                .background {
-                    RoundedRectangle(cornerRadius: SourceRowStyle.corner, style: .continuous)
-                        .fill(.regularMaterial)
-                        .opacity(isFocused ? 0.9 : 0)
-                }
-                .scaleEffect(isFocused ? 1 + SourceRowStyle.growth / SourcePanelMetrics.width : 1)
-                .animation(.easeOut(duration: 0.2), value: isFocused)
-        }
+    /// A controller of its own: in a plain representable, SwiftUI kept focus
+    /// from leaving the cards for the tabs.
+    final class Host: UIViewController {
+        let sheet = StageSheet()
+        override func loadView() { view = sheet }
+        override var preferredFocusEnvironments: [UIFocusEnvironment] { [sheet] }
     }
-}
 
-private enum SourcePanelMetrics {
-    static let width: CGFloat = 1100
+    func makeUIViewController(context: Context) -> Host { Host() }
+
+    func updateUIViewController(_ host: Host, context: Context) {
+        let sheet = host.sheet
+        sheet.onPick = onPick
+        sheet.onRefresh = onRefresh
+        sheet.onBack = onBack
+        sheet.searching = loading
+        sheet.foundAt = loading ? nil : foundAt
+        sheet.update(entries: entries, addons: addons, loading: loading, active: active)
+        guard let focusRequest, focusRequest != context.coordinator.served else { return }
+        context.coordinator.served = focusRequest
+        sheet.focus(on: focusRequest.entry)
+    }
 }
