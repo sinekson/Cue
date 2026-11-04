@@ -465,13 +465,19 @@ struct DetailView: View {
     @ObservedObject private var launcher = PlayLauncher.shared
 
     private func play(_ video: MetaVideo?, fromStart: Bool = false) {
-        launcher.play(viewModel.meta, video, fromStart: fromStart, art: viewModel.backdropURL)
+        launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video))
+    }
+
+    /// The stage's picture: the episode's TMDB still in full size, else the backdrop.
+    private func stageArt(_ video: MetaVideo?) -> String? {
+        let extra = video.flatMap { v in v.episode.flatMap { viewModel.episodeExtras[v.season ?? 0]?[$0] } }
+        return TMDBService.originalSize(extra?.still) ?? viewModel.backdropURL
     }
 
     /// Hold Play (or an episode's "Choose Source"): the source list, on the
     /// stage (`SourcePicker`).
     private func openSources(_ video: MetaVideo?) {
-        SourcePicker.shared.open(viewModel.meta, video, art: viewModel.backdropURL)
+        SourcePicker.shared.open(viewModel.meta, video, art: stageArt(video))
     }
     var onSelectItem: (MetaItem) -> Void = { _ in }
     /// The pages opened from here (a person, a studio, a genre, a tag) get

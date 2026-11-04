@@ -31,6 +31,13 @@ struct PerformanceSettings: View {
                     isOn: s.holdPlayStage
                 )
 
+                PerfToggleRow(
+                    icon: "xmark.octagon",
+                    title: "Every link fails",
+                    subtitle: "Each link fails 3 s into loading: the next is tried, then the source list. For testing what the stage says.",
+                    isOn: s.failEveryLink
+                )
+
                 // Lived under Playback → Seeking; it's a diagnostic overlay, so
                 // it belongs with the other two.
                 PerfToggleRow(

@@ -238,13 +238,18 @@ enum BillboardPicks {
         }
     }
 
+    /// MetaHub's logo for an IMDb title (nil for other ids).
+    static func metaHubLogo(_ id: String) -> String? {
+        id.hasPrefix("tt") ? "https://images.metahub.space/logo/medium/\(id)/img" : nil
+    }
+
     /// A logo for IMDb titles that came without one (MetaHub's; the billboard
     /// falls back to the name when it doesn't load).
     private static func withLogo(_ item: MetaItem) -> MetaItem {
         guard item.logo == nil, item.id.hasPrefix("tt") else { return item }
         return MetaItem(id: item.id, type: item.type, name: item.name, poster: item.poster,
                         background: item.background,
-                        logo: "https://images.metahub.space/logo/medium/\(item.id)/img",
+                        logo: metaHubLogo(item.id),
                         description: item.description, releaseInfo: item.releaseInfo,
                         imdbRating: item.imdbRating, runtime: item.runtime, genres: item.genres,
                         cast: item.cast, videos: item.videos)

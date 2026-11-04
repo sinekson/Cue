@@ -1944,6 +1944,7 @@ struct RootView: View {
         SourcePanel(meta: request.meta, video: request.video,
                     onPlay: { entry, all in
             sourcePicker.picked = true
+            stage.note = nil
             play(request.meta, request.video, entry, all, fromStart: request.fromStart)
         }, onClose: { sourcePicker.close() })
         .id(request.id)

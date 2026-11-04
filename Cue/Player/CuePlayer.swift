@@ -1226,6 +1226,8 @@ final class SourceCard: UICollectionViewCell {
     private static let footKern: CGFloat = 3
     /// At rest the card is barely there: its words on the shelf's glass.
     private static let restFill: CGFloat = 0.05
+    /// A link that didn't play: its words at about half.
+    private static let failedDim: CGFloat = 0.5
     private static let playingFill: CGFloat = 0.09
     /// Focused: lifted, a see-through white.
     private static let focusFill: CGFloat = 0.18
@@ -1252,6 +1254,7 @@ final class SourceCard: UICollectionViewCell {
     private var detailLines: [UILabel] = []
     /// The foot's own line, kept clear of the add-on's text, however long.
     private let foot = UILabel()
+    /// Playing, or Didn't play: a quiet note in one place.
     private let playing = UILabel()
     private var isPlaying = false
     private var isRaw = false
@@ -1287,8 +1290,6 @@ final class SourceCard: UICollectionViewCell {
         // A quiet note, not a label: the card's own brighter rest says it too.
         playing.font = .systemFont(ofSize: 23)
         playing.textColor = UIColor.white.withAlphaComponent(0.55)
-        playing.text = "Playing"
-        playing.sizeToFit()
         for sub in [styled, text, foot, playing] as [UIView] { card.addSubview(sub) }
         applyFocus(false)
     }
@@ -1302,12 +1303,18 @@ final class SourceCard: UICollectionViewCell {
         ])
     }
 
-    func show(_ entry: StreamEntry, playing isPlaying: Bool) {
+    /// `failed`: tried and didn't play: set aside, still to pick (a link that
+    /// timed out can work a minute later).
+    func show(_ entry: StreamEntry, playing isPlaying: Bool, failed: Bool = false) {
         isRaw = SourceCardStyle.current == .raw
         styled.isHidden = isRaw
         text.isHidden = !isRaw
         self.isPlaying = isPlaying
-        playing.isHidden = !isPlaying
+        playing.text = isPlaying ? "Playing" : "Didn't play"
+        playing.sizeToFit()
+        playing.isHidden = !(isPlaying || failed)
+        styled.alpha = failed ? Self.failedDim : 1
+        text.alpha = styled.alpha
         if isRaw {
             let words = (entry.displayName + "\n" + entry.displayDetail)
                 .components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -1371,7 +1378,7 @@ final class SourceCard: UICollectionViewCell {
             playing.frame.origin = CGPoint(x: inner.maxX - playing.bounds.width, y: footY)
             foot.frame = .zero
             // The tabs name the add-on; the foot is only for Playing.
-            layoutRaw(in: inner, bottom: isPlaying ? footY - Self.footGap : inner.maxY)
+            layoutRaw(in: inner, bottom: playing.isHidden ? inner.maxY : footY - Self.footGap)
         } else {
             playing.frame.origin = CGPoint(x: inner.maxX - Self.playingEnd - playing.bounds.width, y: inner.minY + 8)
             foot.frame = CGRect(x: inner.minX, y: footY, width: inner.width - Self.scoreRoom, height: footHeight)
@@ -1547,7 +1554,11 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
     var onBack: () -> Void = {}
 
     private let row = ShelfRow(item: SourceCard.size)
-    private let empty = UILabel()
+    /// Links tried that didn't play (`rejectionKey`): marked, and focus
+    /// starts past them.
+    var failed: Set<String> = [] {
+        didSet { if failed != oldValue { row.reloadData() } }
+    }
     private var entries: [StreamEntry] = []
     private var addons: [String] = []
     private var shown: [StreamEntry] = []
@@ -1569,12 +1580,6 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
         add(pages: [row])
         linksRow = row
         again.action = { [weak self] in self?.onRefresh() }
-        empty.text = "No add-on has a source for this."
-        empty.font = .systemFont(ofSize: 24)
-        empty.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
-        empty.textAlignment = .center
-        empty.isHidden = true
-        glass.alpha = 0
     }
 
     @available(*, unavailable)
@@ -1583,16 +1588,18 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
     override func didMoveToWindow() {
         super.didMoveToWindow()
         guard window != nil, place != .open else { return }
-        // Open from the start: the stage fades in as a whole.
-        UIView.performWithoutAnimation { move(to: .open) }
+        // Open from the start: the stage fades in as a whole. The add-ons may
+        // be in already: their tabs again, open, so Refresh comes out with them.
+        UIView.performWithoutAnimation {
+            move(to: .open)
+            setFold(0, into: addons, preferred: nil)
+        }
     }
 
-    /// The links as they come; the glass with the first.
+    /// The links as they come, into a shelf that's there from the start
+    /// (glass, the add-ons' tabs, Refresh searching).
     func update(entries new: [StreamEntry], addons names: [String], loading: Bool, active: Bool) {
         row.isUserInteractionEnabled = active
-        empty.isHidden = !(new.isEmpty && !loading)
-        let waiting = loading && new.isEmpty
-        UIView.animate(withDuration: Motion.fadeDuration) { self.glass.alpha = waiting ? 0 : 1 }
         guard new.map(\.id) != entries.map(\.id) || names != addons else { return }
         let first = entries.isEmpty
         let change = {
@@ -1603,8 +1610,8 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
         }
         if first {
             change()
-            // The first links fade in with the glass; only the picture, so
-            // focus can land on them meanwhile.
+            // The first links fade in; only the picture, so focus can land
+            // on them meanwhile.
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 0
             fade.duration = Motion.fadeDuration
@@ -1612,8 +1619,9 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
         } else {
             swapLinks(change)
         }
-        // The first link in: focus on it, once, unless focus is already on a card.
-        if waitsOnRefresh, let link = new.first {
+        // The first link in: focus on it, once, unless focus is already on a
+        // card; past the links that didn't play.
+        if waitsOnRefresh, let link = new.first(where: { !failed.contains($0.rejectionKey) }) ?? new.first {
             waitsOnRefresh = false
             let focused = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView
             if !(focused?.isDescendant(of: row) ?? false) { focus(on: link.id) }
@@ -1661,12 +1669,6 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
         waitsOnRefresh || addons.isEmpty ? [again] : [row]
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        if empty.superview == nil { row.superview?.addSubview(empty) }
-        empty.frame = pageFrame
-    }
-
     /// The chosen add-on's links, on the card last on, else from the start.
     override func showPage(_ index: Int) {
         let addon = extra(index).map { addons[$0] }
@@ -1681,7 +1683,8 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "card", for: indexPath)
-        (cell as? SourceCard)?.show(shown[indexPath.item], playing: false)
+        let entry = shown[indexPath.item]
+        (cell as? SourceCard)?.show(entry, playing: false, failed: failed.contains(entry.rejectionKey))
         return cell
     }
 
@@ -2854,8 +2857,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private static let countsAfterSeconds: Double = 30
     /// Worst-case loss if the app dies: periodic saves reach disk this often.
     private static let saveInterval: TimeInterval = 10
-    /// Links tried silently after the first, then the source list.
-    private static let maxRetries = 3
+    /// Links tried silently after the first, then the source list (two in a
+    /// row failing usually share a cause; the list beats a third guess).
+    private static let maxRetries = 1
     /// A failure with a list older than this searches again (the Play cache's age).
     private static let linksFreshSeconds: TimeInterval = 5 * 60
     /// No first frame by then: the link counts as failed.
@@ -3195,6 +3199,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         attempt += 1
         let attempt = attempt
         loadStarted = Date()
+        // Developer: every link fails, a few seconds in, for the stage's lines.
+        if PerformanceSettingsStore.shared.settings.failEveryLink {
+            loadTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, self?.attempt == attempt else { return }
+                self?.linkFailed()
+            }
+            return
+        }
         var options = LoadOptions(
             httpHeaders: entry.stream.behaviorHints?.proxyHeaders?.requestHeaders ?? [:],
             matchContentEnabled: view.window?.avDisplayManager.isDisplayCriteriaMatchingEnabled ?? true,
@@ -3276,8 +3289,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             let (meta, video, fromStart) = (meta, video, resume == nil)
             close()
             SourcePicker.shared.open(meta, video, fromStart: fromStart)
+            PlayStage.shared.note = .allFailed(tried: tried.count)
+            SourcePicker.shared.failed.formUnion(tried)
             return
         }
+        PlayStage.shared.note = .swapping
         tried.append(next.rejectionKey)
         entry = next
         loadTask?.cancel()

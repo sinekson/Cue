@@ -23,11 +23,14 @@ final class PerformanceSettingsStore: ObservableObject {
         /// Play stops on the stage: no search, no stream, until Back. To
         /// look at the stage for as long as it takes.
         var holdPlayStage = false
+        /// Every link fails 3 s into its load: the stage's failover and its
+        /// lines, without a broken link to hand.
+        var failEveryLink = false
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage
+            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage, failEveryLink
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -38,6 +41,7 @@ final class PerformanceSettingsStore: ObservableObject {
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
             holdPlayStage = (try? c.decode(Bool.self, forKey: .holdPlayStage)) ?? false
+            failEveryLink = (try? c.decode(Bool.self, forKey: .failEveryLink)) ?? false
         }
     }
 
