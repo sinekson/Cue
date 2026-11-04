@@ -2950,6 +2950,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var leftAt: Double = 0
     private var away = false
     private var mountPaused = false
+    /// From lights down until the film has risen: no controls (it's held
+    /// paused at first), and presses dropped but Back (most are a stray
+    /// second Play).
+    private var arriving = false
     /// How long the overlay stays after a press.
     private static let overlaySeconds: TimeInterval = 3
     private var overlayUntil = Date.distantPast
@@ -3553,12 +3557,45 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    /// Lights down: the first frame is in; the film holds while the stage
+    /// goes dark, then rises out of the black, playing.
     private func reveal() {
-        guard !revealed else { return }
+        guard !revealed, let engine else { return }
         revealed = true
-        UIView.animate(withDuration: Motion.fadeDuration) {
+        guard PlayStage.shared.scene != nil else { return rise() }
+        arriving = true
+        engine.volume = 0
+        engine.pause()
+        PlayStage.shared.dark = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + PlayStage.lightsDown) { [weak self] in
+            guard let self, !self.closed, !self.closing else { return }
+            engine.play()
+            self.rise()
+            self.soundUp(engine)
+        }
+    }
+
+    /// The sound comes up with the picture: a ramp a little longer than the
+    /// rise, squared so it feels even to the ear.
+    private func soundUp(_ engine: AetherEngine) {
+        let start = CACurrentMediaTime()
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self, !self.closed else { return timer.invalidate() }
+                let t = min(1, (CACurrentMediaTime() - start) / Self.soundRise)
+                engine.volume = Float(t * t)
+                if t >= 1 { timer.invalidate() }
+            }
+        }
+    }
+
+    nonisolated static let soundRise: Double = 0.8
+
+    private func rise() {
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, options: .curveEaseOut) {
             self.surface.alpha = 1
         } completion: { _ in
+            self.arriving = false
             self.view.backgroundColor = .black
             self.onShown()
         }
@@ -3599,6 +3636,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             super.pressesBegan(presses, with: event)
             return
         }
+        if arriving { return }
         if press.type == .select, promptView.isFocused {
             promptPressed(engine)
             return
@@ -3726,6 +3764,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func hideControls() {
         controlsDismissed = true
         if let engine { updateOverlay(engine) }
+    }
+
+    /// Arriving, an arrow moves no focus either.
+    override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        !(arriving && !context.focusHeading.isEmpty)
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -3918,6 +3961,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
         guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
+        if arriving { return false }
         let velocity = pan.velocity(in: view)
         panVertical = abs(velocity.y) > abs(velocity.x) * Self.verticalSwipeRatio
         if shelfOpen { return false }
@@ -4474,7 +4518,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             mark: mark, waiting: waiting
         )
         overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
-        let shown = !shelfOpen && (menu != .none || scrubTarget != nil || revealed && !hasPlayed
+        let shown = !shelfOpen && !arriving && (menu != .none || scrubTarget != nil || revealed && !hasPlayed
             || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
         if overlay.isShown, !shown, !controlsDismissed, menu == .none, !shelfOpen {
             backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)

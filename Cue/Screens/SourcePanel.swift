@@ -39,13 +39,20 @@ struct PlayStageView<Sources: View>: View {
             // anywhere on it: more than under Details' rows, more again for a
             // bright picture.
             Color.black
-            RemoteImage(url: scene.art, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
-                .frame(width: 1920, height: 1080)
-                .blur(radius: Self.blur, opaque: true)
-            Color.black.opacity(max(Self.dim, StageArt.dimBelow(for: scene.art)))
+            // Lights down: the picture goes to black, slowly, the text first.
+            ZStack {
+                RemoteImage(url: scene.art, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
+                    .frame(width: 1920, height: 1080)
+                    .blur(radius: Self.blur, opaque: true)
+                Color.black.opacity(max(Self.dim, StageArt.dimBelow(for: scene.art)))
+            }
+            .opacity(stage.dark ? 0 : 1)
+            .animation(.easeInOut(duration: PlayStage.lightsDown), value: stage.dark)
             header
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, 1080 - ShelfShape.top + Self.aboveShelf)
+                .opacity(stage.dark ? 0 : 1)
+                .animation(Motion.fade, value: stage.dark)
             // With the list too, until it has taken focus from Details' Play
             // behind the stage: then it goes, and focus falls into the list
             // (SwiftUI's host refuses UIKit's own requests).
