@@ -154,12 +154,25 @@ private final class TrackCell: UICollectionViewCell {
         (row.detail == nil ? height : tallHeight) + room(row.separated, row.header != nil)
     }
 
+    private static let titleFont = UIFont.systemFont(ofSize: 28, weight: .medium)
+    private static let detailFont = UIFont.systemFont(ofSize: 24)
+
+    /// What the row needs to show its words whole: the margins of `layoutSubviews`.
+    static func width(of row: TrackList.Row) -> CGFloat {
+        func measure(_ text: String?, _ font: UIFont) -> CGFloat {
+            text.map { ceil(($0 as NSString).size(withAttributes: [.font: font]).width) } ?? 0
+        }
+        let words = max(measure(row.title, titleFont), measure(row.detail, detailFont))
+        let face = 62 + words + 28 + (row.page == nil ? 0 : 36)
+        return max(face + 12, measure(row.header, TrackList.headingFont) + 48)
+    }
+
     /// What grows with focus; the line and header above it stay put.
     private let face = UIView()
     private let platter = UIView()
     private let check = UIImageView()
-    private let title = RunningLine(font: .systemFont(ofSize: 28, weight: .medium), rest: 0.5)
-    private let detail = RunningLine(font: .systemFont(ofSize: 24), rest: 0.5)
+    private let title = RunningLine(font: TrackCell.titleFont, rest: 0.5)
+    private let detail = RunningLine(font: TrackCell.detailFont, rest: 0.5)
     private let chevron = UIImageView()
     private let separator = UIView()
     private let header = UILabel()
@@ -272,7 +285,9 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         let rows: [Row]
     }
 
-    static let width: CGFloat = 620
+    /// As wide as its widest row, within these: a long row runs while focused.
+    private static let minWidth: CGFloat = 400
+    private static let maxWidth: CGFloat = 620
     private static let inset: CGFloat = 16
     private static let headingHeight: CGFloat = 44
     static let headingFont = UIFont.systemFont(ofSize: 24, weight: .medium)
@@ -291,6 +306,7 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
     private var rightEdge: CGFloat = 0
     private var bottom: CGFloat = 0
     private var focusedRow: Int?
+    private var width = TrackList.minWidth
     var picked: () -> Void = {}
 
     override init(frame: CGRect) {
@@ -317,8 +333,20 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         super.layoutSubviews()
         glass.frame = bounds
         heading.frame = CGRect(x: Self.inset + 24, y: Self.inset, width: bounds.width - Self.inset * 2 - 48, height: Self.headingHeight)
-        list.frame = bounds.inset(by: UIEdgeInsets(top: Self.inset + headingRoom, left: Self.inset,
-                                                   bottom: Self.inset, right: Self.inset))
+        // The margins are the list's own insets, not outside it: a focused
+        // row grows and casts a shadow, which the list's edge would cut.
+        let top = heading.text == nil ? Self.inset : Self.headingClearance
+        list.frame = bounds.inset(by: UIEdgeInsets(top: Self.inset + headingRoom - top, left: Self.inset,
+                                                   bottom: 0, right: Self.inset))
+        list.contentInset = UIEdgeInsets(top: top, left: 0, bottom: Self.inset, right: 0)
+    }
+
+    /// Room above the first row under a title, inside the list.
+    private static let headingClearance: CGFloat = 8
+
+    private func toTop() {
+        layoutIfNeeded()
+        list.contentOffset = CGPoint(x: 0, y: -list.contentInset.top)
     }
 
     private var headingRoom: CGFloat { heading.text == nil ? 0 : Self.headingHeight }
@@ -328,7 +356,13 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
     }
 
     private func panel(height: CGFloat) -> CGRect {
-        CGRect(x: rightEdge - Self.width, y: bottom - height, width: Self.width, height: height)
+        CGRect(x: rightEdge - width, y: bottom - height, width: width, height: height)
+    }
+
+    private func width(of menu: Menu) -> CGFloat {
+        let heading = menu.title.map { ceil(($0 as NSString).size(withAttributes: [.font: Self.headingFont]).width) + 48 } ?? 0
+        let content = menu.rows.reduce(heading) { max($0, TrackCell.width(of: $1)) } + Self.inset * 2
+        return min(max(content, Self.minWidth), Self.maxWidth)
     }
 
     /// Unfolds out of its bottom right corner. Its alpha lands at 1 at once:
@@ -338,6 +372,7 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         pages = [(menu, 0)]
         rows = first.rows
         heading.text = first.title
+        width = width(of: first)
         focusedRow = nil
         self.rightEdge = rightEdge
         self.bottom = bottom
@@ -345,10 +380,10 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
         let height = self.height(of: rows)
         frame = panel(height: height)
         list.reloadData()
-        layoutIfNeeded()
+        toTop()
         isHidden = false
         alpha = 0
-        transform = CGAffineTransform(translationX: Self.width * 0.2, y: height * 0.2).scaledBy(x: 0.6, y: 0.6)
+        transform = CGAffineTransform(translationX: width * 0.2, y: height * 0.2).scaledBy(x: 0.6, y: 0.6)
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.alpha = 1
             self.transform = .identity
@@ -366,10 +401,11 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
     private func turn(to menu: Menu, focus: Int?) {
         rows = menu.rows
         heading.text = menu.title
+        width = width(of: menu)
         focusedRow = focus
         UIView.transition(with: list, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
             self.list.reloadData()
-            self.list.contentOffset = .zero
+            self.toTop()
         }
         UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.frame = self.panel(height: self.height(of: self.rows))
@@ -396,11 +432,13 @@ private final class TrackList: UIView, UICollectionViewDataSource, UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        CGSize(width: Self.width - Self.inset * 2, height: TrackCell.height(of: rows[indexPath.item]))
+        CGSize(width: width - Self.inset * 2, height: TrackCell.height(of: rows[indexPath.item]))
     }
 
     func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
-        (focusedRow ?? rows.firstIndex(where: \.active)).map { IndexPath(item: $0, section: 0) }
+        // Always an answer: with none, focus stays on the cell where it was,
+        // now a different row of the new page.
+        IndexPath(item: focusedRow ?? rows.firstIndex(where: \.active) ?? 0, section: 0)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
