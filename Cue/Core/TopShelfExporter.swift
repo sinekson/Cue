@@ -206,8 +206,8 @@ private actor TopShelfWriter {
     func write(_ entries: [TopShelfExporter.Entry], sequence: UInt64) async {
         guard sequence > lastSequence else { return }
         lastSequence = sequence
-        // Continue Watching cards are rendered by the app (art + progress
-        // pill baked in): ALL as landscape cards — the episode still, else
+        // Continue Watching cards are rendered by the app (art + state
+        // line baked in): ALL as landscape cards — the episode still, else
         // the backdrop. tvOS's own progress bar sits flush on the card's
         // bottom edge and can't be moved, so it isn't used.
         var rendered = entries
@@ -249,9 +249,8 @@ private actor TopShelfWriter {
     }
 }
 
-/// Renders Continue Watching cards for the Top Shelf: the artwork with a
-/// tvOS-style progress pill (grey track, white fill) baked in, inset from
-/// the card's edges. Files live in the shared app-group folder, named by
+/// Renders Continue Watching cards for the Top Shelf: the artwork with
+/// Home's card's state line baked in. Files live in the shared app-group folder, named by
 /// art + shape + 5% progress step, so an unchanged card is never re-rendered
 /// and a changed one gets a NEW file name (tvOS caches shelf images by URL).
 enum TopShelfCardRenderer {
@@ -270,7 +269,7 @@ enum TopShelfCardRenderer {
         let key = "\(source)|\(episode ?? "")|\(timeLeft ?? "")"
         let digest = SHA256.hash(data: Data(key.utf8))
             .prefix(8).map { String(format: "%02x", $0) }.joined()
-        let name = "\(prefix)v4-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0 ? "" : "n").jpg"
+        let name = "\(prefix)v8-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0 ? "" : "n").jpg"
         guard let file = AppGroupResolver.sharedFile(name) else { return nil }
         if FileManager.default.fileExists(atPath: file.path) { return file }
 
@@ -293,20 +292,13 @@ enum TopShelfCardRenderer {
         }
     }
 
-    /// The Home Continue Watching card's state line, in the Home card's
-    /// proportions (746×420pt there): "S1:E1 ▬▬▬░░ 40m left", or — not
-    /// started — "S1:E1 … Up Next" with no bar.
-    private enum Line {
-        static let inset: CGFloat = 28 / 746.7      // of the width
-        static let bottom: CGFloat = 22 / 420       // of the height
-        static let barHeight: CGFloat = 10 / 420
-        static let textSize: CGFloat = 22 / 420
-        static let gap: CGFloat = 14 / 746.7
-        static let footStart: CGFloat = 0.4
-        static let footOpacity: CGFloat = 0.7
-    }
+    /// The dark foot, as on Home, so the line reads on bright art.
+    private static let footStart: CGFloat = 0.4
+    private static let footOpacity: CGFloat = 0.7
 
-    /// `started`: Home's rule (over 2%) — the bar; else "Up Next".
+    /// `started`: the bar and the time left; else "Up Next". The state line
+    /// is Home's card's (`FixedFocusProgressView`, `Spotlight.state…`),
+    /// scaled from its 398 pt to the picture's height.
     private static func render(_ image: UIImage, size: CGSize, progress: Double, started: Bool,
                                episode: String?, timeLeft: String?) -> Data? {
         let format = UIGraphicsImageRendererFormat()
@@ -321,65 +313,60 @@ enum TopShelfCardRenderer {
                                   y: (size.height - drawn.height) / 2,
                                   width: drawn.width, height: drawn.height))
 
-            // The dark foot, as on Home, so the line reads on bright art.
             let cg = ctx.cgContext
             let colors = [UIColor.black.withAlphaComponent(0).cgColor,
-                          UIColor.black.withAlphaComponent(Line.footOpacity).cgColor] as CFArray
+                          UIColor.black.withAlphaComponent(footOpacity).cgColor] as CFArray
             if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                                          colors: colors, locations: [0, 1]) {
                 cg.drawLinearGradient(gradient,
-                                      start: CGPoint(x: 0, y: size.height * Line.footStart),
+                                      start: CGPoint(x: 0, y: size.height * footStart),
                                       end: CGPoint(x: 0, y: size.height), options: [])
             }
 
-            let inset = size.width * Line.inset
-            let barHeight = max(size.height * Line.barHeight, 8)
-            let gap = size.width * Line.gap
-            let centerY = size.height - size.height * Line.bottom - barHeight / 2
+            let k = size.height / Spotlight.rowHeight
+            let inset = Spotlight.stateInset * k
+            let barH = Spotlight.stateBarHeight * k
+            let bar = CGRect(x: inset, y: size.height - inset - barH, width: size.width - inset * 2, height: barH)
             let shadow = NSShadow()
-            shadow.shadowColor = UIColor.black.withAlphaComponent(0.6)
-            shadow.shadowBlurRadius = size.height * 0.014
-            shadow.shadowOffset = CGSize(width: 0, height: 2)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: size.height * Line.textSize, weight: .semibold),
-                .foregroundColor: UIColor.white,
-                .shadow: shadow
-            ]
-            /// Draws `text` with its left edge at `x`, centred on the line;
-            /// returns its width.
-            @discardableResult
-            func draw(_ text: String, x: CGFloat) -> CGFloat {
-                let string = NSAttributedString(string: text, attributes: attributes)
-                let textSize = string.size()
-                string.draw(at: CGPoint(x: x, y: centerY - textSize.height / 2))
-                return textSize.width
+            shadow.shadowColor = UIColor.black.withAlphaComponent(0.8)
+            shadow.shadowBlurRadius = 8 * k
+            shadow.shadowOffset = .zero
+            let white = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            let medium = UIFont.systemFont(ofSize: Spotlight.stateTextSize * k, weight: .medium)
+            // Both on one baseline above the bar (as `FixedFocusProgressView`).
+            let baseline = bar.minY - Spotlight.stateBaselineGap * k
+            func line(_ text: String, mono: Bool) -> NSAttributedString {
+                let font = mono ? UIFont.monospacedDigitSystemFont(ofSize: Spotlight.stateTextSize * k, weight: .medium)
+                    : medium
+                return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: white, .shadow: shadow])
             }
-
-            var x = inset
-            guard started else {
-                // Not started: "S1:E1 … Up Next" (episode left, status
-                // right — as on Home), no bar.
-                if let episode { draw(episode, x: x) }
-                let status = "Up Next"
-                let width = NSAttributedString(string: status, attributes: attributes).size().width
-                draw(status, x: size.width - inset - width)
-                return
+            if let episode {
+                let text = line(episode, mono: false)
+                text.draw(at: CGPoint(x: inset, y: baseline - medium.ascender))
             }
-            if let episode { x += draw(episode, x: x) + gap }
-            var barEnd = size.width - inset
-            if let timeLeft {
-                let width = NSAttributedString(string: timeLeft, attributes: attributes).size().width
-                draw(timeLeft, x: barEnd - width)
-                barEnd -= width + gap
+            if let right = started ? (timeLeft ?? "In progress") : "Up Next" as String? {
+                let text = line(right, mono: true)
+                text.draw(at: CGPoint(x: bar.maxX - text.size().width, y: baseline - medium.ascender))
             }
-            let track = CGRect(x: x, y: centerY - barHeight / 2,
-                               width: max(barEnd - x, barHeight), height: barHeight)
-            UIColor.white.withAlphaComponent(0.3).setFill()
-            UIBezierPath(roundedRect: track, cornerRadius: barHeight / 2).fill()
-            var fill = track
-            fill.size.width = max(track.width * progress, barHeight)
-            UIColor.white.setFill()
-            UIBezierPath(roundedRect: fill, cornerRadius: barHeight / 2).fill()
+            guard started else { return }
+            let capsule = UIBezierPath(roundedRect: bar, cornerRadius: barH / 2)
+            // The soft shadow round it, not under it (the bar is see-through).
+            cg.saveGState()
+            let outside = UIBezierPath(rect: CGRect(origin: .zero, size: size))
+            outside.append(capsule)
+            outside.usesEvenOddFillRule = true
+            outside.addClip()
+            cg.setShadow(offset: .zero, blur: 4 * k, color: UIColor.black.withAlphaComponent(0.4).cgColor)
+            UIColor.black.setFill()
+            capsule.fill()
+            cg.restoreGState()
+            UIColor.white.withAlphaComponent(0.25).setFill()
+            capsule.fill()
+            cg.saveGState()
+            capsule.addClip()
+            UIColor.white.withAlphaComponent(0.56).setFill()
+            UIRectFill(CGRect(x: bar.minX, y: bar.minY, width: bar.width * progress, height: barH))
+            cg.restoreGState()
         }
         return rendered.jpegData(compressionQuality: 0.92)
     }

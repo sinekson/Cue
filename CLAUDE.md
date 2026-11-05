@@ -109,6 +109,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
   ring. One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
+  A card's progress (Continue Watching, Details' episodes, the Top Shelf):
+  the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
+  (3, scaled, was too faint), 30 pt from the foot and sides; one line above
+  it, the caption's 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
+  the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
 
 ## How things work
 
