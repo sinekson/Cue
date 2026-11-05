@@ -1122,6 +1122,8 @@ enum TMDBService {
         var runtimeMinutes: Int?
         var country: String?
         var language: String?
+        /// In TMDB's Animation genre (the player's Original Audio: Anime).
+        var isAnimation: Bool?
         /// The one-line tagline ("Fear can hold you prisoner…"), if any.
         var tagline: String?
 
@@ -1166,15 +1168,15 @@ enum TMDBService {
     /// The facts if already loaded (no wait) — e.g. the tagline for a view
     /// drawn at once.
     static func knownFacts(for meta: MetaItem) -> TitleFacts? {
-        cachedFacts("v2:\(meta.type):\(meta.id):\(preferredLanguage)")
+        cachedFacts("v3:\(meta.type):\(meta.id):\(preferredLanguage)")
     }
 
     /// The title block's facts on their own — for Home's billboard, which
     /// has no Detail page load behind it. One light request per title
     /// (credits + certification only), remembered for the session.
     static func facts(for meta: MetaItem) async -> TitleFacts? {
-        // (v2: with the tagline — older stored facts lack it.)
-        let key = "v2:\(meta.type):\(meta.id):\(preferredLanguage)"
+        // (v3: with the animation flag — older stored facts lack it.)
+        let key = "v3:\(meta.type):\(meta.id):\(preferredLanguage)"
         if let hit = cachedFacts(key) { return hit }
         // On disk for a day: a relaunch doesn't ask again.
         if let stored = await factsDisk.value(for: key, ttl: 24 * 60 * 60) {
@@ -1200,6 +1202,8 @@ enum TMDBService {
             let episode_run_time: [Int]?
             let production_countries: [CountryDTO]?
             let original_language: String?
+            let genres: [Genre]?
+            struct Genre: Decodable { let id: Int }
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
             let tagline: String?
@@ -1219,6 +1223,7 @@ enum TMDBService {
         facts.runtimeMinutes = isMovie ? body.runtime : body.episode_run_time?.first
         facts.country = body.production_countries?.first?.name
         facts.language = body.original_language?.uppercased()
+        facts.isAnimation = body.genres.map { $0.contains { $0.id == 16 } }
         let tagline = body.tagline?.trimmingCharacters(in: .whitespacesAndNewlines)
         facts.tagline = tagline?.isEmpty == false ? tagline : nil
         if isMovie {

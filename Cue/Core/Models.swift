@@ -799,44 +799,6 @@ struct Stream: Codable, Hashable {
 
     var isTorrent: Bool { infoHash != nil && url == nil }
 
-    /// Addons whose origin has refused a byte-range request outright.
-    ///
-    /// Keyed by ADDON, not by link, for the same reason `noticeClipsByAddon`
-    /// is: an addon that hands out cast endpoints hands out cast endpoints for
-    /// everything, so its next link refuses ranges too. Seen on "DMM Cast for
-    /// TorBox", which answers 500 to every range request — the proxy fails open
-    /// so the film PLAYS, and caching, seeking and scrub previews are all
-    /// silently impossible for the rest of the session. Nothing about that is
-    /// visible to the viewer beyond "the cache isn't working".
-    ///
-    /// Persisted, because the verdict is about the addon and not about tonight.
-    /// Auto-selection only: a manual tap still plays whatever you choose.
-    enum RangeRefusingAddons {
-        // v2: the first version noted an addon after ONE failure on any status,
-        // including 416 — which meant a good source could be excluded for good
-        // on the strength of a bad request we made ourselves. Anything the
-        // eager version recorded is untrustworthy, so the key moves and the old
-        // list is simply abandoned.
-        private static let key = "cache.addonsRefusingRanges.v2"
-
-        static var all: Set<String> {
-            Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        }
-
-        static func note(_ addon: String?) {
-            guard let addon, !addon.isEmpty else { return }
-            var current = all
-            guard current.insert(addon).inserted else { return }
-            UserDefaults.standard.set(Array(current), forKey: key)
-            NSLog("[CueCache] %@ refuses byte ranges — excluded from auto-selection", addon)
-        }
-
-        static func contains(_ addon: String?) -> Bool {
-            guard let addon, !addon.isEmpty else { return false }
-            return all.contains(addon)
-        }
-    }
-
 
     /// Debrid-cached marker, e.g. "[RD+]", "[TB+]", "PM+" — the convention
     /// Torrentio/Comet/MediaFusion use for torrents the provider already has
@@ -946,100 +908,6 @@ struct Stream: Codable, Hashable {
         )
     }
 
-    /// Torrentio-style seeder count ("👤 123").
-    private static let seedersRegex = try? NSRegularExpression(pattern: #"👤\s*(\d+)"#)
-
-    /// Ranks a link WITHIN its resolution tier by everything the release name
-    /// reveals. Weights, in order of dominance:
-    ///  cached ≫ dead torrent / cam-rip ≫ release quality > codec > HDR >
-    ///  audio > size sweet spot > seeders.
-    /// A10X-specific choices: AV1 is punished hard (no hardware decode —
-    /// software AV1 is a slideshow at high res) and HEVC is boosted.
-    func qualityScore(isInstant: Bool, sizeBytes: Int64?, resolutionLabel: String?) -> Int {
-        let hay = "\(name ?? "") \(title ?? "") \(description ?? "")".lowercased()
-        var score = 0
-
-        // Instant playback dominates everything: an uncached torrent means
-        // waiting for the debrid service to download it first.
-        if isInstant { score += 1000 }
-
-        // Release quality ladder.
-        if hay.contains("remux") { score += 140 }
-        else if hay.contains("blu-ray") || hay.contains("bluray") || hay.contains("bdrip") || hay.contains("brrip") { score += 120 }
-        else if hay.contains("web-dl") || hay.contains("webdl") || hay.contains("web dl") { score += 110 }
-        else if hay.contains("webrip") || hay.contains("web-rip") { score += 90 }
-        else if hay.contains("hdtv") { score += 60 }
-        else if hay.contains("dvdrip") { score += 40 }
-        // Theater rips are near-unwatchable — keep them visible but last.
-        if hay.contains("hdcam") || hay.contains("camrip") || hay.contains("cam-rip")
-            || hay.contains("telesync") || hay.contains("hdts") || hay.contains("telecine") {
-            score -= 400
-        }
-
-        // Codec (hardware-decode reality of the box). The A10X and newer
-        // decode HEVC in hardware and AV1 in software only. The Apple TV HD's
-        // A8 has NO HEVC decoder either: a 1080p HEVC link there is a
-        // software decode the two cores cannot sustain — so on that box the
-        // codec ladder inverts and H.264 leads.
-        let isHEVC = hay.contains("hevc") || hay.contains("x265") || hay.contains("h265") || hay.contains("h.265")
-        let isAVC = hay.contains("x264") || hay.contains("h264") || hay.contains("h.264") || hay.contains("avc")
-        if PerformanceProfile.isLowPower {
-            if hay.contains("av1") { score -= 300 }
-            else if isHEVC { score -= 120 }
-            else if isAVC { score += 40 }
-        } else {
-            if hay.contains("av1") { score -= 150 }
-            else if isHEVC { score += 40 }
-            else if isAVC { score += 15 }
-        }
-
-        // Dynamic range.
-        if hay.contains("dolby vision") || hay.contains("dolby.vision") || hay.contains("dovi")
-            || hay.range(of: #"\bdv\b"#, options: .regularExpression) != nil {
-            score += 35
-        } else if hay.contains("hdr10+") || hay.contains("hdr10plus") {
-            score += 30
-        } else if hay.contains("hdr") {
-            score += 25
-        }
-
-        // Audio. E-AC3/DD+ gets the edge: best tvOS compatibility (and the
-        // native-DV path needs it); Atmos stacks on top.
-        if hay.contains("atmos") { score += 20 }
-        if hay.contains("ddp") || hay.contains("dd+") || hay.contains("eac3") || hay.contains("e-ac-3") || hay.contains("dd5.1") { score += 15 }
-        else if hay.contains("truehd") { score += 10 }
-        else if hay.contains("dts") { score += 8 }
-
-        // Seeders — only meaningful for uncached torrents: 0 seeds = dead.
-        if !isInstant, let regex = Self.seedersRegex,
-           let match = regex.firstMatch(in: hay, range: NSRange(hay.startIndex..., in: hay)),
-           let range = Range(match.range(at: 1), in: hay),
-           let seeders = Int(hay[range]) {
-            if seeders == 0 { score -= 300 }
-            else if seeders >= 20 { score += 20 }
-            else if seeders >= 5 { score += 10 }
-        }
-
-        // Size sweet spot per resolution: rewards a healthy bitrate, doesn't
-        // blindly chase the biggest file. Unknown size is neutral — many
-        // excellent debrid links carry no size.
-        if let bytes = sizeBytes, bytes > 0 {
-            let gb = Double(bytes) / 1_073_741_824
-            let sweet: ClosedRange<Double>
-            switch resolutionLabel {
-            case "2160p": sweet = 8 ... 60
-            case "1080p": sweet = 2 ... 15
-            case "720p":  sweet = 0.7 ... 6
-            case "480p":  sweet = 0.2 ... 3
-            default:      sweet = 0.7 ... 20
-            }
-            if sweet.contains(gb) { score += 30 }
-            else if gb > sweet.upperBound { score += 10 }        // huge remux: fine
-            else if gb < sweet.lowerBound * 0.5 { score -= 25 }  // starved bitrate
-        }
-
-        return score
-    }
 
     /// Addon-provided short label, e.g. "Torrentio\n4K" — its own line
     /// breaks kept (add-ons lay their labels out in lines).
@@ -1234,12 +1102,6 @@ struct StreamEntry: Identifiable, Hashable {
     let fileSizeLabel: String?
     /// Numeric size for ranking; nil = unknown.
     let sizeBytes: Int64?
-    /// Plays immediately (direct link / debrid-cached torrent) — precomputed,
-    /// it's regex work.
-    let isInstant: Bool
-    /// Quality score for ranking within a resolution tier (see
-    /// Stream.qualityScore). Includes the dominant cached/instant bonus.
-    let sourceScore: Int
     /// What the link's text says, for the styled source cards.
     let facts: StreamFacts
 
@@ -1251,10 +1113,6 @@ struct StreamEntry: Identifiable, Hashable {
         resolutionLabel = stream.resolutionLabel
         fileSizeLabel = stream.fileSizeLabel
         sizeBytes = stream.sizeBytes
-        isInstant = stream.isInstant
-        sourceScore = stream.qualityScore(
-            isInstant: isInstant, sizeBytes: sizeBytes, resolutionLabel: resolutionLabel
-        )
         facts = StreamFacts(stream)
     }
 

@@ -3060,6 +3060,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var lastSave = Date.distantPast
     private var saves = 0
     private var audioPicked = false
+    /// The title's own language (TMDB's, lower case) and its genre, asked once.
+    private var originalLanguage: String?
+    private var isAnimation = false
+    private var originalLearned = false
     /// The clock's last value, and when it last moved.
     private var lastClock: Double = 0
     private var clockMoved = Date()
@@ -3342,14 +3346,19 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         options.forwardBufferSegments = Self.windowSegments
         options.sessionCacheByteBudget = Self.windowBytes
         options.softwarePacketCacheStorage = .disk
-        options.preferredAudioLanguages = audioLanguages()
-        options.preferredSubtitleLanguages = subtitleLanguages()
         options.preserveASSMarkup = true
-        let resume = resume
+        let (resume, base) = (resume, options)
         loadTask = Task { [weak self] in
+            await self?.learnOriginalLanguage()
+            guard !Task.isCancelled, self?.attempt == attempt else { return }
+            var options = base
+            options.preferredAudioLanguages = self?.audioLanguages() ?? []
+            options.preferredSubtitleLanguages = self?.subtitleLanguages() ?? []
             do {
                 let probe = try await engine.load(url: url, startPosition: resume, options: options)
                 self?.probe = probe
+                self?.restorePicks(engine)
+                self?.autoSubtitles(engine)
                 self?.loadExternalSubtitles(engine)
             } catch is CancellationError {
             } catch {
@@ -3394,6 +3403,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                             self?.unknownFormats.insert(track.id)
                         }
                     }
+                    // A pick or full subtitles Auto wanted that the file lacked.
+                    self?.restorePicks(engine)
+                    if engine.activeSubtitleTrackIndex == nil { self?.autoSubtitles(engine) }
                 }
             }
         }
@@ -3560,12 +3572,30 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: Tracks
 
-    /// What was picked by hand for this title, then the setting, then the
-    /// device's own language. Never the file's first track: that may be a dub.
+    /// The title's own language and whether it's animation (TMDB's), for
+    /// Original Audio and an untagged track; a second at most, else without.
+    private func learnOriginalLanguage() async {
+        guard !originalLearned else { return }
+        originalLearned = true
+        let meta = meta
+        let facts = await withTaskGroup(of: TMDBService.TitleFacts?.self) { group in
+            group.addTask { await TMDBService.facts(for: meta) }
+            group.addTask { try? await Task.sleep(for: .seconds(1)); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        originalLanguage = facts?.language?.lowercased()
+        isAnimation = facts?.isAnimation ?? meta.genres?.contains { ["animation", "anime"].contains($0.lowercased()) } ?? false
+    }
+
+    /// What was picked by hand for this title, then the original language
+    /// (Original Audio), then the language. Never the file's first track:
+    /// that may be a dub.
     private func audioLanguages() -> [String] {
-        let device = Locale.preferredLanguages.first.map { String($0.prefix(2)) }
         let wanted = [PlaybackMemory.memory(for: meta.id)?.audioLanguage,
-                      settings.preferredAudioLanguage, device]
+                      settings.originalAudio(original: originalLanguage, animation: isAnimation),
+                      settings.languageCode]
         var out: [String] = []
         for case let language? in wanted where !language.isEmpty && !out.contains(language) {
             out.append(language)
@@ -3573,11 +3603,82 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         return out
     }
 
+    /// Auto starts with none: it's chosen once the audio is known (`autoSubtitles`).
     private func subtitleLanguages() -> [String] {
         if let picked = PlaybackMemory.memory(for: meta.id)?.subtitleLanguage {
             return picked == "off" ? [] : [picked]
         }
-        return settings.subtitlesOnByDefault ? [settings.preferredSubtitleLanguage] : []
+        return settings.subtitles == .always ? [settings.languageCode] : []
+    }
+
+    /// Subtitles Auto, from the audio that plays: not the language, its full
+    /// subtitles; the language, only forced ones (signs, foreign lines).
+    /// Never over a pick by hand. `replacing`: the audio changed, so what's
+    /// on may go.
+    private func autoSubtitles(_ engine: AetherEngine, replacing: Bool = false) {
+        guard settings.subtitles == .auto, PlaybackMemory.memory(for: meta.id)?.subtitleLanguage == nil else { return }
+        let language = settings.languageCode
+        let ours = engine.subtitleTracks.filter { !$0.isCommentary && Self.speaks($0, language) }
+        let wantForced = audioIsLanguage(engine)
+        if let pick = Self.ranked(ours.filter { Self.isForced($0) == wantForced }).first {
+            if pick.id != engine.activeSubtitleTrackIndex { engine.selectSubtitleTrack(index: pick.id) }
+        } else if replacing, engine.activeSubtitleTrackIndex != nil {
+            engine.clearSubtitle()
+        }
+    }
+
+    /// Forced subtitles: flagged, or saying so in their name ("Signs & Songs").
+    private static func isForced(_ track: TrackInfo) -> Bool {
+        let name = track.name.lowercased()
+        return track.isForced || name.contains("forced") || name.contains("signs")
+    }
+
+    /// In the file before the add-ons', text before pictures, plain before SDH.
+    private static func ranked(_ tracks: [TrackInfo]) -> [TrackInfo] {
+        func rank(_ track: TrackInfo) -> Int {
+            (track.isExternal ? 4 : 0) + (pictureCodecs.contains(track.codec) ? 2 : 0) + (track.isHearingImpaired ? 1 : 0)
+        }
+        return tracks.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+    }
+
+    private static func speaks(_ track: TrackInfo, _ language: String) -> Bool {
+        AudioLanguageMatch.matches(code: track.language, label: track.name, preferred: language)
+    }
+
+    /// The title's picks by hand, made true once the tracks are known: the
+    /// load options go by tags only, so an untagged track or a forced one
+    /// (the engine prefers full) is set here.
+    private func restorePicks(_ engine: AetherEngine) {
+        guard let memory = PlaybackMemory.memory(for: meta.id) else { return }
+        if let language = memory.audioLanguage,
+           let active = engine.audioTracks.first(where: { $0.id == engine.activeAudioTrackIndex }),
+           !Self.speaks(active, language),
+           let track = engine.audioTracks.first(where: { !$0.isCommentary && Self.speaks($0, language) }) {
+            Task { try? await engine.selectAudioTrack(index: track.id) }
+        }
+        guard let language = memory.subtitleLanguage, language != "off" else { return }
+        let forced = memory.subtitleForced ?? false
+        if let active = engine.subtitleTracks.first(where: { $0.id == engine.activeSubtitleTrackIndex }),
+           Self.speaks(active, language), Self.isForced(active) == forced { return }
+        let theirs = engine.subtitleTracks.filter { !$0.isCommentary && Self.speaks($0, language) }
+        let pick = Self.ranked(theirs.filter { Self.isForced($0) == forced }).first
+            ?? (engine.activeSubtitleTrackIndex == nil ? Self.ranked(theirs).first : nil)
+        if let pick { engine.selectSubtitleTrack(index: pick.id) }
+    }
+
+    private static let pictureCodecs: Set<String> = ["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvb_subtitle"]
+
+    /// Is the audio playing in the language? A track that tags none and
+    /// doesn't say it is taken as the title's own language, else as the language.
+    private func audioIsLanguage(_ engine: AetherEngine) -> Bool {
+        let language = settings.languageCode
+        guard let audio = engine.audioTracks.first(where: { $0.id == engine.activeAudioTrackIndex }) else { return true }
+        if let tag = audio.language, !tag.isEmpty, tag.lowercased() != "und" {
+            return AudioLanguageMatch.matches(code: tag, label: nil, preferred: language)
+        }
+        if AudioLanguageMatch.matches(code: nil, label: audio.name, preferred: language) { return true }
+        guard let originalLanguage else { return true }
+        return AudioLanguageMatch.matches(code: originalLanguage, label: nil, preferred: language)
     }
 
     /// TrueHD loses its objects in the bridge, so E-AC-3 Atmos in the same
@@ -4452,8 +4553,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             MenuPanel.Row(title: audioTitle(track), detail: audioDetail(track, among: engine.audioTracks), active: track.id == engine.activeAudioTrackIndex,
                           header: index == 0 ? "Audio Track" : nil) { [weak self] in
                 self?.audioPicked = true
-                PlaybackMemory.update(self?.meta.id ?? "") { $0.audioLanguage = track.language }
-                Task { try? await engine.selectAudioTrack(index: track.id) }
+                PlaybackMemory.update(self?.meta.id ?? "") {
+                    $0.audioLanguage = AudioLanguageMatch.language(code: track.language, label: track.name)
+                }
+                Task {
+                    try? await engine.selectAudioTrack(index: track.id)
+                    self?.autoSubtitles(engine, replacing: true)
+                }
             }
         }
     }
@@ -4462,9 +4568,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let tracks = engine.subtitleTracks
         let active = tracks.first { $0.id == engine.activeSubtitleTrackIndex }
         if let active { lastSubtitle = active.id }
-        let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
+        let language = settings.languageCode
         let next = active ?? tracks.first { $0.id == lastSubtitle }
-            ?? tracks.first { $0.language?.lowercased().hasPrefix(language) == true } ?? tracks.first
+            ?? tracks.first { AudioLanguageMatch.matches(code: $0.language, label: $0.name, preferred: language) } ?? tracks.first
         var rows: [MenuPanel.Row] = []
         if let next {
             rows.append(MenuPanel.Row(title: "On", active: active != nil) { [weak self] in self?.pickSubtitle(next, engine) })
@@ -4489,9 +4595,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// What's in the file, then the add-ons', the preferred language first:
     /// they can be hundreds.
     private func subtitleTrackRows(_ tracks: [TrackInfo], active: TrackInfo?, _ engine: AetherEngine) -> [MenuPanel.Row] {
-        let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
+        let language = settings.languageCode
         let external = tracks.filter(\.isExternal)
-        let preferred = external.filter { $0.language?.lowercased().hasPrefix(language) == true }
+        let preferred = external.filter { AudioLanguageMatch.matches(code: $0.language, label: $0.name, preferred: language) }
         let parts = [("Included", tracks.filter { !$0.isExternal }),
                      ("External", preferred + external.filter { track in !preferred.contains { $0.id == track.id } })]
             .filter { !$0.1.isEmpty }
@@ -4516,7 +4622,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// A picture track is drawn as its authors drew it: Style can't reach it.
     private func styleDetail(_ active: TrackInfo?) -> String {
-        if let active, ["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvb_subtitle"].contains(active.codec) {
+        if let active, Self.pictureCodecs.contains(active.codec) {
             return "Not used by \(subtitleFormat(active.codec))"
         }
         return SubtitleText.isStandard ? "Default" : "Custom"
@@ -4558,7 +4664,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func pickSubtitle(_ track: TrackInfo, _ engine: AetherEngine) {
         subtitleDelay = 0
         engine.selectSubtitleTrack(index: track.id)
-        PlaybackMemory.update(meta.id) { $0.subtitleLanguage = track.language }
+        PlaybackMemory.update(meta.id) {
+            $0.subtitleLanguage = AudioLanguageMatch.language(code: track.language, label: track.name)
+            $0.subtitleForced = Self.isForced(track)
+        }
     }
 
     private var subtitleStyleMenu: MenuPanel.Menu {

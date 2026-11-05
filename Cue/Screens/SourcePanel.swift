@@ -158,7 +158,6 @@ struct PlayStageView<Sources: View>: View {
 /// Select plays; Back closes.
 struct SourcePanel: View {
     @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var playerSettings: PlayerSettingsStore
     @ObservedObject private var picker = SourcePicker.shared
     @StateObject private var model: StreamsViewModel
     let onPlay: (StreamEntry, [StreamEntry]) -> Void
@@ -193,10 +192,7 @@ struct SourcePanel: View {
             .onChange(of: model.isLoading && !refreshing, initial: true) { _, waiting in picker.searching = waiting }
             .onChange(of: !model.isLoading && model.entries.isEmpty, initial: true) { _, empty in picker.empty = empty }
             .task {
-                let settings = playerSettings.settings
-                await model.load(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
-                                 filtersEnabled: settings.sourceFiltersEnabled,
-                                 streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+                await model.load(addonManager: addonManager)
             }
             .alert("Can't play this source", isPresented: Binding(get: { problem != nil },
                                                                   set: { if !$0 { problem = nil } })) {
@@ -207,16 +203,13 @@ struct SourcePanel: View {
     }
 
     private func searchAgain() {
-        let settings = playerSettings.settings
         refreshing = true
         // New links: the marks and the line go with the old ones.
         picker.failed = []
         PlayStage.shared.note = nil
         Task {
             defer { refreshing = false }
-            await model.reload(addonManager: addonManager, perTier: settings.sourcesPerSizeTier,
-                               filtersEnabled: settings.sourceFiltersEnabled,
-                               streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+            await model.reload(addonManager: addonManager)
         }
     }
 

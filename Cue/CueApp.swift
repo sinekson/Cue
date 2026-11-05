@@ -183,7 +183,6 @@ struct CueApp: App {
     @StateObject private var tmdbSettings = TMDBSettingsStore()
     @StateObject private var mdblistSettings = MDBListSettingsStore()
     @StateObject private var playerSettings = PlayerSettingsStore()
-    @StateObject private var streamBadges = StreamBadgeStore()
 
     var body: some Scene {
         WindowGroup {
@@ -201,7 +200,6 @@ struct CueApp: App {
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
                 .environmentObject(playerSettings)
-                .environmentObject(streamBadges)
                 .preferredColorScheme(theme.preferredColorScheme)
         }
     }
@@ -309,7 +307,6 @@ struct RootView: View {
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
-    @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var mdblistSettings: MDBListSettingsStore
     @Environment(\.scenePhase) private var scenePhase
@@ -438,7 +435,6 @@ struct RootView: View {
                 startDetailDemoIfRequested()
                 PlayLauncher.shared.configure(.init(
                     addonManager: addonManager, progress: progressStore, watched: watched,
-                    settings: { [playerSettings] in playerSettings.settings },
                     start: { meta, video, entry, all, fromStart in
                         play(meta, video, entry, all, fromStart: fromStart)
                     }))
@@ -471,7 +467,6 @@ struct RootView: View {
                         profileStore: profiles,
                         collectionsStore: collections,
                         homeCatalogSettings: homeCatalogSettings,
-                        streamBadges: streamBadges,
                         playerSettings: playerSettings,
                         tmdbSettings: tmdbSettings,
                         themeManager: theme
@@ -481,17 +476,16 @@ struct RootView: View {
                     // signed out of Cue (the sync manager only runs while
                     // signed in): add-ons (honouring the
                     // profile's use-primary fallbacks), player
-                    // settings, TMDB, theme, badges — upstream Nuvio's
+                    // settings, TMDB, theme — upstream Nuvio's
                     // per-profile boundary, ported wholesale.
                     profiles.onSwitchLocal = { [weak addonManager,
                                                 weak playerSettings,
-                                                weak tmdbSettings, weak streamBadges,
+                                                weak tmdbSettings,
                                                 weak searchViewModel, weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
-                        streamBadges?.setProfile(id)
                         searchViewModel?.setProfile(id)
                         // Home's rows and billboard picks for this profile.
                         homeViewModel.profileSwitched()
@@ -515,12 +509,11 @@ struct RootView: View {
                           AppGroupResolver.sharedFile("topshelf.json")?.path ?? "UNAVAILABLE")
                     profiles.onProfileDeleted = { [weak addonManager,
                                                    weak playerSettings,
-                                                   weak tmdbSettings, weak streamBadges,
+                                                   weak tmdbSettings,
                                                    weak searchViewModel, weak nuvioSync] id in
                         addonManager?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
-                        streamBadges?.forgetProfile(id)
                         searchViewModel?.forgetProfile(id)
                         nuvioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")

@@ -131,26 +131,4 @@ enum PerformanceProfile {
         if isMidPower { return 300 }
         return 400
     }
-
-    /// Hard ceiling on the video read-ahead cache (compressed packets held in
-    /// RAM by KSPlayer). tvOS has no working disk cache (FFmpeg's cache:
-    /// protocol can't open a temp file in the sandbox), so the buffer lives in
-    /// memory and an oversized one jetsams the app. These are the most a box
-    /// can safely spare on top of decode + Metal render + the rest of the app.
-    /// Apple TV HD (2 GB), 4K gen-1 (3 GB), 4K gen-2/3 (4 GB+).
-    static var maxBufferBytes: Int {
-        if isLowPower { return 220 << 20 }   // ~220 MB (Apple TV HD, 2 GB)
-        if isMidPower { return 400 << 20 }   // ~400 MB (4K gen 1/2, 3 GB)
-        return 1000 << 20                    // ~1 GB (4K gen 3, 4 GB+)
-    }
-
-    /// Whether native Dolby Vision **Profile 7** (the dual-layer → 8.1 remux)
-    /// should default ON here. Unlike profiles 5/8 (cheap, tag-only), the DV7
-    /// path re-reads and RPU-rewrites the *entire* file with libdovi while
-    /// playback streams in parallel — a heavy CPU + memory + network load that
-    /// the 3 GB gen-1/2 4K (and the 2 GB HD) can't sustain, so it hangs the app
-    /// mid-play. Only the 4 GB+ boxes (gen-3) get it on by default. This gates
-    /// only the DEFAULT; the toggle stays user-flippable on every device, so an
-    /// older box can still opt in (at the risk of the freeze).
-    static var recommendsDolbyVisionProfile7: Bool { !isLowPower && !isMidPower }
 }

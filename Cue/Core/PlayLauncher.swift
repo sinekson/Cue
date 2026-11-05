@@ -18,7 +18,6 @@ final class PlayLauncher: ObservableObject {
         let addonManager: AddonManager
         let progress: ProgressStore
         let watched: WatchedStore
-        let settings: () -> PlayerSettings
         /// Plays a link: from its saved position, or from the start.
         let start: (MetaItem, MetaVideo?, StreamEntry, [StreamEntry], _ fromStart: Bool) -> Void
     }
@@ -132,10 +131,7 @@ final class PlayLauncher: ObservableObject {
     }
 
     private func sweep(_ model: StreamsViewModel, _ context: Context, forceRefresh: Bool = false) async {
-        let settings = context.settings()
-        await model.load(addonManager: context.addonManager, perTier: settings.sourcesPerSizeTier,
-                         filtersEnabled: settings.sourceFiltersEnabled, forceRefresh: forceRefresh,
-                         streamTimeout: TimeInterval(settings.sourceSearchTimeoutSeconds))
+        await model.load(addonManager: context.addonManager, forceRefresh: forceRefresh)
     }
 
     /// Back while searching: it stops.

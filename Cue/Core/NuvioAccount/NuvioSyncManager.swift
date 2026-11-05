@@ -33,7 +33,6 @@ final class NuvioSyncManager: ObservableObject {
     private let profileStore: ProfileStore
     private let collectionsStore: CollectionsStore
     private let homeCatalogSettings: HomeCatalogSettingsStore
-    private let streamBadges: StreamBadgeStore?
     /// App-preference stores synced together as one own-feature blob
     /// (`nuvio_tvos_preferences`): player, TMDB, and theme settings.
     private let playerSettings: PlayerSettingsStore?
@@ -47,7 +46,6 @@ final class NuvioSyncManager: ObservableObject {
     private var pushProfilesTask: Task<Void, Never>?
     private var pushCollectionsTask: Task<Void, Never>?
     private var pushHomeCatalogTask: Task<Void, Never>?
-    private var pushBadgeSettingsTask: Task<Void, Never>?
     private var pushAppPreferencesTask: Task<Void, Never>?
     private var avatarCatalogCache: [AvatarCatalogItem] = []
     private var wasSignedIn = false
@@ -129,12 +127,6 @@ final class NuvioSyncManager: ObservableObject {
     /// the run has to remember to upload the grown library itself.
     private var libraryGrewDuringSync = false
 
-    /// When each profile's badge blobs were last read. Six settings-blob
-    /// round trips per sync for a cosmetic chip set is too many; steady state
-    /// re-reads every ten minutes, and the manual "sync badges" button is
-    /// unthrottled.
-    private var lastBadgePull: [Int: Date] = [:]
-    private static let badgePullInterval: TimeInterval = 10 * 60
 
     /// The account has no `sync_delete_profile_data` (learned from a PGRST202
     /// answer this session), so profile deletions fall back to the legacy
@@ -271,13 +263,12 @@ final class NuvioSyncManager: ObservableObject {
         }
         addonsDirty = false
         profilesDirty = false
-        // `collections`, `homeCatalog`, `badges` and `appPreferences` are now persisted per profile under
+        // `collections`, `homeCatalog` and `appPreferences` are now persisted per profile under
         // `cue.sync.dirty.*` (see `dirtyKey`): the sweep above already drops
         // them for a different account and preserves them for a plain sign-out,
         // so a pending edit still uploads. Nothing to clear here.
         // Whoever signs in next gets a full first cycle again.
         completedFullSyncProfiles.removeAll()
-        lastBadgePull.removeAll()
         // progress / library / watched dirty flags are persisted per profile
         // (`cue.sync.dirty.*`): the sweep above dropped them for a
         // different account and kept them for a plain sign-out.
@@ -461,7 +452,6 @@ final class NuvioSyncManager: ObservableObject {
         pushProfilesTask?.cancel()
         pushCollectionsTask?.cancel()
         pushHomeCatalogTask?.cancel()
-        pushBadgeSettingsTask?.cancel()
         pushAppPreferencesTask?.cancel()
         lastPushedAppPrefs = nil
     }
@@ -515,9 +505,8 @@ final class NuvioSyncManager: ObservableObject {
         static let copyProfileSetup = "sync_copy_profile_setup"
     }
 
-    /// Platform tag the Android TV app uses for the profile-settings blob —
-    /// badge configs (Badger/Fusion) live inside that blob, so we read/write
-    /// the same rows.
+    /// Platform tag the Android TV app uses for the profile-settings blob;
+    /// we read and write the same rows.
     private static let settingsBlobPlatform = "tv"
 
     /// Platform tags for home catalog settings rows (mirrors Android).
@@ -535,7 +524,6 @@ final class NuvioSyncManager: ObservableObject {
         profileStore: ProfileStore,
         collectionsStore: CollectionsStore,
         homeCatalogSettings: HomeCatalogSettingsStore,
-        streamBadges: StreamBadgeStore? = nil,
         playerSettings: PlayerSettingsStore? = nil,
         tmdbSettings: TMDBSettingsStore? = nil,
         themeManager: ThemeManager? = nil
@@ -548,7 +536,6 @@ final class NuvioSyncManager: ObservableObject {
         self.profileStore = profileStore
         self.collectionsStore = collectionsStore
         self.homeCatalogSettings = homeCatalogSettings
-        self.streamBadges = streamBadges
         self.playerSettings = playerSettings
         self.tmdbSettings = tmdbSettings
         self.themeManager = themeManager
@@ -608,11 +595,6 @@ final class NuvioSyncManager: ObservableObject {
             self?.scheduleHomeCatalogPush()
         }
         homeCatalogSettings.onLocalChange = { [weak self] in self?.scheduleHomeCatalogPush() }
-        streamBadges?.onLocalChange = { [weak self] in self?.scheduleBadgeSettingsPush() }
-        streamBadges?.remoteSync = { [weak self] in
-            guard let self else { return "Account sync isn't ready yet" }
-            return await self.pullBadgeSettings(profile: self.pid)
-        }
         // App preferences (player / TMDB / theme) share one own-feature blob.
         playerSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
         tmdbSettings?.onLocalChange = { [weak self] in self?.scheduleAppPreferencesPush() }
@@ -1153,7 +1135,7 @@ final class NuvioSyncManager: ObservableObject {
         try await pullWatchedItems(profile: profile)
     }
 
-    /// Collections, the home layout, badges and the app-preferences blob.
+    /// Collections, the home layout and the app-preferences blob.
     /// These stay in ONE chain: the
     /// preferences blob carries the collections library and the layout reads
     /// it, so their order matters — but nothing in here touches the content
@@ -1188,8 +1170,6 @@ final class NuvioSyncManager: ObservableObject {
         try? await pullCollections(profile: profile)
         if homeCatalogDirty { try? await pushHomeCatalogSettings(profile: profile) }
         try await pullHomeCatalogSettings(profile: profile)
-        if badgeSettingsDirty { await pushBadgeSettings(profile: profile) }
-        await pullBadgeSettingsIfDue(profile: profile)   // best-effort; badge chips are cosmetic
         if appPreferencesDirty { await pushAppPreferences(profile: profile) }
         await pullAppPreferences(profile: profile)  // player/TMDB/theme prefs + collections
     }
@@ -1242,12 +1222,11 @@ final class NuvioSyncManager: ObservableObject {
     }
 
     /// The stores split per profile in the upstream-parity pass: add-ons
-    /// (honouring the profile's use-primary fallback), player settings, TMDB settings, theme, badges.
+    /// (honouring the profile's use-primary fallback), player settings, TMDB settings, theme.
     private func rescopePerProfileStores(_ id: Int) {
         addonManager.setProfile(addonPID(for: id))
         playerSettings?.setProfile(id)
         tmdbSettings?.setProfile(id)
-        streamBadges?.setProfile(id)
     }
 
     // MARK: - Addons
@@ -2805,10 +2784,6 @@ final class NuvioSyncManager: ObservableObject {
         get { isDirty("homeCatalog", profile: pid) }
         set { setDirty("homeCatalog", profile: pid, newValue) }
     }
-    private var badgeSettingsDirty: Bool {
-        get { isDirty("badges", profile: pid) }
-        set { setDirty("badges", profile: pid, newValue) }
-    }
 
     private func scheduleCollectionsPush() {
         // Never while the previous account's state is being retired: the
@@ -3208,82 +3183,7 @@ final class NuvioSyncManager: ObservableObject {
 
     // MARK: - Networking
 
-    // MARK: - Badge settings (profile settings blob, Android-compatible)
-
-    /// Platform tags other Nuvio apps may have pushed their settings blob
-    /// under. Badges configured in the MOBILE app (Fusion) live in that
-    /// platform's blob, not the TV one — check them all, TV first.
-    private static let settingsBlobPlatforms = ["tv", "mobile", "fusion", "ios", "desktop", "web"]
-
-    /// Pull the profile settings blob(s) and apply the
-    /// `stream_badge_settings` feature — the Badger/Fusion badge pack
-    /// configured on any device. Returns a human-readable status for the
-    /// Settings card's manual sync button.
-    @discardableResult
-    private func pullBadgeSettings(profile: Int) async -> String {
-        guard let streamBadges else { return "Badge store unavailable" }
-        guard account.accessToken != nil else { return "Sign in to your Nuvio account first" }
-        guard pid == profile else { return "Profile changed" }
-        // Collect EVERY platform blob that carries a badge config, so the user
-        // can pick between badge profiles instead of silently taking the first.
-        // The six platform reads go out together — in series they were a
-        // noticeable slice of every full sync.
-        let blobs: [(platform: String, data: Data)] = await withTaskGroup(of: (Int, Data?).self) { group in
-            for (index, platform) in Self.settingsBlobPlatforms.enumerated() {
-                group.addTask { @MainActor [weak self] in
-                    guard let self else { return (index, nil) }
-                    let data = try? await self.authedPost(
-                        RPC.url(RPC.pullProfileSettingsBlob),
-                        body: ["p_profile_id": profile, "p_platform": platform]
-                    )
-                    return (index, data)
-                }
-            }
-            var results = [Data?](repeating: nil, count: Self.settingsBlobPlatforms.count)
-            for await (index, data) in group { results[index] = data }
-            return zip(Self.settingsBlobPlatforms, results).compactMap { platform, data in
-                data.map { (platform, $0) }
-            }
-        }
-        // Bail if the profile moved while the reads were out rather than
-        // mixing another profile's badge packs into this set.
-        guard pid == profile else { return "Profile changed" }
-        var found: [(platform: String, rules: String, count: Int)] = []
-        var sawAnyBlob = false
-        for (platform, data) in blobs {
-            guard let blob = await Self.settingsBlobDetached(from: data) else { continue }
-            sawAnyBlob = true
-            guard let features = blob["features"] as? [String: Any],
-                  let badgeFeature = features["stream_badge_settings"] as? [String: Any],
-                  let rulesJSON = Self.preferenceString(badgeFeature["stream_badge_rules"])
-            else { continue }
-            // Count filters in the active import for the picker label.
-            var count = 0
-            if let d = rulesJSON.data(using: .utf8),
-               let root = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-               let imports = root["imports"] as? [[String: Any]] {
-                let active = imports.first { ($0["isActive"] as? Bool) == true } ?? imports.first
-                count = (active?["filters"] as? [[String: Any]])?.count ?? 0
-            }
-            if count > 0 { found.append((platform, rulesJSON, count)) }
-        }
-        // The detached parses above suspend — re-check the profile before
-        // applying, same reason as the guard above the loop.
-        guard pid == profile else { return "Profile changed" }
-        streamBadges.setRemoteRules(Dictionary(found.map { ($0.platform, $0.rules) }, uniquingKeysWith: { a, _ in a }))
-        guard !found.isEmpty else {
-            NSLog("[NuvioBadges] no badge rules in any settings blob (sawAnyBlob=%d)", sawAnyBlob ? 1 : 0)
-            return sawAnyBlob
-                ? "Your account has settings, but no badge config — import one in any Nuvio app first"
-                : "No synced settings found on this account"
-        }
-        NSLog("[NuvioBadges] %d badge profiles found across %d blobs", streamBadges.remoteProfiles.count, found.count)
-        streamBadges.applyChosenRemoteProfile()
-        return streamBadges.isConfigured
-            ? "Synced \(streamBadges.filterCount) badge filters (\(streamBadges.remoteProfiles.count) profiles on account)"
-            : "Badge config had no usable filters"
-    }
-
+    // MARK: - Profile settings blob
 
     /// Rows may arrive as an array or a bare object; settings_json may be an
     /// object or a double-encoded JSON string. Accept all of it.
@@ -3321,70 +3221,6 @@ final class NuvioSyncManager: ObservableObject {
     private static func preferenceString(_ entry: Any?) -> String? {
         if let dict = entry as? [String: Any], let value = dict["value"] as? String { return value }
         return entry as? String
-    }
-
-    /// The periodic sync's badge read, throttled per profile (see
-    /// `lastBadgePull`). The Settings card's manual button calls
-    /// `pullBadgeSettings` directly and is never throttled.
-    private func pullBadgeSettingsIfDue(profile: Int) async {
-        if let last = lastBadgePull[profile], Date().timeIntervalSince(last) < Self.badgePullInterval {
-            return
-        }
-        lastBadgePull[profile] = Date()
-        await pullBadgeSettings(profile: profile)
-    }
-
-    private func scheduleBadgeSettingsPush() {
-        // Never while the previous account's state is being retired: the
-        // store callbacks that retirement fires would arm a push of account A's
-        // data into account B. See `isRetiringAccountState`.
-        guard !isRetiringAccountState else { return }
-        badgeSettingsDirty = true
-        pushBadgeSettingsTask?.cancel()
-        pushBadgeSettingsTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            await self.pushBadgeSettings(profile: self.pid)
-        }
-    }
-
-    /// Push our badge config into the account. READ-MERGE-WRITE: fetch the
-    /// current blob, replace only the stream_badge_settings feature, push the
-    /// whole thing back — never clobbers the other features Android put there.
-    private func pushBadgeSettings(profile: Int) async {
-        guard let streamBadges, account.accessToken != nil,
-              pid == profile,
-              let rulesJSON = streamBadges.syncRulesJSON() else { return }
-
-        var blob: [String: Any] = ["version": 1, "features": [String: Any]()]
-        if let data = try? await authedPost(
-            RPC.url(RPC.pullProfileSettingsBlob),
-            body: ["p_profile_id": profile, "p_platform": Self.settingsBlobPlatform]
-        ),
-           let existing = await Self.settingsBlobDetached(from: data) {
-            blob = existing
-        }
-        // Read-merge-WRITE: the blob we just read belongs to `profile`, so the
-        // write must not be redirected to whichever profile is active now.
-        guard pid == profile else { return }
-        var features = blob["features"] as? [String: Any] ?? [:]
-        var badgeFeature = features["stream_badge_settings"] as? [String: Any] ?? [:]
-        badgeFeature["stream_badge_rules"] = ["type": "string", "value": rulesJSON]
-        features["stream_badge_settings"] = badgeFeature
-        blob["features"] = features
-        if blob["version"] == nil { blob["version"] = 1 }
-
-        let body: [String: Any] = [
-            "p_profile_id": profile,
-            "p_settings_json": blob,
-            "p_platform": Self.settingsBlobPlatform,
-            "p_origin_client_id": clientID,
-        ]
-        // Same rule as the credentials push: a failed upload must stay dirty
-        // or the gated tail push never retries it.
-        if (try? await authedPost(RPC.url(RPC.pushProfileSettingsBlob), body: body)) != nil {
-            setDirty("badges", profile: profile, false)
-        }
     }
 
     // MARK: - App preferences (player / TMDB / theme)
@@ -3556,7 +3392,7 @@ final class NuvioSyncManager: ObservableObject {
     }
 
     /// READ-MERGE-WRITE: fetch the blob, replace only our own feature key, push
-    /// it all back so the badge feature and Android's features survive intact.
+    /// it all back so the other apps' features (Android's, badges) survive intact.
     private func pushAppPreferences(profile: Int) async {
         guard account.accessToken != nil, pid == profile,
               let playerSettings, let tmdbSettings, let themeManager else { return }

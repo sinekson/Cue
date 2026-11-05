@@ -26,7 +26,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .mdblist: return ServiceKey.mdblist.about
         case .appearance: return "Change how Cue's pages and cards look."
         case .homeContent: return "Choose what Home shows and how titles behave."
-        case .playback: return "Choose how titles play, with their audio, subtitles and sources."
+        case .playback: return "Choose the language titles play in."
         case .about: return "See Cue's version, privacy and licenses."
         case .developer: return "Test Cue's rendering and performance."
         }
@@ -337,21 +337,6 @@ struct CueSwitch: View {
     }
 }
 
-/// A toggle row rendered as a focusable card (title + subtitle + pill switch),
-/// matching the APK's toggle rows.
-struct SettingsToggleCard: View {
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button { isOn.toggle() } label: {
-            ToggleCardLabel(title: title, subtitle: subtitle, isOn: isOn)
-        }
-        .buttonStyle(PlainCardButtonStyle())
-    }
-}
-
 private struct ToggleCardLabel: View {
     @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
@@ -383,120 +368,6 @@ private struct ToggleCardLabel: View {
             RoundedRectangle(cornerRadius: theme.settingsRowRadius, style: .continuous)
                 .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 4)
         )
-    }
-}
-
-// MARK: - Add-ons detail
-
-/// Content & Discovery — the APK folds add-ons, catalogs and collections into
-/// one section, so this pane hosts add-on management plus a Collections entry.
-/// Content & Discovery pane: a single "Addons" drill-in row (APK behavior).
-/// Settings → Playback → Sources → Badges: Badger badge-pack import —
-/// paste a config URL (from the Badger editor's export / a community
-/// template), fetch + validate, show the live state, and allow removal. The
-/// chips then appear on Sources-page rows.
-struct StreamBadgeSettings: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var streamBadges: StreamBadgeStore
-    @State private var badgeURLInput = ""
-    @State private var badgeImporting = false
-
-    var body: some View { badgeControls }
-
-    @ViewBuilder
-    private var badgeControls: some View {
-        if streamBadges.isConfigured {
-            HStack(spacing: CueSpacing.md) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(theme.palette.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(streamBadges.filterCount) badge filters active")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(theme.palette.textPrimary)
-                    Text(streamBadges.sourceURL)
-                        .font(.system(size: 17))
-                        .foregroundStyle(theme.palette.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Button("Sync from Account") {
-                    Task { await streamBadges.syncFromAccount() }
-                }
-                .font(.system(size: 22, weight: .semibold))
-                Button("Remove") { streamBadges.removeConfig() }
-                    .font(.system(size: 22, weight: .semibold))
-            }
-            .padding(.vertical, 4)
-            badgeExtraControls
-            if let status = streamBadges.lastStatus {
-                Text(status)
-                    .font(.system(size: 19))
-                    .foregroundStyle(theme.palette.textSecondary)
-            }
-        } else {
-            HStack(spacing: CueSpacing.md) {
-                TextField("Badge config URL or Pastebin link", text: $badgeURLInput)
-                    .font(.system(size: 22))
-                Button {
-                    guard !badgeImporting, !badgeURLInput.isEmpty else { return }
-                    badgeImporting = true
-                    Task {
-                        await streamBadges.importConfig(from: badgeURLInput)
-                        badgeImporting = false
-                        if streamBadges.isConfigured { badgeURLInput = "" }
-                    }
-                } label: {
-                    if badgeImporting {
-                        LoadingSpinner(size: 28)
-                    } else {
-                        Text("Import")
-                            .font(.system(size: 22, weight: .semibold))
-                    }
-                }
-            }
-            Button("Sync from Account") {
-                Task { await streamBadges.syncFromAccount() }
-            }
-            .font(.system(size: 22, weight: .semibold))
-
-            badgeExtraControls
-            if let status = streamBadges.lastStatus {
-                Text(status)
-                    .font(.system(size: 19))
-                    .foregroundStyle(theme.palette.textSecondary)
-            }
-            Text("Build or pick a badge pack at nintle.github.io/Badger, host the JSON (the editor gives you a link), and paste its URL here — or pull the pack already set up in another Cue app with Sync from Account.")
-                .font(.system(size: 18))
-                .foregroundStyle(theme.palette.textTertiary)
-        }
-    }
-
-    /// Size + profile pickers, shown in BOTH the configured and empty states.
-    @ViewBuilder
-    private var badgeExtraControls: some View {
-        CueDropdown(
-            title: "Badge size",
-            icon: "textformat.size",
-            selection: streamBadges.sizeRawUI,
-            options: StreamBadgeStore.sizeOptions.map { CueDropdownOption($0.0, $0.1) }
-        ) { streamBadges.setSize($0) }
-
-        // Only when the account carries badge configs from 2+ Nuvio apps —
-        // run Sync from Account once to discover them.
-        if !streamBadges.remoteProfiles.isEmpty {
-            CueDropdown(
-                title: "Badge profile",
-                icon: "person.2",
-                selection: streamBadges.preferredRemoteProfileID.isEmpty
-                    ? streamBadges.remoteProfiles[0].id
-                    : streamBadges.preferredRemoteProfileID,
-                options: streamBadges.remoteProfiles.map { CueDropdownOption($0.id, $0.label) }
-            ) { id in
-                streamBadges.preferredRemoteProfileID = id
-                streamBadges.applyChosenRemoteProfile()
-            }
-        }
     }
 }
 

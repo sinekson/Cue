@@ -1,24 +1,9 @@
 import Foundation
 
-/// Decides whether an audio track is in the language the viewer asked for.
-///
-/// The three playback engines describe a track completely differently — the
-/// FFmpeg paths expose the container's language tag ("eng", "spa"), VLC exposes
-/// only a display name ("English 5.1"), and plenty of re-encodes tag nothing at
-/// all and put the language in the track title. Each engine used to do its own
-/// comparison, so "Preferred audio language" worked on some streams and was
-/// silently ignored on others:
-///
-/// * a bare `hasPrefix(code)` misses "English" when the setting is "en" (the
-///   capital E alone defeats it) and misses "eng" when a file tags 639-2/B
-///   forms like "ger" against a "de" setting,
-/// * a substring search the other way matched "en" inside "French",
-/// * and a track with a nil language code fell through every check even when
-///   its label said the language in plain words.
-///
-/// This is the one comparison all three now use: match on the language CODE
-/// when there is one, fall back to the track's LABEL when there isn't, and know
-/// the handful of aliases each language actually appears under.
+/// Is a track (audio or subtitles) in a language? Files tag it as "eng",
+/// "en", "ger" or nothing at all, with the language in the track's title
+/// instead: match on the tag when there is one, else on the title's words,
+/// knowing the spellings each language appears under.
 enum AudioLanguageMatch {
 
     /// ISO 639-1 code → every spelling that means the same language: the
@@ -112,6 +97,21 @@ enum AudioLanguageMatch {
         return bare
     }
 
+    /// A track's language as a code: its tag, else a language its title
+    /// names ("English", "Deutsch"); nil when neither says.
+    static func language(code: String?, label: String?) -> String? {
+        if let code, !code.isEmpty, code.lowercased() != "und" { return normalizedCode(code) }
+        guard let label, !label.isEmpty else { return nil }
+        let words = Set(
+            label.folding(options: [.diacriticInsensitive, .caseInsensitive],
+                          locale: Locale(identifier: "en_US_POSIX"))
+                .split(whereSeparator: { !$0.isLetter })
+                .map(String.init)
+                .filter { $0.count > 3 }   // names, not "en" or "de" inside a title
+        )
+        return aliases.first { !$0.value.isDisjoint(with: words) }?.key
+    }
+
     /// A human-readable name for a language tag, preserving the raw tag as the
     /// fallback when Foundation doesn't recognize it. Returns nil only for an
     /// empty tag, so callers can still choose their own "Unknown" wording.
@@ -131,7 +131,7 @@ enum AudioLanguageMatch {
     ///
     /// - Parameters:
     ///   - code: the container's language tag, if the engine exposes one.
-    ///   - label: the track's display name — the only signal VLC gives, and the
+    ///   - label: the track's display name, the
     ///     fallback whenever a file tags no language.
     ///   - preferred: the configured (or remembered) language.
     static func matches(code: String?, label: String?, preferred: String) -> Bool {
