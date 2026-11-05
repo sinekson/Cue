@@ -668,6 +668,7 @@ struct HomeView: View {
     /// at) — left out of the rows with Hide watched titles.
     @State private var finishedShows: Set<String> = []
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
+    @ObservedObject private var stills = ContinueStills.shared
 
     /// False while Home is covered (player fullScreenCover, pushed screen,
     /// other tab). Home stays mounted in those states, so without this gate the
@@ -928,6 +929,9 @@ struct HomeView: View {
         .onChange(of: homeCatalogSettings.disabledKeys) { _, _ in scheduleReload() }
         .onChange(of: homeCatalogSettings.customTitles) { _, _ in scheduleReload() }
         .task(id: nextUpRefreshKey) { await refreshNextUpContinueItems() }
+        .task(id: continueStillsKey) {
+            await stills.load(mergedContinueItems(), useEpisodes: tmdbSettings.settings.useEpisodes)
+        }
         // Hourly clock nudge so the day bucket in `nextUpRefreshKey` notices a
         // midnight rollover while Home is left open. The key only changes once
         // per day, so this does NOT re-run the Next Up fetch every hour.
@@ -1362,11 +1366,19 @@ struct HomeView: View {
 
     // MARK: Rows
 
-    /// Continue Watching card art: the episode's still (variety — the
-    /// backdrops are everywhere else), else the show's backdrop/poster.
+    /// Continue Watching card art: the episode's still, as Details shows it
+    /// (TMDB's, else the add-on's), else the show's backdrop/poster.
     private func continueImage(_ progress: WatchProgress) -> String? {
+        if let still = stills.still(for: progress) { return still }
         if let thumb = progress.episodeThumbnail, !thumb.isEmpty { return thumb }
         return progress.background ?? progress.poster ?? catalogMeta(for: progress.metaID)?.background ?? catalogMeta(for: progress.metaID)?.poster
+    }
+
+    /// The episodes on Continue Watching, to look their stills up again
+    /// when they change.
+    private var continueStillsKey: String {
+        guard tmdbSettings.settings.useEpisodes else { return "" }
+        return mergedContinueItems().compactMap(ContinueStills.key).joined(separator: ",")
     }
 
     /// A hero-bar item for a Continue Watching entry. Progress rows only carry
@@ -1383,6 +1395,55 @@ struct HomeView: View {
     /// The loaded catalog item for an id, via the view model's O(1) index.
     private func catalogMeta(for id: String) -> MetaItem? {
         viewModel.itemIndex[id]
+    }
+}
+
+/// TMDB's episode stills for Continue Watching, as Details' episodes show
+/// them; the add-on's thumbnail only where TMDB has none (Cinemeta's are
+/// often missing). Looked up under the launch curtain (`LaunchPreloader`),
+/// then whenever the row's episodes change; TMDB's seasons are on disk.
+@MainActor
+final class ContinueStills: ObservableObject {
+    static let shared = ContinueStills()
+    @Published private(set) var stills: [String: String] = [:]
+
+    nonisolated static func key(_ progress: WatchProgress) -> String? {
+        guard let season = progress.season, let episode = progress.episode else { return nil }
+        return "\(progress.metaID):\(season):\(episode)"
+    }
+
+    func still(for progress: WatchProgress) -> String? {
+        Self.key(progress).flatMap { stills[$0] }
+    }
+
+    /// Looks up the episodes not yet known, a season at a time; returns
+    /// the stills of `rows` (known or found).
+    @discardableResult
+    func load(_ rows: [WatchProgress], useEpisodes: Bool) async -> [String] {
+        guard useEpisodes, TMDBService.hasAPIKey else { return [] }
+        var seasons: [String: (metaID: String, type: String, season: Int, episodes: [Int: String])] = [:]
+        for row in rows {
+            guard let key = Self.key(row), stills[key] == nil,
+                  let season = row.season, let episode = row.episode else { continue }
+            seasons["\(row.metaID):\(season)", default: (row.metaID, row.type, season, [:])].episodes[episode] = key
+        }
+        if !seasons.isEmpty {
+            let found = await withTaskGroup(of: [String: String].self) { group in
+                for job in seasons.values {
+                    group.addTask {
+                        let extras = await TMDBService.seasonEpisodes(imdbID: job.metaID, type: job.type, season: job.season)
+                        var out: [String: String] = [:]
+                        for (episode, key) in job.episodes {
+                            if let still = TMDBService.originalSize(extras[episode]?.still) { out[key] = still }
+                        }
+                        return out
+                    }
+                }
+                return await group.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
+            }
+            if !found.isEmpty { stills.merge(found) { _, new in new } }
+        }
+        return rows.compactMap(still(for:))
     }
 }
 

@@ -405,7 +405,10 @@ struct RootView: View {
             // it.
             .overlay { LaunchCurtain() }
             .animation(.easeOut(duration: 0.35), value: launch.curtain)
-            .task { launch.run(home: homeViewModel, addonManager: addonManager) }
+            .task {
+                launch.run(home: homeViewModel, addonManager: addonManager, progress: progressStore,
+                           homeSettings: homeCatalogSettings, tmdb: tmdbSettings)
+            }
             // The welcome screen up: it covers it — no curtain on top (the
             // preload carries on behind). The profile gate is on the curtain.
             .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
@@ -2149,14 +2152,21 @@ final class LaunchPreloader: ObservableObject {
     private var elapsed: Double { CACurrentMediaTime() - stepsStarted }
     private weak var home: HomeViewModel?
     private weak var addonManager: AddonManager?
+    private weak var progress: ProgressStore?
+    private weak var homeSettings: HomeCatalogSettingsStore?
+    private weak var tmdb: TMDBSettingsStore?
     private var generation = 0
     private var wentAwayAt: Date?
 
-    func run(home: HomeViewModel, addonManager: AddonManager) {
+    func run(home: HomeViewModel, addonManager: AddonManager, progress: ProgressStore,
+             homeSettings: HomeCatalogSettingsStore, tmdb: TMDBSettingsStore) {
         guard !started else { return }
         started = true
         self.home = home
         self.addonManager = addonManager
+        self.progress = progress
+        self.homeSettings = homeSettings
+        self.tmdb = tmdb
         start(firstLaunch: true)
     }
 
@@ -2321,6 +2331,16 @@ final class LaunchPreloader: ObservableObject {
                     rows.count, picks.count, home.billboardPicks.isEmpty ? " (highlights)" : "",
                     picksWait, records, firstTitles.count, (CACurrentMediaTime() - t) * 1000))
 
+        // Continue Watching's episode stills (TMDB's seasons, on disk once
+        // seen), so its cards come up with them.
+        t = CACurrentMediaTime()
+        var stills: [String] = []
+        if let progress, let homeSettings, let tmdb {
+            let rows = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
+            stills = await ContinueStills.shared.load(rows, useEpisodes: tmdb.settings.useEpisodes)
+        }
+        line(String(format: "Stills    %d · %.0f ms", stills.count, (CACurrentMediaTime() - t) * 1000))
+
         // ③ One-time artwork (cheap; first so it's off the way), on the main
         // actor — under the curtain.
         t = CACurrentMediaTime()
@@ -2354,6 +2374,9 @@ final class LaunchPreloader: ObservableObject {
                 }))
             }
         }
+        for url in stills {
+            jobs.append(("still", { await ImageCache.shared.preloadFromDisk(url, maxDimension: Spotlight.boxWidth) }))
+        }
         for item in (rows.first?.items ?? []).prefix(8) {
             if let url = item.poster ?? item.background {
                 jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: FixedFocusMetrics.height) }))
@@ -2378,7 +2401,7 @@ final class LaunchPreloader: ObservableObject {
                 start()
             }
         }
-        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters")]
+        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters"), ("still", "stills")]
             .compactMap { kind, label -> String? in
                 guard let entry = done[kind] else { return nil }
                 return "\(label) \(entry.ok)/\(entry.all)"

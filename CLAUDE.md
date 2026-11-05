@@ -125,6 +125,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Animation in `didUpdateFocus`. A fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus.
   SwiftUI scrolling was rejected (main-thread animation, lost targets).
+  What a row shows is what Select acts on: the row focus is in keeps its
+  titles, order and pictures until focus leaves it (a reordered Continue
+  Watching showed one title and played another); other rows update at once,
+  new pictures in place (`heldRows`, `refreshArt`).
+  Continue Watching's art is the episode's TMDB still as Details', else the
+  add-on's, looked up under the launch curtain (`ContinueStills`).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`). No Play button: Details is the way to play.
