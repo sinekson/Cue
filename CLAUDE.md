@@ -243,7 +243,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   is fine control: slow, about 45 s across the pad whatever the length, the
   gain growing evenly with the speed up to 3 min across, with a glide;
   keyframe stills while moving, the exact frame 0.25 s after it rests; the preview follows the marker,
-  glass and a spinner until its first still; nothing lands until Select (which plays), Back cancels.
+  not there until its first still, then fading in (0.25 s), only the time under the marker until then (the loading dots, glass breathing as the placeholders, fainter and brighter, a light sweeping the glass, and the last still kept and dimmed while the next is late were tried); nothing lands until Select (which plays), Back cancels.
   Skip (IntroDB, by IMDb id, no key; crowd-sourced, a 5 s intro can be right):
   glass pill left above the bar, no icon, a rounded rectangle as the tall Settings rows (a capsule was wrong), focused white with dark text (a soft veil looked worse), in the title's place while it's up, with where it ends,
   inside recap, intro or a film's outro; up until 3 s before the span ends, controls or not; focused only with the controls up, so Select skips (controls gone, Up or Select brings them up on it and does nothing else; Left and Right scrub as usual); paused or

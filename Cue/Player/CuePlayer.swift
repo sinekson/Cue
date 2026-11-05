@@ -2772,8 +2772,6 @@ private final class PlayerOverlay: UIView {
     private let preview = UIImageView()
     private static let previewSize = CGSize(width: 480, height: 270)
     private let previewHolder = UIView()
-    private let previewGlass = GlassBacking(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
-    private let previewSpinner = LoadingSymbol(size: 44)
     private var scrubStartFraction: CGFloat = 0
     private var fraction: CGFloat = 0
     private var isScrubbing = false
@@ -2843,16 +2841,13 @@ private final class PlayerOverlay: UIView {
         clip.layer.borderColor = UIColor.white.withAlphaComponent(0.2).cgColor
         clip.frame = CGRect(origin: .zero, size: Self.previewSize)
         preview.frame = clip.bounds
-        previewGlass.frame = clip.bounds
-        previewSpinner.center = CGPoint(x: clip.bounds.midX, y: clip.bounds.midY)
-        clip.addSubview(previewGlass)
-        clip.addSubview(previewSpinner)
         clip.addSubview(preview)
         previewHolder.addSubview(clip)
         previewHolder.layer.shadowColor = UIColor.black.cgColor
         previewHolder.layer.shadowRadius = 36
         previewHolder.layer.shadowOffset = CGSize(width: 0, height: 10)
         previewHolder.layer.shadowPath = UIBezierPath(roundedRect: clip.bounds, cornerRadius: Spotlight.cornerRadius).cgPath
+        previewHolder.layer.shadowOpacity = 0.7
         previewHolder.isHidden = true
         for sub in [title, episode, elapsed, markIcon, markNumber, remaining, barShadow, bar, previewHolder] as [UIView] {
             controls.addSubview(sub)
@@ -2963,20 +2958,25 @@ private final class PlayerOverlay: UIView {
         previewHolder.frame = CGRect(x: x, y: bounds.height - 176 - size.height, width: size.width, height: size.height)
     }
 
-    /// nil: time only (no still for that spot yet).
+    /// nil: time only (no still for that spot yet). The preview isn't there
+    /// until its first still, then fades in.
     func setPreview(_ image: CGImage?) {
         guard image !== preview.image?.cgImage else { return }
         preview.image = image.map { UIImage(cgImage: $0) }
-        showWaiting(image == nil)
-        previewHolder.isHidden = image == nil
+        if image == nil { hidePreview() } else { revealPreview() }
     }
 
-    private func showWaiting(_ waiting: Bool) {
-        preview.isHidden = waiting
-        previewGlass.isHidden = !waiting
-        // A shadow falls under its shape too, and would darken the glass.
-        previewHolder.layer.shadowOpacity = waiting ? 0 : 0.7
-        if waiting { previewSpinner.startAnimating() } else { previewSpinner.stopAnimating() }
+    private func revealPreview() {
+        guard previewHolder.isHidden else { return }
+        previewHolder.alpha = 0
+        previewHolder.isHidden = false
+        UIView.animate(withDuration: Motion.fadeDuration) { self.previewHolder.alpha = 1 }
+    }
+
+    private func hidePreview() {
+        previewHolder.layer.removeAllAnimations()
+        previewHolder.isHidden = true
+        previewHolder.alpha = 1
     }
 
     func setTitle(_ text: String, episode line: String?) {
@@ -3002,11 +3002,10 @@ private final class PlayerOverlay: UIView {
     /// `detached`: the fill stays behind the marker. A press while playing
     /// isn't: the two move as one.
     func setScrubbing(_ scrubbing: Bool, detached: Bool) {
-        if scrubbing, previewHolder.isHidden {
-            previewHolder.isHidden = false
-            showWaiting(preview.image == nil)
+        if scrubbing, preview.image != nil {
+            revealPreview()
         } else if !scrubbing {
-            previewHolder.isHidden = true
+            hidePreview()
         }
         if scrubbing != isScrubbing {
             scrubStartFraction = fraction
