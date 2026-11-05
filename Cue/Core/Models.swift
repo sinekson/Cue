@@ -1325,7 +1325,7 @@ struct StreamFacts: Hashable {
     }
 
     private static let resolutions = table([
-        ("2160p|4k|uhd", "2160p"), ("1440p", "1440p"), ("1080p|fhd", "1080p"),
+        ("2160p|4k|uhd", "4K"), ("1440p", "1440p"), ("1080p|fhd", "1080p"),
         ("720p", "720p"), ("576p", "576p"), ("480p", "480p")
     ])
     private static let qualities = table([

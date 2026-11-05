@@ -38,6 +38,19 @@ struct PerformanceSettings: View {
                     isOn: s.failEveryLink
                 )
 
+                Button {
+                    store.settings.shelfCardColour = (store.settings.shelfCardColour + 1) % 3
+                } label: {
+                    PerfRowLabel(icon: "paintpalette",
+                                 title: "Shelf source cards",
+                                 subtitle: "The cards' colour on the player's shelf, see-through. Press to change.") {
+                        Text(["Backdrop", "Black", "White"][store.settings.shelfCardColour % 3])
+                            .font(.system(size: 24))
+                            .foregroundStyle(theme.palette.textSecondary)
+                    }
+                }
+                .buttonStyle(PlainCardButtonStyle())
+
                 // Lived under Playback → Seeking; it's a diagnostic overlay, so
                 // it belongs with the other two.
                 PerfToggleRow(

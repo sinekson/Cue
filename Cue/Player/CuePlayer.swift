@@ -683,6 +683,14 @@ class PlayerSheet: UIView {
     /// In the gap under the tabs: Down lands on the page's preferred row, not
     /// the nearest, and Up reaches a tab from anywhere along it.
     private let guide = UIFocusGuide()
+    /// Past the links' first and last card: on to the add-on before or after.
+    private let sides = [UIFocusGuide(), UIFocusGuide()]
+    /// Where the next add-on's page lands: its first card going right, its
+    /// last going left. The pages read it as their page opens.
+    fileprivate enum Landing { case first, last }
+    fileprivate var landing: Landing?
+    /// Focus asked for once, past the tabs' own preference.
+    fileprivate var focusTarget: UIFocusEnvironment?
     private(set) var current = 0
     private(set) var place = Place.away
     private var reachedEdge = Date.distantPast
@@ -715,6 +723,17 @@ class PlayerSheet: UIView {
             guide.topAnchor.constraint(equalTo: topAnchor, constant: PanelTab.height),
             guide.heightAnchor.constraint(equalToConstant: Self.tabsGap)
         ])
+        for (index, side) in sides.enumerated() {
+            side.isEnabled = false
+            addLayoutGuide(side)
+            NSLayoutConstraint.activate([
+                index == 0 ? side.leadingAnchor.constraint(equalTo: leadingAnchor)
+                           : side.trailingAnchor.constraint(equalTo: trailingAnchor),
+                side.widthAnchor.constraint(equalToConstant: 8),
+                side.topAnchor.constraint(equalTo: topAnchor, constant: Self.tabRow),
+                side.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        }
     }
 
     @available(*, unavailable)
@@ -732,7 +751,97 @@ class PlayerSheet: UIView {
                height: bounds.height - Self.tabRow - Self.inset * 2)
     }
 
-    override var preferredFocusEnvironments: [UIFocusEnvironment] { [tabs[current]] }
+    override var preferredFocusEnvironments: [UIFocusEnvironment] { focusTarget.map { [$0] } ?? [tabs[current]] }
+
+    /// The add-on `step` away from the chosen one, among those unfolded.
+    private func neighbour(_ step: Int) -> Int? {
+        guard unfolded, let fold, fold.extras.contains(current + step) else { return nil }
+        return current + step
+    }
+
+    /// Only Left and Right out of the links' row reach the sides: there they
+    /// stop, and the next add-on's page opens with focus on its near card.
+    override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        guard let row = linksRow, context.previouslyFocusedView?.isDescendant(of: row) == true,
+              !(context.nextFocusedView?.isDescendant(of: row) ?? false),
+              context.focusHeading.contains(.left) || context.focusHeading.contains(.right),
+              let next = neighbour(context.focusHeading.contains(.right) ? 1 : -1)
+        else { return super.shouldUpdateFocus(in: context) }
+        let going = context.focusHeading.contains(.right) ? Landing.first : .last
+        DispatchQueue.main.async { [self] in
+            slideLinks(going == .first ? 1 : -1) {
+                landing = going
+                // The tabs' pills cross over as the cards do.
+                let fade = CATransition()
+                fade.type = .fade
+                fade.duration = Motion.moveDuration
+                tabRow.layer.add(fade, forKey: "chosen")
+                choose(next)
+                focusTarget = row
+                setNeedsFocusUpdate()
+                updateFocusIfNeeded()
+                focusTarget = nil
+                landing = nil
+            }
+        }
+        return false
+    }
+
+    /// The cards going out toward the side being left, the new ones coming in
+    /// from the other, a page's width, as one strip, on the move spring. Only the
+    /// picture moves (the row itself stays put and whole, so focus lands).
+    /// A press mid-way settles the last one first.
+    private var leaving: UIView?
+    private func slideLinks(_ direction: CGFloat, _ change: () -> Void) {
+        guard let row = linksRow, !row.isHidden, let page = row.superview else { return change() }
+        leaving?.removeFromSuperview()
+        row.layer.removeAnimation(forKey: "slide")
+        // What shows, to the glass's edge: the cards the row holds past it
+        // would otherwise sweep over the new ones.
+        let reach = ShelfRow.over - Self.inset
+        let seen = CGRect(x: row.bounds.minX + reach, y: row.bounds.minY,
+                          width: row.bounds.width - reach * 2, height: row.bounds.height)
+        guard let before = row.resizableSnapshotView(from: seen, afterScreenUpdates: false, withCapInsets: .zero)
+        else { return change() }
+        change()
+        row.layoutIfNeeded()
+        before.frame = CGRect(x: row.frame.minX + reach, y: row.frame.minY, width: seen.width, height: seen.height)
+        page.insertSubview(before, aboveSubview: row)
+        leaving = before
+        let move = { (layer: CALayer, from: CGFloat, to: CGFloat) in
+            let spring = CASpringAnimation(perceptualDuration: Motion.moveDuration, bounce: 0)
+            spring.keyPath = "transform.translation.x"
+            spring.fromValue = from
+            spring.toValue = to
+            spring.duration = spring.settlingDuration
+            spring.fillMode = .forwards
+            spring.isRemovedOnCompletion = false
+            layer.add(spring, forKey: "slide")
+        }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self, weak before] in
+            before?.removeFromSuperview()
+            // Only the latest slide clears the row: an earlier one's end mustn't cut it.
+            guard let self, self.leaving === before else { return }
+            self.leaving = nil
+            row.layer.removeAnimation(forKey: "slide")
+        }
+        // The page's width plus a gap, so the strip reads as one.
+        let distance = page.bounds.width + ShelfRow.gap
+        move(before.layer, 0, -direction * distance)
+        move(row.layer, direction * distance, 0)
+        CATransaction.commit()
+        CATransaction.flush()
+    }
+
+    /// The sides only while focus is on a link with an add-on beside its own.
+    private func aimSides() {
+        let onLinks = linksRow.map { row in (UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView)?.isDescendant(of: row) == true } ?? false
+        for (index, side) in sides.enumerated() {
+            side.isEnabled = onLinks && neighbour(index == 0 ? -1 : 1) != nil
+            side.preferredFocusEnvironments = [tabs[current]]
+        }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -952,6 +1061,7 @@ class PlayerSheet: UIView {
         } else {
             aimGuide()
         }
+        aimSides()
     }
 }
 
@@ -1130,6 +1240,85 @@ private final class DetailsPage: UIView {
 }
 
 /// Settings → Appearance → Source Cards.
+/// The source cards' colour: the title's picture's dominant one (the stage's
+/// picture, so every card of a list shares it), always dark enough for the
+/// text. Grey pictures get a quiet slate.
+enum SourceTint {
+    private static let tints = NSCache<NSString, UIColor>()
+    private static let sampleBudget: CGFloat = 200
+    static let plain = UIColor(hue: 0.58, saturation: 0.15, brightness: 0.3, alpha: 1)
+
+    /// The picture the colour comes from.
+    @MainActor static var art: String? { PlayStage.shared.scene?.art }
+
+    static func cached(for url: String?) -> UIColor? {
+        url.flatMap { tints.object(forKey: $0 as NSString) }
+    }
+
+    static func tint(for url: String) async -> UIColor {
+        if let hit = cached(for: url) { return hit }
+        var image = await ImageCache.shared.diskImage(for: url, budget: sampleBudget)
+        if image == nil, let remote = URL(string: url),
+           let data = try? await ImageCache.shared.download(remote) {
+            ImageCache.shared.insertData(data, for: url)
+            image = ImageCache.decodeDownsampled(data, budget: sampleBudget)
+        }
+        guard let cg = image?.cgImage else { return plain }
+        let tint = await Task.detached(priority: .userInitiated) { sample(cg) }.value
+        tints.setObject(tint, forKey: url as NSString)
+        return tint
+    }
+
+    /// The hue that weighs most, by how colourful and bright its pixels are,
+    /// as the mean of those pixels.
+    private static func sample(_ image: CGImage) -> UIColor {
+        let width = 32, height = 18
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                    bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        var bins = [(weight: CGFloat, red: CGFloat, green: CGFloat, blue: CGFloat)](repeating: (0, 0, 0, 0), count: 12)
+        for start in stride(from: 0, to: pixels.count, by: 4) {
+            let red = CGFloat(pixels[start]) / 255, green = CGFloat(pixels[start + 1]) / 255
+            let blue = CGFloat(pixels[start + 2]) / 255
+            var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
+            UIColor(red: red, green: green, blue: blue, alpha: 1)
+                .getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+            guard saturation > 0.12, brightness > 0.1 else { continue }
+            let weight = saturation * brightness
+            let bin = min(Int(hue * 12), 11)
+            bins[bin].weight += weight
+            bins[bin].red += red * weight
+            bins[bin].green += green * weight
+            bins[bin].blue += blue * weight
+        }
+        guard let top = bins.max(by: { $0.weight < $1.weight }), top.weight > 0 else { return plain }
+        var hue: CGFloat = 0, saturation: CGFloat = 0
+        UIColor(red: top.red / top.weight, green: top.green / top.weight, blue: top.blue / top.weight, alpha: 1)
+            .getHue(&hue, saturation: &saturation, brightness: nil, alpha: nil)
+        return UIColor(hue: hue, saturation: min(max(saturation, 0.3), 0.6), brightness: 0.32, alpha: 1)
+    }
+
+    /// The text's ink: the card's hue, barely, near white, so the words read
+    /// as printed on the card rather than laid over it.
+    static func ink(_ color: UIColor, _ alpha: CGFloat) -> UIColor {
+        var hue: CGFloat = 0, saturation: CGFloat = 0
+        color.getHue(&hue, saturation: &saturation, brightness: nil, alpha: nil)
+        return UIColor(hue: hue, saturation: min(saturation, inkSaturation), brightness: 1, alpha: alpha)
+    }
+    private static let inkSaturation: CGFloat = 0.14
+
+    /// The colour at another brightness, for rest, playing and focus.
+    static func shade(_ color: UIColor, _ brightness: CGFloat) -> UIColor {
+        var hue: CGFloat = 0, saturation: CGFloat = 0
+        color.getHue(&hue, saturation: &saturation, brightness: nil, alpha: nil)
+        return UIColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
+    }
+}
+
 enum SourceCardStyle: String, CaseIterable {
     case styled, raw
 
@@ -1139,22 +1328,91 @@ enum SourceCardStyle: String, CaseIterable {
     var label: String { self == .styled ? "Styled" : "Raw" }
 }
 
+/// What's playing, as Music's: three thin bars rising and falling, each at its
+/// own slow pace, so they never read as the loading dots.
+private final class PlayingBars: UIView {
+    static let size = CGSize(width: 16, height: 16)
+    private let bars = (0..<3).map { _ in CALayer() }
+    private static let barWidth: CGFloat = 3
+    private static let paces: [CFTimeInterval] = [0.9, 1.25, 0.75]
+    private static let lows: [CGFloat] = [0.3, 0.45, 0.25]
+
+    var colour: UIColor = .white {
+        didSet { bars.forEach { $0.backgroundColor = colour.cgColor } }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        bars.forEach { layer.addSublayer($0) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let gap = (bounds.width - Self.barWidth * 3) / 2
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in bars.enumerated() {
+            bar.anchorPoint = CGPoint(x: 0.5, y: 1)
+            bar.bounds = CGRect(x: 0, y: 0, width: Self.barWidth, height: bounds.height)
+            bar.position = CGPoint(x: CGFloat(index) * (Self.barWidth + gap) + Self.barWidth / 2, y: bounds.height)
+            bar.cornerRadius = Self.barWidth / 2
+        }
+        CATransaction.commit()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        run()
+    }
+
+    override var isHidden: Bool { didSet { run() } }
+
+    /// Running only while seen; started again after the app was away.
+    func run() {
+        guard window != nil, !isHidden else {
+            bars.forEach { $0.removeAnimation(forKey: "rise") }
+            return
+        }
+        for (index, bar) in bars.enumerated() where bar.animation(forKey: "rise") == nil {
+            let rise = CABasicAnimation(keyPath: "transform.scale.y")
+            rise.fromValue = Self.lows[index]
+            rise.toValue = 1
+            rise.duration = Self.paces[index]
+            rise.autoreverses = true
+            rise.repeatCount = .infinity
+            rise.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            rise.timeOffset = Self.paces[index] * Double(index) * 0.6
+            bar.add(rise, forKey: "rise")
+        }
+    }
+}
+
 /// The resolution on a source card, shaped as the billboard's `TitleBadge`,
 /// larger: an off-white outline, the words dark on a plate of that colour.
 private final class SourceBadge: UIView {
     let height: CGFloat = 44
     private static let padding: CGFloat = 15
-    private static let colour = UIColor(white: 1, alpha: FixedFocusText.primary)
     private let plate = UIView()
     private let label = UILabel()
+    /// The outline and plate: the card's ink.
+    var colour = UIColor(white: 1, alpha: FixedFocusText.primary) {
+        didSet {
+            layer.borderColor = colour.cgColor
+            plate.backgroundColor = colour
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        layer.borderColor = Self.colour.cgColor
+        layer.borderColor = colour.cgColor
         layer.borderWidth = 2
         layer.cornerRadius = 11
         layer.cornerCurve = .continuous
-        plate.backgroundColor = Self.colour
+        plate.backgroundColor = colour
         plate.layer.cornerRadius = 6
         plate.layer.cornerCurve = .continuous
         label.font = .systemFont(ofSize: 23, weight: .heavy)
@@ -1184,8 +1442,8 @@ private final class SourceBadge: UIView {
     }
 }
 
-/// One link, on the shelf and the stage: at rest its words on the shelf's
-/// glass, barely a card; focused, lifted on a see-through white.
+/// One link, on the shelf and the stage, on the title's dominant colour:
+/// dimmed at rest, less for what's playing; focused, lit and lifted.
 /// Styled: every fact has one fixed place, and a place with nothing to show
 /// stays clear, so a row can be scanned. Raw: the add-on's own text, its first
 /// line large.
@@ -1207,30 +1465,32 @@ final class SourceCard: UICollectionViewCell {
     private static let fadeHeight: CGFloat = 56
     /// A line of facts, at Details' size.
     private static let rowHeight: CGFloat = 30
-    /// Language and cached share the line above the rule.
-    private static let ruleGap: CGFloat = 10
-    /// Room for "Not cached".
-    private static let cachedRoom: CGFloat = 150
+    /// The rule's gap each side: to the language's baseline above, the foot's
+    /// capitals below.
+    private static let ruleGap: CGFloat = 18
+    /// Room for the cached mark.
+    private static let cachedRoom: CGFloat = 40
     /// The foot stops short of the score at its end.
     private static let scoreRoom: CGFloat = 110
-    /// Clear of the resolution, however long.
+    /// The resolution's widest, so quality keeps its room.
     private static let playingEnd: CGFloat = 140
-    private static let nameFont = UIFont.systemFont(ofSize: 32, weight: .bold)
     /// Raw's first line: leading the card, not shouting.
     private static let rawNameFont = UIFont.systemFont(ofSize: 26, weight: .semibold)
     /// Details' size.
-    private static let detailFont = UIFont.systemFont(ofSize: 24)
+    private static let detailFont = UIFont.systemFont(ofSize: 23)
     /// Raw's lines: the text's floor, add-ons' descriptions run long.
     private static let rawDetailFont = UIFont.systemFont(ofSize: 23)
     private static let footFont = UIFont.systemFont(ofSize: 23, weight: .semibold)
     private static let footKern: CGFloat = 3
-    /// At rest the card is barely there: its words on the shelf's glass.
-    private static let restFill: CGFloat = 0.05
+    private static let nameFont = UIFont.systemFont(ofSize: 28, weight: .bold)
+    /// The colour's brightness: dimmed at rest, less for what's playing, lit focused.
+    private static let restLight: CGFloat = 0.24
+    private static let playingLight: CGFloat = 0.3
+    private static let focusLight: CGFloat = 0.4
     /// A link that didn't play: its words at about half.
     private static let failedDim: CGFloat = 0.5
-    private static let playingFill: CGFloat = 0.09
-    /// Focused: lifted, a see-through white.
-    private static let focusFill: CGFloat = 0.18
+    /// On the player's shelf: the colour at this, the glass showing through.
+    private static let overFilmOpacity: CGFloat = 0.6
 
     private let card = UIView()
     private let shadow = UIView()
@@ -1241,7 +1501,9 @@ final class SourceCard: UICollectionViewCell {
     /// Size and bitrate.
     private let weight = UILabel()
     private let language = UILabel()
-    private let cached = UILabel()
+    /// Cached: a bolt (it starts at once); not cached: a dimmer hourglass;
+    /// nothing where the add-on doesn't say.
+    private let cached = UIImageView()
     private let video = UILabel()
     private let audio = UILabel()
     private let rule = UIView()
@@ -1254,10 +1516,22 @@ final class SourceCard: UICollectionViewCell {
     private var detailLines: [UILabel] = []
     /// The foot's own line, kept clear of the add-on's text, however long.
     private let foot = UILabel()
-    /// Playing, or Didn't play: a quiet note in one place.
+    /// Playing, or Didn't play: Styled, under the card in its caption room;
+    /// Raw, at the foot. Led by the bars, or the mark.
     private let playing = UILabel()
+    private let bars = PlayingBars()
+    private let mark = UIImageView(image: UIImage(systemName: "play.slash"))
+    /// The note's size under the card: the episodes' caption.
+    private static let captionFont = UIFont.systemFont(ofSize: FixedFocusMetrics.captionSize)
     private var isPlaying = false
     private var isRaw = false
+    private var art: String?
+    private var tint = SourceTint.plain
+    private var footWords: String?
+    private var cachedAlpha: CGFloat = 0.85
+    private var overFilm = false
+    /// Size and bitrate, rounded, their numbers apart from their units.
+    private var weightParts: [(number: String, unit: String)] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1269,18 +1543,10 @@ final class SourceCard: UICollectionViewCell {
         card.layer.cornerCurve = .continuous
         contentView.addSubview(card)
         title.font = Self.nameFont
-        title.textColor = UIColor.white.withAlphaComponent(0.95)
-        for (labels, alpha) in [([weight, language], 0.85), ([video, audio], 0.72)] {
-            for label in labels {
-                label.font = Self.detailFont
-                label.textColor = UIColor.white.withAlphaComponent(alpha)
-            }
-        }
-        cached.font = Self.detailFont
-        cached.textAlignment = .right
-        rule.backgroundColor = UIColor.white.withAlphaComponent(0.3)
+        for label in [weight, language, video, audio] { label.font = Self.detailFont }
+        cached.contentMode = .right
+        cached.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: Self.detailFont)
         score.font = .systemFont(ofSize: 26, weight: .semibold)
-        score.textColor = UIColor.white.withAlphaComponent(0.95)
         score.textAlignment = .right
         for sub in [title, resolution, weight, language, cached, video, audio, rule, score] as [UIView] {
             styled.addSubview(sub)
@@ -1288,31 +1554,42 @@ final class SourceCard: UICollectionViewCell {
         text.clipsToBounds = true
         fade.colors = [UIColor.black.cgColor, UIColor.clear.cgColor]
         // A quiet note, not a label: the card's own brighter rest says it too.
-        playing.font = .systemFont(ofSize: 23)
-        playing.textColor = UIColor.white.withAlphaComponent(0.55)
-        for sub in [styled, text, foot, playing] as [UIView] { card.addSubview(sub) }
+        for sub in [styled, text, foot] as [UIView] { card.addSubview(sub) }
+        mark.contentMode = .center
         applyFocus(false)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func footText(_ words: String) -> NSAttributedString {
+    /// The foot's spaced capitals.
+    private func footText(_ words: String, _ colour: UIColor) -> NSAttributedString {
         NSAttributedString(string: words.uppercased(), attributes: [
-            .font: footFont, .kern: footKern, .foregroundColor: UIColor.white.withAlphaComponent(0.7),
+            .font: Self.footFont, .kern: Self.footKern, .foregroundColor: colour,
         ])
     }
 
     /// `failed`: tried and didn't play: set aside, still to pick (a link that
     /// timed out can work a minute later).
-    func show(_ entry: StreamEntry, playing isPlaying: Bool, failed: Bool = false) {
+    /// `overFilm`: on the player's shelf, its glass coloured by the film: the
+    /// card's colour lets that through a little.
+    func show(_ entry: StreamEntry, playing isPlaying: Bool, failed: Bool = false, overFilm: Bool = false) {
+        self.overFilm = overFilm
         isRaw = SourceCardStyle.current == .raw
         styled.isHidden = isRaw
         text.isHidden = !isRaw
         self.isPlaying = isPlaying
+        setTint(SourceTint.art)
         playing.text = isPlaying ? "Playing" : "Didn't play"
+        // Raw has no caption room: its note stays on the card.
+        let host = isRaw ? card : contentView
+        playing.font = isRaw ? Self.detailFont : Self.captionFont
+        mark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: playing.font)
+        for sub in [playing, bars, mark] as [UIView] where sub.superview !== host { host.addSubview(sub) }
         playing.sizeToFit()
         playing.isHidden = !(isPlaying || failed)
+        bars.isHidden = !isPlaying
+        mark.isHidden = !failed || isPlaying
         styled.alpha = failed ? Self.failedDim : 1
         text.alpha = styled.alpha
         if isRaw {
@@ -1320,15 +1597,15 @@ final class SourceCard: UICollectionViewCell {
                 .components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             nameLines = lines(words.first, into: nameLines, font: Self.rawNameFont)
             detailLines = lines(words.dropFirst().joined(separator: "\n"), into: detailLines, font: Self.rawDetailFont)
-            foot.attributedText = nil
+            footWords = nil
         } else {
             let found = entry.facts
             title.text = found.quality
             resolution.words = found.resolution
-            weight.text = [found.size, found.bitrate].compactMap { $0 }.joined(separator: " at ")
+            weightParts = [found.size, found.bitrate].compactMap { $0.flatMap(Self.rounded) }
             language.text = found.language
-            cached.text = found.cached.map { $0 ? "Cached" : "Not cached" }
-            cached.textColor = UIColor.white.withAlphaComponent(found.cached == true ? 0.85 : 0.55)
+            cached.image = found.cached.map { UIImage(systemName: $0 ? "bolt.fill" : "hourglass") } ?? nil
+            cachedAlpha = found.cached == true ? 0.85 : 0.55
             video.text = found.video
             audio.text = found.audio
             // A score starts the add-on's first line, where there is one.
@@ -1338,7 +1615,7 @@ final class SourceCard: UICollectionViewCell {
             let isGathered = entry.sourceAddonName.localizedCaseInsensitiveContains("aiostreams")
             let source = (isGathered ? found.gatheredFrom : nil) ?? entry.sourceAddonName
             let origin = found.origin.filter { $0.caseInsensitiveCompare(source) != .orderedSame }
-            foot.attributedText = Self.footText(([source] + origin).joined(separator: " · "))
+            footWords = ([source] + origin).joined(separator: " · ")
         }
         applyFocus(isFocused)
         setNeedsLayout()
@@ -1372,19 +1649,22 @@ final class SourceCard: UICollectionViewCell {
         shadow.center = card.center
         sizeShadow()
         let inner = card.bounds.insetBy(dx: Self.inset, dy: Self.inset)
-        let footHeight = playing.bounds.height
+        let footHeight = ceil(Self.detailFont.lineHeight)
         let footY = inner.maxY - footHeight
         if isRaw {
             playing.frame.origin = CGPoint(x: inner.maxX - playing.bounds.width, y: footY)
+            placeLead()
             foot.frame = .zero
             // The tabs name the add-on; the foot is only for Playing.
             layoutRaw(in: inner, bottom: playing.isHidden ? inner.maxY : footY - Self.footGap)
         } else {
-            playing.frame.origin = CGPoint(x: inner.maxX - Self.playingEnd - playing.bounds.width, y: inner.minY + 8)
             foot.frame = CGRect(x: inner.minX, y: footY, width: inner.width - Self.scoreRoom, height: footHeight)
-            rule.frame = CGRect(x: inner.minX, y: footY - Self.footGap - 2, width: inner.width, height: 2)
+            // As far from the foot's capitals as from the language's baseline.
+            let capsTop = footY + (footHeight - Self.footFont.lineHeight) / 2 + Self.footFont.ascender - Self.footFont.capHeight
+            rule.frame = CGRect(x: inner.minX, y: capsTop - Self.ruleGap - 2, width: inner.width, height: 2)
             score.frame = CGRect(x: inner.maxX - Self.scoreRoom, y: foot.frame.midY - 20, width: Self.scoreRoom, height: 40)
             layoutStyled(in: inner)
+            placeNote()
         }
     }
 
@@ -1393,14 +1673,36 @@ final class SourceCard: UICollectionViewCell {
         resolution.frame = CGRect(x: inner.maxX - pill, y: inner.minY, width: pill, height: resolution.height)
         // Quality and its size from the top; the rest stacked on the rule, the
         // room left between them.
-        title.frame = CGRect(x: inner.minX, y: inner.minY - 2, width: inner.width - Self.playingEnd - playing.bounds.width - 20,
+        title.frame = CGRect(x: inner.minX, y: inner.minY - 2, width: inner.width - pill - 20,
                              height: ceil(Self.nameFont.lineHeight))
         weight.frame = CGRect(x: inner.minX, y: title.frame.maxY, width: inner.width, height: Self.rowHeight)
-        let lastY = rule.frame.minY - Self.ruleGap - Self.rowHeight
+        let baseline = rule.frame.minY - Self.ruleGap
+        let lastY = baseline - (Self.rowHeight - Self.detailFont.lineHeight) / 2 - Self.detailFont.ascender
         language.frame = CGRect(x: inner.minX, y: lastY, width: inner.width - Self.cachedRoom, height: Self.rowHeight)
         cached.frame = CGRect(x: inner.maxX - Self.cachedRoom, y: lastY, width: Self.cachedRoom, height: Self.rowHeight)
         audio.frame = CGRect(x: inner.minX, y: lastY - Self.rowHeight, width: inner.width, height: Self.rowHeight)
         video.frame = audio.frame.offsetBy(dx: 0, dy: -Self.rowHeight)
+    }
+
+    /// Styled: under the card as the episodes' caption, keeping its distance
+    /// to the card at its focused size.
+    private func placeNote() {
+        let lead = PlayingBars.size.width + Self.leadGap
+        let top = Self.face.height * (isFocused ? 1 + lift : 1) / 2 + card.center.y + FixedFocusMetrics.infoGap
+        let left = card.center.x - Self.face.width / 2 + FixedFocusMetrics.textIndent
+        playing.frame = CGRect(x: left + lead, y: top, width: playing.bounds.width, height: 30)
+        placeLead()
+    }
+    private static let leadGap: CGFloat = 10
+
+    /// The bars or the mark before the words, standing on their baseline.
+    private func placeLead() {
+        let font = playing.font!
+        let baseline = playing.frame.minY + (playing.frame.height - font.lineHeight) / 2 + font.ascender
+        let size = PlayingBars.size
+        bars.frame = CGRect(x: playing.frame.minX - Self.leadGap - size.width, y: baseline - size.height,
+                            width: size.width, height: size.height)
+        mark.frame = CGRect(x: bars.frame.minX - 4, y: baseline - font.capHeight / 2 - 12, width: size.width + 8, height: 24)
     }
 
     private func layoutRaw(in inner: CGRect, bottom: CGFloat) {
@@ -1452,15 +1754,112 @@ final class SourceCard: UICollectionViewCell {
         }
     }
 
+    private func setTint(_ new: String?) {
+        guard new != art else { return }
+        art = new
+        tint = SourceTint.cached(for: new) ?? SourceTint.plain
+        applyFocus(isFocused)
+        guard SourceTint.cached(for: new) == nil, let new else { return }
+        Task { @MainActor [weak self] in
+            let found = await SourceTint.tint(for: new)
+            guard let self, self.art == new else { return }
+            self.tint = found
+            UIView.animate(withDuration: Motion.fadeDuration) { self.applyFocus(self.isFocused) }
+        }
+    }
+
+    /// Every word in the card's ink, at its level.
+    private func applyInk() {
+        let ink = { self.neutral == 0 ? SourceTint.ink(self.tint, $0) : UIColor(white: 1, alpha: $0) }
+        nameLines.forEach { $0.textColor = ink(0.95) }
+        detailLines.forEach { $0.textColor = ink(0.8) }
+        title.textColor = ink(0.95)
+        score.textColor = ink(0.95)
+        [weight, language].forEach { $0.textColor = ink(0.85) }
+        [video, audio].forEach { $0.textColor = ink(0.72) }
+        cached.tintColor = ink(cachedAlpha)
+        weight.attributedText = weightText(ink)
+        rule.backgroundColor = ink(0.3)
+        // Under the card: the caption's white, brighter focused.
+        let caption = UIColor.white.withAlphaComponent(isFocused ? FixedFocusText.primary : FixedFocusText.secondary)
+        playing.textColor = isRaw ? ink(0.55) : caption
+        bars.colour = isRaw ? ink(0.7) : caption
+        mark.tintColor = playing.textColor
+        resolution.colour = ink(FixedFocusText.primary)
+        foot.attributedText = footWords.map { footText($0, ink(0.7)) }
+        let words = nameLines + detailLines + [title, score, weight, language, video, audio, foot] + (isRaw ? [playing] : [])
+        words.forEach(Self.press)
+        Self.pressDarkEdge(cached.layer)
+        // Pressed into the card only where it's on it.
+        for layer in [bars.layer, mark.layer] {
+            if isRaw { Self.pressDarkEdge(layer) } else { layer.shadowOpacity = 0 }
+        }
+        if !isRaw { playing.shadowColor = nil }
+    }
+
+    /// "6.6 GB at 37 Mbps": the numbers at the line's level in equal-width
+    /// digits, so they line up across the row; units and "at" a level down.
+    private func weightText(_ ink: (CGFloat) -> UIColor) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        let number: [NSAttributedString.Key: Any] = [.font: Self.weightFont, .foregroundColor: ink(0.85)]
+        let quiet: [NSAttributedString.Key: Any] = [.font: Self.detailFont, .foregroundColor: ink(FixedFocusText.secondary)]
+        for (index, part) in weightParts.enumerated() {
+            if index > 0 { text.append(NSAttributedString(string: " at ", attributes: quiet)) }
+            text.append(NSAttributedString(string: part.number, attributes: number))
+            text.append(NSAttributedString(string: " " + part.unit, attributes: quiet))
+        }
+        return text
+    }
+    private static let weightFont = UIFont.monospacedDigitSystemFont(ofSize: 23, weight: .regular)
+
+    /// "6.56 GB" → 6.6 GB, "36.69 Mbps" → 37 Mbps: a decimal only under 10.
+    private static func rounded(_ value: String) -> (number: String, unit: String)? {
+        let parts = value.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let amount = Double(parts[0]) else { return nil }
+        let number = amount < 10 && amount.rounded() != amount
+            ? String(format: "%.1f", amount) : String(format: "%.0f", amount)
+        return (number, parts[1])
+    }
+
+    /// Letterpress: the words pressed into the card, lit from above: a dark edge at the top of each letter, a faint light one below.
+    private static func press(_ label: UILabel) {
+        label.shadowColor = UIColor.white.withAlphaComponent(pressLight)
+        label.shadowOffset = CGSize(width: 0, height: 1)
+        pressDarkEdge(label.layer)
+    }
+
+    private static func pressDarkEdge(_ layer: CALayer) {
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = pressDark
+        layer.shadowOffset = CGSize(width: 0, height: -1)
+        layer.shadowRadius = 0
+    }
+    private static let pressLight: CGFloat = 0.18
+    private static let pressDark: Float = 0.45
+
+    /// On the shelf, a neutral see-through card where Developer says so:
+    /// black, darker at rest; white, a little more when focused.
+    private var neutral: Int { overFilm ? PerformanceSettingsStore.shared.settings.shelfCardColour % 3 : 0 }
+
+    private func cardColour(_ focused: Bool) -> UIColor {
+        switch neutral {
+        case 1: return UIColor(white: 0, alpha: focused ? 0.3 : isPlaying ? 0.45 : 0.55)
+        case 2: return UIColor(white: 1, alpha: focused ? 0.24 : isPlaying ? 0.14 : 0.08)
+        default:
+            return SourceTint.shade(tint, focused ? Self.focusLight : isPlaying ? Self.playingLight : Self.restLight)
+                .withAlphaComponent(overFilm ? Self.overFilmOpacity : 1)
+        }
+    }
+
     /// As `FixedFocusDestinationCell`: the same lift and shadow.
     private func applyFocus(_ focused: Bool) {
-        nameLines.forEach { $0.textColor = UIColor.white.withAlphaComponent(0.95) }
-        detailLines.forEach { $0.textColor = UIColor.white.withAlphaComponent(0.8) }
-        card.backgroundColor = UIColor(white: 1, alpha: focused ? Self.focusFill : isPlaying ? Self.playingFill : Self.restFill)
+        applyInk()
+        card.backgroundColor = cardColour(focused)
         scale = focused ? 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
         card.transform = CGAffineTransform(scaleX: scale, y: scale)
         sizeShadow()
         shadow.alpha = focused ? 1 : 0
+        if !isRaw { placeNote() }
         if focused { superview?.bringSubviewToFront(self) }
     }
 
@@ -1666,13 +2065,14 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
 
     /// Refresh first, while there's nothing else.
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
-        waitsOnRefresh || addons.isEmpty ? [again] : [row]
+        focusTarget.map { [$0] } ?? (waitsOnRefresh || addons.isEmpty ? [again] : [row])
     }
 
     /// The chosen add-on's links, on the card last on, else from the start.
     override func showPage(_ index: Int) {
         let addon = extra(index).map { addons[$0] }
         shown = addon.map { addon in entries.filter { $0.addonName == addon } } ?? []
+        if let landing { preferred = (landing == .first ? shown.first : shown.last)?.id }
         row.reloadData()
         row.show(shown.firstIndex { $0.id == preferred } ?? 0)
         // The link asked for, else this page's first (the first link can be another add-on's).
@@ -1833,7 +2233,7 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
         let addon = extra(index).map { addons[$0] }
         shown = addon.map { addon in sources.filter { $0.addon == addon } } ?? sources
         sourcesRow.reloadData()
-        sourcesRow.show(shown.firstIndex(where: \.playing) ?? 0)
+        sourcesRow.show(landingIndex ?? shown.firstIndex(where: \.playing) ?? 0)
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
@@ -1848,15 +2248,21 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
                            card: Self.card, cardState: episode.state)
         } else if let card = cell as? SourceCard {
             let source = shown[indexPath.item]
-            card.show(source.entry, playing: source.playing)
+            card.show(source.entry, playing: source.playing, overFilm: true)
         }
         return cell
     }
 
     func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
         (collectionView === episodesRow ? episodes.firstIndex(where: \.playing)
-                                        : shown.firstIndex(where: \.playing))
+                                        : landingIndex ?? shown.firstIndex(where: \.playing))
             .map { IndexPath(item: $0, section: 0) }
+    }
+
+    /// From the add-on beside it: its near card.
+    private var landingIndex: Int? {
+        guard let landing, !shown.isEmpty else { return nil }
+        return landing == .first ? 0 : shown.count - 1
     }
 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,

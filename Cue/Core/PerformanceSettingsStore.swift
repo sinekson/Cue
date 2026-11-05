@@ -26,11 +26,14 @@ final class PerformanceSettingsStore: ObservableObject {
         /// Every link fails 3 s into its load: the stage's failover and its
         /// lines, without a broken link to hand.
         var failEveryLink = false
+        /// The source cards on the player's shelf: 0 the backdrop's colour,
+        /// 1 black, 2 white, all see-through. An experiment.
+        var shelfCardColour = 0
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage, failEveryLink
+            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage, failEveryLink, shelfCardColour
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -42,6 +45,7 @@ final class PerformanceSettingsStore: ObservableObject {
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
             holdPlayStage = (try? c.decode(Bool.self, forKey: .holdPlayStage)) ?? false
             failEveryLink = (try? c.decode(Bool.self, forKey: .failEveryLink)) ?? false
+            shelfCardColour = (try? c.decode(Int.self, forKey: .shelfCardColour)) ?? 0
         }
     }
 
