@@ -226,9 +226,10 @@ struct TitleChipsLine: View {
 enum ContinueMenuAction: CaseIterable {
     case details, startOver, chooseSource, markWatched, remove
 
-    var title: String {
+    /// `series`: the card is an episode, so Details is the show's.
+    func title(series: Bool) -> String {
         switch self {
-        case .details: return "Go to Details"
+        case .details: return series ? "Go to Show" : "Go to Movie"
         case .startOver: return "Start Over"
         case .chooseSource: return "Choose Source"
         case .markWatched: return "Mark as Watched"
@@ -242,7 +243,7 @@ enum ContinueMenuAction: CaseIterable {
         case .startOver: return "gobackward"
         case .chooseSource: return "list.and.film"
         case .markWatched: return "checkmark.circle"
-        case .remove: return "xmark"
+        case .remove: return "minus.circle"
         }
     }
 }

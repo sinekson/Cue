@@ -1358,7 +1358,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if isContinue(rowIndex) {
             guard let onContinueMenu, let entry = progress[item.id] else { return nil }
             return (entry.name, ContinueMenuAction.allCases.map { action in
-                MenuEntry(title: action.title, icon: action.icon, destructive: action == .remove) {
+                MenuEntry(title: action.title(series: entry.season != nil), icon: action.icon, destructive: action == .remove) {
                     onContinueMenu(action, entry)
                 }
             })

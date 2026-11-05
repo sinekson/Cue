@@ -35,22 +35,6 @@ struct CuePlayer: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: PlayerController, context: Context) {}
 }
 
-/// A change of focus, as the hold menus' rows: quick both ways, not the system's
-/// slow way out.
-private func focusChange(duration: TimeInterval = 0.12, _ changes: @escaping () -> Void) {
-    UIView.animate(withDuration: duration, delay: 0,
-                   options: [.curveEaseOut, .beginFromCurrentState, .overrideInheritedDuration, .overrideInheritedCurve],
-                   animations: changes)
-}
-
-/// The hold menus' lift under a focused platter; it fades with the platter.
-private func liftShadow(_ view: UIView) {
-    view.layer.shadowColor = UIColor.black.cgColor
-    view.layer.shadowOpacity = 0.25
-    view.layer.shadowRadius = 12
-    view.layer.shadowOffset = CGSize(width: 0, height: 6)
-}
-
 /// Takes focus, so the remote's presses reach the controller.
 private final class PlayerFocusView: UIView {
     var takesFocus = true
@@ -134,328 +118,6 @@ private final class PlayerButton: UIButton {
                               : UIColor.white.withAlphaComponent(FixedFocusText.primary)
         let scale: CGFloat = isHighlighted ? 0.97 : isFocused ? 1.05 : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
-    }
-}
-
-/// One track: nothing at rest, focused a white capsule, as the hold menus' rows.
-private final class TrackCell: UICollectionViewCell {
-    static let height: CGFloat = 66
-    /// With a value under the title.
-    private static let tallHeight: CGFloat = 92
-    /// The line's room above a row that starts a new part.
-    private static let separation: CGFloat = 20
-    private static let headerHeight: CGFloat = 46
-
-    private static func room(_ separated: Bool, _ header: Bool) -> CGFloat {
-        (separated ? separation : 0) + (header ? headerHeight : 0)
-    }
-
-    static func height(of row: TrackList.Row) -> CGFloat {
-        (row.detail == nil ? height : tallHeight) + room(row.separated, row.header != nil)
-    }
-
-    private static let titleFont = UIFont.systemFont(ofSize: 28, weight: .medium)
-    private static let detailFont = UIFont.systemFont(ofSize: 24)
-
-    /// What the row needs to show its words whole: the margins of `layoutSubviews`.
-    static func width(of row: TrackList.Row) -> CGFloat {
-        func measure(_ text: String?, _ font: UIFont) -> CGFloat {
-            text.map { ceil(($0 as NSString).size(withAttributes: [.font: font]).width) } ?? 0
-        }
-        let words = max(measure(row.title, titleFont), measure(row.detail, detailFont))
-        let face = 62 + words + 28 + (row.page == nil ? 0 : 36)
-        return max(face + 12, measure(row.header, TrackList.headingFont) + 48)
-    }
-
-    /// What grows with focus; the line and header above it stay put.
-    private let face = UIView()
-    private let platter = UIView()
-    private let check = UIImageView()
-    private let title = RunningLine(font: TrackCell.titleFont, rest: 0.5)
-    private let detail = RunningLine(font: TrackCell.detailFont, rest: 0.5)
-    private let chevron = UIImageView()
-    private let separator = UIView()
-    private let header = UILabel()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        platter.backgroundColor = .white
-        platter.alpha = 0
-        liftShadow(platter)
-        check.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .bold))
-        check.contentMode = .center
-        title.running = false
-        detail.running = false
-        chevron.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
-        chevron.contentMode = .center
-        separator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
-        header.font = TrackList.headingFont
-        header.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        for sub in [separator, header, face] as [UIView] { contentView.addSubview(sub) }
-        for sub in [platter, check, title, detail, chevron] as [UIView] { face.addSubview(sub) }
-        paint()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var isHighlighted: Bool {
-        didSet { focusChange { self.paint() } }
-    }
-
-    func show(_ row: TrackList.Row) {
-        title.text = row.title
-        detail.text = row.detail ?? ""
-        detail.isHidden = row.detail == nil
-        check.isHidden = !row.active
-        chevron.isHidden = row.page == nil
-        separator.isHidden = !row.separated
-        header.text = row.header
-        header.isHidden = row.header == nil
-        setNeedsLayout()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let room = Self.room(!separator.isHidden, !header.isHidden)
-        let inner = contentView.bounds.insetBy(dx: 6, dy: 0)
-            .inset(by: UIEdgeInsets(top: room, left: 0, bottom: 0, right: 0))
-        header.frame = CGRect(x: 24, y: room - Self.headerHeight, width: inner.width - 36, height: Self.headerHeight)
-        separator.frame = CGRect(x: inner.minX + 62, y: Self.separation / 2, width: inner.width - 80, height: 1)
-        face.bounds = CGRect(origin: .zero, size: inner.size)
-        face.center = CGPoint(x: inner.midX, y: inner.midY)
-        platter.frame = face.bounds
-        platter.layer.cornerRadius = min(inner.height, Self.height) / 2
-        platter.layer.shadowPath = UIBezierPath(roundedRect: platter.bounds, cornerRadius: platter.layer.cornerRadius).cgPath
-        check.frame = CGRect(x: 18, y: 0, width: 28, height: inner.height)
-        chevron.frame = CGRect(x: inner.width - 54, y: 0, width: 28, height: inner.height)
-        let width = inner.width - 90 - (chevron.isHidden ? 0 : 36)
-        if detail.isHidden {
-            title.frame = CGRect(x: 62, y: 0, width: width, height: inner.height)
-        } else {
-            title.frame = CGRect(x: 62, y: 12, width: width, height: 36)
-            detail.frame = CGRect(x: 62, y: 48, width: width, height: 30)
-        }
-    }
-
-    private func paint() {
-        let focused = isFocused
-        let color = focused ? UIColor.black.withAlphaComponent(0.85) : UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        title.color = color
-        check.tintColor = color
-        chevron.tintColor = color
-        detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        platter.alpha = focused ? 1 : 0
-        let scale: CGFloat = isHighlighted ? 0.97 : focused ? 1.02 : 1
-        face.transform = CGAffineTransform(scaleX: scale, y: scale)
-    }
-
-    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
-        super.didUpdateFocus(in: context, with: coordinator)
-        let focused = isFocused
-        if title.running != focused {
-            title.running = focused
-            detail.running = focused
-        }
-        focusChange { self.paint() }
-    }
-}
-
-/// A button's menu: a glass panel rising from it, its title on top, a row can
-/// open a page of its own, Back returns. A collection view: a tvOS table spaces
-/// its rows out and fades its edges.
-private final class TrackList: UIView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
-    struct Row {
-        let title: String
-        var detail: String?
-        var active = false
-        /// A line above it.
-        var separated = false
-        /// A title above it, for a part of the list.
-        var header: String?
-        /// Stays open on a pick, for a setting.
-        var stays = false
-        var page: (() -> Menu)?
-        var pick: () -> Void = {}
-    }
-
-    struct Menu {
-        /// None where the rows' own headers say it all.
-        var title: String?
-        let rows: [Row]
-    }
-
-    /// As wide as its widest row, within these: a long row runs while focused.
-    private static let minWidth: CGFloat = 400
-    private static let maxWidth: CGFloat = 620
-    private static let inset: CGFloat = 16
-    private static let headingHeight: CGFloat = 44
-    static let headingFont = UIFont.systemFont(ofSize: 24, weight: .medium)
-    private static let maxHeight: CGFloat = 640
-
-    private let glass = GlassBacking(RoundedRectangle(cornerRadius: TrackCell.height / 2 + inset, style: .continuous))
-    private let list: UICollectionView = {
-        let layout = UICollectionViewFlowLayout()
-        layout.minimumLineSpacing = 0
-        return UICollectionView(frame: .zero, collectionViewLayout: layout)
-    }()
-    private let heading = UILabel()
-    /// Built anew on the way back, so a row shows what its page changed.
-    private var pages: [(menu: () -> Menu, from: Int)] = []
-    private var rows: [Row] = []
-    private var rightEdge: CGFloat = 0
-    private var bottom: CGFloat = 0
-    private var focusedRow: Int?
-    private var width = TrackList.minWidth
-    var picked: () -> Void = {}
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        addSubview(glass)
-        heading.font = Self.headingFont
-        heading.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        addSubview(heading)
-        list.backgroundColor = .clear
-        list.contentInsetAdjustmentBehavior = .never
-        list.dataSource = self
-        list.delegate = self
-        list.remembersLastFocusedIndexPath = false
-        list.register(TrackCell.self, forCellWithReuseIdentifier: "row")
-        addSubview(list)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var preferredFocusEnvironments: [UIFocusEnvironment] { [list] }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        glass.frame = bounds
-        heading.frame = CGRect(x: Self.inset + 24, y: Self.inset, width: bounds.width - Self.inset * 2 - 48, height: Self.headingHeight)
-        // The margins are the list's own insets, not outside it: a focused
-        // row grows and casts a shadow, which the list's edge would cut.
-        let top = heading.text == nil ? Self.inset : Self.headingClearance
-        list.frame = bounds.inset(by: UIEdgeInsets(top: Self.inset + headingRoom - top, left: Self.inset,
-                                                   bottom: 0, right: Self.inset))
-        list.contentInset = UIEdgeInsets(top: top, left: 0, bottom: Self.inset, right: 0)
-    }
-
-    /// Room above the first row under a title, inside the list.
-    private static let headingClearance: CGFloat = 8
-
-    private func toTop() {
-        layoutIfNeeded()
-        list.contentOffset = CGPoint(x: 0, y: -list.contentInset.top)
-    }
-
-    private var headingRoom: CGFloat { heading.text == nil ? 0 : Self.headingHeight }
-
-    private func height(of rows: [Row]) -> CGFloat {
-        min(rows.reduce(0) { $0 + TrackCell.height(of: $1) } + Self.inset * 2 + headingRoom, Self.maxHeight)
-    }
-
-    private func panel(height: CGFloat) -> CGRect {
-        CGRect(x: rightEdge - width, y: bottom - height, width: width, height: height)
-    }
-
-    private func width(of menu: Menu) -> CGFloat {
-        let heading = menu.title.map { ceil(($0 as NSString).size(withAttributes: [.font: Self.headingFont]).width) + 48 } ?? 0
-        let content = menu.rows.reduce(heading) { max($0, TrackCell.width(of: $1)) } + Self.inset * 2
-        return min(max(content, Self.minWidth), Self.maxWidth)
-    }
-
-    /// Unfolds out of its bottom right corner. Its alpha lands at 1 at once:
-    /// tvOS wouldn't focus into it otherwise.
-    func open(_ menu: @escaping () -> Menu, rightEdge: CGFloat, bottom: CGFloat) {
-        let first = menu()
-        pages = [(menu, 0)]
-        rows = first.rows
-        heading.text = first.title
-        width = width(of: first)
-        focusedRow = nil
-        self.rightEdge = rightEdge
-        self.bottom = bottom
-        transform = .identity
-        let height = self.height(of: rows)
-        frame = panel(height: height)
-        list.reloadData()
-        toTop()
-        isHidden = false
-        alpha = 0
-        transform = CGAffineTransform(translationX: width * 0.2, y: height * 0.2).scaledBy(x: 0.6, y: 0.6)
-        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-            self.alpha = 1
-            self.transform = .identity
-        }
-    }
-
-    /// Back: a page to the one before it. False on the first.
-    func back() -> Bool {
-        guard pages.count > 1 else { return false }
-        let from = pages.removeLast().from
-        turn(to: pages[pages.count - 1].menu(), focus: from)
-        return true
-    }
-
-    private func turn(to menu: Menu, focus: Int?) {
-        rows = menu.rows
-        heading.text = menu.title
-        width = width(of: menu)
-        focusedRow = focus
-        UIView.transition(with: list, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
-            self.list.reloadData()
-            self.toTop()
-        }
-        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-            self.frame = self.panel(height: self.height(of: self.rows))
-            self.layoutIfNeeded()
-        }
-        setNeedsFocusUpdate()
-        updateFocusIfNeeded()
-    }
-
-    func close() {
-        guard !isHidden else { return }
-        UIView.animate(withDuration: Motion.fadeDuration) { self.alpha = 0 } completion: { _ in
-            if self.alpha == 0 { self.isHidden = true }
-        }
-    }
-
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { rows.count }
-
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "row", for: indexPath)
-        (cell as? TrackCell)?.show(rows[indexPath.item])
-        return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
-                        sizeForItemAt indexPath: IndexPath) -> CGSize {
-        CGSize(width: width - Self.inset * 2, height: TrackCell.height(of: rows[indexPath.item]))
-    }
-
-    func indexPathForPreferredFocusedView(in collectionView: UICollectionView) -> IndexPath? {
-        // Always an answer: with none, focus stays on the cell where it was,
-        // now a different row of the new page.
-        IndexPath(item: focusedRow ?? rows.firstIndex(where: \.active) ?? 0, section: 0)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let row = rows[indexPath.item]
-        if let page = row.page {
-            pages.append((page, indexPath.item))
-            turn(to: page(), focus: nil)
-            return
-        }
-        row.pick()
-        guard row.stays else { return picked() }
-        let menu = pages[pages.count - 1].menu()
-        rows = menu.rows
-        heading.text = menu.title
-        for path in list.indexPathsForVisibleItems {
-            (list.cellForItem(at: path) as? TrackCell)?.show(rows[path.item])
-        }
     }
 }
 
@@ -1105,7 +767,7 @@ class PlayerSheet: UIView {
 
 /// One line of text. Too long for its place it runs: a rest, then round through
 /// a second copy in the same label, back where it began.
-private final class RunningLine: UIView {
+final class RunningLine: UIView {
     private static let gap = "          "
     private static let speed: Double = 60
     private static let edge: CGFloat = 40
@@ -3348,7 +3010,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let overlay: PlayerOverlay
     private let audioButton = PlayerButton(icon: "waveform", label: "Audio")
     private let subtitleButton = PlayerButton(icon: "captions.bubble", label: "Subtitles")
-    private let trackList = TrackList()
+    private let trackList: MenuPanel = {
+        let menu = MenuPanel()
+        menu.minWidth = 400
+        menu.maxWidth = 620
+        return menu
+    }()
     private let shelf = PlayerShelf()
     private let promptView = PlayerPrompt()
     private let readout = UILabel()
@@ -4667,7 +4334,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         promptView.takesFocus = new == .buttons && promptView.alpha > 0
         focusView.takesFocus = new == .none && !shelfOpen
         for button in buttons { button.takesFocus = new == .buttons }
-        if new != .tracks { trackList.close() }
+        if new != .tracks, !trackList.isHidden {
+            UIView.animate(withDuration: Motion.fadeDuration) { self.trackList.alpha = 0 } completion: { _ in
+                if self.trackList.alpha == 0 { self.trackList.isHidden = true }
+            }
+        }
         showControls()
         if let engine { updateOverlay(engine) }
         setNeedsFocusUpdate()
@@ -4678,11 +4349,21 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         guard let engine else { return }
         lastButton = button
         let audio = button === audioButton
-        trackList.open({ [unowned self] in
-            audio ? TrackList.Menu(rows: audioRows(engine)) : subtitleMenu(engine)
-        },
-                       rightEdge: view.bounds.width - 80,
-                       bottom: view.bounds.height - PlayerPrompt.bottom - PlayerButton.size - 24)
+        trackList.load { [unowned self] in
+            audio ? MenuPanel.Menu(rows: audioRows(engine)) : subtitleMenu(engine)
+        }
+        // Unfolds out of its bottom right corner, over the buttons. Its alpha
+        // lands at 1 at once: tvOS wouldn't focus into it otherwise.
+        trackList.layer.anchorPoint = CGPoint(x: 1, y: 1)
+        trackList.center = CGPoint(x: view.bounds.width - 80,
+                                   y: view.bounds.height - PlayerPrompt.bottom - PlayerButton.size - 24)
+        trackList.isHidden = false
+        trackList.alpha = 0
+        trackList.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.trackList.alpha = 1
+            self.trackList.transform = .identity
+        }
         setMenu(.tracks)
     }
 
@@ -4754,9 +4435,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         reload(engine, from: position)
     }
 
-    private func audioRows(_ engine: AetherEngine) -> [TrackList.Row] {
+    private func audioRows(_ engine: AetherEngine) -> [MenuPanel.Row] {
         engine.audioTracks.enumerated().map { index, track in
-            TrackList.Row(title: audioTitle(track), detail: audioDetail(track, among: engine.audioTracks), active: track.id == engine.activeAudioTrackIndex,
+            MenuPanel.Row(title: audioTitle(track), detail: audioDetail(track, among: engine.audioTracks), active: track.id == engine.activeAudioTrackIndex,
                           header: index == 0 ? "Audio Track" : nil) { [weak self] in
                 self?.audioPicked = true
                 PlaybackMemory.update(self?.meta.id ?? "") { $0.audioLanguage = track.language }
@@ -4765,37 +4446,37 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    private func subtitleMenu(_ engine: AetherEngine) -> TrackList.Menu {
+    private func subtitleMenu(_ engine: AetherEngine) -> MenuPanel.Menu {
         let tracks = engine.subtitleTracks
         let active = tracks.first { $0.id == engine.activeSubtitleTrackIndex }
         if let active { lastSubtitle = active.id }
         let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
         let next = active ?? tracks.first { $0.id == lastSubtitle }
             ?? tracks.first { $0.language?.lowercased().hasPrefix(language) == true } ?? tracks.first
-        var rows: [TrackList.Row] = []
+        var rows: [MenuPanel.Row] = []
         if let next {
-            rows.append(TrackList.Row(title: "On", active: active != nil) { [weak self] in self?.pickSubtitle(next, engine) })
+            rows.append(MenuPanel.Row(title: "On", active: active != nil) { [weak self] in self?.pickSubtitle(next, engine) })
         }
-        rows.append(TrackList.Row(title: "Off", active: active == nil) { [weak self] in
+        rows.append(MenuPanel.Row(title: "Off", active: active == nil) { [weak self] in
             engine.clearSubtitle()
             PlaybackMemory.update(self?.meta.id ?? "") { $0.subtitleLanguage = "off" }
         })
         if let next {
-            rows.append(TrackList.Row(title: "Track", detail: subtitleTitle(next), separated: true, page: { [unowned self] in
-                TrackList.Menu(rows: subtitleTrackRows(tracks, active: active, engine))
+            rows.append(MenuPanel.Row(title: "Track", detail: subtitleTitle(next), separated: true, page: { [unowned self] in
+                MenuPanel.Menu(rows: subtitleTrackRows(tracks, active: active, engine))
             }))
-            rows.append(TrackList.Row(title: "Delay", detail: subtitleDelayText ?? "None", page: { [unowned self] in
+            rows.append(MenuPanel.Row(title: "Delay", detail: subtitleDelayText ?? "None", page: { [unowned self] in
                 subtitleDelayMenu(engine)
             }))
         }
-        rows.append(TrackList.Row(title: "Style", detail: styleDetail(active),
+        rows.append(MenuPanel.Row(title: "Style", detail: styleDetail(active),
                                   separated: next == nil, page: { [unowned self] in subtitleStyleMenu }))
-        return TrackList.Menu(title: "Subtitles", rows: rows)
+        return MenuPanel.Menu(title: "Subtitles", rows: rows)
     }
 
     /// What's in the file, then the add-ons', the preferred language first:
     /// they can be hundreds.
-    private func subtitleTrackRows(_ tracks: [TrackInfo], active: TrackInfo?, _ engine: AetherEngine) -> [TrackList.Row] {
+    private func subtitleTrackRows(_ tracks: [TrackInfo], active: TrackInfo?, _ engine: AetherEngine) -> [MenuPanel.Row] {
         let language = settings.preferredSubtitleLanguage.prefix(2).lowercased()
         let external = tracks.filter(\.isExternal)
         let preferred = external.filter { $0.language?.lowercased().hasPrefix(language) == true }
@@ -4804,7 +4485,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             .filter { !$0.1.isEmpty }
         return parts.enumerated().flatMap { part, entry in
             entry.1.enumerated().map { index, track in
-                TrackList.Row(title: subtitleTitle(track), detail: subtitleDetail(track, among: entry.1), active: track.id == active?.id,
+                MenuPanel.Row(title: subtitleTitle(track), detail: subtitleDetail(track, among: entry.1), active: track.id == active?.id,
                               separated: part > 0 && index == 0, header: index == 0 ? entry.0 : nil) { [weak self] in
                     self?.pickSubtitle(track, engine)
                 }
@@ -4847,15 +4528,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         return String(format: "%g s %@", abs(subtitleDelay), subtitleDelay > 0 ? "Later" : "Earlier")
     }
 
-    private func subtitleDelayMenu(_ engine: AetherEngine) -> TrackList.Menu {
-        func row(_ title: String, _ delay: @escaping (Double) -> Double, active: Bool = false, separated: Bool = false) -> TrackList.Row {
-            TrackList.Row(title: title, active: active, separated: separated, stays: true) { [weak self] in
+    private func subtitleDelayMenu(_ engine: AetherEngine) -> MenuPanel.Menu {
+        func row(_ title: String, _ delay: @escaping (Double) -> Double, active: Bool = false, separated: Bool = false) -> MenuPanel.Row {
+            MenuPanel.Row(title: title, active: active, separated: separated, stays: true) { [weak self] in
                 guard let self else { return }
                 subtitleDelay = delay(subtitleDelay)
                 showSubtitle(engine)
             }
         }
-        return TrackList.Menu(title: subtitleDelayText ?? "Delay", rows: [
+        return MenuPanel.Menu(title: subtitleDelayText ?? "Delay", rows: [
             row("Earlier") { $0 - Self.subtitleDelayStep },
             row("Later") { $0 + Self.subtitleDelayStep },
             row("No Delay", { _ in 0 }, active: subtitleDelay == 0, separated: true)
@@ -4868,15 +4549,15 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         PlaybackMemory.update(meta.id) { $0.subtitleLanguage = track.language }
     }
 
-    private var subtitleStyleMenu: TrackList.Menu {
-        TrackList.Menu(title: "Style", rows: SubtitleText.choices.map { choice in
-            TrackList.Row(title: choice.title, detail: choice.name, page: { [unowned self] in subtitleChoiceMenu(choice) })
+    private var subtitleStyleMenu: MenuPanel.Menu {
+        MenuPanel.Menu(title: "Style", rows: SubtitleText.choices.map { choice in
+            MenuPanel.Row(title: choice.title, detail: choice.name, page: { [unowned self] in subtitleChoiceMenu(choice) })
         })
     }
 
-    private func subtitleChoiceMenu(_ choice: any SubtitleChoice) -> TrackList.Menu {
-        TrackList.Menu(title: choice.title, rows: choice.names.map { name in
-            TrackList.Row(title: name, active: name == choice.name, stays: true) { [weak self] in
+    private func subtitleChoiceMenu(_ choice: any SubtitleChoice) -> MenuPanel.Menu {
+        MenuPanel.Menu(title: choice.title, rows: choice.names.map { name in
+            MenuPanel.Row(title: name, active: name == choice.name, stays: true) { [weak self] in
                 guard let self else { return }
                 choice.name = name
                 for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }

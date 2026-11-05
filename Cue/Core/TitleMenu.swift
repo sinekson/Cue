@@ -52,10 +52,17 @@ final class TitleMenu {
         if place == .standard { entries.append(libraryEntry) }
 
         if item.isSeries {
-            entries.append(Entry(title: "Mark Series as Watched", icon: "checkmark.circle",
-                                 confirm: "Mark Every Aired Episode") { [weak self] in
-                self?.markSeriesWatched(item)
-            })
+            if let aired = airedEpisodes(item), !aired.isEmpty, aired.allSatisfy({ isWatched(item.id, $0) }) {
+                entries.append(Entry(title: "Mark Series as Unwatched", icon: "eye.slash") {
+                    watched.remove(keys: aired.map {
+                        WatchedItem.key(contentID: item.id, season: $0.season, episode: $0.episode)
+                    })
+                })
+            } else {
+                entries.append(Entry(title: "Mark Series as Watched", icon: "checkmark.circle") { [weak self] in
+                    self?.markSeriesWatched(item)
+                })
+            }
         } else {
             let seen = watched.isWatched(item)
             entries.append(Entry(title: seen ? "Mark as Unwatched" : "Mark as Watched",
@@ -68,6 +75,19 @@ final class TitleMenu {
         return entries
     }
 
+
+    /// The show's aired episodes (specials left out, as the mark), if its
+    /// list has been looked up this run; nil: not known yet, so the menu
+    /// offers to mark it (a second mark only adds what's missing).
+    private func airedEpisodes(_ item: MetaItem) -> [MetaVideo]? {
+        SeriesEpisodes.known[item.id].map {
+            SeriesEpisodes.inPlayOrder($0).filter { ($0.season ?? 0) > 0 && $0.hasAired }
+        }
+    }
+
+    private func isWatched(_ id: String, _ episode: MetaVideo) -> Bool {
+        watched?.isWatched(contentID: id, season: episode.season, episode: episode.episode) ?? false
+    }
 
     /// Started and not finished: the film, or an episode of the show.
     private func isStarted(_ item: MetaItem) -> Bool {

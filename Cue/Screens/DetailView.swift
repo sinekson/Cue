@@ -1438,7 +1438,7 @@ struct DetailView: View {
         let started = progressStore.progress(for: episode.id)?.isStarted ?? false
         entries.append(MenuEntry(title: started ? "Resume" : "Play", icon: "play.fill") { play(episode) })
         if started {
-            entries.append(MenuEntry(title: "Play from Beginning", icon: "gobackward") {
+            entries.append(MenuEntry(title: "Start Over", icon: "gobackward") {
                 play(episode, fromStart: true)
             })
         }
@@ -1449,12 +1449,23 @@ struct DetailView: View {
             toggleWatched(episode, season: season)
         })
         if let at = viewModel.allEpisodesInPlayOrder.firstIndex(where: { $0.id == episode.id }), at > 0 {
-            entries.append(MenuEntry(title: "Mark Previous as Watched", icon: "checklist") {
+            entries.append(MenuEntry(title: "Mark Earlier Episodes as Watched", icon: "checklist") {
                 markWatched(Array(viewModel.allEpisodesInPlayOrder[..<at]))
             })
         }
-        entries.append(MenuEntry(title: season == 0 ? "Mark Specials Watched" : "Mark Season \(season) Watched",
-                                 icon: "checkmark.circle.fill") { markSeasonWatched(season) })
+        let part = season == 0 ? "Specials" : "Season \(season)"
+        let aired = viewModel.episodes(season: season).filter(\.hasAired)
+        if !aired.isEmpty, aired.allSatisfy({ isWatched($0, season: season) }) {
+            entries.append(MenuEntry(title: "Mark \(part) as Unwatched", icon: "eye.slash") {
+                watched.remove(keys: aired.map {
+                    WatchedItem.key(contentID: viewModel.meta.id, season: $0.season ?? season, episode: $0.episode)
+                })
+            })
+        } else {
+            entries.append(MenuEntry(title: "Mark \(part) as Watched", icon: "checkmark.circle.fill") {
+                markSeasonWatched(season)
+            })
+        }
         return ("\(episode.seasonEpisodeCode) · \(episode.title ?? viewModel.meta.name)", entries)
     }
 
