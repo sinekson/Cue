@@ -2460,9 +2460,11 @@ private final class PlayerOverlay: UIView {
     /// Its own view: the bar clips.
     private let barShadow = UIView()
     private var barFocused = false
+    /// What's on disk, every span of it, the dimmer white wherever the fill
+    /// isn't: masked to the bar past the fill, so it moves with it.
     private let held = UIView()
+    private let heldMask = UIView()
     private let fill = UIView()
-    private let scrubSpan = UIView()
     private let scrubStart = UIView()
     private let scrubMarker = UIView()
     private let markIcon = UIImageView()
@@ -2477,7 +2479,7 @@ private final class PlayerOverlay: UIView {
     private var isScrubbing = false
     private var isDetached = false
     private var promptUp = false
-    private var heldSpan: (from: CGFloat, to: CGFloat) = (0, 0)
+    private var heldSpans: [(from: CGFloat, to: CGFloat)] = []
     private static let barHeight: CGFloat = 8
     private static let restingFill: CGFloat = 0.56
     private static let focusedFill: CGFloat = 0.85
@@ -2522,9 +2524,9 @@ private final class PlayerOverlay: UIView {
         barShadow.layer.shadowOffset = .zero
         fill.backgroundColor = .white
         fill.alpha = Self.restingFill
-        held.backgroundColor = UIColor.white.withAlphaComponent(0.25)
-        scrubSpan.backgroundColor = held.backgroundColor
-        for sub in [held, scrubSpan, fill, scrubStart, scrubMarker] {
+        heldMask.backgroundColor = .black
+        held.mask = heldMask
+        for sub in [held, fill, scrubStart, scrubMarker] {
             bar.addSubview(sub)
         }
         for line in [scrubStart, scrubMarker] {
@@ -2591,22 +2593,32 @@ private final class PlayerOverlay: UIView {
         }
     }
 
-    /// Detached, the fill stops at the nearer of the two lines, the scrub's
-    /// span between them.
+    /// Detached, the fill stops at the nearer of the two lines; past it the
+    /// bar shows what's on disk, the scrub's span marked only by the lines.
     private func placeFill() {
         let (width, height) = (bar.bounds.width, Self.barHeight)
         let start = isDetached ? scrubStartFraction : fraction
-        let (from, to) = (min(fraction, start), max(fraction, start))
+        let from = min(fraction, start)
         fill.frame = CGRect(x: 0, y: 0, width: width * from, height: height)
-        scrubSpan.frame = CGRect(x: width * from, y: 0, width: width * (to - from), height: height)
+        heldMask.frame = CGRect(x: width * from, y: 0, width: width * (1 - from), height: height)
         scrubStart.frame = CGRect(x: width * scrubStartFraction - 1, y: 0, width: 2, height: height)
         scrubMarker.frame = CGRect(x: width * fraction - 1, y: 0, width: 2, height: height)
     }
 
     private func placeHeld() {
         let width = bar.bounds.width
-        held.frame = CGRect(x: width * heldSpan.from, y: 0,
-                            width: width * max(heldSpan.to - heldSpan.from, 0), height: Self.barHeight)
+        held.frame = bar.bounds
+        while held.subviews.count < heldSpans.count {
+            let span = UIView()
+            span.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+            held.addSubview(span)
+        }
+        for (index, span) in held.subviews.enumerated() {
+            guard index < heldSpans.count else { span.isHidden = true; continue }
+            let (from, to) = heldSpans[index]
+            span.isHidden = false
+            span.frame = CGRect(x: width * from, y: 0, width: width * max(to - from, 0), height: Self.barHeight)
+        }
     }
 
     /// Under the marker, always, the mark to its right; the time left makes
@@ -2718,7 +2730,6 @@ private final class PlayerOverlay: UIView {
         isDetached = detach
         scrubStart.isHidden = !detach
         fadeTitle()
-        UIView.animate(withDuration: Motion.fadeDuration) { self.held.alpha = detach ? 0 : 1 }
         glide(placeFill)
     }
 
@@ -2740,11 +2751,12 @@ private final class PlayerOverlay: UIView {
         remaining.text = duration > 0 ? "-" + Self.clock(max(duration - time, 0)) : nil
     }
 
-    /// What's on disk ahead of the playhead, a shade over the empty bar.
-    func setHeld(from start: Double, to end: Double, duration: Double) {
+    /// What's on disk, a shade over the empty bar.
+    func setHeld(_ spans: [ClosedRange<Double>], duration: Double) {
         guard duration > 0 else { return }
-        heldSpan = (CGFloat(min(max(start / duration, 0), 1)), CGFloat(min(max(end / duration, 0), 1)))
-        placeHeld()
+        let clamp = { (t: Double) in CGFloat(min(max(t / duration, 0), 1)) }
+        heldSpans = spans.map { (clamp($0.lowerBound), clamp($0.upperBound)) }
+        UIView.performWithoutAnimation(placeHeld)
     }
 
     func update(time: Double, duration: Double, mark: Mark?, waiting: Bool) {
@@ -4641,7 +4653,9 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             time: scrubTarget ?? landing ?? position, duration: engine.duration,
             mark: mark, waiting: waiting
         )
-        overlay.setHeld(from: position, to: engine.bufferedPosition, duration: engine.duration)
+        let resident = engine.residentRanges
+        overlay.setHeld(resident.isEmpty ? [position...max(position, engine.bufferedPosition)] : resident,
+                        duration: engine.duration)
         let shown = !shelfOpen && !arriving && (menu != .none || scrubTarget != nil || revealed && !hasPlayed
             || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
         if overlay.isShown, !shown, !controlsDismissed, menu == .none, !shelfOpen {

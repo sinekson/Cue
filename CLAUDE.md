@@ -245,7 +245,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   memory; a kill's leftovers go at launch, `PlayerTempSweep`), so seeks and
   stills inside it use no network; `loadPreview` asks
   the engine first, its own connection only for what it doesn't hold);
-  the bar shows what's on disk ahead, in the dimmer white; in the scan or paused scrubbing that white is the scrub's span instead, with a thin line where it began and one at the marker (two levels: a third wouldn't read on the bar). A press while playing doesn't detach: line, fill, time and preview glide as one on the move spring, as Apple's. Paused, with the bar focused: a swipe
+  the bar shows every span on disk in the dimmer white wherever the fill isn't (`residentRanges`: islands left by a seek stay; what's behind shows when the fill pulls back in a scrub); in the scan or paused scrubbing the scrub's span is only a thin line where it began and one at the marker (the span in that white took its meaning; two levels: a third wouldn't read on the bar). A press while playing doesn't detach: line, fill, time and preview glide as one on the move spring, as Apple's. Paused, with the bar focused: a swipe
   is fine control: slow, about 45 s across the pad whatever the length, the
   gain growing evenly with the speed up to 3 min across, with a glide;
   keyframe stills while moving, the exact frame 0.25 s after it rests; the preview follows the marker,
