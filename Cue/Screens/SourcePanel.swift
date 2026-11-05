@@ -103,26 +103,18 @@ struct PlayStageView<Sources: View>: View {
     }
 
     /// What's happening, under the episode on every way in, keeping its room
-    /// so nothing moves: at work the loading symbol and a line from the
-    /// press's set; with the list up, why there's nothing to play. The one
-    /// place for it (Refresh shows only its own search).
+    /// so nothing moves: at work a line from the press's set with a light
+    /// passing through it (beside it, the loading symbol left the words off
+    /// centre; above or below, a letter wave and a pulse were tried); with
+    /// the list up, why there's nothing to play, still. The one place for it
+    /// (Refresh shows only its own search).
     private var work: some View {
-        HStack(spacing: 16) {
-            if waiting {
-                LoadingSpinner(size: 36)
-                    .transition(.opacity)
-            }
-            Text(status ?? " ")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
-                .id(status)
-                .transition(.opacity)
-        }
-        .frame(height: 36)
-        .lineLimit(1)
-        .opacity(status == nil ? 0 : 1)
-        .animation(Motion.fade, value: status)
-        .animation(Motion.fade, value: waiting)
+        SweepLine(text: status ?? " ", sweeping: waiting)
+            .id(status)
+            .transition(.opacity)
+            .frame(width: Self.textWidth, height: 36)
+            .opacity(status == nil ? 0 : 1)
+            .animation(Motion.fade, value: status)
     }
 
     /// The logo, trimmed and sized by area as the billboard's (`LogoFit`) so
@@ -288,5 +280,105 @@ private struct StageSources: UIViewControllerRepresentable {
         guard let focusRequest, focusRequest != context.coordinator.served else { return }
         context.coordinator.served = focusRequest
         sheet.focus(on: focusRequest.entry)
+    }
+}
+
+/// The stage's line at work: in place of the loading symbol, a soft band of
+/// light passes through the words, left to right, then a brief rest, as the
+/// dots' light goes with them. The words drawn once; only a mask moves, so it
+/// costs nothing. Still, it sits at the body level.
+private struct SweepLine: UIViewRepresentable {
+    let text: String
+    let sweeping: Bool
+
+    func makeUIView(context: Context) -> Line { Line() }
+
+    func updateUIView(_ line: Line, context: Context) {
+        line.set(text, sweeping: sweeping)
+    }
+
+    final class Line: UIView {
+        private let label = UILabel()
+        private let band = CAGradientLayer()
+        private var sweeping = false
+        /// What the running sweep was made for: the same, it runs on.
+        private var running: CGFloat?
+        /// At rest the words a level down; the light past the primary, on
+        /// purpose: at the primary it barely showed.
+        private static let rest = FixedFocusText.secondary
+        private static let peak: CGFloat = 0.85
+        private static let pass: CFTimeInterval = 1.0
+        private static let pause: CFTimeInterval = 0.6
+
+        init() {
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+            label.font = .systemFont(ofSize: 28, weight: .medium)
+            label.textColor = .white
+            label.textAlignment = .center
+            addSubview(label)
+            let dim = UIColor(white: 1, alpha: Self.rest).cgColor
+            let lit = UIColor(white: 1, alpha: Self.peak).cgColor
+            band.colors = [dim, dim, lit, dim, dim]
+            // A wider, softer band: about half the words lit at its peak.
+            band.locations = [0, 0.4, 0.5, 0.6, 1]
+            band.startPoint = CGPoint(x: 0, y: 0.5)
+            band.endPoint = CGPoint(x: 1, y: 0.5)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        func set(_ text: String, sweeping: Bool) {
+            label.text = text
+            self.sweeping = sweeping
+            label.alpha = sweeping ? 1 : FixedFocusText.body
+            label.layer.mask = sweeping ? band : nil
+            setNeedsLayout()
+            run()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let size = label.sizeThatFits(bounds.size)
+            let width = min(size.width, bounds.width)
+            label.frame = CGRect(x: (bounds.width - width) / 2, y: (bounds.height - size.height) / 2,
+                                 width: width, height: size.height)
+            // Three times the words, so it covers them wherever the band is.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            band.frame = CGRect(x: -width, y: 0, width: width * 3, height: label.bounds.height)
+            CATransaction.commit()
+            run()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            run()
+        }
+
+        /// The band from just before the words to just past them.
+        private func run() {
+            let width = label.bounds.width
+            let wanted: CGFloat? = sweeping && window != nil && width > 0 ? width : nil
+            guard wanted != running || (wanted != nil && band.animation(forKey: "sweep") == nil) else { return }
+            running = wanted
+            band.removeAnimation(forKey: "sweep")
+            guard wanted != nil else { return }
+            let move = CABasicAnimation(keyPath: "transform.translation.x")
+            move.fromValue = -0.8 * width
+            move.toValue = 0.8 * width
+            move.duration = Self.pass
+            move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            let round = CAAnimationGroup()
+            round.animations = [move]
+            round.duration = Self.pass + Self.pause
+            round.repeatCount = .infinity
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            band.transform = CATransform3DMakeTranslation(-0.8 * width, 0, 0)
+            CATransaction.commit()
+            band.add(round, forKey: "sweep")
+        }
     }
 }
