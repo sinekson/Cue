@@ -315,7 +315,7 @@ final class StagePictureView: UIView {
     }
 
     private func load(_ url: String?, into view: UIImageView) {
-        FixedFocusImages.load(url, into: view, maxDimension: Self.pictureSize.width)
+        FixedFocusImages.load(url, into: view, maxDimension: PictureSize.screen)
     }
 }
 
@@ -348,7 +348,7 @@ enum StageArt {
     private static func mean(_ url: String?) -> CGFloat? {
         guard let url else { return nil }
         if let known = brightness[url] { return known }
-        let key = RemoteImage.memoryKey(url, maxDimension: StagePictureView.pictureSize.width, maxPixels: nil)
+        let key = RemoteImage.memoryKey(url, maxDimension: PictureSize.screen, maxPixels: nil)
         guard let cg = ImageCache.shared.image(for: key)?.cgImage else { return nil }
         let (w, h) = (32, 18)
         var pixels = [UInt8](repeating: 0, count: w * h * 4)

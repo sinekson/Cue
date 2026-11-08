@@ -105,7 +105,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         self.rowCell = rowCell
         if self.item?.id != item.id {
             FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
-                                  maxDimension: StagePictureView.pictureSize.width,
+                                  maxDimension: PictureSize.landscape,
                                   waiting: { [weak self] waiting in
                 guard let self else { return }
                 self.loadingCard.follow(waiting: waiting)
@@ -113,7 +113,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
                 self.edge.isHidden = waiting
             })
             logo.image = nil
-            FixedFocusImages.load(item.logo, into: logo.imageView, maxDimension: 600)
+            FixedFocusImages.load(item.logo, into: logo.imageView, maxDimension: PictureSize.cardLogo)
         }
         let changed = self.item?.id != item.id
         self.item = item
@@ -516,7 +516,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             // over the logo's plate.)
             FixedFocusImages.load(nil, into: picture, maxDimension: 0)
             logo.image = nil
-            FixedFocusImages.load(art, into: logo, maxDimension: max(card.width, card.height),
+            FixedFocusImages.load(art, into: logo, maxDimension: PictureSize.landscape,
                                   waiting: { [weak self] in self?.pictureWaiting($0, plate: true) })
             return
         }
@@ -556,7 +556,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                 self.pictureWaiting(false, plate: false)
             }
         } else {
-            FixedFocusImages.load(art, into: picture, maxDimension: max(card.width, card.height),
+            FixedFocusImages.load(art, into: picture, maxDimension: card.width > card.height ? PictureSize.landscape : PictureSize.poster,
                                   waiting: { [weak self] in self?.pictureWaiting($0, plate: false) })
         }
     }
@@ -650,13 +650,18 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 /// A poster cell: a WINDOW onto two fixed-size images — the portrait
 /// poster and the box-sized backdrop (with logo). Growing opens the window;
 /// nothing is stretched. Backdrop and logo load only once it grows.
-final class FixedFocusPosterCell: UICollectionViewCell {
-    /// Set by the controller while it starts an Up/Down movement.
-    static var vertical: (direction: CGFloat, duration: Double)?
-    /// Set while a move changes a card between poster and box (Up/Down, and
+/// A move of the rows, as the cards laid out in it see it (read through
+/// their row while `FixedFocusMotion.run`'s animation block runs).
+struct FixedFocusMove {
+    /// An Up/Down movement: its direction and duration.
+    var vertical: (direction: CGFloat, duration: Double)?
+    /// A move that changes a card between poster and box (Up/Down, and
     /// Left/Right while an opening still runs — the cells carry it): its
     /// duration.
-    static var reshaping: Double?
+    var reshaping: Double?
+}
+
+final class FixedFocusPosterCell: UICollectionViewCell {
 
     // Select pressed / held: the box (which shows this card) sinks a little.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
@@ -719,7 +724,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// 10 % — too little; 25 %).
     static let grownFadeShare: Double = 0.3
     private func fadeCaption(out: Bool, share: Double? = nil) {
-        let move = Self.vertical?.duration ?? Motion.moveDuration
+        let move = rowCell?.move?.vertical?.duration ?? Motion.moveDuration
         let start = share.map { FixedFocusMotion.time(at: 1 - $0, duration: move) }
             ?? Self.captionFadeIn(duration: move)
         let gone = share.map { FixedFocusMotion.time(at: $0, duration: move) } ?? Self.captionFadeOut
@@ -924,10 +929,10 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             backdropFor = item.id
             shade.isHidden = item.type == "collection"
             FixedFocusImages.load(item.background ?? item.poster,
-                                  into: backdrop, maxDimension: landscapeWidth,
+                                  into: backdrop, maxDimension: PictureSize.landscape,
                                   waiting: { [weak self] in self?.backdropWaiting = $0; self?.updateWaiting() })
             FixedFocusImages.load(progress == nil ? item.logo : nil, into: logo,
-                                  maxDimension: landscapeWidth * 0.55)
+                                  maxDimension: PictureSize.cardLogo)
             FixedFocusImages.load(nil, into: poster, maxDimension: 0,
                                   waiting: { [weak self] in self?.posterWaiting = $0 })
             state.show(progress)
@@ -943,7 +948,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         captionYear.text = item.year
         applyAlpha()
         FixedFocusImages.load(item.poster ?? item.background, into: poster,
-                              maxDimension: FixedFocusMetrics.height,
+                              maxDimension: PictureSize.poster,
                               waiting: { [weak self] in self?.posterWaiting = $0; self?.updateWaiting() })
         FixedFocusImages.load(nil, into: backdrop, maxDimension: 0,
                               waiting: { [weak self] in self?.backdropWaiting = $0 })
@@ -955,7 +960,11 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// The picture it shows still on its way: the placeholder's look, no
     /// edge (the box's backdrop under the fixed box: the box shows it).
     private func updateWaiting() {
-        loadingCard.follow(waiting: landscape || showsBox ? backdropWaiting : posterWaiting)
+        // Opening with the landscape still on its way, the poster stays
+        // (`backdropArrived`): the placeholder only with neither.
+        let waiting = landscape ? backdropWaiting
+            : showsBox ? backdropWaiting && posterWaiting : posterWaiting
+        loadingCard.follow(waiting: waiting)
         setNeedsLayout()
     }
 
@@ -1057,9 +1066,14 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         if grown, let item, backdropFor != item.id {
             backdropFor = item.id
             FixedFocusImages.load(item.background ?? item.poster, into: backdrop,
-                                  maxDimension: FixedFocusMetrics.boxWidth,
-                                  waiting: { [weak self] in self?.backdropWaiting = $0; self?.updateWaiting() })
-            FixedFocusImages.load(item.logo, into: logo, maxDimension: FixedFocusMetrics.boxWidth * 0.55)
+                                  maxDimension: PictureSize.landscape,
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                self.backdropWaiting = waiting
+                self.updateWaiting()
+                if !waiting { self.backdropArrived() }
+            })
+            FixedFocusImages.load(item.logo, into: logo, maxDimension: PictureSize.cardLogo)
         }
         // Under the fixed box (contentHidden) the poster simply stays: the
         // box covers it — no fade, only movement. It only gives way to the
@@ -1067,12 +1081,13 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         let shows = grown && !contentHidden
         let changes = shows != showsBox
         if changes { showsBox = shows; updateWaiting(); setNeedsLayout() }
-        if let duration = Self.reshaping, changes {
+        let move = rowCell?.move
+        if let duration = move?.reshaping, changes {
             if shows { reshape(duration: duration) } else { close(duration: duration) }
         } else if !closing || changes {
             if closing { endClose() }
-            if shaped, Self.reshaping == nil { unshape() }
-            poster.alpha = shows ? 0 : 1
+            if shaped, move?.reshaping == nil { unshape() }
+            poster.alpha = shows && !backdropWaiting ? 0 : 1
             backdrop.alpha = shows ? 1 : 0
         }
         // A placeholder (`FixedFocusRows.placeholderRows`): the empty card
@@ -1087,7 +1102,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         // The info too only while the cell shows itself (Up/Down); under the
         // box, the box's own info drifts in place.
         info.alpha = shows ? 1 : 0
-        if let vertical = Self.vertical {
+        if let vertical = move?.vertical {
             // Up/Down: the outlines hand over gradually: the old one fades out over
             // the first 70 %, the new one in over the last 70 %, linearly.
             let span = vertical.duration * 0.7
@@ -1118,9 +1133,22 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         shaped = true
         setNeedsLayout()
         layoutIfNeeded()
+        // Its landscape not in yet: the poster stays, filling the card, until
+        // it is (`backdropArrived`) — no placeholder, no pop.
+        guard !backdropWaiting else { return }
         let start = FixedFocusMotion.time(at: 0.25, duration: duration)
         let end = FixedFocusMotion.time(at: 0.75, duration: duration)
         UIView.animate(withDuration: end - start, delay: start,
+                       options: [.overrideInheritedDuration, .overrideInheritedCurve,
+                                 .beginFromCurrentState, .curveEaseInOut]) {
+            self.poster.alpha = 0
+        }
+    }
+    /// The landscape in late, the card showing itself: it fades in over
+    /// the poster.
+    private func backdropArrived() {
+        guard showsBox, !closing, poster.alpha > 0 else { return }
+        UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
                        options: [.overrideInheritedDuration, .overrideInheritedCurve,
                                  .beginFromCurrentState, .curveEaseInOut]) {
             self.poster.alpha = 0
@@ -1593,10 +1621,28 @@ final class FixedFocusChipsView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Drawn ahead (`TitleExtras`): the status and what's known of the
+    /// ratings, so `show` only puts up images.
+    static func prepare(_ item: MetaItem) {
+        _ = statusImage(item)
+        let settings = MDBListSettingsStore.current
+        _ = ratingImage(MDBListService.cachedRatings(for: item) ?? nil, item: item, settings: settings)
+    }
+
+    private static func statusImage(_ item: MetaItem) -> UIImage? {
+        FixedFocusShowInfo.status(item).flatMap { drawn("status:" + $0, TitleBadge(text: $0).padding(1)) }
+    }
+
+    private static func ratingImage(_ ratings: MDBListRatings?, item: MetaItem, settings: MDBListSettings) -> UIImage? {
+        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating,
+                                                onDetails: false).prefix(settings.rowCount)
+        return entries.isEmpty ? nil : drawn(
+            entries.map { $0.provider.rawValue + ":" + $0.text }.joined(separator: " "),
+            MDBListRatingsRow(entries: Array(entries)).padding(1))
+    }
+
     func show(_ item: MetaItem) {
-        status.image = FixedFocusShowInfo.status(item).flatMap {
-            Self.drawn("status:" + $0, TitleBadge(text: $0).padding(1))
-        }
+        status.image = Self.statusImage(item)
         status.isHidden = status.image == nil
         status.sizeToFit()
         ratingTask?.cancel()
@@ -1615,11 +1661,7 @@ final class FixedFocusChipsView: UIView {
     }
 
     private func showRating(_ ratings: MDBListRatings?, item: MetaItem, settings: MDBListSettings) {
-        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating,
-                                                onDetails: false).prefix(settings.rowCount)
-        rating.image = entries.isEmpty ? nil : Self.drawn(
-            entries.map { $0.provider.rawValue + ":" + $0.text }.joined(separator: " "),
-            MDBListRatingsRow(entries: Array(entries)).padding(1))
+        rating.image = Self.ratingImage(ratings, item: item, settings: settings)
         rating.isHidden = rating.image == nil
         rating.sizeToFit()
         setNeedsLayout()

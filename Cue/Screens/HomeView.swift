@@ -2645,7 +2645,7 @@ extension HomeUIKitView {
         for step in [1, -1, 2, -2] {
             guard let logo = row.items[((index + step) % count + count) % count].logo else { continue }
             Task.detached(priority: .userInitiated) {
-                await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth)
+                await ImageCache.shared.preload(logo, maxDimension: PictureSize.logo)
             }
         }
     }
@@ -2666,10 +2666,12 @@ extension HomeUIKitView {
     /// Into Details in place (`opened`): the reason goes (Details' hint
     /// comes in with Details).
     private func billboardText(_ item: MetaItem, opened: Bool) -> some View {
-        FixedFocusBillboardText(item: item, info: billboardInfo[item.id],
+        // (What's in memory already — loaded ahead, `TitleExtras` — draws
+        // with the text, not a moment after it.)
+        FixedFocusBillboardText(item: item, info: billboardInfo[item.id] ?? FixedFocusShowInfo.known(item),
                                 reason: opened ? nil : billboardReasons[item.id],
                                 ratings: billboardRatingsRow(item),
-                                tagline: billboardTaglines[item.id])
+                                tagline: billboardTaglines[item.id] ?? TMDBService.knownFacts(for: item)?.tagline)
             .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
             .padding(.leading, FixedFocusMetrics.titleInset)
     }
@@ -2677,7 +2679,8 @@ extension HomeUIKitView {
     /// The ratings chips (nil: none at all) — the catalog's IMDb score until
     /// MDBList's arrive, as on the Detail page.
     private func billboardRatingsRow(_ item: MetaItem) -> AnyView? {
-        FixedFocusBillboardText.ratingsChips(billboardRatings[item.id], settings: mdblist.settings, item: item)
+        FixedFocusBillboardText.ratingsChips(billboardRatings[item.id] ?? MDBListService.cachedRatings(for: item) ?? nil,
+                                             settings: mdblist.settings, item: item)
     }
 }
 

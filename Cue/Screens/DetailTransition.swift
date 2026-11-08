@@ -501,7 +501,7 @@ final class DetailTransition {
 
     /// The picture as Details decodes it (same size: same memory entry).
     private static func decoded(_ url: String) -> UIImage? {
-        ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: StagePictureView.pictureSize.width,
+        ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: PictureSize.screen,
                                                            maxPixels: nil))
     }
 

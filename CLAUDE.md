@@ -147,8 +147,25 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   and first-screen pictures are ready (`PagePreparer`, `PageLoad`, 4 s cap,
   then placeholders in the final layout: `FixedFocusPlaceholder`). Launch runs
   under a curtain (`LaunchPreloader`, `ProfileGate` for "Who's watching?").
-- **Pictures**: posters and the box from add-ons; billboard and Details from
-  TMDB's backdrop, decoded as focus settles (`TitlePreloader`).
+- **Pictures**: posters and the box from add-ons (honoured: we're a Nuvio
+  client); billboard and Details from TMDB's backdrop. Decoded at a few
+  named sizes (`PictureSize`: poster, landscape, card logo, screen, logo),
+  each its largest on screen at the screen's scale, nothing more (1.5× and
+  a ladder of sizes cost up to 3× the memory). On disk the original plus
+  a copy at each size decoded smaller (`keepResized`), read first, so a
+  disk read doesn't decode a 4K original again. Three decodes at a time,
+  never on the main thread (`DecodeGate`): what's on screen first, with a
+  slot of its own; ahead at most two, newest first, dropped once focus has
+  moved on (a held Left/Right ran dozens at once: under 30 fps, the box
+  waiting behind passed titles). Decoded ahead in one place
+  (`PicturePreloader`): Home's reachable titles at once
+  (`preloadReachable`: Left/Right's next, and Up/Down's one title per row in
+  the 3 nearest rows each way — every row would evict the cache at 4K), and
+  Details' one picture as focus settles (`TitlePreloader`). A grown card's
+  picture still late: the poster stays until it's in. The same titles'
+  status, ratings and (billboard) tagline load ahead too, after a 0.3 s
+  rest (MDBList counts requests), chips drawn ahead (`TitleExtras`); what's
+  in memory draws with the text, never a moment after it.
 - **Progress**: under 30 s played in a session, nothing is saved (a Start Over
   keeps its old position). After that the real position, seeks included: to
   the device every 10 s, to Nuvio on the first save and every 30 s; both on

@@ -41,7 +41,7 @@ struct PlayStageView<Sources: View>: View {
             Color.black
             // Lights down: the picture goes to black, slowly, the text first.
             ZStack {
-                RemoteImage(url: scene.art, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
+                RemoteImage(url: scene.art, maxDimension: PictureSize.screen, showsPlaceholder: false)
                     .frame(width: 1920, height: 1080)
                     .blur(radius: Self.blur, opaque: true)
                 Color.black.opacity(max(Self.dim, StageArt.dimBelow(for: scene.art)))

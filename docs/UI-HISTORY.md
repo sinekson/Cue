@@ -188,7 +188,12 @@ matching section before changing that part of the UI. Where this differs from
   of the way (`closeStretch`; 25–75 % — the stretch showed too much),
   less stretched as the card closes, its own shape at
   the end (`FixedFocusPosterCell.close`; good enough for now, not
-  perfect). (Tried: at the press the card the poster, at its own size at
+  perfect).
+  (2026-11-08: the first opening of each title flickered: its landscape was
+  only loaded at the press, decoded from disk mid-move, the placeholder look
+  flashing. Now the selected titles of the 3 nearest rows each way are
+  decoded ahead, and a picture still late leaves the poster up until it's in.)
+  (Tried: at the press the card the poster, at its own size at
   the card's left edge (or centred), the landscape fading away beside it
   in 0.3 s outside the edge; the poster fading in at 95 % in 0.15 s, stretched a
   few percent; at its own width at 90 % — the edge showed apart from it;

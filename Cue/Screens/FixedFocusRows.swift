@@ -978,11 +978,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         FixedFocusTint.prepare([itemIndex + 1, itemIndex - 1, itemIndex + 2]
             .filter { row.items.indices.contains($0) }
             .compactMap { row.items[$0].background ?? row.items[$0].poster })
-        // …and the box's next pictures.
-        if !featured, !isLandscape(rowIndex), !isDestination(rowIndex) {
-            box.warm([itemIndex + 1, itemIndex - 1, itemIndex + 2]
-                .filter { row.items.indices.contains($0) }.map { row.items[$0] })
-        }
+        preloadReachable(row: rowIndex, index: itemIndex)
         onDepth(depth(of: rowIndex))
         // Back on the SAME card from outside the rows (a menu closing, down
         // from the top bar, back from a page): nothing moved — no move to
@@ -997,13 +993,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if rowChanged, !featured, !isDestination(rowIndex) { openingRow = rowIndex }
         // Up/Down is the "opening": the box steps aside, the new row's title
         // grows into it, the old one shrinks back to a poster.
-        let verticalDrift = false
         let direction: CGFloat = rowChanged
             ? (rowIndex > focusedRow ? 1 : -1)
             : (itemIndex >= (selected[row.id] ?? 0) ? 1 : -1)
         let oldRowCell = rowChanged
             ? outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell : nil
-        if rowChanged, !verticalDrift, box.alpha == 1 {
+        if rowChanged, box.alpha == 1 {
             // Opening: the old row's cell first takes on the box's exact
             // look (still the focused row here) — the box can step aside
             // without anything changing — and then shrinks, animated.
@@ -1048,7 +1043,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // The billboard has no box (coming up from a catalog, that row's
             // cell already took over its look above and shrinks back).
             box.alpha = 0
-        } else if rowChanged, !verticalDrift {
+        } else if rowChanged {
             // The opening: the grown cell shows its own content.
             box.alpha = 0
             rowCell.contentHidden = false
@@ -1085,11 +1080,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (Now: focus is taken right after, and a held move runs later.)
         let hadFocus = hasFocus
         let move = {
-            FixedFocusPosterCell.vertical = rowChanged && hadFocus
-                ? (direction: direction, duration: duration) : nil
-            FixedFocusPosterCell.reshaping = (rowChanged && hadFocus) || self.box.alpha < 1
-                ? duration : nil
-            defer { FixedFocusPosterCell.vertical = nil; FixedFocusPosterCell.reshaping = nil }
+            let id = self.beginMove(FixedFocusMove(
+                vertical: rowChanged && hadFocus ? (direction: direction, duration: duration) : nil,
+                reshaping: (rowChanged && hadFocus) || self.box.alpha < 1 ? duration : nil))
+            defer { self.move = nil }
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
@@ -1111,15 +1105,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                         self.outer.layoutIfNeeded()
                     }
                 }
-                if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
-                self.movesInFlight -= 1
-                if !rowChanged, self.movesInFlight == 0 { self.runPendingStep() }
-                if self.movesInFlight == 0 { self.landBack() }
+                guard self.endMove(id) else { return }
+                if !rowChanged, !self.isMoving { self.runPendingStep() }
+                if !self.isMoving { self.landBack() }
                 self.runHeldSelect()
                 guard !featured, self.focusedRow == rowIndex else { return }
                 self.handOverToBox(rowCell, row: row, rowIndex: rowIndex)
             }
-            self.movesInFlight += 1
             if billboardScroll { self.liftNextTitle(down: !featured) }
         }
         // A Select held for the move before: focus has moved on, it's gone.
@@ -1129,14 +1121,65 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         loadShowInfo(for: item, in: row, at: itemIndex)
     }
 
-    /// Moves (Up/Down, Left/Right) still running in the rows.
-    private var movesInFlight = 0
+    /// The move being set up (inside `FixedFocusMotion.run`'s animation
+    /// block): what the cells laid out in it animate by (`setGrown`).
+    private(set) var move: FixedFocusMove?
+    /// Moves (Up/Down, Left/Right) still running in the rows; a hurry
+    /// (`hurryMoves`) empties it, so their own completions do nothing.
+    private var liveMoves: Set<Int> = []
+    private var lastMoveID = 0
+    private var isMoving: Bool { !liveMoves.isEmpty }
+    private func beginMove(_ move: FixedFocusMove) -> Int {
+        lastMoveID += 1
+        liveMoves.insert(lastMoveID)
+        self.move = move
+        return lastMoveID
+    }
+    /// False for a move already counted done (hurried).
+    private func endMove(_ id: Int) -> Bool { liveMoves.remove(id) != nil }
     private var cutToken = 0
     private weak var cutRow: FixedFocusRowCell?
     /// A fixed-box row opening (Up/Down into it), until the box has it.
     private var openingRow: Int?
     /// Left/Right presses held during an opening (+ right, − left).
     private var pendingSteps = 0
+    /// What focus can reach from here, decoded ahead at the size it shows
+    /// at (`PicturePreloader`), so it's there from the first frame:
+    /// Left/Right's next titles (the box's picture and logo, or on the
+    /// billboard its full-screen picture), and the one title Up/Down lands
+    /// on in each of the 3 nearest rows each way (its selected one) — a
+    /// first opening otherwise decoded from disk mid-move and flickered.
+    /// (Every row: at 4K a full-screen picture is 33 MB, too many evict
+    /// the cache.)
+    static let reachRows = 3
+    private func preloadReachable(row rowIndex: Int, index itemIndex: Int) {
+        var wants: [PicturePreloader.Want] = []
+        var extras: [(item: MetaItem, billboard: Bool)] = []
+        func add(_ item: MetaItem, in index: Int) {
+            if !isDestination(index), custom(index) == nil { extras.append((item, isFeatured(index))) }
+            if isFeatured(index) {
+                wants.append(.init(TMDBService.originalSize(item.background) ?? item.poster, PictureSize.screen))
+                wants.append(.init(item.logo, PictureSize.logo))
+            } else if !isLandscape(index), !isDestination(index), custom(index) == nil {
+                wants.append(.init(item.background ?? item.poster, PictureSize.landscape))
+                wants.append(.init(item.logo, PictureSize.cardLogo))
+            }
+        }
+        let items = rows[rowIndex].items
+        for offset in [1, -1, 2] where items.indices.contains(itemIndex + offset) {
+            add(items[itemIndex + offset], in: rowIndex)
+        }
+        for distance in 1...Self.reachRows {
+            for index in [rowIndex + distance, rowIndex - distance] where rows.indices.contains(index) {
+                let row = rows[index]
+                let current = selected[row.id] ?? 0
+                if row.items.indices.contains(current) { add(row.items[current], in: index) }
+            }
+        }
+        PicturePreloader.shared.want(wants)
+        TitleExtras.shared.want(extras)
+    }
+
     private var hurried = false
     /// The opening's rest in this much time, from where it is now.
     static let hurryDuration: Double = 0.10
@@ -1206,20 +1249,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             }
             layer.sublayers?.forEach(hurry)
         }
-        // The moves' own completions are void now (`hurriedMoves`) — set
-        // first: removing their animations calls them.
-        hurriedMoves += movesInFlight
-        movesInFlight = 0
+        // The moves count as done now — first: removing their animations
+        // calls their completions.
+        liveMoves.removeAll()
         hurry(view.layer)
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: then)
     }
-    /// Completions of moves cut short by a hurry, still to come (ignored).
-    private var hurriedMoves = 0
 
     private static let all = NSHashTable<FixedFocusRowsController>.weakObjects()
     /// Rows on screen still moving (a page opening now would take its still
     /// mid-move — Back dissolved into the rows landed: they seemed to scroll).
-    static var moving: Bool { all.allObjects.contains { $0.movesInFlight > 0 && $0.view.window != nil } }
+    static var moving: Bool { all.allObjects.contains { $0.isMoving && $0.view.window != nil } }
     /// Every move on screen finished quickly, as for a held press, then
     /// `run` once the landed rows are drawn.
     static func land(then run: @escaping () -> Void) {
@@ -1228,7 +1268,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             rows.afterBack.append { land(then: run) }
             return
         }
-        for rows in all.allObjects where rows.movesInFlight > 0 && rows.view.window != nil {
+        for rows in all.allObjects where rows.isMoving && rows.view.window != nil {
             if let opening = rows.openingRow, opening == rows.focusedRow {
                 rows.hurryOpening(opening)
             } else {
@@ -1267,7 +1307,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// One held Left/Right, as a normal step (the box has the row now).
     private func runPendingStep() {
-        guard openingRow == nil, movesInFlight == 0, pendingSteps != 0,
+        guard openingRow == nil, !isMoving, pendingSteps != 0,
               rows.indices.contains(focusedRow),
               let rowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
         else { return }
@@ -1288,7 +1328,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// keeps the cells carrying it): the box takes over — identical look,
     /// same place, no jump — on the title focused now.
     private func handOverToBox(_ rowCell: FixedFocusRowCell, row: HomeRow, rowIndex: Int) {
-        guard movesInFlight == 0 else { return }
+        guard !isMoving else { return }
         if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
             let now = row.items[current]
             // The grown cell's picture and logo, as they are: the box's own
@@ -1361,9 +1401,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
         let move = {
             // The old row's card closes as into a fixed row (see `setGrown`).
-            FixedFocusPosterCell.vertical = hadFocus ? (direction: direction, duration: duration) : nil
-            FixedFocusPosterCell.reshaping = hadFocus ? duration : nil
-            defer { FixedFocusPosterCell.vertical = nil; FixedFocusPosterCell.reshaping = nil }
+            let id = self.beginMove(FixedFocusMove(
+                vertical: hadFocus ? (direction: direction, duration: duration) : nil,
+                reshaping: hadFocus ? duration : nil))
+            defer { self.move = nil }
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
@@ -1371,19 +1412,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 self.outer.layoutIfNeeded()
                 self.applyPageHeaderPosition()
             } completion: { _ in
-                if self.hurriedMoves > 0 { self.hurriedMoves -= 1; return }
-                self.movesInFlight -= 1
-                if self.movesInFlight == 0 { self.landBack() }
+                guard self.endMove(id) else { return }
+                if !self.isMoving { self.landBack() }
                 self.runHeldSelect()
             }
-            self.movesInFlight += 1
             if fromBillboard { self.liftNextTitle(down: true) }
         }
         move()
     }
 
-    /// The season count for the title you rest on (and the next two, so
-    /// stepping right finds them ready) — then the box's text takes it.
+    /// The season count for the title you rest on — then the box's text
+    /// takes it. (The ones focus can reach next: `TitleExtras`.)
     private var infoLoading: Task<Void, Never>?
 
     private func loadShowInfo(for item: MetaItem, in row: HomeRow, at index: Int) {
@@ -1394,10 +1433,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if FixedFocusShowInfo.known(item) == nil, await FixedFocusShowInfo.load(item) != nil,
                !Task.isCancelled {
                 self?.box.refreshInfo(for: item)
-            }
-            for next in row.items.dropFirst(index + 1).prefix(2) {
-                guard !Task.isCancelled else { return }
-                _ = await FixedFocusShowInfo.load(next)
             }
         }
     }
@@ -1455,7 +1490,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             pressWaiting = true
             if let opening = openingRow, opening == focusedRow {
                 hurryOpening(opening)
-            } else if movesInFlight > 0 {
+            } else if isMoving {
                 hurryMoves { self.runWaitingPress() }
             }
             return
@@ -2291,7 +2326,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// Nothing moving in the rows, the box holding its row (an opening's
     /// card handed over).
-    private var settled: Bool { movesInFlight == 0 && openingRow != focusedRow }
+    private var settled: Bool { !isMoving && openingRow != focusedRow }
     /// A Select during a move: held, run as the move lands (opened mid-move,
     /// Details took the screen with the box still empty — the grown card
     /// had its content until the hand-over). The move finishes quickly
@@ -2323,7 +2358,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // The move finishing quickly, as for a held Left/Right.
             if let opening = openingRow, opening == focusedRow {
                 hurryOpening(opening)
-            } else if movesInFlight > 0 {
+            } else if isMoving {
                 hurryMoves { self.runHeldSelect() }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.heldSelectLimit) { [weak self] in
@@ -2839,8 +2874,10 @@ final class FixedFocusBoxView: UIView {
         func show(_ item: MetaItem, pictures: FixedFocusPosterCell.Pictures? = nil) {
             // A folder's cover is its own picture, name and all: no shade.
             shade.isHidden = item.type == "collection"
-            // (At the box's size — larger for a side-info row.)
-            let width = max(bounds.width, FixedFocusMetrics.boxWidth)
+            // (A banner row's box is wider than a landscape card: the
+            // screen's size.)
+            let large = bounds.width > FixedFocusMetrics.boxWidth * FixedFocusMetrics.boxScale
+            let width = large ? PictureSize.screen : PictureSize.landscape
             let shaded = item.type != "collection"
             self.shaded = shaded
             let backdropURL = item.background ?? item.poster
@@ -2873,7 +2910,7 @@ final class FixedFocusBoxView: UIView {
             if let logoPicture = pictures?.logo {
                 FixedFocusImages.adopt(logoPicture, url: item.logo, into: logo)
             } else {
-                FixedFocusImages.load(item.logo, into: logo, maxDimension: width * 0.55)
+                FixedFocusImages.load(item.logo, into: logo, maxDimension: large ? PictureSize.logo : PictureSize.cardLogo)
             }
         }
 
@@ -3068,17 +3105,6 @@ final class FixedFocusBoxView: UIView {
     /// Counts the box's moves: a move's end only clears what a later move
     /// hasn't taken over.
     private var moveID = 0
-
-    /// The next titles' pictures decoded ahead at the box's size (its
-    /// memory key): a title coming in has its picture from the first frame.
-    /// (The preloader decodes the neighbours at the stage's size, another
-    /// key — the box decoded from disk as it moved, a few frames late.)
-    func warm(_ items: [MetaItem]) {
-        let width = max(page.bounds.width, FixedFocusMetrics.boxWidth)
-        for url in items.compactMap({ $0.background ?? $0.poster }) {
-            Task { await ImageCache.shared.preload(url, maxDimension: width) }
-        }
-    }
 
     /// The box's picture a little larger than the box (as the grown cell's
     /// landscape, so they match): room for the drift (`show`).
@@ -3310,6 +3336,83 @@ final class FixedFocusPlaceholder: FixedFocusPulsing {
     }
 }
 
+/// Pictures decoded ahead into memory, each at the size it will show at
+/// (`PictureSize`): what focus can reach (`preloadReachable`) and the
+/// title preloader's (`TitlePreloader`). One place, one decode per picture.
+@MainActor
+final class PicturePreloader {
+    static let shared = PicturePreloader()
+
+    struct Want {
+        let url: String?
+        let size: CGFloat
+        init(_ url: String?, _ size: CGFloat) { self.url = url; self.size = size }
+    }
+
+    private var loading = Set<String>()
+    /// The latest `want`'s pictures: one still waiting for its turn
+    /// (`DecodeGate`) when focus has moved on is dropped, not decoded.
+    private var wanted = Set<String>()
+
+    /// Decodes what isn't in memory or on its way, in decoding's ahead
+    /// turn; returns at once. Replaces the last call's wishes.
+    func want(_ wants: [Want]) {
+        wanted = Set(wants.compactMap { want in
+            want.url.map { RemoteImage.memoryKey($0, maxDimension: want.size, maxPixels: nil) }
+        })
+        for want in wants { Task { await load(want, dropped: true) } }
+    }
+
+    /// Decodes it unless it's in memory; returns once it is (or failed).
+    func load(_ want: Want) async { await load(want, dropped: false) }
+
+    private func load(_ want: Want, dropped: Bool) async {
+        guard let url = want.url else { return }
+        let key = RemoteImage.memoryKey(url, maxDimension: want.size, maxPixels: nil)
+        guard ImageCache.shared.image(for: key) == nil, loading.insert(key).inserted else { return }
+        var still: (@MainActor () -> Bool)?
+        if dropped { still = { [weak self] in self?.wanted.contains(key) ?? false } }
+        await ImageCache.shared.preload(url, maxDimension: want.size, turn: .ahead, still: still)
+        loading.remove(key)
+    }
+}
+
+/// What the text under a title needs besides its picture, loaded ahead
+/// for what focus can reach (`preloadReachable`'s titles): the status
+/// (`FixedFocusShowInfo`, from the episode list), the ratings (MDBList),
+/// on the billboard the tagline (TMDB's facts) — and the chips drawn
+/// (`FixedFocusChipsView.prepare`). They came in only once a title was
+/// shown, the chips a moment after the text. After a 0.3 s rest, so a
+/// held Left/Right doesn't ask for every title it passes (MDBList counts
+/// requests); all cached on disk, so asked once a day at most.
+@MainActor
+final class TitleExtras {
+    static let shared = TitleExtras()
+    private var task: Task<Void, Never>?
+
+    func want(_ titles: [(item: MetaItem, billboard: Bool)]) {
+        task?.cancel()
+        task = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            let settings = MDBListSettingsStore.current
+            let ratings = settings.isConfigured && settings.showsRatings(onDetails: false)
+            await withTaskGroup(of: Void.self) { group in
+                for (item, billboard) in titles {
+                    group.addTask { @MainActor in
+                        async let info: Void = { if item.isSeries { _ = await FixedFocusShowInfo.load(item) } }()
+                        async let rated: Void = { if ratings { _ = await MDBListService.ratings(for: item, settings: settings) } }()
+                        async let facts: Void = { if billboard { _ = await TMDBService.facts(for: item) } }()
+                        _ = await (info, rated, facts)
+                        guard !Task.isCancelled else { return }
+                        FixedFocusChipsView.prepare(item)
+                    }
+                }
+            }
+        }
+    }
+}
+
 enum FixedFocusImages {
     private static var requested: [ObjectIdentifier: String] = [:]
 
@@ -3339,7 +3442,7 @@ enum FixedFocusImages {
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
         if await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey) != nil { return }
         guard let remote = URL(string: url), let data = try? await ImageCache.shared.download(remote) else { return }
-        if let image = ImageCache.decodeDownsampled(data, budget: budget) {
+        if let image = await DecodeGate.shared.run(.now, { ImageCache.decodeDownsampled(data, budget: budget) }) {
             ImageCache.shared.insert(image, for: url, data: data, memoryKey: memoryKey)
         } else {
             ImageCache.shared.insertData(data, for: url)
@@ -3378,11 +3481,16 @@ enum FixedFocusImages {
         view.image = nil
         waiting?(true)
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        // Dropped, not decoded, once the view has asked for another
+        // (a held Left/Right: the box has moved on).
+        let still: @MainActor () -> Bool = { requested[slot] == url }
         Task { @MainActor [weak view] in
-            var image = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey)
-            if image == nil, let remote = URL(string: url),
+            var image = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey,
+                                                          still: still)
+            if image == nil, still(), let remote = URL(string: url),
                let data = try? await ImageCache.shared.download(remote) {
-                image = ImageCache.decodeDownsampled(data, budget: budget)
+                // Off the main thread (it decoded here, mid-scroll).
+                image = await DecodeGate.shared.run(.now) { ImageCache.decodeDownsampled(data, budget: budget) }
                 // In memory too (under the same key a SwiftUI RemoteImage of
                 // this size uses): the Detail page opened from the billboard
                 // shows the very same picture from its first frame.
@@ -3443,6 +3551,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                                UICollectionViewDelegateFlowLayout {
     private(set) var rowIndex = 0
     private weak var controller: FixedFocusRowsController?
+    /// The move its controller is setting up (`FixedFocusMove`).
+    var move: FixedFocusMove? { controller?.move }
     private let title = UILabel()
     private let strip: UICollectionView
     private var row: HomeRow? {

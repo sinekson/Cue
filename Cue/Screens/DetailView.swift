@@ -204,7 +204,7 @@ final class DetailViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 await choice.value
                 guard let self, let url = prepared.picture else { self?.pictureLate = false; return }
-                _ = await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+                _ = await ImageCache.shared.preload(url, maxDimension: PictureSize.screen)
                 self.shownPicture = url
                 self.pictureLate = false
             }
@@ -918,7 +918,7 @@ struct DetailView: View {
             // little wider than the screen, leaned in by the step-in zoom.
             // Its picture not in yet: the page's background until it is.
             if viewModel.pictureLate { ATVBackground() }
-            RemoteImage(url: url, maxDimension: StagePictureView.pictureSize.width, showsPlaceholder: false)
+            RemoteImage(url: url, maxDimension: PictureSize.screen, showsPlaceholder: false)
                 .frame(width: 1920 + 2 * drift, height: 1080)
                 .modifier(DetailLean(depth: depth))
                 .frame(width: 1920, height: 1080)
@@ -1957,7 +1957,7 @@ final class TitlePictures {
     private func decode(_ item: MetaItem) -> Task<String?, Never> {
         Task { @MainActor in
             guard let url = await self.picture(for: item),
-                  await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+                  await ImageCache.shared.preload(url, maxDimension: PictureSize.screen)
             else { return nil }
             return url
         }
@@ -2112,7 +2112,7 @@ final class DetailPreparer {
         }
         guard let url = prepared.picture else { return nil }
         let decoded = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width) }
+            group.addTask { await ImageCache.shared.preload(url, maxDimension: PictureSize.screen) }
             group.addTask {
                 let left = deadline - CACurrentMediaTime()
                 if left > 0 { try? await Task.sleep(for: .seconds(left)) }
@@ -2144,7 +2144,7 @@ final class DetailPreparer {
         let picture = prepared.pictureLate ? nil : prepared.picture
         let stills = peekStills(meta, extras: prepared.extras, fallback: picture)
         await withTaskGroup(of: Void.self) { group in
-            if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) } }
+            if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: PictureSize.logo) } }
             // The episodes' peek: its first cards' stills (created just
             // before the rise, they loaded then — the name rose alone and
             // the cards popped in at its end).
@@ -2154,7 +2154,7 @@ final class DetailPreparer {
                 }
             }
             if let picture {
-                group.addTask { await ImageCache.shared.preload(picture, maxDimension: StagePictureView.pictureSize.width) }
+                group.addTask { await ImageCache.shared.preload(picture, maxDimension: PictureSize.screen) }
                 group.addTask { _ = await BlurredBackdrop.image(for: picture) }
                 group.addTask { _ = await FixedFocusTint.colors(for: picture) }
             }
@@ -2185,7 +2185,7 @@ final class DetailPreparer {
         let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress,
                                                watched: context.watched)
         let start = target.flatMap { t in order.firstIndex { $0.id == t.id } } ?? 0
-        let size = FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight)
+        let size = PictureSize.landscape
         return order.dropFirst(max(0, start - 1)).prefix(7).map { episode in
             let extra = episode.episode.flatMap { extras[episode.season ?? 0]?[$0] }
             return (TMDBService.originalSize(extra?.still) ?? episode.thumbnail ?? fallback, size)

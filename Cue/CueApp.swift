@@ -2350,29 +2350,27 @@ final class LaunchPreloader: ObservableObject {
         var jobs: [(kind: String, run: () async -> Bool)] = []
         for item in picks.prefix(3) {
             if let url = TMDBService.originalSize(item.background) ?? item.poster {
-                jobs.append(("backdrop", { await ImageCache.shared.preloadFromDisk(url, maxDimension: StagePictureView.pictureSize.width) }))
+                jobs.append(("backdrop", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.screen) }))
             }
         }
         for item in picks {
             if let logo = item.logo {
-                jobs.append(("logo", { await ImageCache.shared.preloadFromDisk(logo, maxDimension: TitleBlock.logoWidth) }))
+                jobs.append(("logo", { await ImageCache.shared.preloadFromDisk(logo, maxDimension: PictureSize.logo) }))
             }
         }
         for item in picks.prefix(3) {
             if let url = item.background ?? item.poster {
                 jobs.append(("colours", {
-                    guard await ImageCache.shared.preloadFromDisk(url, maxDimension: 64) else { return false }
-                    _ = await FixedFocusTint.colors(for: url)
-                    return true
+                    await FixedFocusTint.colors(for: url) != nil
                 }))
             }
         }
         for url in stills {
-            jobs.append(("still", { await ImageCache.shared.preloadFromDisk(url, maxDimension: Spotlight.boxWidth) }))
+            jobs.append(("still", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.landscape) }))
         }
         for item in (rows.first?.items ?? []).prefix(8) {
             if let url = item.poster ?? item.background {
-                jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: FixedFocusMetrics.height) }))
+                jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.poster) }))
             }
         }
         var done: [String: (ok: Int, all: Int)] = [:]
@@ -2722,8 +2720,7 @@ final class TitlePreloader {
         if TMDBService.hasAPIKey, first {
             _ = await TMDBService.detail(imdbID: meta.id, type: meta.type)
         }
-        // The page's pictures: what Details shows (its meta's) and what the
-        // card had, if different.
+        // The pictures on disk: the record's and the card's, if different.
         let backdrops = Array(Set([meta.background ?? meta.poster, item.background ?? item.poster].compactMap { $0 }))
         let logo = meta.logo ?? item.logo
         if depth == .record {
@@ -2731,11 +2728,14 @@ final class TitlePreloader {
             if let logo { _ = await ImageCache.shared.fetchToDisk(logo) }
             return net
         }
-        for url in backdrops {
-            await ImageCache.shared.preload(url, maxDimension: StagePictureView.pictureSize.width)
+        // Decoded: the one picture Details opens on (TMDB's backdrop, else
+        // the card's — `TitlePictures`), at the screen's size. (The add-on's
+        // full-screen too was a second large decode Details rarely showed.)
+        if let page = await TitlePictures.shared.picture(for: item) ?? item.background ?? item.poster {
+            await PicturePreloader.shared.load(.init(page, PictureSize.screen))
         }
-        if let logo { await ImageCache.shared.preload(logo, maxDimension: TitleBlock.logoWidth) }
-        if let url = backdrops.first { _ = await FixedFocusTint.colors(for: url) }
+        await PicturePreloader.shared.load(.init(logo, PictureSize.logo))
+        if let art = item.background ?? item.poster { _ = await FixedFocusTint.colors(for: art) }
         guard depth == .full else { return net }
         _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster)
         // A show: the season extras (Details asks for every season — the

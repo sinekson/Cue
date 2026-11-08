@@ -120,7 +120,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     /// The first two lines' posters decoded: the grid swaps in whole.
     private static func decode(_ first: TMDBService.BrowsePage) async {
         await FixedFocusImages.prefetch(first.items.prefix(12).map {
-            (url: $0.poster ?? $0.background, maxDimension: FolderGridController.card.height)
+            (url: $0.poster ?? $0.background, maxDimension: PictureSize.poster)
         }, within: .milliseconds(700))
     }
 

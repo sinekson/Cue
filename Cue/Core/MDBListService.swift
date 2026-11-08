@@ -415,21 +415,37 @@ enum MDBListService {
         let imdbID: String?
         if meta.id.hasPrefix("tt") {
             imdbID = meta.id
+        } else if let known = resolvedID(meta.id) {
+            imdbID = known
         } else if let (tid, isMovie) = await TMDBService.resolveTMDBID(from: meta.id, type: meta.type) {
             imdbID = await TMDBService.imdbID(tmdbID: tid, isMovie: isMovie)
         } else {
             imdbID = nil
         }
         guard let imdbID else { return nil }
+        if !meta.id.hasPrefix("tt") { noteResolved(meta.id, imdbID) }
         return await ratings(imdbID: imdbID, type: meta.type, settings: settings)
     }
 
     /// A title's ratings if they're in memory already (`.some(nil)`: known
     /// to have none) — for a view that draws at once.
     static func cachedRatings(for meta: MetaItem) -> MDBListRatings?? {
-        guard meta.id.hasPrefix("tt"),
-              let hit = cachedEntry(cacheKey(meta.id, mediaType(meta.type))) else { return nil }
+        guard let imdbID = meta.id.hasPrefix("tt") ? meta.id : resolvedID(meta.id),
+              let hit = cachedEntry(cacheKey(imdbID, mediaType(meta.type))) else { return nil }
         return .some(hit.ratings.isEmpty ? nil : hit.ratings)
+    }
+
+    /// Other ids (TMDB's, Kitsu's…) to their IMDb id, once looked up: a
+    /// title without a `tt` id found its ratings in memory only after a
+    /// lookup, so its chips always came late.
+    nonisolated(unsafe) private static var resolved: [String: String] = [:]
+    private static func resolvedID(_ id: String) -> String? {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        return resolved[id]
+    }
+    private static func noteResolved(_ id: String, _ imdbID: String) {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        resolved[id] = imdbID
     }
 
     /// A title's ratings, every source. Needs an imdb `tt…` id.

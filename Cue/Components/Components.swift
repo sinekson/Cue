@@ -6,6 +6,59 @@ import CoreImage
 
 // MARK: - Image cache
 
+/// How many pictures decode at once, and in what order. A decode is tens
+/// of milliseconds of CPU; unlimited, a held Left/Right started dozens
+/// together, frames dropped below 30 and the box's own picture waited
+/// behind titles long passed. Three at a time; what's on screen (`now`)
+/// always goes first and has one slot to itself, decoding ahead (`ahead`)
+/// takes at most two, the newest wish first (the oldest are the ones
+/// focus has left).
+actor DecodeGate {
+    static let shared = DecodeGate()
+    enum Turn { case now, ahead }
+
+    private let limit = 3
+    private let aheadLimit = 2
+    private var running = 0
+    private var runningAhead = 0
+    private var waitingNow: [CheckedContinuation<Void, Never>] = []
+    private var waitingAhead: [CheckedContinuation<Void, Never>] = []
+
+    func enter(_ turn: Turn) async {
+        switch turn {
+        case .now:
+            if running < limit { running += 1; return }
+            await withCheckedContinuation { waitingNow.append($0) }
+        case .ahead:
+            if running < limit, runningAhead < aheadLimit { running += 1; runningAhead += 1; return }
+            await withCheckedContinuation { waitingAhead.append($0) }
+        }
+    }
+
+    func leave(_ turn: Turn) {
+        running -= 1
+        if turn == .ahead { runningAhead -= 1 }
+        if !waitingNow.isEmpty {
+            running += 1
+            waitingNow.removeFirst().resume()
+        } else if !waitingAhead.isEmpty, runningAhead < aheadLimit {
+            running += 1; runningAhead += 1
+            waitingAhead.removeLast().resume()
+        }
+    }
+
+    /// `work` in its turn; nil, without running it, when `still` says by
+    /// then it's no longer wanted (focus moved on).
+    func run<T>(_ turn: Turn, still: (@MainActor () -> Bool)? = nil,
+                _ work: @escaping @Sendable () -> T?) async -> T? {
+        await enter(turn)
+        if let still, !(await still()) { leave(turn); return nil }
+        let result = await Task.detached(priority: turn == .now ? .userInitiated : .utility) { work() }.value
+        leave(turn)
+        return result
+    }
+}
+
 /// Process-wide image cache with two layers:
 ///
 /// * **Memory** (`NSCache`) — decoded pixels, instant re-show. `AsyncImage`
@@ -123,14 +176,37 @@ final class ImageCache: @unchecked Sendable {
 
     /// Off-main disk lookup. On a hit the image is promoted back into memory
     /// (under `memoryKey`, which carries the decode-budget bucket) and its
-    /// file's mtime is touched so it survives LRU trimming. Disk always stores
-    /// the original encoded bytes keyed by URL — one file serves every size.
-    func diskImage(for key: String, budget: CGFloat? = nil, memoryKey: String? = nil) async -> UIImage? {
+    /// file's mtime is touched so it survives LRU trimming. Disk stores the
+    /// original encoded bytes keyed by URL, and beside it a smaller copy per
+    /// size decoded (`keepResized`), keyed by `memoryKey` — read first.
+    func diskImage(for key: String, budget: CGFloat? = nil, memoryKey: String? = nil,
+                   turn: DecodeGate.Turn = .now, still: (@MainActor () -> Bool)? = nil) async -> UIImage? {
+        await DecodeGate.shared.enter(turn)
+        if let still, !(await still()) { await DecodeGate.shared.leave(turn); return nil }
+        let image = await readDisk(for: key, budget: budget, memoryKey: memoryKey)
+        await DecodeGate.shared.leave(turn)
+        return image
+    }
+
+    private func readDisk(for key: String, budget: CGFloat?, memoryKey: String?) async -> UIImage? {
         let fileURL = fileURL(for: key)
+        // Its copy at this size, if one was kept (`keepResized`): a small
+        // file, decoded as it is.
+        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.fileURL(for: $0) }
         return await withCheckedContinuation { continuation in
             ioQueue.async { [weak self] in
-                guard let self,
-                      let data = try? Data(contentsOf: fileURL),
+                guard let self else { continuation.resume(returning: nil); return }
+                if let resizedURL, let small = try? Data(contentsOf: resizedURL),
+                   let prepared = Self.decodeDownsampled(small, budget: budget) {
+                    self.insertMemory(prepared, for: memoryKey ?? key)
+                    continuation.resume(returning: prepared)
+                    self.ioQueue.async { [weak self] in
+                        try? self?.fm.setAttributes([.modificationDate: Date()],
+                                                    ofItemAtPath: resizedURL.path)
+                    }
+                    return
+                }
+                guard let data = try? Data(contentsOf: fileURL),
                       // Decode HERE (background, downsampled) — otherwise UIKit
                       // decodes lazily on first draw, i.e. on the render path
                       // while a row is scrolling.
@@ -140,6 +216,7 @@ final class ImageCache: @unchecked Sendable {
                 }
                 self.insertMemory(prepared, for: memoryKey ?? key)
                 continuation.resume(returning: prepared)
+                if let resizedURL { self.keepResized(prepared, of: data, at: resizedURL) }
                 // LRU bookkeeping only — never make the caller wait on a
                 // filesystem attribute write.
                 self.ioQueue.async { [weak self] in
@@ -159,7 +236,30 @@ final class ImageCache: @unchecked Sendable {
         let payload = data ?? image.jpegData(compressionQuality: 0.9)
         guard let payload else { return }
         let fileURL = fileURL(for: key)
-        ioQueue.async { [self] in writeCacheFile(payload, to: fileURL) }
+        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.fileURL(for: $0) }
+        ioQueue.async { [self] in
+            writeCacheFile(payload, to: fileURL)
+            if let resizedURL { keepResized(image, of: payload, at: resizedURL) }
+        }
+    }
+
+    /// A picture decoded smaller than its file (`PictureSize`): that size
+    /// kept on disk too, beside the original, so the next read from disk
+    /// decodes a small file, not the original again (TMDB's are multi-MB
+    /// 4K JPEGs). Only when it's really smaller — fewer pixels, under 70 %
+    /// of the bytes; JPEG, or PNG for pictures with transparency (logos).
+    /// On `ioQueue`.
+    private func keepResized(_ image: UIImage, of original: Data, at fileURL: URL) {
+        guard let cg = image.cgImage,
+              let source = CGImageSourceCreateWithData(original as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              max(cg.width, cg.height) < max(w, h) * 9 / 10 else { return }
+        let opaque = [.none, .noneSkipFirst, .noneSkipLast].contains(cg.alphaInfo)
+        guard let small = opaque ? image.jpegData(compressionQuality: 0.85) : image.pngData(),
+              small.count < original.count * 7 / 10 else { return }
+        writeCacheFile(small, to: fileURL)
     }
 
     /// Raw encoded bytes from the disk layer, no decode — for consumers that
@@ -352,15 +452,17 @@ final class ImageCache: @unchecked Sendable {
     /// its first frame (no late fade-in). Returns once it is there, or at
     /// once if it already was; false when it could not be loaded.
     @discardableResult
-    func preload(_ value: String, maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil) async -> Bool {
+    func preload(_ value: String, maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil,
+                 turn: DecodeGate.Turn = .now, still: (@MainActor () -> Bool)? = nil) async -> Bool {
         let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: maxPixels)
         if image(for: key) != nil { return true }
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: maxPixels)
-        if await diskImage(for: value, budget: budget, memoryKey: key) != nil { return true }
+        if await diskImage(for: value, budget: budget, memoryKey: key, turn: turn, still: still) != nil { return true }
+        if let still, !(await still()) { return false }
         guard let url = URL(string: value), let data = try? await download(url),
-              let prepared = await Task.detached(priority: .userInitiated, operation: {
+              let prepared = await DecodeGate.shared.run(turn, still: still, {
                   ImageCache.decodeDownsampled(data, budget: budget)
-              }).value else { return false }
+              }) else { return false }
         insert(prepared, for: value, data: data, memoryKey: key)
         return true
     }
@@ -498,6 +600,27 @@ struct LogoFit {
     }
 }
 
+/// The sizes pictures are decoded at, in points: each its largest on
+/// screen (focused, zoomed). One picture, one size, one decode — what is
+/// preloaded is what is shown.
+@MainActor
+enum PictureSize {
+    /// Portrait posters (one size everywhere), focused.
+    static var poster: CGFloat { FixedFocusMetrics.posterCard.height * (1 + FixedFocusMetrics.movingFocusLift) }
+    /// Landscape cards (the fixed box and a grown card, Continue Watching,
+    /// episode stills, collection tiles): the box lifted and zoomed for
+    /// its drift — the largest of them.
+    static var landscape: CGFloat {
+        FixedFocusMetrics.boxWidth * FixedFocusMetrics.boxScale * FixedFocusBoxView.driftZoom
+    }
+    /// A landscape card's logo.
+    static var cardLogo: CGFloat { landscape * 0.55 }
+    /// Full screen: the billboard, Details, the stage.
+    static var screen: CGFloat { StagePictureView.pictureSize.width }
+    /// The billboard's and Details' logo.
+    static var logo: CGFloat { TitleBlock.logoWidth }
+}
+
 struct RemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
@@ -599,25 +722,18 @@ struct RemoteImage: View {
         Self.pixelBudget(maxDimension: maxDimension, maxPixels: maxPixels)
     }
 
-    /// Coarse budget ladder (≈√2 steps). The raw budget derives from each call
-    /// site's point size, so the same poster URL rendered at 150/168/180 pt in
-    /// different rows produced three distinct memory keys — three decodes of
-    /// the same bytes, three slots in the A8's 96 MB cache. Rounding UP to a
-    /// shared rung keeps every consumer supersampled (never softer than asked)
-    /// while nearby sizes collapse into one decode.
-    private static let budgetLadder: [CGFloat] = [240, 340, 480, 680, 960, 1360, 1920, 2720, 3840]
-
+    /// The picture's longest side in pixels: its largest size on screen in
+    /// points, at the screen's scale — nothing more (decoding 1.5× larger and
+    /// rounding up to a ladder of sizes cost up to 3× the memory). Callers
+    /// use the few `PictureSize`s, so one picture has one decode.
     static func pixelBudget(maxDimension: CGFloat?, maxPixels: CGFloat?) -> CGFloat? {
-        let fromPoints = maxDimension.map { $0 * UIScreen.main.scale * 1.5 }
-        let raw: CGFloat?
+        let fromPoints = maxDimension.map { ($0 * UIScreen.main.scale).rounded(.up) }
         switch (fromPoints, maxPixels) {
-        case (let a?, let b?): raw = min(a, b)
-        case (let a?, nil): raw = a
-        case (nil, let b?): raw = b
-        case (nil, nil): raw = nil
+        case (let a?, let b?): return min(a, b)
+        case (let a?, nil): return a
+        case (nil, let b?): return b
+        case (nil, nil): return nil
         }
-        guard let raw else { return nil }
-        return budgetLadder.first { $0 >= raw } ?? raw
     }
 
     static func memoryKey(_ value: String, maxDimension: CGFloat?, maxPixels: CGFloat?) -> String {
@@ -679,9 +795,9 @@ struct RemoteImage: View {
         // view's own pixel budget (a poster card must not decode a full-res
         // backdrop-sized original).
         let budget = pixelBudget
-        guard let prepared = await Task.detached(priority: .userInitiated, operation: {
+        guard let prepared = await DecodeGate.shared.run(.now, {
             ImageCache.decodeDownsampled(data, budget: budget)
-        }).value else {
+        }) else {
             if !Task.isCancelled, image == nil { withAnimation(.easeOut(duration: 0.2)) { failed = true } }
             return
         }

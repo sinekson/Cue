@@ -104,17 +104,17 @@ struct FolderView: View {
         -> [(url: String?, maxDimension: CGFloat)] {
         let poster = { (item: MetaItem, size: CGFloat) in (url: item.poster ?? item.background, maxDimension: size) }
         if catalogs.count == 1, let only = catalogs.first {
-            return only.items.prefix(12).map { poster($0, FolderGridController.card.height) }
+            return only.items.prefix(12).map { poster($0, PictureSize.poster) }
         }
         guard let first = catalogs.first?.items else { return [] }
         var pictures: [(url: String?, maxDimension: CGFloat)] = []
         if let box = first.first {
-            pictures.append((box.background ?? box.poster, FixedFocusMetrics.boxWidth))
-            pictures.append((box.logo, FixedFocusMetrics.boxWidth * 0.55))
+            pictures.append((box.background ?? box.poster, PictureSize.landscape))
+            pictures.append((box.logo, PictureSize.cardLogo))
         }
-        pictures += first.dropFirst().prefix(4).map { poster($0, FixedFocusMetrics.height) }
+        pictures += first.dropFirst().prefix(4).map { poster($0, PictureSize.poster) }
         if catalogs.count > 1 {
-            pictures += catalogs[1].items.prefix(7).map { poster($0, FixedFocusMetrics.height) }
+            pictures += catalogs[1].items.prefix(7).map { poster($0, PictureSize.poster) }
         }
         return pictures
     }
