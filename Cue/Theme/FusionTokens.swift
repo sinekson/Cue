@@ -7,18 +7,13 @@ import SwiftUI
 
 /// Type roles at the 1920×1080 reference.
 enum FusionType {
-    static func heroTitle(_ f: AppFont) -> Font { .system(size: 62, weight: .bold, design: heading(f)) }
-    static func pageTitle(_ f: AppFont) -> Font { .system(size: 46, weight: .bold, design: heading(f)) }
-    static func cardTitle(_ f: AppFont) -> Font { .system(size: 22, weight: .semibold, design: body(f)) }
-    static func bodyText(_ f: AppFont) -> Font { .system(size: 23, weight: .regular, design: body(f)) }
-    static func metadata(_ f: AppFont) -> Font { .system(size: 20, weight: .medium, design: body(f)) }
-    static func button(_ f: AppFont) -> Font { .system(size: 23, weight: .semibold, design: body(f)) }
-    static func badge(_ f: AppFont) -> Font { .system(size: 15, weight: .bold, design: body(f)) }
-
-    private static func heading(_ f: AppFont) -> Font.Design { f.design }
-    private static func body(_ f: AppFont) -> Font.Design {
-        return f == .serif ? .default : f.design
-    }
+    static let heroTitle = Font.system(size: 62, weight: .bold)
+    static let pageTitle = Font.system(size: 46, weight: .bold)
+    static let cardTitle = Font.system(size: 22, weight: .semibold)
+    static let bodyText = Font.system(size: 23, weight: .regular)
+    static let metadata = Font.system(size: 20, weight: .medium)
+    static let button = Font.system(size: 23, weight: .semibold)
+    static let badge = Font.system(size: 15, weight: .bold)
 }
 
 // MARK: - Corner radius (§10)
@@ -34,12 +29,8 @@ enum FusionMotion {
 
     static let focusEntry = enter(0.22)
     static let focusMove = enter(0.21)
-    static let pageEnter = enter(0.32)
     static let toastEnter = enter(0.22)
     static let toastExit = exit(0.20)
-    static let controlsAppear = enter(0.18)
-    static let controlsDismiss = exit(0.26)
-    static let upNext = enter(0.30)
 
     static let toastVisibleSeconds: Double = 2.6
 }

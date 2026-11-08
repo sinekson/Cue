@@ -23,7 +23,6 @@ struct CueDropdownOption: Identifiable, Equatable {
 /// - `triggerWidth == nil` → settings-row style: `[icon]` title (+ subtitle)
 ///   … value ▾, full width. Used for TMDB language, Playback rows, etc.
 struct CueDropdown: View {
-    @EnvironmentObject private var theme: ThemeManager
     let title: String
     var subtitle: String? = nil
     var icon: String? = nil
@@ -47,13 +46,12 @@ struct CueDropdown: View {
             DropdownPicker(title: title, selection: selection, options: options,
                            onSelect: { onSelect($0); open = false },
                            onCancel: { open = false })
-                .environmentObject(theme)
+
         }
     }
 }
 
 private struct DropdownTrigger: View {
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let title: String
     var subtitle: String?
@@ -72,18 +70,18 @@ private struct DropdownTrigger: View {
                 if compact {
                     Text(title)
                         .font(.system(size: 17))
-                        .foregroundStyle(theme.palette.textTertiary)
+                        .foregroundStyle(CuePalette.textTertiary)
                     Text(value)
                         .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(theme.palette.textPrimary)
+                        .foregroundStyle(CuePalette.textPrimary)
                 } else {
                     Text(title)
                         .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(theme.palette.textPrimary)
+                        .foregroundStyle(CuePalette.textPrimary)
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
                             .font(.system(size: 20))
-                            .foregroundStyle(theme.palette.textSecondary)
+                            .foregroundStyle(CuePalette.textSecondary)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: 1000, alignment: .leading)
@@ -94,12 +92,12 @@ private struct DropdownTrigger: View {
             if !compact {
                 Text(value)
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(theme.palette.secondary)
+                    .foregroundStyle(CuePalette.secondary)
                     .padding(.top, 2)
             }
             Image(systemName: "chevron.down")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(theme.palette.textSecondary)
+                .foregroundStyle(CuePalette.textSecondary)
                 .padding(.top, compact ? 0 : 2)
         }
         .padding(.horizontal, compact ? CueSpacing.lg : CueSpacing.md)
@@ -136,7 +134,6 @@ private struct DropdownTrigger: View {
 
 /// The full-screen option list. Initial focus lands on the current selection.
 private struct DropdownPicker: View {
-    @EnvironmentObject private var theme: ThemeManager
     let title: String
     let selection: String
     let options: [CueDropdownOption]
@@ -163,7 +160,7 @@ private struct DropdownPicker: View {
     private var header: some View {
         Text(title)
             .font(.system(size: 40, weight: .bold))
-            .foregroundStyle(theme.palette.textPrimary)
+            .foregroundStyle(CuePalette.textPrimary)
             .frame(maxWidth: .infinity)
             .padding(.bottom, Self.headerFade)
             .background(alignment: .bottom) {
@@ -174,10 +171,10 @@ private struct DropdownPicker: View {
                     // above it on show. A background never affects the layout
                     // it is attached to, so the height only has to be "more
                     // than the title's distance from the top edge".
-                    theme.palette.background
+                    CuePalette.background
                         .frame(height: 1200)
                     LinearGradient(
-                        colors: [theme.palette.background, theme.palette.background.opacity(0)],
+                        colors: [CuePalette.background, CuePalette.background.opacity(0)],
                         startPoint: .top, endPoint: .bottom
                     )
                     .frame(height: Self.headerFade)
@@ -190,7 +187,7 @@ private struct DropdownPicker: View {
 
     var body: some View {
         ZStack {
-            theme.palette.background.ignoresSafeArea()
+            CuePalette.background.ignoresSafeArea()
             // `spacing: 0`: the gap that used to be here is now the header's
             // own bottom padding, which is what the fade is drawn over.
             VStack(spacing: 0) {
@@ -222,7 +219,6 @@ private struct DropdownPicker: View {
 }
 
 private struct DropdownOptionRow: View {
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let label: String
     let selected: Bool
@@ -231,12 +227,12 @@ private struct DropdownOptionRow: View {
         HStack {
             Text(label)
                 .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(theme.palette.textPrimary)
+                .foregroundStyle(CuePalette.textPrimary)
             Spacer()
             if selected {
                 Image(systemName: "checkmark")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(theme.palette.secondary)
+                    .foregroundStyle(CuePalette.secondary)
             }
         }
         .padding(.horizontal, CueSpacing.lg)
@@ -244,11 +240,11 @@ private struct DropdownOptionRow: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .fill(isFocused ? theme.palette.focusBackground : theme.palette.backgroundCard.opacity(0.5))
+                .fill(isFocused ? CuePalette.focusBackground : CuePalette.backgroundCard.opacity(0.5))
         )
         .overlay(
             RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .strokeBorder(isFocused ? theme.palette.focusRing : (selected ? theme.palette.secondary.opacity(0.5) : .clear),
+                .strokeBorder(isFocused ? CuePalette.focusRing : (selected ? CuePalette.secondary.opacity(0.5) : .clear),
                               lineWidth: isFocused ? 4 : 2)
         )
         .focusLift(CueFocus.row, isFocused)

@@ -69,7 +69,6 @@ struct SettingsCategoryPane: View {
 
 /// Settings → Developer: the frame rate, then the diagnostics — one page.
 struct DeveloperSettingsDetail: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @State private var syncLog = NuvioSyncDiagnostics.entries()
     @State private var showHealth = false
@@ -105,7 +104,7 @@ struct DeveloperSettingsDetail: View {
         }
         .fullScreenCover(isPresented: $showHealth) {
             AddonHealthView(onDone: { showHealth = false })
-                .environmentObject(theme)
+
                 .environmentObject(addonManager)
         }
     }
@@ -117,7 +116,6 @@ struct DeveloperSettingsDetail: View {
 /// a consistent, scannable icon "chip" (iOS-Settings style) — the core visual
 /// motif of the redesigned panes.
 struct SettingsIconTile: View {
-    @EnvironmentObject private var theme: ThemeManager
     let symbol: String
     var size: CGFloat = 48
 
@@ -125,25 +123,24 @@ struct SettingsIconTile: View {
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             .fill(
                 LinearGradient(
-                    colors: [theme.palette.secondary.opacity(0.32), theme.palette.secondary.opacity(0.16)],
+                    colors: [CuePalette.secondary.opacity(0.32), CuePalette.secondary.opacity(0.16)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                    .strokeBorder(theme.palette.secondary.opacity(0.35), lineWidth: 1)
+                    .strokeBorder(CuePalette.secondary.opacity(0.35), lineWidth: 1)
             )
             .overlay(
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.46, weight: .semibold))
-                    .foregroundStyle(theme.palette.secondary)
+                    .foregroundStyle(CuePalette.secondary)
             )
             .frame(width: size, height: size)
     }
 }
 
 struct SettingsDetailHeader: View {
-    @EnvironmentObject private var theme: ThemeManager
     let title: String
     let subtitle: String
 
@@ -153,15 +150,15 @@ struct SettingsDetailHeader: View {
                 // Accent spine — a bold vertical bar that anchors the title and
                 // sets the new, more editorial header rhythm.
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(theme.palette.secondary)
+                    .fill(CuePalette.secondary)
                     .frame(width: 6, height: 44)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.system(size: 40, weight: .heavy))
-                        .foregroundStyle(theme.palette.textPrimary)
+                        .foregroundStyle(CuePalette.textPrimary)
                     Text(subtitle)
                         .font(.system(size: 21))
-                        .foregroundStyle(theme.palette.textSecondary)
+                        .foregroundStyle(CuePalette.textSecondary)
                 }
             }
         }
@@ -172,7 +169,6 @@ struct SettingsDetailHeader: View {
 /// A grouped settings section rendered as a rounded card (title + optional
 /// subtitle + rows), matching the APK's `secondaryCardRadius` (18dp) groups.
 struct SettingsGroupCard<Content: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.colorScheme) private var scheme
     let title: String
     var subtitle: String? = nil
@@ -189,12 +185,12 @@ struct SettingsGroupCard<Content: View>: View {
                         Text(title.uppercased())
                             .font(.system(size: 18, weight: .bold))
                             .tracking(1.6)
-                            .foregroundStyle(theme.palette.secondary)
+                            .foregroundStyle(CuePalette.secondary)
                     }
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
                             .font(.system(size: 19))
-                            .foregroundStyle(theme.palette.textTertiary)
+                            .foregroundStyle(CuePalette.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -209,11 +205,11 @@ struct SettingsGroupCard<Content: View>: View {
             .padding(CueSpacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: theme.settingsCardRadius, style: .continuous)
-                    .fill(theme.palette.backgroundCard.opacity(0.32))
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(CuePalette.backgroundCard.opacity(0.32))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: theme.settingsCardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     // Hairline reads mid-grey on dark; in ATV light mode that
                     // same grey is a heavy outline — use a soft dark line.
                     .strokeBorder(scheme == .light ? Color.black.opacity(0.10)
@@ -227,7 +223,6 @@ struct SettingsGroupCard<Content: View>: View {
 /// A tappable settings row with strong focus, matching the Android SettingsActionRow.
 struct SettingsActionRow: View {
     @ObservedObject private var perf = PerformanceSettingsStore.shared
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let title: String
     var subtitle: String?
@@ -242,12 +237,12 @@ struct SettingsActionRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
+                    .foregroundStyle(CuePalette.textPrimary)
                     .lineLimit(1)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 20))
-                        .foregroundStyle(theme.palette.textSecondary)
+                        .foregroundStyle(CuePalette.textSecondary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 1000, alignment: .leading)
@@ -257,11 +252,11 @@ struct SettingsActionRow: View {
             if let value, !value.isEmpty {
                 Text(value)
                     .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(theme.palette.secondary)
+                    .foregroundStyle(CuePalette.secondary)
             }
             Image(systemName: "chevron.right")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(isFocused ? theme.palette.textSecondary : theme.palette.textTertiary)
+                .foregroundStyle(isFocused ? CuePalette.textSecondary : CuePalette.textTertiary)
         }
         .padding(.horizontal, CueSpacing.md)
         .padding(.vertical, CueSpacing.md)
@@ -278,21 +273,19 @@ struct SettingsActionRow: View {
 /// rows read as one grouped list, and an accent-tinted, ringed highlight when
 /// focused. No per-row scale — the fill/ring alone carries focus.
 struct SettingsRowBackground: View {
-    @EnvironmentObject private var theme: ThemeManager
     let isFocused: Bool
 
     var body: some View {
         RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-            .fill(isFocused ? theme.palette.focusBackground : Color.clear)
+            .fill(isFocused ? CuePalette.focusBackground : Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                    .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3)
+                    .strokeBorder(isFocused ? CuePalette.focusRing : .clear, lineWidth: 3)
             )
     }
 }
 
 struct DetailScaffold<Content: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
     let title: String
     let subtitle: String
     @ViewBuilder let content: Content
@@ -314,13 +307,12 @@ struct DetailScaffold<Content: View>: View {
 }
 
 struct CueSwitch: View {
-    @EnvironmentObject private var theme: ThemeManager
     let isOn: Bool
 
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? theme.palette.secondary : Color.primary.opacity(0.18))
+                .fill(isOn ? CuePalette.secondary : Color.primary.opacity(0.18))
                 .frame(width: 64, height: 36)
             Circle()
                 // The knob has to read against TWO different tracks: the dark
@@ -329,45 +321,11 @@ struct CueSwitch: View {
                 // — the "toggles are invisible with the white colour" report.
                 // `onSecondary` is the accent's own ink (dark on White), so the
                 // knob contrasts when on; white is right for the dark off-track.
-                .fill(isOn ? theme.palette.onSecondary : .white)
+                .fill(isOn ? CuePalette.onSecondary : .white)
                 .frame(width: 28, height: 28)
                 .padding(4)
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isOn)
-    }
-}
-
-private struct ToggleCardLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let subtitle: String
-    let isOn: Bool
-
-    var body: some View {
-        HStack(spacing: CueSpacing.lg) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(theme.palette.textPrimary)
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 18))
-                        .foregroundStyle(theme.palette.textSecondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer()
-            CueSwitch(isOn: isOn)
-        }
-        .padding(.horizontal, CueSpacing.lg)
-        .frame(minHeight: 68)
-        .background(
-            RoundedRectangle(cornerRadius: theme.settingsRowRadius, style: .continuous)
-                .fill(isFocused ? theme.palette.focusBackground : theme.palette.backgroundCard.opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.settingsRowRadius, style: .continuous)
-                .strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 4)
-        )
     }
 }
 
@@ -452,7 +410,6 @@ private struct AboutLicensesPage: View {
 }
 
 private struct AddonHealthView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     let onDone: () -> Void
 
@@ -537,7 +494,6 @@ private struct AddonHealthView: View {
 }
 
 private struct AddonHealthRow: View {
-    @EnvironmentObject private var theme: ThemeManager
     let result: AddonManager.HealthResult
     let onDisable: () -> Void
 
@@ -553,7 +509,7 @@ private struct AddonHealthRow: View {
                 HStack(spacing: CueSpacing.sm) {
                     Text(result.name)
                         .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(theme.palette.textPrimary)
+                        .foregroundStyle(CuePalette.textPrimary)
                     Text(result.status.label)
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(color)
@@ -563,11 +519,11 @@ private struct AddonHealthRow: View {
                 }
                 Text(detail)
                     .font(.system(size: 18))
-                    .foregroundStyle(theme.palette.textSecondary)
+                    .foregroundStyle(CuePalette.textSecondary)
                     .lineLimit(2)
                 Text(result.manifestURL)
                     .font(.system(size: 16).monospaced())
-                    .foregroundStyle(theme.palette.textTertiary)
+                    .foregroundStyle(CuePalette.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -581,7 +537,7 @@ private struct AddonHealthRow: View {
         }
         .padding(.horizontal, CueSpacing.lg)
         .padding(.vertical, CueSpacing.sm)
-        .background(theme.palette.backgroundCard.opacity(0.5), in: RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous))
+        .background(CuePalette.backgroundCard.opacity(0.5), in: RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous))
     }
 
     private var detail: String {
@@ -613,8 +569,8 @@ private struct AddonHealthRow: View {
     private var color: Color {
         switch result.status {
         case .ok: return CuePrimitives.success
-        case .slow: return theme.palette.secondary
-        case .disabled: return theme.palette.textTertiary
+        case .slow: return CuePalette.secondary
+        case .disabled: return CuePalette.textTertiary
         case .failed: return CuePrimitives.error
         }
     }

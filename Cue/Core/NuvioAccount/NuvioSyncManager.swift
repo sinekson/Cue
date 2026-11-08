@@ -37,7 +37,6 @@ final class NuvioSyncManager: ObservableObject {
     /// (`nuvio_tvos_preferences`): player, TMDB, and theme settings.
     private let playerSettings: PlayerSettingsStore?
     private let tmdbSettings: TMDBSettingsStore?
-    private let themeManager: ThemeManager?
 
     private var cancellables = Set<AnyCancellable>()
     private var pushAddonsTask: Task<Void, Never>?
@@ -127,28 +126,11 @@ final class NuvioSyncManager: ObservableObject {
     /// the run has to remember to upload the grown library itself.
     private var libraryGrewDuringSync = false
 
-
     /// The account has no `sync_delete_profile_data` (learned from a PGRST202
     /// answer this session), so profile deletions fall back to the legacy
     /// `p_deleted_profile_ids` hint on the profile push.
     private var profileDeleteRPCMissing = false
     private var legacyProfileDeleteHintMissing = false
-
-    struct PendingSyncCounts {
-        let progressDeletes: Int
-        let libraryDeletes: Int
-        let watchedDeletes: Int
-
-        var total: Int { progressDeletes + libraryDeletes + watchedDeletes }
-    }
-
-    var pendingSyncCounts: PendingSyncCounts {
-        PendingSyncCounts(
-            progressDeletes: loadPendingDeletes(profile: pid).count,
-            libraryDeletes: loadPendingLibraryDeletes(profile: pid).count,
-            watchedDeletes: loadPendingWatchedDeletes(profile: pid).count
-        )
-    }
 
     // MARK: - Seeded flags
     // "Has this profile ever had <kind> data on the account?" — persisted, set
@@ -182,7 +164,6 @@ final class NuvioSyncManager: ObservableObject {
     /// The active profile scopes all personal-data sync. Addons stay global
     /// (profile 1) so the same sources are available on every profile.
     private var pid: Int { profileStore.activeProfileID }
-
 
     /// Thrown when the active profile changes part-way through a sync run.
     ///
@@ -525,8 +506,7 @@ final class NuvioSyncManager: ObservableObject {
         collectionsStore: CollectionsStore,
         homeCatalogSettings: HomeCatalogSettingsStore,
         playerSettings: PlayerSettingsStore? = nil,
-        tmdbSettings: TMDBSettingsStore? = nil,
-        themeManager: ThemeManager? = nil
+        tmdbSettings: TMDBSettingsStore? = nil
     ) {
         self.account = account
         self.addonManager = addonManager
@@ -538,7 +518,6 @@ final class NuvioSyncManager: ObservableObject {
         self.homeCatalogSettings = homeCatalogSettings
         self.playerSettings = playerSettings
         self.tmdbSettings = tmdbSettings
-        self.themeManager = themeManager
 
         // Sync whenever we transition into a signed-in state.
         account.$authState
@@ -1020,9 +999,7 @@ final class NuvioSyncManager: ObservableObject {
             try ensureProfile(runProfile)
             // The first cycle for a profile uploads EVERYTHING (that is how a
             // device's local data merges into the account); afterwards only
-            // what changed locally, by each store's dirty flag. Every merge
-            // from a tracker marks its store dirty (`requestSyncPush`), so
-            // nothing that used to ride the unconditional tail push is lost.
+            // what changed locally, by each store's dirty flag.
             if firstFullSync || profilesDirty { try await pushProfiles() }
             if firstFullSync || isDirty("addons", profile: runProfile) {
                 try await pushAddons(profile: runProfile)
@@ -1196,14 +1173,8 @@ final class NuvioSyncManager: ObservableObject {
         if let first = errors.first { throw first }
     }
 
-    func pullAccountUpdates() async {
-        NuvioSyncDiagnostics.record(.info, area: "Nuvio", "Pull updates requested; running full two-way sync for profile \(pid).")
-        await syncNow()
-    }
-
     func pushThisDevice() async {
-        // Mid-film this is the Stremio tick's "we merged something" nudge,
-        // thirty seconds apart at most — the light pass carries it.
+        // Mid-film the light pass carries it.
         if Self.playbackActive {
             await syncLight(reason: "device push during playback")
             return
@@ -1764,8 +1735,7 @@ final class NuvioSyncManager: ObservableObject {
     /// The key an account row is stored under on this device.
     ///
     /// The account names an episode `<content_id>_s<S>e<E>`; everything local
-    /// — the player's saves, the details page, the Trakt and SIMKL merges —
-    /// names it by its add-on video id. Kept under the account's key, a pulled
+    /// — the player's saves, the details page — names it by its add-on video id. Kept under the account's key, a pulled
     /// episode was invisible to all of them: the player saved beside it under
     /// `tt…:2:2`, the next pull dropped that save as absent from the server,
     /// and a resume from the details page started from zero.
@@ -1865,14 +1835,11 @@ final class NuvioSyncManager: ObservableObject {
         let accountKeyByLocalID = converted.accountKeyByLocalID
         // NOTE: no clear-horizon filter here, deliberately. An earlier version
         // dropped every account row older than the watch-history clear AND
-        // queued its deletion, to converge the account after a Trakt flood.
-        // That was a permanent rule applied to every pull, so it also deleted
-        // legitimate rows that arrive with an older timestamp — anything
-        // imported from Stremio carries its ORIGINAL watch time — which is
-        // exactly why Stremio Continue Watching stopped syncing. The clear
+        // queued its deletion. That was a permanent rule applied to every
+        // pull, so it also deleted legitimate rows that arrive with an older
+        // timestamp (an import carries its ORIGINAL watch time). The clear
         // itself already deletes the account rows (clearWatchHistoryEverywhere),
-        // so nothing here needs to re-litigate it. The horizon still filters
-        // TRAKT re-imports, which is what it was built for.
+        // so nothing here needs to re-litigate it.
         // Rows for a show the user REMOVED here (and has not watched since)
         // are still on the account — the delete lost a race with a push, was
         // rejected, or the row is keyed the way another client keys it. The
@@ -2233,8 +2200,7 @@ final class NuvioSyncManager: ObservableObject {
         // was missing.
         guard !items.isEmpty || pulledLibraryProfiles.contains(profile) || !pendingDeletes.isEmpty
         else { return }
-        // Built AND serialized off the main actor: a Trakt-watchlist-sized
-        // library is thousands of dictionary rows, and this ran on @MainActor
+        // Built AND serialized off the main actor: a large library is thousands of dictionary rows, and this ran on @MainActor
         // every push tick.
         let clientID = self.clientID
         let payload = try await Task.detached(priority: .utility) {
@@ -3255,9 +3221,8 @@ final class NuvioSyncManager: ObservableObject {
         /// Whole collections switched off account-wide.
         var globalHiddenCollectionIDs: [String]?
         /// When the user last cleared watch history, synced so EVERY install
-        /// filters Trakt re-imports and account pulls by the same horizon.
-        /// Container-local only, this let any other install of the app flood
-        /// the account with the full Trakt history the user had cleared.
+        /// filters account pulls by the same horizon. Container-local only,
+        /// this let any other install push the cleared history back up.
         var watchHistoryClearedAt: Date?
     }
 
@@ -3317,7 +3282,7 @@ final class NuvioSyncManager: ObservableObject {
     /// stores. Best-effort: any decode failure leaves local settings untouched.
     private func pullAppPreferences(profile: Int) async {
         guard account.accessToken != nil, pid == profile,
-              let playerSettings, let tmdbSettings, let themeManager else { return }
+              let playerSettings, let tmdbSettings else { return }
         // A sync already PAST its "flush dirty first" step when the user picks a
         // theme would fetch the pre-change blob and apply it here — reverting
         // the pick, and then the debounced push would ship the REVERTED value,
@@ -3395,12 +3360,12 @@ final class NuvioSyncManager: ObservableObject {
     /// it all back so the other apps' features (Android's, badges) survive intact.
     private func pushAppPreferences(profile: Int) async {
         guard account.accessToken != nil, pid == profile,
-              let playerSettings, let tmdbSettings, let themeManager else { return }
+              let playerSettings, let tmdbSettings else { return }
         let generationAtStart = appPrefsGeneration
         let snapshot = AppPreferencesSnapshot(
             player: playerSettings.settings,
             tmdb: tmdbSettings.settings,
-            theme: themeManager.snapshot,
+            theme: .fixed,
             home: homeCatalogSettings.presentationSnapshot,
             // No copy of the collections (they sync through their own row),
             // just THIS profile's opt-outs.

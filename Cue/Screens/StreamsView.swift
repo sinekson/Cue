@@ -58,10 +58,6 @@ final class StreamsViewModel: ObservableObject {
         self.video = video
     }
 
-    var streamID: String {
-        video?.id ?? meta.id
-    }
-
     /// The id actually sent to stream addons — resolved once, then reused so
     /// the cache key and every fetch agree. Two normalizations, both so a
     /// resumed / manually-played title lands on an id Cinemeta/Comet/Torrentio

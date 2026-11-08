@@ -1,8 +1,6 @@
 import Foundation
 
 /// Lock-guarded property wrapper for cross-thread flags and counters.
-/// (Extracted from the retired DVRemuxer.swift — the sample engine and
-/// thumbnailer share it.)
 @propertyWrapper
 final class Atomic<Value>: @unchecked Sendable {
     private let lock = NSLock()

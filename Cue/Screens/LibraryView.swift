@@ -7,7 +7,6 @@ private enum LibraryFilter: String, CaseIterable {
 }
 
 struct LibraryView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var progressStore: ProgressStore
 
@@ -137,12 +136,12 @@ struct LibraryView: View {
     private func header(countLine: String?) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text("Library")
-                .font(FusionType.pageTitle(theme.font))
-                .foregroundStyle(theme.palette.textPrimary)
+                .font(FusionType.pageTitle)
+                .foregroundStyle(CuePalette.textPrimary)
             if let countLine {
                 Text(countLine)
-                    .font(FusionType.metadata(theme.font))
-                    .foregroundStyle(theme.palette.textTertiary)
+                    .font(FusionType.metadata)
+                    .foregroundStyle(CuePalette.textTertiary)
                     .padding(.leading, CueSpacing.sm)
             }
             Spacer()

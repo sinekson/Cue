@@ -46,12 +46,6 @@ enum TraktService {
 
     // MARK: Public lists (collection sources)
 
-    struct PublicListInfo: Hashable {
-        let traktListId: Int64
-        let title: String
-        let description: String?
-    }
-
     /// One raw item from a public list — enough to build a MetaItem once the
     /// caller resolves poster art (Trakt's own image extension needs VIP).
     struct PublicListItem: Hashable {

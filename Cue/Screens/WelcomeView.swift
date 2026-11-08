@@ -7,7 +7,6 @@ import SwiftUI
 ///
 /// Shown once, before anything else, and only when nobody is signed in.
 struct WelcomeView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject var account: NuvioAccountManager
     @ObservedObject var addonManager: AddonManager
     let onFinished: () -> Void
@@ -54,11 +53,11 @@ struct WelcomeView: View {
     private var addonOffer: some View {
         VStack(spacing: CueSpacing.lg) {
             Text("Add add-ons?")
-                .font(FusionType.pageTitle(theme.font))
-                .foregroundStyle(theme.palette.textPrimary)
+                .font(FusionType.pageTitle)
+                .foregroundStyle(CuePalette.textPrimary)
             Text("Add-ons are where Cue gets its catalogs, artwork and streams. Cinemeta and OpenSubtitles are already installed. You can add more from your phone now — no typing on the remote — or any time from Settings → Add-ons.")
-                .font(FusionType.bodyText(theme.font))
-                .foregroundStyle(theme.palette.textSecondary)
+                .font(FusionType.bodyText)
+                .foregroundStyle(CuePalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 900)
                 .fixedSize(horizontal: false, vertical: true)

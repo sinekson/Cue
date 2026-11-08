@@ -641,8 +641,6 @@ enum TMDBService {
         }
     }
 
-    struct BrandInfo { let name: String; let logoURL: String? }
-
     /// A title's picture for the billboard and Details: TMDB's main backdrop
     /// (TMDB's own choice, by votes), the original file. (Tried: one of
     /// several at random each time — the others too often looked bad, by
@@ -1058,7 +1056,6 @@ enum TMDBService {
         let id: String        // TMDB video id
         let name: String
         let youtubeKey: String
-        var thumbnailURL: String { "https://img.youtube.com/vi/\(youtubeKey)/hqdefault.jpg" }
     }
 
     /// Everything the Detail screen pulls from TMDB in one call.

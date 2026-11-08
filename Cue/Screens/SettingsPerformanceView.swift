@@ -3,7 +3,6 @@ import SwiftUI
 /// Settings → Developer, second half: the diagnostics (player HUD, the LAN
 /// log).
 struct PerformanceSettings: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var store = PerformanceSettingsStore.shared
 
     private var s: Binding<PerformanceSettingsStore.Settings> {
@@ -44,7 +43,7 @@ struct PerformanceSettings: View {
 
             Text("These switches are per-device and don't sync to your account.")
                 .font(.system(size: 18))
-                .foregroundStyle(theme.palette.textTertiary)
+                .foregroundStyle(CuePalette.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -72,7 +71,6 @@ private struct PerfToggleRow: View {
 /// accessory (switch, or nothing). Flat until focused, matching the other
 /// redesigned settings panes.
 private struct PerfRowLabel<Accessory: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let icon: String
     let title: String
@@ -85,10 +83,10 @@ private struct PerfRowLabel<Accessory: View>: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
+                    .foregroundStyle(CuePalette.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 20))
-                    .foregroundStyle(theme.palette.textSecondary)
+                    .foregroundStyle(CuePalette.textSecondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 1000, alignment: .leading)
@@ -104,7 +102,6 @@ private struct PerfRowLabel<Accessory: View>: View {
         .background(SettingsRowBackground(isFocused: isFocused))
     }
 }
-
 
 /// Settings → Developer, first half: the FPS overlay.
 struct MeasureSettings: View {

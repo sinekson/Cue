@@ -6,36 +6,16 @@ import UIKit
 
 /// Reclaims the player's scratch space in `tmp/` at launch.
 ///
-/// The DV remuxer writes its fMP4 segments to `tmp/dv-remux-<uuid>/` and
-/// deletes the directory when the session ends. That deletion is best-effort
-/// by construction — it runs as the player is being dismissed, and a remux
-/// session is exactly the workload most likely to get the app jetsammed on a
-/// 3 GB box, so the process is often gone before the delete completes. Every
-/// time that happens the directory is orphaned with no owner left to remove
-/// it: found on a real Apple TV 4K (1st gen) as **3.2 GB across 15 leaked
-/// directories**, three of them ~1 GB each.
-///
-/// Nothing else ever cleaned them up. tvOS does purge `tmp/` under storage
-/// pressure, but only once the box is nearly full — long after the app has
-/// been swapping, stuttering and getting killed. So the sweep has to be ours,
-/// and it has to run at LAUNCH: that is the one moment we know for certain
-/// that no remuxer owns any of these directories.
-///
-/// CFNetwork's response spool files (`tmp/CFNetworkDownload_*.tmp`) leak the
-/// same way and for the same reason — the app dies with requests in flight —
-/// so they are swept on the same pass (179 MB / 12,231 files on that device).
-///
-/// The hybrid disk cache's file (`Caches/hybrid-cache/current.bin`) is the
-/// third case, and the largest of them: `MediaCacheServer.endSession()` deletes
-/// it on player teardown, but teardown only runs on a normal exit. A crash, a
-/// jetsam kill, or the user force-quitting mid-film leaves TENS OF GIGABYTES
-/// stranded, and nothing would ever remove it — the next `beginSession` only
-/// clears the file if a cache session actually starts, so turning the feature
-/// off (or never playing a cacheable stream again) strands it permanently.
+/// The engine's disk window (`tmp/aether-*`, up to 6 GB a session) is deleted
+/// when the player closes, but a jetsam kill or a force-quit mid-film leaves
+/// it behind with no owner. tvOS only purges `tmp/` once the box is nearly
+/// full, so the sweep is ours, at launch: the one moment no session can own
+/// any of it. CFNetwork's response spools (`tmp/CFNetworkDownload_*.tmp`)
+/// leak the same way and go on the same pass.
 enum PlayerTempSweep {
-    /// The engine's disk window goes here too: up to 6 GB a session, and its
-    /// own sweeps wait hours, to be sure a directory isn't another session's.
-    private static let scratchPrefixes = ["dv-remux-", "aether-"]
+    /// The engine's own sweeps wait hours, to be sure a directory isn't
+    /// another session's.
+    private static let scratchPrefixes = ["aether-"]
     private static let spoolPrefix = "CFNetworkDownload_"
 
     /// Delete every orphaned player scratch directory and network spool file.
@@ -47,34 +27,9 @@ enum PlayerTempSweep {
         Task.detached(priority: .utility) { sweep() }
     }
 
-    /// Delete a hybrid-cache file orphaned by a kill. Launch is the one moment
-    /// no session can own it: `MediaCacheServer` creates its file inside
-    /// `beginSession`, which cannot have run yet.
-    private static func sweepHybridCache() {
-        let fm = FileManager.default
-        guard let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = caches.appendingPathComponent("hybrid-cache", isDirectory: true)
-        guard let entries = try? fm.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]
-        ), !entries.isEmpty else { return }
-        var reclaimed: Int64 = 0
-        for entry in entries {
-            reclaimed += Int64(
-                (try? entry.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?
-                    .totalFileAllocatedSize ?? 0
-            )
-            try? fm.removeItem(at: entry)
-        }
-        if reclaimed > 0 {
-            NSLog("[CueSweep] reclaimed %.2f GB of orphaned hybrid cache at launch",
-                  Double(reclaimed) / 1e9)
-        }
-    }
-
     /// The sweep itself. Synchronous — call it directly only from a background
     /// context (or a test).
     static func sweep() {
-        sweepHybridCache()
         let fm = FileManager.default
         let tmp = fm.temporaryDirectory
         guard let entries = try? fm.contentsOfDirectory(
@@ -246,21 +201,6 @@ enum PlayerProbe {
         lock.lock()
         notes.removeAll { $0.key == key }
         notes.append((key, v, Date()))
-        lock.unlock()
-    }
-
-    /// Drop every counter and note. Called when a new playback session starts
-    /// so the numbers describe THIS title, not the afternoon.
-    nonisolated static func resetHealth(keeping prefix: String? = nil) {
-        guard ProbeGate.isEnabled else { return }
-        lock.lock()
-        if let prefix {
-            counters = counters.filter { $0.key.hasPrefix(prefix) }
-            counterOrder = counterOrder.filter { $0.hasPrefix(prefix) }
-            notes = notes.filter { $0.key.hasPrefix(prefix) }
-        } else {
-            counters = [:]; counterOrder = []; notes = []
-        }
         lock.unlock()
     }
 
@@ -558,12 +498,9 @@ final class ColorProbeServer {
 /// - **mem** — footprint in MB, app-wide and continuous. The existing memory
 ///   line only runs while the player is open, which is why the staircase that
 ///   ended in the panic was invisible.
-/// - **vms** — live `PlayerViewModel` count. Leaked players are what fills the
-///   memory; the leak probe already counts them but only shouted into NSLog.
 /// - **state** — foreground / inactive / background, tracked from the lifecycle
 ///   notifications rather than read from `UIApplication`, because
 ///   `applicationState` is main-thread-only and this runs on a utility queue.
-/// - **cache** — the hybrid cache's own status line (file size, window, pool).
 ///
 /// Deliberately cheap and deliberately boring: two timers, a few lock-guarded
 /// reads, a bounded ring, no retained references to anything it observes, and
@@ -573,7 +510,7 @@ enum FlightRecorder {
     /// `plistlib.load(open(prefs))["dev.flight"]`
     private static let key = "dev.flight"
     /// ~40 minutes at the tick below. Bounded so it can never grow without
-    /// limit — the same discipline `dvTrail` learned the hard way.
+    /// limit.
     private static let capacity = 240
     private static let tick: TimeInterval = 10
     /// How often the main queue stamps its heartbeat. Finer than the tick so a

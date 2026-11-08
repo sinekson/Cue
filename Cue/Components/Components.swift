@@ -248,18 +248,6 @@ final class ImageCache: @unchecked Sendable {
     private let bytesWrittenSinceTrim = Atomic<Int>(wrappedValue: 0)
     private static let trimRearmBytes = 64 << 20
 
-    /// Release every decoded image held in RAM.
-    ///
-    /// Invisible: anything still on screen re-decodes from the disk layer,
-    /// which is the whole reason that layer exists. Called when playback
-    /// starts, because the player's peak is the app's peak — a read-ahead
-    /// buffer (up to 400 MB on a 3 GB box), the decoder, and the Metal
-    /// surfaces all arrive at once, and until now a browsing session's worth
-    /// of decoded posters (up to 160 MB) was still being held underneath it.
-    /// tvOS does not reliably deliver a memory warning before jetsam on a
-    /// spike that fast, so waiting for one is not a strategy.
-    func dropDecoded() { memory.removeAllObjects() }
-
     private func insertMemory(_ image: UIImage, for key: String) {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale) * 4
         memory.setObject(image, forKey: key as NSString, cost: cost)
@@ -723,7 +711,6 @@ struct PlaceholderShimmer: UIViewRepresentable {
 // MARK: - Poster card
 
 struct PosterCard: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var layout: HomeCatalogSettingsStore
@@ -781,7 +768,7 @@ struct PosterCard: View {
                 }
             }
             .frame(width: cardWidth, height: cardHeight)
-            .background(theme.palette.backgroundCard)
+            .background(CuePalette.backgroundCard)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             // Fusion (§13.4): dim unfocused cards a touch so the focused one
             // pops. This USED to be .saturation(0.94) + .brightness(-0.05) — two
@@ -805,7 +792,7 @@ struct PosterCard: View {
             .overlay(
                 // Stremio marks focus with a thicker purple border.
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(showsFocusRing ? theme.palette.focusRing : .clear,
+                    .strokeBorder(showsFocusRing ? CuePalette.focusRing : .clear,
                                   lineWidth: 3)
             )
             // FOCUSED card only. A drop shadow is an offscreen render pass per
@@ -829,7 +816,6 @@ struct PosterCard: View {
 }
 
 struct ProgressStrip: View {
-    @EnvironmentObject private var theme: ThemeManager
     let fraction: Double
 
     var body: some View {
@@ -840,7 +826,7 @@ struct ProgressStrip: View {
         Capsule().fill(Color.white.opacity(0.35))
             .overlay(alignment: .leading) {
                 Capsule()
-                    .fill(theme.palette.secondary)
+                    .fill(CuePalette.secondary)
                     .scaleEffect(x: CGFloat(min(max(fraction, 0.02), 1)), y: 1, anchor: .leading)
             }
             .frame(height: 6)
@@ -1147,7 +1133,6 @@ private struct GlassSurface<S: Shape>: ViewModifier {
 /// sibling below the button — the way the real tvOS home screen and TV app do
 /// it — keeps the poster a clean tile and the title a free-floating label.
 struct ATVCardCaption: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     let title: String
     var subtitle: String? = nil
@@ -1163,13 +1148,13 @@ struct ATVCardCaption: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(FusionType.cardTitle(theme.font))
-                .foregroundStyle(theme.palette.textPrimary)
+                .font(FusionType.cardTitle)
+                .foregroundStyle(CuePalette.textPrimary)
                 .lineLimit(1)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(FusionType.metadata(theme.font))
-                    .foregroundStyle(theme.palette.textSecondary)
+                    .font(FusionType.metadata)
+                    .foregroundStyle(CuePalette.textSecondary)
                     .lineLimit(1)
             }
         }
@@ -1243,7 +1228,6 @@ struct GridPosterCell: View {
 /// Card-button chrome: the native tvOS `CardButtonStyle` — the raised platter
 /// with the trackpad tilt/wiggle parallax, exactly like home-screen icons.
 private struct MediaCardButtonStyleModifier: ViewModifier {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     var onPressChanged: ((Bool) -> Void)?
 
@@ -1384,38 +1368,6 @@ extension View {
 }
 
 // MARK: - Badges & meta
-
-struct ContentRatingBadge: View {
-    let rating: String
-
-    var body: some View {
-        Text(rating)
-            .font(.system(size: 18, weight: .heavy))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(.white.opacity(0.5), lineWidth: 1)
-            )
-    }
-}
-
-struct MetaBadge: View {
-    let text: String
-    var tint: Color = .primary.opacity(0.14)
-    var textColor: Color = .primary
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(textColor)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 5)
-            .background(tint, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
 
 /// Small "watched" checkmark chip shown on poster/landscape cards.
 struct WatchedBadge: View {
@@ -1683,75 +1635,6 @@ private struct RatingMark: View {
     }
 }
 
-struct ImdbBadge: View {
-    let rating: String
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Text("IMDb")
-                .font(.system(size: 18, weight: .heavy))
-                .foregroundStyle(.black)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(CuePrimitives.imdb, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            Text(rating)
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(.primary)
-        }
-    }
-}
-
-// MARK: - Hero gradients (ported from Cue's ModernHeroGradientLayer)
-
-struct HeroGradient: View {
-    let background: Color
-    var fullBleed: Bool = false
-    @Environment(\.colorScheme) private var scheme
-    private var isLight: Bool { scheme == .light }
-
-    var body: some View {
-        ZStack {
-            LinearGradient(
-                stops: isLight
-                    ? [
-                        .init(color: background, location: 0),
-                        .init(color: background.opacity(0.86), location: 0.20),
-                        .init(color: background.opacity(0.50), location: 0.42),
-                        .init(color: background.opacity(0.12), location: 0.62),
-                        .init(color: .clear, location: 0.78)
-                    ]
-                    : [
-                        .init(color: background, location: 0),
-                        .init(color: background.opacity(0.86), location: 0.22),
-                        .init(color: background.opacity(0.56), location: 0.46),
-                        .init(color: background.opacity(0.16), location: 0.76),
-                        .init(color: .clear, location: 1)
-                    ],
-                startPoint: .leading,
-                endPoint: UnitPoint(x: fullBleed ? 0.65 : 0.45, y: 0.5)
-            )
-            LinearGradient(
-                stops: isLight
-                    ? [
-                        .init(color: .clear, location: 0),
-                        .init(color: .clear, location: 0.38),
-                        .init(color: background.opacity(0.40), location: 0.62),
-                        .init(color: background.opacity(0.80), location: 0.85),
-                        .init(color: background, location: 1)
-                    ]
-                    : [
-                        .init(color: .clear, location: 0),
-                        .init(color: background.opacity(0.25), location: 0.4),
-                        .init(color: background.opacity(0.65), location: 0.75),
-                        .init(color: background, location: 1)
-                    ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-    }
-}
-
 // MARK: - Loading / error states
 
 /// An invisible 1pt focusable. Put one in any state that would otherwise have
@@ -1769,7 +1652,6 @@ struct FocusAnchor: View {
 }
 
 struct CueLoadingView: View {
-    @EnvironmentObject private var theme: ThemeManager
     var label: String = "Loading"
     /// Hold focus while this is the only thing on screen (see FocusAnchor).
     var holdsFocus: Bool = false
@@ -1780,14 +1662,13 @@ struct CueLoadingView: View {
             LoadingSpinner()
             Text(label)
                 .font(.system(size: 24))
-                .foregroundStyle(theme.palette.textSecondary)
+                .foregroundStyle(CuePalette.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 struct CueEmptyState: View {
-    @EnvironmentObject private var theme: ThemeManager
     let icon: String
     let title: String
     let message: String
@@ -1801,13 +1682,13 @@ struct CueEmptyState: View {
             if holdsFocus { FocusAnchor() }
             Image(systemName: icon)
                 .font(.system(size: 60))
-                .foregroundStyle(theme.palette.textTertiary)
+                .foregroundStyle(CuePalette.textTertiary)
             Text(title)
                 .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(theme.palette.textPrimary)
+                .foregroundStyle(CuePalette.textPrimary)
             Text(message)
                 .font(.system(size: 23))
-                .foregroundStyle(theme.palette.textSecondary)
+                .foregroundStyle(CuePalette.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 700)
         }
@@ -1816,25 +1697,6 @@ struct CueEmptyState: View {
 }
 
 // MARK: - Formatting helpers
-
-enum TimeFormat {
-    static func clock(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
-        return String(format: "%d:%02d", m, s)
-    }
-
-    static func signedDelta(_ seconds: Double) -> String {
-        let sign = seconds < 0 ? "-" : "+"
-        return sign + clock(abs(seconds))
-    }
-}
 
 // MARK: - Toasts (§54)
 
@@ -1865,7 +1727,6 @@ final class ToastCenter: ObservableObject {
 /// Lower-center toast (§54): dark glass pill, white text, optional accent icon.
 /// Never takes focus. Hosted at the app root.
 struct FusionToastHost: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var center = ToastCenter.shared
 
     var body: some View {
@@ -1876,10 +1737,10 @@ struct FusionToastHost: View {
                     if let icon = center.icon {
                         Image(systemName: icon)
                             .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(theme.palette.secondary)
+                            .foregroundStyle(CuePalette.secondary)
                     }
                     Text(message)
-                        .font(FusionType.button(theme.font))
+                        .font(FusionType.button)
                         .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                 }
                 .padding(.horizontal, CueSpacing.xl)
@@ -1927,40 +1788,6 @@ extension View {
             let value = await TMDBService.contentRating(imdbID: item.id, type: item.type)
             guard !Task.isCancelled else { return }
             rating.wrappedValue = value
-        }
-    }
-}
-
-/// A small pill — Search's recent searches, a folder's tabs: a faint
-/// platter (lighter when `selected`), the light platter with dark text when
-/// focused, a little lift.
-struct PillButtonStyle: ButtonStyle {
-    var quiet = false
-    var selected = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        Pill(configuration: configuration, quiet: quiet, selected: selected)
-    }
-
-    private struct Pill: View {
-        @Environment(\.isFocused) private var isFocused
-        let configuration: ButtonStyle.Configuration
-        let quiet: Bool
-        let selected: Bool
-
-        var body: some View {
-            configuration.label
-                .font(.system(size: 24, weight: .medium))
-                .lineLimit(1)
-                .padding(.horizontal, 22)
-                .frame(height: 52)
-                .foregroundStyle(isFocused ? FlatControl.contentOnFocus
-                                 : quiet ? FlatControl.contentMuted : FlatControl.content)
-                .background(Capsule().fill(isFocused ? FlatControl.focus
-                                           : selected ? FlatControl.selected
-                                           : quiet ? FlatControl.restSubtle : FlatControl.rest))
-                .scaleEffect(isFocused ? (configuration.isPressed ? 1.02 : 1.06) : 1)
-                .animation(.smooth(duration: 0.18), value: isFocused)
         }
     }
 }

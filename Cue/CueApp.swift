@@ -119,10 +119,8 @@ enum InputHold {
 
 @main
 struct CueApp: App {
-    /// Reclaim orphaned player scratch space before anything else runs. A
-    /// remux session that got jetsammed leaves its segment directory behind
-    /// with no owner left to delete it, and nothing else in the app ever
-    /// swept them — launch is the one moment we know none of them are live.
+    /// Reclaim orphaned player scratch space before anything else runs
+    /// (`PlayerTempSweep`): launch is the one moment none of it is live.
     init() {
         // FIRST of all, before ANY UserDefaults write below: shrink an
         // oversized add-on blob a pre-compression build left behind. On a box
@@ -132,8 +130,8 @@ struct CueApp: App {
         // remove the add-on. This is a reducing write, which CFPreferences
         // accepts, so it breaks the loop. See AddonManager.
         AddonManager.reclaimUncompressedStorage()
-        // Same emergency reclaim for the content stores. A large SIMKL/Trakt
-        // import can put the watched history or the library past the ~1 MB
+        // Same emergency reclaim for the content stores. A long history
+        // can put the watched history or the library past the ~1 MB
         // CFPreferences abort on its own, and on such a box the first save
         // crash-loops the app before it can ever compress — so shrink those
         // blobs here, first. Both namespaces: the rename migration below would
@@ -171,7 +169,6 @@ struct CueApp: App {
         BandsPictureStore.shared.load()
     }
 
-    @StateObject private var theme = ThemeManager()
     @StateObject private var addonManager = AddonManager()
     @StateObject private var progressStore = ProgressStore()
     @StateObject private var account = NuvioAccountManager()
@@ -187,8 +184,7 @@ struct CueApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .fontDesign(theme.rootFontDesign)   // app-wide font family (Fusion routes serif to headings only)
-                .environmentObject(theme)
+
                 .environmentObject(addonManager)
                 .environmentObject(progressStore)
                 .environmentObject(account)
@@ -200,7 +196,7 @@ struct CueApp: App {
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
                 .environmentObject(playerSettings)
-                .preferredColorScheme(theme.preferredColorScheme)
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -293,7 +289,6 @@ enum Route: Hashable {
 }
 
 struct RootView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var sourcePicker = SourcePicker.shared
     @ObservedObject private var stage = PlayStage.shared
@@ -471,8 +466,7 @@ struct RootView: View {
                         collectionsStore: collections,
                         homeCatalogSettings: homeCatalogSettings,
                         playerSettings: playerSettings,
-                        tmdbSettings: tmdbSettings,
-                        themeManager: theme
+                        tmdbSettings: tmdbSettings
                     )
                     sync = nuvioSync
                     // Everything personal rescopes on a switch, even when
@@ -726,7 +720,7 @@ struct RootView: View {
                     showWelcome = false
                     if gateNeeded { launch.showGate(.resume) }
                 }
-                .environmentObject(theme)
+
             }
             // Returning to the app pulls the latest Continue Watching so changes
             // made on another device show up without a relaunch (local edits
@@ -870,13 +864,13 @@ struct RootView: View {
             if let picked {
                 let type = args.contains("-detailMovie") ? "movie" : "series"
                 return AnyView(ZStack {
-                    theme.palette.background.ignoresSafeArea()
+                    CuePalette.background.ignoresSafeArea()
                     DetailView(item: MetaItem(id: picked, type: type, name: picked))
                 })
             }
             return AnyView(
                 ZStack {
-                    theme.palette.background.ignoresSafeArea()
+                    CuePalette.background.ignoresSafeArea()
                     DetailView(
                         item: series
                             ? MetaItem(id: "tt0903747", type: "series", name: "Breaking Bad",

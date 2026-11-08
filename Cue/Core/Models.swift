@@ -1,18 +1,5 @@
 import Foundation
 
-/// Timestamp for a synced row whose SOURCE reported none.
-///
-/// Deliberately NOT `Date()`. A tracker (Trakt/SIMKL/Stremio) that omits a
-/// timestamp would otherwise stamp "now", which outranks a live Continue
-/// Watching row's `updatedAt`: `ProgressStore.episodeWatchedAfter` would then
-/// retire the episode the viewer is part-way through, and `mergeExternal` could
-/// clobber a precise local resume point with an approximate tracker position.
-/// The epoch is older than any real row, so it can never win an ordering
-/// comparison, and non-negative so it serializes safely as milliseconds.
-enum SyncTimestamp {
-    static let unknown = Date(timeIntervalSince1970: 0)
-}
-
 // MARK: - UserDefaults blob compression
 
 /// Compression for the content stores' UserDefaults blobs (watched history,
@@ -21,7 +8,7 @@ enum SyncTimestamp {
 /// NSUserDefaults on tvOS aborts the process once the app's domain crosses
 /// roughly 1 MB — `__CFPREFERENCES_HAS_DETECTED_THIS_APP_TRYING_TO_STORE_TOO_MUCH_DATA__`,
 /// observed on a real box at ~984 KB — and these two stores grow with the
-/// viewer's library: a large tracker import (SIMKL/Trakt) is tens of thousands
+/// viewer's library: a long history is tens of thousands
 /// of rows of highly repetitive JSON, which is exactly the shape zlib crushes
 /// (the add-on list has shipped this way since v8, 18x on real data). Without
 /// it, importing a large library makes the very next `save()` abort — the app
@@ -490,29 +477,6 @@ struct MetaItem: Codable, Identifiable, Hashable {
         return "\(total)m"
     }
 
-    /// Runtime in SECONDS from the addon's free-text field ("109 min",
-    /// "1h 49m", "2 hr 15 min"). A duration of last resort: an external
-    /// player's callback reports a position but no duration, and a position
-    /// means nothing without something to measure it against.
-    var runtimeSeconds: Double? {
-        guard let runtime = runtime?.lowercased() else { return nil }
-        var hours = 0.0, minutes = 0.0
-        var digits = ""
-        var value: Double?
-        for character in runtime {
-            if character.isNumber { digits.append(character); continue }
-            if !digits.isEmpty { value = Double(digits); digits = "" }
-            guard let number = value else { continue }
-            if character == "h" { hours += number; value = nil }
-            else if character == "m" { minutes += number; value = nil }
-        }
-        if !digits.isEmpty { value = Double(digits) }
-        // A bare number with no unit ("109") is minutes — Cinemeta's usual form.
-        if let leftover = value, hours == 0, minutes == 0 { minutes = leftover }
-        let total = hours * 3600 + minutes * 60
-        return total > 0 ? total : nil
-    }
-
     var seasons: [Int] {
         let numbers = Set((videos ?? []).compactMap { $0.season }.filter { $0 >= 0 })
         return numbers.sorted()
@@ -799,36 +763,12 @@ struct Stream: Codable, Hashable {
 
     var isTorrent: Bool { infoHash != nil && url == nil }
 
-
     /// Debrid-cached marker, e.g. "[RD+]", "[TB+]", "PM+" — the convention
     /// Torrentio/Comet/MediaFusion use for torrents the provider already has
     /// (instant play, no download wait).
     private static let cachedMarkerRegex = try? NSRegularExpression(
         pattern: #"\b(rd|ad|pm|tb|dl|oc|pk|ed)\+"#, options: [.caseInsensitive]
     )
-
-    /// True when picking this source plays immediately: a direct http(s)
-    /// link, or a torrent the debrid service reports as already cached
-    /// (the "[RD+]"-style marker, a ⚡, or the word "cached"). An unmarked
-    /// torrent counts as NOT instant — the debrid provider would have to
-    /// download it first.
-    var isInstant: Bool {
-        let haystack = "\(name ?? "") \(title ?? "") \(description ?? "")"
-        let lower = haystack.lowercased()
-        // Explicitly-uncached debrid links (Torrentio's "[RD download]", a ⏳,
-        // "uncached") DO carry a playable URL — the debrid service just
-        // downloads on demand — so they must be caught BEFORE the isPlayable
-        // shortcut, or "cached only" lets them through.
-        if isUncachedMarked(lower) { return false }
-        if isPlayable { return true }
-        if haystack.contains("⚡") { return true }
-        if lower.contains("cached") { return true }
-        guard let regex = Self.cachedMarkerRegex else { return false }
-        return regex.firstMatch(
-            in: haystack, options: [],
-            range: NSRange(haystack.startIndex..., in: haystack)
-        ) != nil
-    }
 
     private static let uncachedRegex = try? NSRegularExpression(
         pattern: #"\b(?:rd|ad|pm|tb|dl|oc|pk|torbox|debrid)\b[\s\-\]]*download|download\]|uncached|not cached"#,
@@ -840,34 +780,6 @@ struct Stream: Codable, Hashable {
         if raw.contains("⏳") || raw.contains("⌛") || raw.contains("⏬") { return true }
         guard let regex = Self.uncachedRegex else { return false }
         return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
-    }
-
-    /// Mentions of a debrid provider — a stream that names one is a debrid
-    /// result, whose bare playable URL does NOT imply "cached".
-    private static let debridMentionRegex = try? NSRegularExpression(
-        pattern: #"real[\s\-]?debrid|premium(ize)?|all[\s\-]?debrid|torbox|debrid|\[(rd|ad|pm|tb|dl|oc|pk|ed)\b"#,
-        options: [.caseInsensitive]
-    )
-    private func mentionsDebrid(_ lower: String) -> Bool {
-        guard let regex = Self.debridMentionRegex else { return false }
-        return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
-    }
-
-    /// STRICT cached test for the "cached only" filter. Unlike `isInstant`, a
-    /// bare playable URL does NOT count — debrid addons (Comet, MediaFusion,
-    /// StremThru…) return a playable URL for UNCACHED results too (they
-    /// download on access), which is why "cached only" was letting non-cached
-    /// links through. Requires a positive cached signal, or a plain direct
-    /// link with no debrid involvement at all.
-    var isCached: Bool {
-        let raw = "\(name ?? "") \(title ?? "") \(description ?? "")"
-        let lower = raw.lowercased()
-        if let stated = statedCached(in: raw) { return stated }
-        // An unmarked torrent is never instant; a debrid URL without a cached
-        // marker is a download-on-access link (NOT cached). Only a genuine
-        // direct link with no debrid context counts as instant.
-        if isTorrent { return false }
-        return isPlayable && !mentionsDebrid(lower)
     }
 
     /// What the add-on's own text says about being cached, nil if it says nothing.
@@ -884,8 +796,6 @@ struct Stream: Codable, Hashable {
 
     private var searchHaystack: String { "\(name ?? "") \(title ?? "") \(description ?? "")".lowercased() }
 
-    /// AV1-encoded (no hardware decode on the Apple TV A10X).
-    var isAV1: Bool { searchHaystack.contains("av1") }
     /// Dolby Vision.
     var isDolbyVision: Bool {
         let h = searchHaystack
@@ -907,7 +817,6 @@ struct Stream: Codable, Hashable {
             addonName: addonName
         )
     }
-
 
     /// Addon-provided short label, e.g. "Torrentio\n4K" — its own line
     /// breaks kept (add-ons lay their labels out in lines).

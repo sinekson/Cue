@@ -174,8 +174,6 @@ final class DetailViewModel: ObservableObject {
     @Published var episodeExtras: [Int: [Int: TMDBService.EpisodeExtra]] = [:] {
         didSet { extrasRevision &+= 1 }
     }
-    @Published var episodeCasts: [String: [TMDBService.CastMember]] = [:]
-    private var loadingEpisodeCast = Set<String>()
 
     init(item: MetaItem) {
         meta = item
@@ -470,7 +468,6 @@ final class DetailViewModel: ObservableObject {
 }
 
 struct DetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var library: LibraryStore
@@ -648,7 +645,7 @@ struct DetailView: View {
                                    genres: about.genres.map(\.name).joined(separator: " · "),
                                    summary: viewModel.meta.description ?? "",
                                    facts: about.factsBox(across: 2, width: SummaryPanelMetrics.columnWidth)
-                                       .environmentObject(theme).environmentObject(mdblist)) {
+                                       .environmentObject(mdblist)) {
                     summaryShown = false
                     returningToInfo = true
                     actionFocus = .info
@@ -1058,7 +1055,7 @@ struct DetailView: View {
     /// SwiftUI host: the page's environment goes along).
     private var rowsBillboardOverlay: AnyView {
         AnyView(rowsBillboardText
-            .environmentObject(theme).environmentObject(addonManager)
+            .environmentObject(addonManager)
             .environmentObject(progressStore).environmentObject(library)
             .environmentObject(watched).environmentObject(mdblist)
             .environmentObject(tmdbSettings).environmentObject(layout)
@@ -1166,7 +1163,7 @@ struct DetailView: View {
             // (In line with the row's name.)
             .padding(.leading, FixedFocusMetrics.titleInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .environmentObject(theme).environmentObject(mdblist)
+            .environmentObject(mdblist)
             .environmentObject(tmdbSettings).environmentObject(layout))
     }
 
@@ -1525,8 +1522,8 @@ struct DetailView: View {
         season == 0 ? "Specials" : "Season \(season)"
     }
 
-    /// Mark every AIRED episode of a season watched (unaired ones would be
-    /// pushed to Trakt/SIMKL as real plays and wreck the new-episode badge).
+    /// Mark every AIRED episode of a season watched (unaired ones would
+    /// wreck the new-episode badge).
     private func markSeasonWatched(_ season: Int) {
         markWatched(viewModel.episodes(season: season))
     }

@@ -290,7 +290,6 @@ final class NuvioAccountManager: ObservableObject {
     /// once. The first won; the rest got a 400 for a token the server had
     /// already rotated away and, reading that as "your session is dead",
     /// signed the user out. Concurrent callers now share one refresh.
-    /// (Same serialization TraktSyncManager.validToken() uses.)
     private var refreshTask: Task<Bool, Never>?
 
     @discardableResult
@@ -359,11 +358,6 @@ final class NuvioAccountManager: ObservableObject {
     private func postArray<T: Decodable>(endpoint: String, body: [String: String]) async throws -> [T] {
         let data = try await post(endpoint: endpoint, body: body)
         return try JSONDecoder().decode([T].self, from: data)
-    }
-
-    private func postObject<T: Decodable>(endpoint: String, body: [String: String]) async throws -> T {
-        let data = try await post(endpoint: endpoint, body: body)
-        return try JSONDecoder().decode(T.self, from: data)
     }
 
     /// POSTs a JSON body, retrying against the origin fallback host when the

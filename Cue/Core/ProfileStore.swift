@@ -476,18 +476,6 @@ final class ProfileStore: ObservableObject {
         notifyChange()
     }
 
-    /// The active profile's Auto Link Selector settings (defaults if unset).
-    var activeAutoLink: AutoLinkPreferences { active.autoLinkPrefs }
-
-    func setAutoLink(id: Int, _ prefs: AutoLinkPreferences) {
-        guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return }
-        var sanitized = prefs
-        sanitized.maxSizeGB = AutoLinkPreferences.sanitizedMaxSizeGB(sanitized.maxSizeGB)
-        profiles[idx].autoLink = sanitized
-        saveList()
-        notifyChange()
-    }
-
     /// Resolves a profile's avatar image URL from the catalog (or its stored URL).
     func avatarURL(for profile: UserProfile) -> String? {
         if let direct = profile.avatarURL, !direct.isEmpty { return direct }
@@ -732,14 +720,4 @@ enum ProfileScopedDefaults {
         for base in bases { UserDefaults.standard.removeObject(forKey: key(base, profile)) }
     }
 
-    /// Remove EVERY profile's scoped copies plus the legacy seed (account
-    /// switch, for credential-bearing stores).
-    static func forgetAll(_ bases: [String]) {
-        for base in bases {
-            UserDefaults.standard.removeObject(forKey: base)
-            for id in 1...ProfileStore.maxProfiles {
-                UserDefaults.standard.removeObject(forKey: key(base, id))
-            }
-        }
-    }
 }

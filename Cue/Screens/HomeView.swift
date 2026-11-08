@@ -588,7 +588,6 @@ final class HomeViewModel: ObservableObject {
 }
 
 struct HomeView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var collections: CollectionsStore
@@ -1200,10 +1199,9 @@ struct HomeView: View {
     /// metaID → when this viewer first watched anything of that title.
     ///
     /// Derived rather than stored, from the two things that already sync
-    /// everywhere: watch history (account, Trakt, SIMKL, Stremio) and stored
-    /// playback positions. That is what makes the badge agree across devices
-    /// without a new synced field — and it means an imported Trakt history,
-    /// which carries each episode's ORIGINAL watch time, gives the true start
+    /// everywhere: watch history and stored playback positions. That is what
+    /// makes the badge agree across devices without a new synced field — and
+    /// it means an imported history, which carries each episode's ORIGINAL watch time, gives the true start
     /// date rather than the import date.
     private func startedWatchingByShow() -> [String: Date] {
         var out: [String: Date] = [:]
@@ -1447,29 +1445,6 @@ final class ContinueStills: ObservableObject {
     }
 }
 
-/// Focus-styled "Try Again" pill shared by network-failure empty states.
-struct RetryLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
-
-    var body: some View {
-        HStack(spacing: CueSpacing.sm) {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 20, weight: .semibold))
-            Text("Try Again")
-                .font(.system(size: 24, weight: .semibold))
-        }
-        .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
-        .padding(.horizontal, 30)
-        .padding(.vertical, 12)
-        .background(Capsule().fill(isFocused ? theme.palette.secondary : Color.primary.opacity(0.1)))
-        .overlay(Capsule().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-        .focusLift(CueFocus.card, isFocused)
-        .animation(PerformanceSettingsStore.shared.buttonMotion(FusionMotion.focusEntry),
-                   value: isFocused)
-    }
-}
-
 extension View {
     /// Small helper because `.onFocusChange` reads better at call sites than
     /// the focusable/onChange dance.
@@ -1600,7 +1575,6 @@ struct HomeUIKitView: View {
     /// Details is up over Home (the billboard doesn't page behind it).
     @ObservedObject private var detailsOpen = DetailsOpen.shared
     /// …and its picture has stepped closer (see `StagePictureView`).
-    @EnvironmentObject private var theme: ThemeManager
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
@@ -2106,7 +2080,6 @@ enum FixedFocusTint {
 /// the status badge and ratings, the facts and the tagline — no summary,
 /// within the box's width less the text indent on both sides.
 struct FixedFocusBillboardText: View {
-    @EnvironmentObject private var theme: ThemeManager
     let item: MetaItem
     /// TMDB's season count, once loaded.
     let info: TMDBService.ShowSize?
@@ -2192,8 +2165,8 @@ struct FixedFocusBillboardText: View {
     }
     private var nameText: some View {
         Text(item.name)
-            .font(FusionType.heroTitle(theme.font))
-            .foregroundStyle(theme.palette.textPrimary)
+            .font(FusionType.heroTitle)
+            .foregroundStyle(CuePalette.textPrimary)
             .lineLimit(2)
             .minimumScaleFactor(0.74)
             .frame(maxWidth: TitleBlock.logoWidth, alignment: .bottomLeading)

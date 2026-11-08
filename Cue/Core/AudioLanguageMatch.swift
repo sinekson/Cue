@@ -158,16 +158,4 @@ enum AudioLanguageMatch {
         return !words.isDisjoint(with: wanted)
     }
 
-    /// A commentary, described-video or otherwise secondary track, spotted from
-    /// its label. The FFmpeg paths also have disposition flags, which are more
-    /// reliable; this catches the files that set no flags and say it in words.
-    static func isSecondary(label: String?) -> Bool {
-        guard let label = label?.lowercased() else { return false }
-        for marker in ["commentary", "description", "descriptive", "narration",
-                       "sdh", "visual impaired", "audio description"]
-        where label.contains(marker) {
-            return true
-        }
-        return false
-    }
 }

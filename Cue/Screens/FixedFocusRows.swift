@@ -10,7 +10,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     }
 
     @EnvironmentObject private var mdblist: MDBListSettingsStore
-    @EnvironmentObject private var theme: ThemeManager
     let rows: [HomeRow]
     let featuredRowID: String
     let continueRowID: String
@@ -187,8 +186,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.onContinueMenu = onContinueMenu
         controller.titleMenu = titleMenu
         // SwiftUI inside the cells (the banner's chips) gets the app's stores.
-        controller.environment = { [mdblist, theme] in
-            AnyView($0.environmentObject(mdblist).environmentObject(theme))
+        controller.environment = { [mdblist] in
+            AnyView($0.environmentObject(mdblist))
         }
         controller.billboardPageText = billboardPageText
         controller.onBillboardStep = onBillboardStep
