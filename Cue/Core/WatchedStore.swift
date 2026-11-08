@@ -36,12 +36,8 @@ final class WatchedStore: ObservableObject {
     /// upsert-only push would resurrect them on the next pull. Mirrors
     /// ProgressStore.onRemove.
     var onRemove: (([WatchedItem]) -> Void)?
-    /// Tracking-service hooks, fired on a genuine local mark / un-mark.
-    ///
-    /// A LIST rather than a single closure: Trakt and SIMKL are independent
-    /// destinations and both want to hear about the same local change. While
-    /// this was one `onTrakt…` property, whichever manager was constructed
-    /// second would silently overwrite the first's subscription. Separate from
+    /// Fired on a genuine local mark / un-mark (the sync coordinator kicks a
+    /// full sync). Lists, so more than one observer can listen. Separate from
     /// the account-sync `onRemove`, which has its own owner.
     var onTrackerMark: [(WatchedItem) -> Void] = []
     var onTrackerRemove: [([WatchedItem]) -> Void] = []
@@ -101,15 +97,11 @@ final class WatchedStore: ObservableObject {
     /// Items the user explicitly un-marked → when.
     ///
     /// The in-memory tombstone lasts three minutes and dies with the process,
-    /// but the trackers re-assert a watched mark indefinitely: Stremio's push
-    /// copies the previous `flagged_watched` state back onto the row and its
-    /// pull re-imports it, and Trakt/SIMKL re-add it from history. So the
-    /// un-mark came back on the first sync after the grace expired, and
-    /// `requestSyncPush` then propagated it to the account.
+    /// while a pull can hand a mark back after that (a delete still retrying).
     ///
     /// A remote row only lifts the record when it is genuinely NEWER than the
-    /// removal — which for these services means the title really was watched
-    /// again elsewhere, since they carry the original watch time.
+    /// removal — the title really was watched again elsewhere, since rows
+    /// carry the original watch time.
     private var removedMarks: [String: Date] = [:]
     private var removedMarksKey: String {
         profileID == 1 ? "cue.watched.removed.v1" : "cue.watched.removed.v1.p\(profileID)"
@@ -203,8 +195,8 @@ final class WatchedStore: ObservableObject {
         let now = Date()
         for item in removed {
             tombstones[item.key] = now
-            // Outlives the grace window and the process, so a tracker
-            // re-import can't quietly put the ✓ back (see `removedMarks`).
+            // Outlives the grace window and the process, so a pull can't
+            // quietly put the ✓ back (see `removedMarks`).
             if !suppressChange { removedMarks[item.key] = now }
         }
         if !suppressChange { saveRemovedMarks() }
@@ -248,27 +240,6 @@ final class WatchedStore: ObservableObject {
 
     func allForSync() -> [WatchedItem] { Array(items.values) }
 
-    func importItems(_ imported: [WatchedItem]) {
-        guard !imported.isEmpty else { return }
-        var changed = false
-        var marksChanged = false
-        for item in imported {
-            if let local = items[item.key], local.watchedAt >= item.watchedAt { continue }
-            tombstones.removeValue(forKey: item.key)
-            // Re-marking clears the un-mark record, exactly as `set` does — a
-            // restored backup otherwise kept a `removedMarks` entry that would
-            // block this key on a later account pull.
-            if removedMarks.removeValue(forKey: item.key) != nil { marksChanged = true }
-            items[item.key] = item
-            changed = true
-        }
-        if marksChanged { saveRemovedMarks() }
-        if changed {
-            save()
-            if !suppressChange { onLocalChange?() }
-        }
-    }
-
     /// Merge a FULL remote snapshot. Two-way, mirroring ProgressStore: newer
     /// remote rows are added AND (when `reconcile`) local rows the server no
     /// longer has are removed (a removal made on another device propagates),
@@ -276,9 +247,8 @@ final class WatchedStore: ObservableObject {
     /// rows whose delete is pending. `reconcile: false` = additive union, used
     /// for a profile's FIRST pull so pre-sign-in local history survives and is
     /// pushed up instead of being treated as remotely deleted.
-    /// Returns whether anything changed, so a caller merging from a TRACKER
-    /// (Trakt/SIMKL/Stremio) can ask for an account push — the account's own
-    /// pulls never need one, and this method fires no change hook of its own.
+    /// Returns whether anything changed; this method fires no change hook of
+    /// its own.
     @discardableResult
     func mergeRemote(_ remote: [WatchedItem], reconcile: Bool = true) -> Bool {
         suppressChange = true
@@ -303,10 +273,8 @@ final class WatchedStore: ObservableObject {
         // ── Add rows from the account ── skipping ones the user just un-marked
         // whose delete hasn't landed yet (the snapshot can still contain them).
         //
-        // Existing keys are deliberately NOT updated from the remote copy. The
-        // tracker merges (Trakt/SIMKL/Stremio) call this too and build their
-        // rows with `watchedAt: s.watchedAt ?? Date()`, so a missing timestamp
-        // becomes "now". Adopting that would raise the mark above a live
+        // Existing keys are deliberately NOT updated from the remote copy. A
+        // row whose missing timestamp became "now" would raise the mark above a live
         // Continue Watching row's `updatedAt`, and `ProgressStore.episodeWatchedAfter`
         // would then retire the episode the viewer is part-way through. Add-only
         // is the safe direction here.
@@ -333,15 +301,6 @@ final class WatchedStore: ObservableObject {
         if marksChanged { saveRemovedMarks() }
         if changed { save() }
         return changed
-    }
-
-    /// Rows just merged from a tracker need to reach the ACCOUNT too. The
-    /// full sync used to upload the whole store unconditionally at the end of
-    /// every run, which covered this by accident; now that it pushes only
-    /// what is marked dirty, a tracker merge has to say so.
-    func requestSyncPush() {
-        guard !suppressChange else { return }
-        onLocalChange?()
     }
 
     // MARK: - Persistence

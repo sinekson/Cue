@@ -354,7 +354,6 @@ private struct ServiceKeyDetailPage: View {
 /// local network and shows its address as a QR. Neither service has a
 /// device login, so the hand-off happens between the phone and the TV.
 private struct KeyHandoffPage: View {
-    @EnvironmentObject private var theme: ThemeManager
     let service: ServiceKey
     let save: (String) -> Void
     let onDone: () -> Void
@@ -374,7 +373,7 @@ private struct KeyHandoffPage: View {
             VStack(spacing: CueSpacing.lg) {
                 Text("Send your \(service.name) key")
                     .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(theme.palette.textPrimary)
+                    .foregroundStyle(CuePalette.textPrimary)
 
                 if server.accepted {
                     Image(systemName: "checkmark.circle.fill")
@@ -382,18 +381,18 @@ private struct KeyHandoffPage: View {
                         .foregroundStyle(CuePrimitives.success)
                     Text("Key saved.")
                         .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(theme.palette.textPrimary)
+                        .foregroundStyle(CuePalette.textPrimary)
                 } else if let address = server.address {
                     Text("Scan with your phone, or open \(address) in its browser. Both devices have to be on the same network.")
                         .font(.system(size: 22))
-                        .foregroundStyle(theme.palette.textSecondary)
+                        .foregroundStyle(CuePalette.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 900)
                         .fixedSize(horizontal: false, vertical: true)
                     QRCodeView(string: address, side: 360)
                     Text(address)
                         .font(.system(size: 24, weight: .medium, design: .monospaced))
-                        .foregroundStyle(theme.palette.secondary)
+                        .foregroundStyle(CuePalette.secondary)
                 } else if let error = server.lastError {
                     Text(error)
                         .font(.system(size: 22))

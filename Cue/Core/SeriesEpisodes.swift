@@ -20,6 +20,17 @@ enum SeriesEpisodes {
     /// airing show — `StremioAPI.meta`).
     static func fullMeta(for item: MetaItem, addonManager: AddonManager,
                          revalidateAfter: TimeInterval? = nil) async -> MetaItem {
+        let meta = await lookUp(item, addonManager: addonManager, revalidateAfter: revalidateAfter)
+        if meta.isSeries, !(meta.videos ?? []).isEmpty { known[meta.id] = meta }
+        return meta
+    }
+
+    /// Series whose episode list has been looked up this run, for what has to
+    /// answer at once (a hold menu's "Mark Series as Unwatched").
+    private(set) static var known: [String: MetaItem] = [:]
+
+    private static func lookUp(_ item: MetaItem, addonManager: AddonManager,
+                               revalidateAfter: TimeInterval?) async -> MetaItem {
         var best: MetaItem?
         for addon in addonManager.metaAddons(for: item.type, id: item.id).prefix(4) {
             guard let full = try? await StremioAPI.meta(addon: addon, type: item.type, id: item.id,
@@ -65,7 +76,7 @@ enum SeriesEpisodes {
         guard !all.isEmpty else { return nil }
         var latest: (index: Int, progress: WatchProgress)?
         for (index, ep) in all.enumerated() {
-            guard let p = progress.progress(for: ep.id), p.fraction > 0.02, p.fraction < 0.95 else { continue }
+            guard let p = progress.progress(for: ep.id), p.isStarted else { continue }
             if let current = latest, (current.progress.updatedAt, current.progress.id) >= (p.updatedAt, p.id) { continue }
             latest = (index, p)
         }

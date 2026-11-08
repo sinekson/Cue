@@ -3,7 +3,29 @@ import SwiftUI
 /// Details' depth below the billboard (see `DetailView.rowsDepth`).
 @Observable @MainActor
 final class DetailRowsDepth {
-    var depth = 0
+    var depth = 0 {
+        didSet {
+            // Back at the billboard from below (Up, or Back's scroll):
+            // the Ups that follow are eaten a moment (`upEaten`).
+            if oldValue > 0, depth == 0 { upGuardUntil = CACurrentMediaTime() + Self.upGuard }
+        }
+    }
+    /// Read by the buttons' Up only: no page redraw.
+    @ObservationIgnored private var upGuardUntil: CFTimeInterval = 0
+    /// One press too many while climbing back (or after Back) opened the
+    /// trailer full screen: Up on the buttons does nothing this long after
+    /// arriving, while the rows still move, and this long after each Up it ate,
+    /// so a burst is eaten whole and a deliberate Up after a pause works.
+    static let upGuard: CFTimeInterval = 0.5
+
+    /// Whether this Up arrived too soon after reaching the billboard from below.
+    func upEaten() -> Bool {
+        let now = CACurrentMediaTime()
+        guard now < upGuardUntil || (upGuardUntil > 0 && now < upGuardUntil + 2 && FixedFocusRowsController.moving)
+        else { return false }
+        upGuardUntil = now + Self.upGuard
+        return true
+    }
 }
 
 /// The focus of a group of controls that may live in another SwiftUI host
@@ -152,8 +174,6 @@ final class DetailViewModel: ObservableObject {
     @Published var episodeExtras: [Int: [Int: TMDBService.EpisodeExtra]] = [:] {
         didSet { extrasRevision &+= 1 }
     }
-    @Published var episodeCasts: [String: [TMDBService.CastMember]] = [:]
-    private var loadingEpisodeCast = Set<String>()
 
     init(item: MetaItem) {
         meta = item
@@ -448,7 +468,6 @@ final class DetailViewModel: ObservableObject {
 }
 
 struct DetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var library: LibraryStore
@@ -461,18 +480,23 @@ struct DetailView: View {
     @EnvironmentObject private var profiles: ProfileStore
     @StateObject private var viewModel: DetailViewModel
 
-    /// Play: finds the first source IN PLACE (the button says so — see
-    /// `PlayLauncher`) and the player opens.
+    /// Play: the stage, the first source found on it (`PlayLauncher`), the player.
     @ObservedObject private var launcher = PlayLauncher.shared
 
-    private func play(_ video: MetaVideo?, fromStart: Bool = false, onButton: Bool = false) {
-        launcher.play(viewModel.meta, video, fromStart: fromStart, overlay: !onButton)
+    private func play(_ video: MetaVideo?, fromStart: Bool = false) {
+        launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video))
     }
 
-    /// Hold Play (or an episode's "Choose Source"): the source picker, over
-    /// the app (`SourcePicker`).
+    /// The stage's picture: the episode's TMDB still in full size, else the backdrop.
+    private func stageArt(_ video: MetaVideo?) -> String? {
+        let extra = video.flatMap { v in v.episode.flatMap { viewModel.episodeExtras[v.season ?? 0]?[$0] } }
+        return TMDBService.originalSize(extra?.still) ?? viewModel.backdropURL
+    }
+
+    /// Hold Play (or an episode's "Choose Source"): the source list, on the
+    /// stage (`SourcePicker`).
     private func openSources(_ video: MetaVideo?) {
-        SourcePicker.shared.open(viewModel.meta, video)
+        SourcePicker.shared.open(viewModel.meta, video, art: stageArt(video))
     }
     var onSelectItem: (MetaItem) -> Void = { _ in }
     /// The pages opened from here (a person, a studio, a genre, a tag) get
@@ -545,6 +569,10 @@ struct DetailView: View {
     /// From a box: the scrim arrives half-way (the growing box took it that
     /// far) and finishes with the page's parts; Back takes it half-way back.
     @State private var scrim: Double
+    /// The trailer full screen: its cover, at once…
+    @State private var trailerCover = false
+    /// …and the page's text, buttons and shade fading out under it.
+    @State private var trailerFull = false
     /// The billboard's season count ("3 Seasons") when opened from there.
     /// State, not a plain property: SwiftUI re-creates this view while the
     /// page is up, and only the FIRST creation still sees the handoff.
@@ -617,7 +645,7 @@ struct DetailView: View {
                                    genres: about.genres.map(\.name).joined(separator: " · "),
                                    summary: viewModel.meta.description ?? "",
                                    facts: about.factsBox(across: 2, width: SummaryPanelMetrics.columnWidth)
-                                       .environmentObject(theme).environmentObject(mdblist)) {
+                                       .environmentObject(mdblist)) {
                     summaryShown = false
                     returningToInfo = true
                     actionFocus = .info
@@ -656,7 +684,7 @@ struct DetailView: View {
             guard let pending = pendingSeriesPlay, let target = seriesPlayTarget else { return }
             pendingSeriesPlay = nil
             switch pending {
-            case .auto: play(target, onButton: true)
+            case .auto: play(target)
             case .manual: openSources(target)
             }
         }
@@ -706,11 +734,21 @@ struct DetailView: View {
         .onChange(of: detailScenePhase) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailersEnabled) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailerSound) { _, _ in restTrailer() }
-        // The Trailer button: the trailer on the picture full screen (from
+        // Up from the buttons: the trailer on the picture full screen (from
         // its start if none is on), playing on behind once closed.
-        .fullScreenCover(isPresented: Binding(get: { trailer.full }, set: { if !$0 { closeFullTrailer() } }),
+        // The cover comes and goes at once, clear (the picture under it is
+        // the trailer's); what's over the picture fades out and back in.
+        .onChange(of: trailer.full) { _, full in
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) { trailerCover = full }
+            withAnimation(Motion.present) { trailerFull = full }
+        }
+        .fullScreenCover(isPresented: Binding(get: { trailerCover }, set: { if !$0 { closeFullTrailer() } }),
                          onDismiss: closeFullTrailer) {
-            TrailerFullScreen(trailer: trailer, close: closeFullTrailer)
+            TrailerFullScreen(trailer: trailer, title: viewModel.meta.name, close: closeFullTrailer)
+                .ignoresSafeArea()
+                .presentationBackground(.clear)
         }
     }
 
@@ -831,6 +869,8 @@ struct DetailView: View {
                 if item.type == "episode" { focusedRowEpisode = item.id }
             }
             .ignoresSafeArea()
+            // Under the full-screen trailer: out, the picture alone.
+            .opacity(trailerFull ? 0 : 1)
             // (Again once the episode list is in: opened from a card, the page
             // starts with the card's data — no seasons yet.)
             .task(id: "\(viewModel.meta.id)|\(viewModel.meta.seasons.count)") {
@@ -911,7 +951,7 @@ struct DetailView: View {
                 }
             }
             .frame(width: 1920, height: 1080)
-            .opacity(below ? 0 : scrim)
+            .opacity(below || trailerFull ? 0 : scrim)
         }
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the
@@ -1015,7 +1055,7 @@ struct DetailView: View {
     /// SwiftUI host: the page's environment goes along).
     private var rowsBillboardOverlay: AnyView {
         AnyView(rowsBillboardText
-            .environmentObject(theme).environmentObject(addonManager)
+            .environmentObject(addonManager)
             .environmentObject(progressStore).environmentObject(library)
             .environmentObject(watched).environmentObject(mdblist)
             .environmentObject(tmdbSettings).environmentObject(layout)
@@ -1123,7 +1163,7 @@ struct DetailView: View {
             // (In line with the row's name.)
             .padding(.leading, FixedFocusMetrics.titleInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .environmentObject(theme).environmentObject(mdblist)
+            .environmentObject(mdblist)
             .environmentObject(tmdbSettings).environmentObject(layout))
     }
 
@@ -1146,7 +1186,7 @@ struct DetailView: View {
         case .play:
             let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
             if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
-            else { play(target, onButton: true) }
+            else { play(target) }
         case .back:
             backToBillboard()
         case .down:
@@ -1233,16 +1273,15 @@ struct DetailView: View {
                 // lost: `pendingSeriesPlay` fires once the target lands.
                 //
                 let target = viewModel.meta.isSeries ? seriesPlayTarget : nil
-                let finding = launcher.searching == PlayLauncher.key(viewModel.meta, target)
                 // "Play" — a show's episode under it while focused (a film:
                 // nothing).
                 DetailActionButton(
                     icon: "play.fill", title: "Play",
-                    isPrimary: true, lit: litAction == .play, busy: finding,
-                    caption: finding ? "Finding a source…" : target.map(seriesPlayTitle),
+                    isPrimary: true, lit: litAction == .play,
+                    caption: target.map(seriesPlayTitle),
                     action: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
-                        else { play(target, onButton: true) }
+                        else { play(target) }
                     },
                     // Hold Select: straight to the source list.
                     onHold: {
@@ -1288,7 +1327,7 @@ struct DetailView: View {
             .padding(.top, CueSpacing.xs)
             // Up from the buttons (nothing above them): the trailer full
             // screen — the hint over the logo says so.
-            .onMoveCommand { if $0 == .up { openFullTrailer() } }
+            .onMoveCommand { if $0 == .up, !rowsDepth.upEaten() { openFullTrailer() } }
             // Full-width focus section: the buttons stay left-aligned, but the
             // section spans the row so pressing Up from a right-scrolled cast
             // card still lands here (a narrow left-only section is missed when
@@ -1395,7 +1434,7 @@ struct DetailView: View {
             let progress = progressStore.progress(for: episode.id)
             let fraction = progress?.fraction ?? 0
             let done = isWatched(episode, season: season)
-            let inProgress = !done && fraction > 0.02 && fraction < 0.95
+            let inProgress = !done && progress?.isStarted == true
             let air = viewModel.airInfo(episode)
             let state = EpisodeRowState(
                 label: "S\(season):E\(episode.episode ?? 0)",
@@ -1431,11 +1470,10 @@ struct DetailView: View {
         let episode = list[index]
         let season = episode.season ?? 0
         var entries: [MenuEntry] = []
-        let fraction = progressStore.progress(for: episode.id)?.fraction ?? 0
-        let started = fraction > 0.02 && fraction < 0.95
+        let started = progressStore.progress(for: episode.id)?.isStarted ?? false
         entries.append(MenuEntry(title: started ? "Resume" : "Play", icon: "play.fill") { play(episode) })
         if started {
-            entries.append(MenuEntry(title: "Play from Beginning", icon: "gobackward") {
+            entries.append(MenuEntry(title: "Start Over", icon: "gobackward") {
                 play(episode, fromStart: true)
             })
         }
@@ -1446,12 +1484,23 @@ struct DetailView: View {
             toggleWatched(episode, season: season)
         })
         if let at = viewModel.allEpisodesInPlayOrder.firstIndex(where: { $0.id == episode.id }), at > 0 {
-            entries.append(MenuEntry(title: "Mark Previous as Watched", icon: "checklist") {
+            entries.append(MenuEntry(title: "Mark Earlier Episodes as Watched", icon: "checklist") {
                 markWatched(Array(viewModel.allEpisodesInPlayOrder[..<at]))
             })
         }
-        entries.append(MenuEntry(title: season == 0 ? "Mark Specials Watched" : "Mark Season \(season) Watched",
-                                 icon: "checkmark.circle.fill") { markSeasonWatched(season) })
+        let part = season == 0 ? "Specials" : "Season \(season)"
+        let aired = viewModel.episodes(season: season).filter(\.hasAired)
+        if !aired.isEmpty, aired.allSatisfy({ isWatched($0, season: season) }) {
+            entries.append(MenuEntry(title: "Mark \(part) as Unwatched", icon: "eye.slash") {
+                watched.remove(keys: aired.map {
+                    WatchedItem.key(contentID: viewModel.meta.id, season: $0.season ?? season, episode: $0.episode)
+                })
+            })
+        } else {
+            entries.append(MenuEntry(title: "Mark \(part) as Watched", icon: "checkmark.circle.fill") {
+                markSeasonWatched(season)
+            })
+        }
         return ("\(episode.seasonEpisodeCode) · \(episode.title ?? viewModel.meta.name)", entries)
     }
 
@@ -1473,8 +1522,8 @@ struct DetailView: View {
         season == 0 ? "Specials" : "Season \(season)"
     }
 
-    /// Mark every AIRED episode of a season watched (unaired ones would be
-    /// pushed to Trakt/SIMKL as real plays and wreck the new-episode badge).
+    /// Mark every AIRED episode of a season watched (unaired ones would
+    /// wreck the new-episode badge).
     private func markSeasonWatched(_ season: Int) {
         markWatched(viewModel.episodes(season: season))
     }
@@ -1519,10 +1568,7 @@ struct DetailActionButton: View {
     let title: String
     let isPrimary: Bool
     let lit: Bool
-    /// Working (Play finding a source): a spinner instead of the icon.
-    var busy = false
-    /// The primary button's line under it while focused (Play: "Finding a
-    /// source…").
+    /// The primary button's line under it while focused (a show's episode).
     var caption: String? = nil
     /// Only its icon (its name under it while focused) — all but Play.
     var bare = false
@@ -1642,25 +1688,17 @@ struct DetailActionButton: View {
         // (Back's scroll up to these buttons running: dropped.)
         Button(action: { if !held, !FixedFocusRowsController.backScrolling { action() } }) {
             HStack(spacing: 10) {
-                // A labelled button: its name alone — while it works, a
-                // spinner in its place, the name's width kept (the row never
-                // moves); an icon button: its icon.
+                // A labelled button: its name alone; an icon button: its icon.
                 if bare {
-                    Group {
-                        if busy {
-                            ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8)
-                        } else {
-                            Image(systemName: shownIcon)
-                                .font(.system(size: iconSize, weight: .bold))
-                                // (Into Details in place: › becomes About's;
-                                // set from another host — no transaction.)
-                                .contentTransition(["plus", "checkmark"].contains(shownIcon)
-                                    ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
-                                    : .opacity)
-                                .animation(Motion.move, value: shownIcon)
-                        }
-                    }
-                    .frame(width: Self.iconBox, height: Self.iconBox)
+                    Image(systemName: shownIcon)
+                        .font(.system(size: iconSize, weight: .bold))
+                        // (Into Details in place: › becomes About's;
+                        // set from another host — no transaction.)
+                        .contentTransition(["plus", "checkmark"].contains(shownIcon)
+                            ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
+                            : .opacity)
+                        .animation(Motion.move, value: shownIcon)
+                        .frame(width: Self.iconBox, height: Self.iconBox)
                 } else {
                     // (Into Details in place: Details becomes Play — the
                     // two names crossfade, centred, as the width goes from
@@ -1677,10 +1715,6 @@ struct DetailActionButton: View {
                     .frame(width: Self.labelWidth(shownTitle))
                     // (Set from another host — no transaction reaches it.)
                     .animation(Motion.move, value: shownTitle)
-                    .opacity(busy ? 0 : 1)
-                        .overlay {
-                            if busy { ProgressView().tint(shownLit ? .black : .white).scaleEffect(0.8) }
-                        }
                 }
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
@@ -1688,7 +1722,7 @@ struct DetailActionButton: View {
             .modifier(ActionFace(lit: shownLit, pill: !(worn?.plain ?? plain), dimmed: openingDimmed))
             .animation(Motion.move, value: worn?.plain ?? plain)
             // Under it while focused (outside its frame: the row never moves
-            // for it): Play's search, the bare button's name.
+            // for it): a show's episode, the bare button's name.
             .overlay(alignment: .top) {
                 if let text = isPrimary ? caption : bare ? shownTitle : nil {
                     Text(text)

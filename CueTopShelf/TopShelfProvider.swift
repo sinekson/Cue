@@ -47,7 +47,7 @@ final class TopShelfProvider: TVTopShelfContentProvider {
         let continueEntries = load("topshelf.json")
         if !continueEntries.isEmpty {
             let items = continueEntries.map { entry -> TVTopShelfSectionedItem in
-                // The app pre-renders these cards (art + progress pill), so
+                // The app pre-renders these cards (art + state line), so
                 // the image already has the right shape and its own bar.
                 let item = makeItem(entry, scheme: scheme, shape: .hdtv)
                 // Just the episode title (the movie's name for a movie).

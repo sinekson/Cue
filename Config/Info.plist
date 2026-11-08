@@ -47,6 +47,17 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter-Regular.otf</string>
+		<string>Inter-Italic.otf</string>
+		<string>Inter-Medium.otf</string>
+		<string>Inter-MediumItalic.otf</string>
+		<string>Inter-SemiBold.otf</string>
+		<string>Inter-SemiBoldItalic.otf</string>
+		<string>Inter-Bold.otf</string>
+		<string>Inter-BoldItalic.otf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

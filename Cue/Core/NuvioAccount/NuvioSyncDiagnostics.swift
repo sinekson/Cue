@@ -40,8 +40,7 @@ enum NuvioSyncDiagnostics {
 
     static func record(_ level: NuvioSyncLogEntry.Level, area: String, _ message: String) {
         // Mirror into the live probe. Every sync milestone the app already
-        // records for the Settings log passes through here — 37 call sites
-        // across Nuvio, Trakt, SIMKL and Stremio — so one line puts all of
+        // records for the Settings log passes through here, so one line puts all of
         // them on the same clock as the browsing and playback around them,
         // with nothing to keep in step later.
         AppProbe.sync("\(area): \(message)")

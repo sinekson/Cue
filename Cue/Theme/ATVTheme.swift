@@ -2,31 +2,6 @@ import CoreImage
 import SwiftUI
 
 extension View {
-    /// Player-overlay chrome (toasts, pills, control sheets shown OVER playing
-    /// video). `.ultraThinMaterial` here re-blurs the moving frame underneath on
-    /// every displayed frame — one of the worst per-frame costs on the A8, and
-    /// it drops playback frames while any control is up. On the low-power box
-    /// fall back to a solid dark fill (visually near-identical, since these
-    /// chips already sit under dark text scrims). `solid` is opaque enough that
-    /// the missing blur doesn't read as a change.
-    @ViewBuilder
-    func playerChrome<S: Shape>(in shape: S, solid: Color = Color(hex: 0x121418).opacity(0.86)) -> some View {
-        // Mid tier included: this blurs a MOVING frame on every displayed frame,
-        // while the same chip is decoding it. The worst composite in the app,
-        // and it was landing on the 4K gen 1 because that box is `isMidPower`.
-        if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
-            self.background(solid, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
-        }
-    }
-}
-
-/// The tone hero/backdrop scrims fade into so full-bleed art dissolves into
-/// `ATVBackground` without a seam — approximately the wash's color at the
-/// lower-middle of the screen (the flat `palette.background` used to leave a
-/// visible hard line where the hero band met the lighter graphite stage).
-enum ATVStage {
 }
 
 /// Settings → Appearance → Background, Dynamic (true): Home, Movies and

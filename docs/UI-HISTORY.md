@@ -367,7 +367,11 @@ matching section before changing that part of the UI. Where this differs from
   out through Back while it's handed over — `trailerOut`; they came back
   with Home's parts, then moved out again).
   Details: Up from the buttons (nothing else above them) opens that same
-  player full screen (`openFullTrailer`); over the logo, in the reason's
+  player full screen (`openFullTrailer`) — but not for 0.5 s after the
+  billboard is reached from below (Up or Back), while the rows still move,
+  or 0.5 s after an Up it ate (`DetailRowsDepth.upEaten`): one Up too many
+  climbing back opened it (2026-11-08; swapping it for a Trailer button,
+  Up opening About, was tried and reverted the same day); over the logo, in the reason's
   place on Home, a hint says so (tried: at the screen's top, centred) (`DetailTrailerHint`, the `SectionHint`
   look: a chevron up that bobs every 3.5 s, small capitals, 55 %) —
   "Watch full screen" while it plays on the picture, else "Watch the
@@ -375,19 +379,33 @@ matching section before changing that part of the UI. Where this differs from
   awkward with the trailer already playing behind it). Only once a
   trailer is known to play (the row's season's, else the show's —
   resolved ahead as Details opens, `lookUpTrailer`, kept as the rest's;
-  none: no hint, Up does nothing). Full screen: the system's player
-  (`TrailerFullScreen`, the system's `AVPlayerViewController` — pause,
-  scrubbing), where it was, with sound; none on the picture (not yet
+  none: no hint, Up does nothing). Full screen
+  (`TrailerFullScreen`), where it was, with sound; none on the picture (not yet
   played, ended, trailers off): the title's from its start, the same
   resolving (HLS, 720p floor); it waits for its buffer there (played
   at once without waiting, it stalled on its first frame for good). No
-  info panel. Down closes it, as Back does — unless focus is on a button
-  above the bar (it moves to the bar). Back with the controls up hides
-  them (ours, `showsPlaybackControls` off and on — handed to the player,
-  on the TV it went on to the cover and closed it; a second Back then
-  goes out); for 1 s after they
-  hide by themselves Back does nothing (`backGrace` — pressed to hide
-  them just as they went, it left the player). Out: on the picture again,
+  info panel. Was the system's player; now the player's own controls on
+  the trailer's `AVPlayer` (`TrailerController` on `PlayerTransport` /
+  `PlayerOverlay`, 2026-11-08): the title's name over the bar (no episode
+  line), presses, scan and paused swipes as playback, no stills, no shelf,
+  no Audio/Subtitles. With the controls up, Up hides them and Down closes:
+  a chevron and "Back to Details" (`TrailerDownHint`, the tabs' words at
+  rest) sit where the shelf's tabs peek, with the controls, gone in the
+  scan and paused scrubbing; Down with them gone brings them up first (Up
+  and Down only bringing them up was tried first).
+  For 1 s after the controls hide by themselves, Down does nothing too, as
+  Back. Back only reaches the controls with SwiftUI's `onExitCommand` kept
+  to the loading and failed states (over the controls it took every Back).
+  Opening and closing (2026-11-08): no picture of its own — a clear cover,
+  no animation, over Details' picture where the same `AVPlayer` already
+  plays (filled, no longer fitted on black); Details' text, buttons and
+  shade fade out under it (0.45 s) and back as it closes; the sound rises
+  from silence over 0.8 s and falls away (0.45 s) on the way out when
+  Details' trailer sound is off. A full-screen crossfade was talked over
+  (the same picture under it: nothing to cross, and two alike dip). Was:
+  the system cover's own cut to a black page. Back hides the controls, then closes; 1 s after they hide
+  by themselves it does nothing (pressed to hide them just as they went,
+  it left the player). Out: on the picture again,
   playing on, with the setting's sound. (Was: a separate player resolving the
   trailer again from its start — `TrailerPlayerView`, removed.)
 - **Details** uses the billboard's text and shade. Three buttons, as

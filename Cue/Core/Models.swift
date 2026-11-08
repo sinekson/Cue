@@ -1,18 +1,5 @@
 import Foundation
 
-/// Timestamp for a synced row whose SOURCE reported none.
-///
-/// Deliberately NOT `Date()`. A tracker (Trakt/SIMKL/Stremio) that omits a
-/// timestamp would otherwise stamp "now", which outranks a live Continue
-/// Watching row's `updatedAt`: `ProgressStore.episodeWatchedAfter` would then
-/// retire the episode the viewer is part-way through, and `mergeExternal` could
-/// clobber a precise local resume point with an approximate tracker position.
-/// The epoch is older than any real row, so it can never win an ordering
-/// comparison, and non-negative so it serializes safely as milliseconds.
-enum SyncTimestamp {
-    static let unknown = Date(timeIntervalSince1970: 0)
-}
-
 // MARK: - UserDefaults blob compression
 
 /// Compression for the content stores' UserDefaults blobs (watched history,
@@ -21,7 +8,7 @@ enum SyncTimestamp {
 /// NSUserDefaults on tvOS aborts the process once the app's domain crosses
 /// roughly 1 MB — `__CFPREFERENCES_HAS_DETECTED_THIS_APP_TRYING_TO_STORE_TOO_MUCH_DATA__`,
 /// observed on a real box at ~984 KB — and these two stores grow with the
-/// viewer's library: a large tracker import (SIMKL/Trakt) is tens of thousands
+/// viewer's library: a long history is tens of thousands
 /// of rows of highly repetitive JSON, which is exactly the shape zlib crushes
 /// (the add-on list has shipped this way since v8, 18x on real data). Without
 /// it, importing a large library makes the very next `save()` abort — the app
@@ -490,29 +477,6 @@ struct MetaItem: Codable, Identifiable, Hashable {
         return "\(total)m"
     }
 
-    /// Runtime in SECONDS from the addon's free-text field ("109 min",
-    /// "1h 49m", "2 hr 15 min"). A duration of last resort: an external
-    /// player's callback reports a position but no duration, and a position
-    /// means nothing without something to measure it against.
-    var runtimeSeconds: Double? {
-        guard let runtime = runtime?.lowercased() else { return nil }
-        var hours = 0.0, minutes = 0.0
-        var digits = ""
-        var value: Double?
-        for character in runtime {
-            if character.isNumber { digits.append(character); continue }
-            if !digits.isEmpty { value = Double(digits); digits = "" }
-            guard let number = value else { continue }
-            if character == "h" { hours += number; value = nil }
-            else if character == "m" { minutes += number; value = nil }
-        }
-        if !digits.isEmpty { value = Double(digits) }
-        // A bare number with no unit ("109") is minutes — Cinemeta's usual form.
-        if let leftover = value, hours == 0, minutes == 0 { minutes = leftover }
-        let total = hours * 3600 + minutes * 60
-        return total > 0 ? total : nil
-    }
-
     var seasons: [Int] {
         let numbers = Set((videos ?? []).compactMap { $0.season }.filter { $0 >= 0 })
         return numbers.sorted()
@@ -748,13 +712,8 @@ struct Stream: Codable, Hashable {
     /// Tracker/DHT sources for building a magnet URI (Stremio torrent streams).
     let sources: [String]?
     let behaviorHints: StreamBehaviorHints?
-    /// Stremio's `externalUrl`: a link the client opens/hands off rather than
-    /// plays in-app. "Cast" addons (DMM Cast etc.) use it for their cast
-    /// action, so a stream can carry this INSTEAD of a playable `url`.
-    let externalUrl: String?
-
     private enum CodingKeys: String, CodingKey {
-        case name, title, description, url, infoHash, fileIdx, sources, behaviorHints, externalUrl
+        case name, title, description, url, infoHash, fileIdx, sources, behaviorHints
     }
 
     /// Tolerant decode: addons in the wild bend the spec (numbers where
@@ -780,13 +739,12 @@ struct Stream: Codable, Hashable {
         fileIdx = decodedFileIdx
         sources = (try? c.decodeIfPresent([String].self, forKey: .sources)) ?? nil
         behaviorHints = (try? c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)) ?? nil
-        externalUrl = (try? c.decodeIfPresent(String.self, forKey: .externalUrl)) ?? nil
     }
 
     init(
         name: String?, title: String?, description: String?, url: String?,
         infoHash: String?, fileIdx: Int? = nil, sources: [String]? = nil,
-        behaviorHints: StreamBehaviorHints?, externalUrl: String? = nil
+        behaviorHints: StreamBehaviorHints?
     ) {
         self.name = name
         self.title = title
@@ -796,7 +754,6 @@ struct Stream: Codable, Hashable {
         self.fileIdx = fileIdx
         self.sources = sources
         self.behaviorHints = behaviorHints
-        self.externalUrl = externalUrl
     }
 
     var isPlayable: Bool {
@@ -806,79 +763,12 @@ struct Stream: Codable, Hashable {
 
     var isTorrent: Bool { infoHash != nil && url == nil }
 
-    /// Addons whose origin has refused a byte-range request outright.
-    ///
-    /// Keyed by ADDON, not by link, for the same reason `noticeClipsByAddon`
-    /// is: an addon that hands out cast endpoints hands out cast endpoints for
-    /// everything, so its next link refuses ranges too. Seen on "DMM Cast for
-    /// TorBox", which answers 500 to every range request — the proxy fails open
-    /// so the film PLAYS, and caching, seeking and scrub previews are all
-    /// silently impossible for the rest of the session. Nothing about that is
-    /// visible to the viewer beyond "the cache isn't working".
-    ///
-    /// Persisted, because the verdict is about the addon and not about tonight.
-    /// Auto-selection only: a manual tap still plays whatever you choose.
-    enum RangeRefusingAddons {
-        // v2: the first version noted an addon after ONE failure on any status,
-        // including 416 — which meant a good source could be excluded for good
-        // on the strength of a bad request we made ourselves. Anything the
-        // eager version recorded is untrustworthy, so the key moves and the old
-        // list is simply abandoned.
-        private static let key = "cache.addonsRefusingRanges.v2"
-
-        static var all: Set<String> {
-            Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        }
-
-        static func note(_ addon: String?) {
-            guard let addon, !addon.isEmpty else { return }
-            var current = all
-            guard current.insert(addon).inserted else { return }
-            UserDefaults.standard.set(Array(current), forKey: key)
-            NSLog("[CueCache] %@ refuses byte ranges — excluded from auto-selection", addon)
-        }
-
-        static func contains(_ addon: String?) -> Bool {
-            guard let addon, !addon.isEmpty else { return false }
-            return all.contains(addon)
-        }
-    }
-
-    /// A cast / open-externally stream (e.g. DMM Cast): no in-app-playable url
-    /// and no torrent, but a link to hand off to the system / an external app.
-    var isExternal: Bool {
-        !isPlayable && !isTorrent && !(externalUrl?.isEmpty ?? true)
-    }
-
     /// Debrid-cached marker, e.g. "[RD+]", "[TB+]", "PM+" — the convention
     /// Torrentio/Comet/MediaFusion use for torrents the provider already has
     /// (instant play, no download wait).
     private static let cachedMarkerRegex = try? NSRegularExpression(
         pattern: #"\b(rd|ad|pm|tb|dl|oc|pk|ed)\+"#, options: [.caseInsensitive]
     )
-
-    /// True when picking this source plays immediately: a direct http(s)
-    /// link, or a torrent the debrid service reports as already cached
-    /// (the "[RD+]"-style marker, a ⚡, or the word "cached"). An unmarked
-    /// torrent counts as NOT instant — the debrid provider would have to
-    /// download it first.
-    var isInstant: Bool {
-        let haystack = "\(name ?? "") \(title ?? "") \(description ?? "")"
-        let lower = haystack.lowercased()
-        // Explicitly-uncached debrid links (Torrentio's "[RD download]", a ⏳,
-        // "uncached") DO carry a playable URL — the debrid service just
-        // downloads on demand — so they must be caught BEFORE the isPlayable
-        // shortcut, or "cached only" lets them through.
-        if isUncachedMarked(lower) { return false }
-        if isPlayable { return true }
-        if haystack.contains("⚡") { return true }
-        if lower.contains("cached") { return true }
-        guard let regex = Self.cachedMarkerRegex else { return false }
-        return regex.firstMatch(
-            in: haystack, options: [],
-            range: NSRange(haystack.startIndex..., in: haystack)
-        ) != nil
-    }
 
     private static let uncachedRegex = try? NSRegularExpression(
         pattern: #"\b(?:rd|ad|pm|tb|dl|oc|pk|torbox|debrid)\b[\s\-\]]*download|download\]|uncached|not cached"#,
@@ -892,25 +782,8 @@ struct Stream: Codable, Hashable {
         return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
     }
 
-    /// Mentions of a debrid provider — a stream that names one is a debrid
-    /// result, whose bare playable URL does NOT imply "cached".
-    private static let debridMentionRegex = try? NSRegularExpression(
-        pattern: #"real[\s\-]?debrid|premium(ize)?|all[\s\-]?debrid|torbox|debrid|\[(rd|ad|pm|tb|dl|oc|pk|ed)\b"#,
-        options: [.caseInsensitive]
-    )
-    private func mentionsDebrid(_ lower: String) -> Bool {
-        guard let regex = Self.debridMentionRegex else { return false }
-        return regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil
-    }
-
-    /// STRICT cached test for the "cached only" filter. Unlike `isInstant`, a
-    /// bare playable URL does NOT count — debrid addons (Comet, MediaFusion,
-    /// StremThru…) return a playable URL for UNCACHED results too (they
-    /// download on access), which is why "cached only" was letting non-cached
-    /// links through. Requires a positive cached signal, or a plain direct
-    /// link with no debrid involvement at all.
-    var isCached: Bool {
-        let raw = "\(name ?? "") \(title ?? "") \(description ?? "")"
+    /// What the add-on's own text says about being cached, nil if it says nothing.
+    func statedCached(in raw: String) -> Bool? {
         let lower = raw.lowercased()
         if isUncachedMarked(lower) { return false }
         // Positive cached markers used across the common addons.
@@ -918,17 +791,11 @@ struct Stream: Codable, Hashable {
         if lower.contains("cached") || lower.contains("instant") { return true }
         if let regex = Self.cachedMarkerRegex,   // "[RD+]" / "[PM+]" style tags
            regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)) != nil { return true }
-        // An unmarked torrent is never instant; a debrid URL without a cached
-        // marker is a download-on-access link (NOT cached). Only a genuine
-        // direct link with no debrid context counts as instant.
-        if isTorrent { return false }
-        return isPlayable && !mentionsDebrid(lower)
+        return nil
     }
 
     private var searchHaystack: String { "\(name ?? "") \(title ?? "") \(description ?? "")".lowercased() }
 
-    /// AV1-encoded (no hardware decode on the Apple TV A10X).
-    var isAV1: Bool { searchHaystack.contains("av1") }
     /// Dolby Vision.
     var isDolbyVision: Bool {
         let h = searchHaystack
@@ -949,101 +816,6 @@ struct Stream: Codable, Hashable {
             atmos: hasAtmos,
             addonName: addonName
         )
-    }
-
-    /// Torrentio-style seeder count ("👤 123").
-    private static let seedersRegex = try? NSRegularExpression(pattern: #"👤\s*(\d+)"#)
-
-    /// Ranks a link WITHIN its resolution tier by everything the release name
-    /// reveals. Weights, in order of dominance:
-    ///  cached ≫ dead torrent / cam-rip ≫ release quality > codec > HDR >
-    ///  audio > size sweet spot > seeders.
-    /// A10X-specific choices: AV1 is punished hard (no hardware decode —
-    /// software AV1 is a slideshow at high res) and HEVC is boosted.
-    func qualityScore(isInstant: Bool, sizeBytes: Int64?, resolutionLabel: String?) -> Int {
-        let hay = "\(name ?? "") \(title ?? "") \(description ?? "")".lowercased()
-        var score = 0
-
-        // Instant playback dominates everything: an uncached torrent means
-        // waiting for the debrid service to download it first.
-        if isInstant { score += 1000 }
-
-        // Release quality ladder.
-        if hay.contains("remux") { score += 140 }
-        else if hay.contains("blu-ray") || hay.contains("bluray") || hay.contains("bdrip") || hay.contains("brrip") { score += 120 }
-        else if hay.contains("web-dl") || hay.contains("webdl") || hay.contains("web dl") { score += 110 }
-        else if hay.contains("webrip") || hay.contains("web-rip") { score += 90 }
-        else if hay.contains("hdtv") { score += 60 }
-        else if hay.contains("dvdrip") { score += 40 }
-        // Theater rips are near-unwatchable — keep them visible but last.
-        if hay.contains("hdcam") || hay.contains("camrip") || hay.contains("cam-rip")
-            || hay.contains("telesync") || hay.contains("hdts") || hay.contains("telecine") {
-            score -= 400
-        }
-
-        // Codec (hardware-decode reality of the box). The A10X and newer
-        // decode HEVC in hardware and AV1 in software only. The Apple TV HD's
-        // A8 has NO HEVC decoder either: a 1080p HEVC link there is a
-        // software decode the two cores cannot sustain — so on that box the
-        // codec ladder inverts and H.264 leads.
-        let isHEVC = hay.contains("hevc") || hay.contains("x265") || hay.contains("h265") || hay.contains("h.265")
-        let isAVC = hay.contains("x264") || hay.contains("h264") || hay.contains("h.264") || hay.contains("avc")
-        if PerformanceProfile.isLowPower {
-            if hay.contains("av1") { score -= 300 }
-            else if isHEVC { score -= 120 }
-            else if isAVC { score += 40 }
-        } else {
-            if hay.contains("av1") { score -= 150 }
-            else if isHEVC { score += 40 }
-            else if isAVC { score += 15 }
-        }
-
-        // Dynamic range.
-        if hay.contains("dolby vision") || hay.contains("dolby.vision") || hay.contains("dovi")
-            || hay.range(of: #"\bdv\b"#, options: .regularExpression) != nil {
-            score += 35
-        } else if hay.contains("hdr10+") || hay.contains("hdr10plus") {
-            score += 30
-        } else if hay.contains("hdr") {
-            score += 25
-        }
-
-        // Audio. E-AC3/DD+ gets the edge: best tvOS compatibility (and the
-        // native-DV path needs it); Atmos stacks on top.
-        if hay.contains("atmos") { score += 20 }
-        if hay.contains("ddp") || hay.contains("dd+") || hay.contains("eac3") || hay.contains("e-ac-3") || hay.contains("dd5.1") { score += 15 }
-        else if hay.contains("truehd") { score += 10 }
-        else if hay.contains("dts") { score += 8 }
-
-        // Seeders — only meaningful for uncached torrents: 0 seeds = dead.
-        if !isInstant, let regex = Self.seedersRegex,
-           let match = regex.firstMatch(in: hay, range: NSRange(hay.startIndex..., in: hay)),
-           let range = Range(match.range(at: 1), in: hay),
-           let seeders = Int(hay[range]) {
-            if seeders == 0 { score -= 300 }
-            else if seeders >= 20 { score += 20 }
-            else if seeders >= 5 { score += 10 }
-        }
-
-        // Size sweet spot per resolution: rewards a healthy bitrate, doesn't
-        // blindly chase the biggest file. Unknown size is neutral — many
-        // excellent debrid links carry no size.
-        if let bytes = sizeBytes, bytes > 0 {
-            let gb = Double(bytes) / 1_073_741_824
-            let sweet: ClosedRange<Double>
-            switch resolutionLabel {
-            case "2160p": sweet = 8 ... 60
-            case "1080p": sweet = 2 ... 15
-            case "720p":  sweet = 0.7 ... 6
-            case "480p":  sweet = 0.2 ... 3
-            default:      sweet = 0.7 ... 20
-            }
-            if sweet.contains(gb) { score += 30 }
-            else if gb > sweet.upperBound { score += 10 }        // huge remux: fine
-            else if gb < sweet.lowerBound * 0.5 { score -= 25 }  // starved bitrate
-        }
-
-        return score
     }
 
     /// Addon-provided short label, e.g. "Torrentio\n4K" — its own line
@@ -1085,11 +857,12 @@ struct Stream: Codable, Hashable {
     /// row bodies, never directly per render.
     var fileSizeLabel: String? {
         if let bytes = behaviorHints?.videoSize, bytes > 0 {
-            let gb = Double(bytes) / 1_073_741_824
+            // Decimal, as the add-ons and Apple count.
+            let gb = Double(bytes) / 1_000_000_000
             if gb >= 1 {
-                return String(format: gb >= 100 ? "%.0f GB" : "%.1f GB", gb)
+                return String(format: gb >= 100 ? "%.0f GB" : "%.2f GB", gb)
             }
-            let mb = Double(bytes) / 1_048_576
+            let mb = Double(bytes) / 1_000_000
             return String(format: "%.0f MB", mb)
         }
         let haystack = "\(name ?? "") \(title ?? "") \(description ?? "")"
@@ -1121,7 +894,7 @@ struct Stream: Codable, Hashable {
               let unitRange = Range(match.range(at: 2), in: haystack),
               let value = Double(haystack[numberRange]) else { return nil }
         let multiplier: Double = haystack[unitRange].lowercased().hasPrefix("m")
-            ? 1_048_576 : 1_073_741_824
+            ? 1_000_000 : 1_000_000_000
         // `Int64(Double)` TRAPS past 2^63. The digits come from addon text
         // (`\d+` is unbounded), so a long numeric id glued to "GB" in a
         // release title was a remote crash while the Sources list was built.
@@ -1216,9 +989,8 @@ struct StreamEntry: Identifiable, Hashable {
         return String(addonName[separator.upperBound...])
     }
 
-    /// Identity that survives between sessions, for remembering a link the
-    /// viewer walked out on. NOT the URL: a debrid link is freshly signed on
-    /// every resolve, so keying on it would never match twice. An infoHash is
+    /// Identity of a link across sweeps. NOT the URL: a debrid link is freshly
+    /// signed on every resolve, so keying on it would never match twice. An infoHash is
     /// the same torrent forever; a filename is the same file; the display
     /// strings are the last resort.
     var rejectionKey: String {
@@ -1239,12 +1011,8 @@ struct StreamEntry: Identifiable, Hashable {
     let fileSizeLabel: String?
     /// Numeric size for ranking; nil = unknown.
     let sizeBytes: Int64?
-    /// Plays immediately (direct link / debrid-cached torrent) — precomputed,
-    /// it's regex work.
-    let isInstant: Bool
-    /// Quality score for ranking within a resolution tier (see
-    /// Stream.qualityScore). Includes the dominant cached/instant bonus.
-    let sourceScore: Int
+    /// What the link's text says, for the styled source cards.
+    let facts: StreamFacts
 
     init(addonName: String, stream: Stream) {
         self.addonName = addonName
@@ -1254,14 +1022,178 @@ struct StreamEntry: Identifiable, Hashable {
         resolutionLabel = stream.resolutionLabel
         fileSizeLabel = stream.fileSizeLabel
         sizeBytes = stream.sizeBytes
-        isInstant = stream.isInstant
-        sourceScore = stream.qualityScore(
-            isInstant: isInstant, sizeBytes: sizeBytes, resolutionLabel: resolutionLabel
-        )
+        facts = StreamFacts(stream)
     }
 
     static func == (lhs: StreamEntry, rhs: StreamEntry) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+/// The key facts of a link, read by known words, not positions: add-ons' text
+/// differs per config. AIOStreams' formatters like Unicode small caps, so the
+/// text is made plain first. The file name fills in what the text leaves out;
+/// what neither says stays nil.
+struct StreamFacts: Hashable {
+    let resolution: String?
+    /// "Bluray Remux"
+    let quality: String?
+    let size: String?
+    let bitrate: String?
+    /// "German, English", "German, English, French +3"
+    let language: String?
+    /// As the add-on says, nil if it doesn't.
+    let cached: Bool?
+    /// "DV · HDR10+ · HEVC"
+    let video: String?
+    /// "TrueHD Atmos · 7.1"
+    let audio: String?
+    /// The release group or provider, and any editions.
+    let origin: [String]
+    /// With AIOStreams, the add-on behind the link: the template's last line starts with it.
+    let gatheredFrom: String?
+
+    init(_ stream: Stream) {
+        let text = Self.plain("\(stream.name ?? "") \(stream.title ?? "") \(stream.description ?? "")")
+        let file = Self.plain(stream.behaviorHints?.filename ?? "")
+        let all = text + " " + file
+        resolution = Self.first(Self.resolutions, in: all)
+        quality = Self.first(Self.qualities, in: all)
+        size = Self.size(of: stream, in: text)
+        bitrate = Self.bitrate(in: text)
+        language = Self.language(in: text)
+        cached = stream.statedCached(in: text)
+        video = Self.video(in: all)
+        audio = Self.audio(in: all)
+        let editions = Self.editions.filter { Self.matches($0.0, all) }.map(\.1)
+        origin = [Self.group(of: stream, file: file)].compactMap { $0 } + editions
+        let lastLine = (stream.description ?? "").components(separatedBy: .newlines).last { !$0.isEmpty }
+        let lastParts = (lastLine ?? "").components(separatedBy: "·")
+        gatheredFrom = lastLine == nil ? nil : lastParts[0].trimmingCharacters(in: .whitespaces)
+    }
+
+    private static let smallCaps: [Character: Character] = [
+        "ᴀ": "A", "ʙ": "B", "ᴄ": "C", "ᴅ": "D", "ᴇ": "E", "ꜰ": "F", "ғ": "F", "ɢ": "G", "ʜ": "H",
+        "ɪ": "I", "ᴊ": "J", "ᴋ": "K", "ʟ": "L", "ᴍ": "M", "ɴ": "N", "ᴏ": "O", "ᴘ": "P", "ǫ": "Q",
+        "ʀ": "R", "ꜱ": "S", "ᴛ": "T", "ᴜ": "U", "ᴠ": "V", "ᴡ": "W", "ʏ": "Y", "ᴢ": "Z"
+    ]
+
+    /// The compatibility mapping takes care of the mathematical alphabets.
+    private static func plain(_ text: String) -> String {
+        String(text.precomposedStringWithCompatibilityMapping.map { smallCaps[$0] ?? ($0 == "_" ? " " : $0) })
+    }
+
+    private static func regex(_ pattern: String) -> NSRegularExpression? {
+        try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }
+
+    /// Best first, each a whole word; a digit may follow ("DDP5.1").
+    private static func table(_ words: [(String, String)]) -> [(NSRegularExpression?, String)] {
+        words.map { (regex("(?<![a-z0-9])(?:\($0.0))(?![a-z])"), $0.1) }
+    }
+
+    private static let resolutions = table([
+        ("2160p|4k|uhd", "4K"), ("1440p", "1440p"), ("1080p|fhd", "1080p"),
+        ("720p", "720p"), ("576p", "576p"), ("480p", "480p")
+    ])
+    private static let qualities = table([
+        ("remux", "Bluray Remux"), ("blu-?ray|bdrip|brrip", "Bluray"), ("web-?dl", "Web-dl"), ("web-?rip", "Webrip"),
+        ("web", "Web"), ("hdtv", "HDTV"), ("dvd(?:rip)?", "DVD"), ("hd-?cam|cam(?:rip)?|telesync|hd-?ts", "Cam")
+    ])
+    private static let pictures = table([
+        ("dv|dovi|dolby[ .]?vision", "DV"), ("hdr10\\+|hdr10plus", "HDR10+"), ("hdr(?:10)?", "HDR")
+    ])
+    private static let codecs = table([
+        ("hevc|x\\.?265|h\\.?265", "HEVC"), ("av1", "AV1"), ("vp9", "VP9"), ("avc|x\\.?264|h\\.?264", "AVC")
+    ])
+    private static let languages = table([
+        ("english", "English"), ("german", "German"), ("french", "French"), ("spanish", "Spanish"), ("latino", "Latino"),
+        ("italian", "Italian"), ("portuguese", "Portuguese"), ("dutch", "Dutch"), ("russian", "Russian"),
+        ("ukrainian", "Ukrainian"), ("polish", "Polish"), ("czech", "Czech"), ("turkish", "Turkish"),
+        ("swedish", "Swedish"), ("norwegian", "Norwegian"), ("danish", "Danish"), ("finnish", "Finnish"),
+        ("greek", "Greek"), ("hungarian", "Hungarian"), ("romanian", "Romanian"), ("arabic", "Arabic"),
+        ("hindi", "Hindi"), ("tamil", "Tamil"), ("telugu", "Telugu"), ("japanese", "Japanese"), ("korean", "Korean"),
+        ("chinese", "Chinese"), ("thai", "Thai"), ("vietnamese", "Vietnamese")
+    ])
+    private static let audios = table([
+        ("truehd", "TrueHD"), ("dts[:.\\- ]?x", "DTS:X"), ("dts-?hd[ .-]?ma", "DTS-HD MA"), ("dts-?hd", "DTS-HD"),
+        ("dd\\+|ddp|e-?ac-?3", "DD+"), ("dts", "DTS"), ("dd|ac-?3", "DD"), ("flac", "FLAC"), ("aac", "AAC"), ("opus", "Opus")
+    ])
+    private static let editions = table([
+        ("extended", "Extended"), ("director'?s?[ .]?cut", "Director's Cut"), ("theatrical", "Theatrical"),
+        ("unrated", "Unrated"), ("uncut", "Uncut"), ("imax", "IMAX"), ("remaster(?:ed)?", "Remastered"),
+        ("criterion", "Criterion")
+    ])
+    private static let atmos = regex("(?<![a-z0-9])atmos(?![a-z])")
+    private static let channels = regex(#"(?<![\d.])[2567]\.[01](?![\d.])"#)
+    private static let sizes = regex(#"(\d+(?:\.\d+)?)\s*(TB|GB|GiB|MB|MiB)(?![a-z])"#)
+    private static let bitrates = regex(#"(\d+(?:\.\d+)?)\s*Mbps"#)
+    private static let groups = regex(#"-([a-z0-9]+)(?:\.[a-z0-9]{2,4})?\s*$"#)
+
+    private static func matches(_ regex: NSRegularExpression?, _ text: String) -> Bool {
+        regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    private static func first(_ table: [(NSRegularExpression?, String)], in text: String) -> String? {
+        table.first { matches($0.0, text) }?.1
+    }
+
+    /// The whole match, then its groups.
+    private static func parts(_ regex: NSRegularExpression?, in text: String) -> [String]? {
+        guard let match = regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        return (0..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: text).map { String(text[$0]) } }
+    }
+
+    /// Whatever there is, nil if nothing.
+    private static func listed(_ parts: [String?]) -> String? {
+        let found = parts.compactMap { $0 }
+        return found.isEmpty ? nil : found.joined(separator: " · ")
+    }
+
+    private static func video(in text: String) -> String? {
+        let pictures = pictures.filter { matches($0.0, text) }.map(\.1)
+        // "HDR" also matches inside "HDR10+".
+        let picture = pictures.contains("HDR10+") ? pictures.filter { $0 != "HDR" } : pictures
+        return listed(picture + [first(codecs, in: text)])
+    }
+
+    private static func audio(in text: String) -> String? {
+        let codec = first(audios, in: text)
+        let format = matches(atmos, text) ? [codec, "Atmos"].compactMap { $0 }.joined(separator: " ") : codec
+        return listed([format, parts(channels, in: text)?.first])
+    }
+
+    private static func size(of stream: Stream, in text: String) -> String? {
+        // The add-on's own figure; the file's bytes only where its text has none.
+        if let found = parts(sizes, in: text), found.count == 3 {
+            return "\(found[1]) \(found[2].prefix(1).uppercased())B"
+        }
+        if let bytes = stream.behaviorHints?.videoSize, bytes > 0 { return stream.fileSizeLabel }
+        return nil
+    }
+
+    private static func bitrate(in text: String) -> String? {
+        guard let found = parts(bitrates, in: text), found.count == 2 else { return nil }
+        return "\(found[1]) Mbps"
+    }
+
+    /// In the order the text names them.
+    private static func language(in text: String) -> String? {
+        let found = languages.compactMap { entry -> (Int, String)? in
+            entry.0?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)).map { ($0.range.location, entry.1) }
+        }.sorted { $0.0 < $1.0 }
+        guard !found.isEmpty else { return nil }
+        let shown = found.prefix(3).map(\.1).joined(separator: ", ")
+        return found.count > 3 ? "\(shown) +\(found.count - 3)" : shown
+    }
+
+    /// The release group: the end of AIOStreams' binge group, else of a scene
+    /// file name.
+    private static func group(of stream: Stream, file: String) -> String? {
+        let binge = stream.behaviorHints?.bingeGroup?.components(separatedBy: "|") ?? []
+        if binge.count > 3, let last = binge.last, !last.isEmpty { return last }
+        guard let found = parts(groups, in: file), found.count == 2, Int(found[1]) == nil else { return nil }
+        return found[1]
+    }
 }
 
 // MARK: - API response envelopes

@@ -16,6 +16,8 @@ Server-facing values (`nuvio_tvos_preferences`, `syncSource: "nuvio"`) must not 
   Tool: `Tools/RemoteDriver/remote.sh "<keys>" [launch args]` presses real
   Siri Remote keys on the sim (`up/down/left/right/select/menu`, `hold`,
   `wait:<s>`, `shot:<name>`, `focus`, `<key>*<n>`; ~20 s per run).
+  Launched by the driver (launch args) the player never starts: for
+  playback, `simctl launch` and drive without args.
 - No test targets or UI test suites unless asked.
 - **Unsure what the user means? Ask before building.** Many changes start as a
   discussion; when the user says "lets discuss", propose, don't build.
@@ -72,7 +74,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - `Cue/Components/TitleBlock.swift` (`ModeSwap`, shared title parts),
   `Components.swift` (glass, `GlassPill`, flat controls).
 - `Cue/Core/`: services (Stremio, TMDB, MDBList), stores, `BillboardPicks`,
-  `MenuEntry.swift` (HoldMenu), `SourcePicker.swift`.
+  `MenuEntry.swift` (HoldMenu, `MenuPanel`), `SourcePicker.swift` (with `PlayStage`).
 
 ## Design rules
 
@@ -84,6 +86,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   glass everywhere (`AppGlass`). Everything in the page is flat
   (`FlatControl`). Exception: the action buttons' pill at rest (`ActionFace`:
   glass at rest; focused a white capsule, dark content, 5 % larger).
+  In the player the glass sits directly on the picture: no shade or dimming under it (a shade made it read dark; without the glass's dark tint it was at times unreadable, so the tint stays).
 - **Text:** the system font; 24 pt regular is the base, 23–25 pt the floor.
   Four levels, everywhere (`FixedFocusText`): primary 75 %, body 65 %,
   secondary 55 %, tertiary 45 %. Never brighter.
@@ -96,11 +99,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (pages, Details) presses are dropped until the page is whole. Long journeys
   (Back's scroll to the top) go at their own pace; a press in their first part
   is dropped.
+- **Loading**: one symbol everywhere, three dots rising and falling one after
+  the other, the light going with them, a brief rest between rounds
+  (`LoadingSymbol`, `LoadingSpinner` in SwiftUI), 64 pt on a page, the text's
+  white; in the player too, at once (after 0.5 s, the title's logo or a play symbol
+  instead was talked over: left as is). A turning ring, a ripple, dots standing still and a pulsing dot were tried.
 - Never alpha 0 on a focusable list (tvOS skips transparent views); hide cell
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
   ring. One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
+  A card's progress (Continue Watching, Details' episodes, the Top Shelf):
+  the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
+  (3, scaled, was too faint), 30 pt from the foot and sides; one line above
+  it, the caption's 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
+  the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
 
 ## How things work
 
@@ -112,6 +125,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Animation in `didUpdateFocus`. A fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus.
   SwiftUI scrolling was rejected (main-thread animation, lost targets).
+  What a row shows is what Select acts on: the row focus is in keeps its
+  titles, order and pictures until focus leaves it (a reordered Continue
+  Watching showed one title and played another); other rows update at once,
+  new pictures in place (`heldRows`, `refreshArt`).
+  Continue Watching's art is the episode's TMDB still as Details', else the
+  add-on's, looked up under the launch curtain (`ContinueStills`).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`). No Play button: Details is the way to play.
@@ -128,22 +147,49 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   under a curtain (`LaunchPreloader`, `ProfileGate` for "Who's watching?").
 - **Pictures**: posters and the box from add-ons; billboard and Details from
   TMDB's backdrop, decoded as focus settles (`TitlePreloader`).
+- **Progress**: under 30 s played in a session, nothing is saved (a Start Over
+  keeps its old position). After that the real position, seeks included: to
+  the device every 10 s, to Nuvio on the first save and every 30 s; both on
+  pause, leaving the app and exit. Finished at 95 %. Started means past 30 s
+  (`WatchProgress.isStarted`); "Up Next" only ever means unstarted.
 - **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): 2 s rest on the
   buttons, one `AVPlayer` handed between Home, Details and full screen, YouTube
-  HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Be gentle on YouTube:
+  HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Full screen
+  (`TrailerController`) has the player's bar and presses (`PlayerTransport`,
+  `PlayerOverlay`, shared with `PlayerController`): the title's name, no
+  buttons, shelf or stills; with the controls up, Up hides them and Down
+  closes ("Back to Details" with a chevron where the shelf's tabs peek).
+  It has no picture of its own: a clear cover, at once, over Details'
+  picture where the trailer plays; Details' text, buttons and shade fade
+  out under it and back as it goes (0.45 s), the sound rising from silence
+  (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer` through the player rework.
-- **Sources**: no sorting or filtering, the add-ons' order; Play takes the
-  first link; 5-min cache; none remembered. Hold Play: the source list
+- **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
+  take the first link (`PlayLauncher`); a link that fails or shows
+  no frame in 20 s: the next, silently, once (3 was the fork's: two failing usually share a cause), then the source list; 5-min cache; none remembered; each add-on gets 20 s to answer (Play waits on them in order). Hold Play: the source list
   (`SourcePanel`).
+- **The stage** (`PlayStage`, `PlayStageView`): every way into the player goes
+  through the title's picture softly blurred (12 pt: shapes and colours, no detail to compete with the text; sharp was tried), evenly dimmed, 70 % at least, more for a bright picture (`StageArt.dimBelow`; Details' 55 % left the centred text hard to read): an episode's TMDB still in full size, else TMDB's backdrop as Details', for every way in (from a card's hold menu looked up at the press, 1.5 s at most, else the card's own background; never the poster) (the blur under Details' rows looked boring; the billboard's left shade, a softer blur, a dimmed blur over the screen as it was at the press, the title's colours, and a magazine page (the picture framed on a near-black page: terrible) were tried), centred over it, its foot 40 pt above the shelf's tabs: the logo, always (a catalog item without one: MetaHub's by IMDb id, as the billboard), trimmed and sized by area (`LogoFit`, 70,000 pt² within 728 × 160, its foot fixed; a film keeps the episode lines' room, so it sits as a show's), the name 48 pt semibold where none loads, a show's episode: "SEASON 2, EPISODE 5" as a label above its name (spaced capitals, 23 pt medium, the secondary level), the name 32 pt medium at the primary level ("Season 2 · Episode 5" on a line under the name looked cramped, and the dot was disliked; a level lower was hard to read on the picture) (tried: a centred logo fitted to a box (uneven); the centred name (plain); a poster card above; low on the left the name, the billboard's logo, and the poster beside the text). What's happening, one place for every way in: under the episode, keeping its room, a line, 28 pt medium at the body level, at work a soft light passing through it left to right, then a rest (`SweepLine`: 1 s, a 0.6 s rest, a band about half the words wide; the words at the secondary level, the light at 85 %, past the levels on purpose; the loading symbol beside it put the words off centre; above or below, a letter wave and a size pulse were tried) (a quiet 24 pt line there was too faint, top right was tried, and Refresh's "Searching" doubled it); the lines a little playful, one of each set per press, never changing mid-wait (`PlayStage`): searching "Finding a print", "Finding a good copy", "Checking under the couch"; starting "Lights down", "Shh, it's starting", "Curtain up"; a link failed and the next tried "Swapping reels"; with the list up, no light, both failed "The first two wouldn't play. Pick another." (one link: "That one…"; more, after a fresh search: "These…"); the links that didn't play marked on their cards, "Didn't play" in Playing's place, their words at half, still to pick (a timed-out link can work later), focus landing on the first link not tried, until the list closes or Refresh (no colour, no strike, not removed: the list would jump), nothing found "No prints anywhere. Try Refresh in a bit." ("Searching sources" and "Starting" were boring). The logo keeps one spot for every way in and never moves. Play: the logo still (a pulsing logo pulled the eye from the list; dots and the name fading in and out were tried too), the status
+  from the start, film; no list; Back returns to the
+  page. Choose Source: the same, with the player's shelf below from the start (glass, the add-ons' tabs, Refresh turning with "Searching" only for a search it started; the first search is the corner's; the cards as they come, at once from a list still in the cache), same place, size, glass and cards (`ShelfShape`, `SourceCard`): its tabs the shelf's Sources unfolded (`StageSheet`: the player's own sheet, a `PlayerSheet` with Sources always unfolded; one code, so the glass sits under the tabs as in the player (a SwiftUI copy drew it over them: a reflection). SwiftUI's host refuses UIKit's focus requests: the stage holds focus from Details' Play until the list is up, then drops it into the sheet; focus lands on the first card (Refresh while there's none; landing on the tabs, as the player's shelf, was talked over: Choose Source is for picking), so the tabs go out of focus until it has left them) (cards on no glass were tried; a column of rows, Nuvio's two columns and a grid were talked over: one card, one look).
+  After a pick the row fades; Back returns to it, on that card. All links
+  failing brings the row up on the stage. The player's cover is clear so the
+  stage stays under it until the first frame; then lights down: the film holds paused (no controls for that pause), the stage's text fades (0.25 s) and its picture goes to black (0.7 s), then the film rises out of the black (0.45 s, easing out) and plays, its sound rising from silence over 0.8 s; presses but Back are dropped until it has risen (most are a stray second Play) (a crossfade straight from the stage was talked over); leaving is one fade
+  straight to the page.
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.
 - **Hold menus** are Cue's own `HoldMenu`: the system's ate the next press.
+  One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
+  menus and the player's Audio and Subtitles; a change there reaches all
+  (the SwiftUI hold menu is gone). Entries: playing, the source, Library,
+  watched (narrow to wide), red last; one name per action (Start Over, Go to
+  Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
+  its row turning into "Mark … as Unwatched" (a confirm page was pointless).
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
-  What's only to read takes no focus. Playback and Developer are still on the
-  old cards. Profile management lives under Nuvio.
+  What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.
 - **Background**: one still picture, Bands (`BandsPicture`); Dynamic follows
   the focused title (`TitleBackground`).
 - **App icon and Top Shelf** are generated, never hand-edited:
@@ -162,13 +208,14 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
 
 - Removed features: cloud library, Plex/Jellyfin, Live TV/M3U, JS plugins,
   in-app debrid/TorrServer, themes/accent palettes, external players,
-  Trakt/SIMKL accounts (public Trakt lists stay), Stremio account.
+  Trakt/SIMKL accounts (public Trakt lists stay), Stremio account, Nuvio's
+  stream badges (Badger/Fusion: not liked; their blob feature is left alone).
 - Removed from the screen: the launch's numbers (the steps still go to the
   probe log, `LaunchPreloader.line`).
 - Ask before touching the Nuvio sync.
 - Rejected mechanisms: tvOS's own sidebar, the system's context menus, SwiftUI
   scrolling for the rows, the add-ons' catalogs for Search, sorting or
-  filtering sources, a remembered source.
+  filtering links by content (the add-on pills and refresh are fine), a remembered source.
 - Rejected looks: glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
   Left/Right: a full page scroll (too much movement), the text's parts
@@ -186,11 +233,8 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
-- Trailers: the full-screen trailer's controls to move to the playback
-  refactor's player (now the system's); a setting "foreign titles in original audio"
-  (anime: Japanese with English subtitles — burned in, or YouTube's
-  captions added to the playlist).
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
+- Inter's OFL text and copyright notice to ship with the fonts (`Cue/Player/Fonts/`); Licenses & Credits lists it.
 - A proper cache setting (every cache — pictures, title records,
   TMDB's, trailers — what it holds and one honest clear), replacing the
   TMDB page's old Clear Cache and About's (both gone).
@@ -201,14 +245,64 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
   Collections row stays a count with no page (talked over, not built: a
   list as the add-ons', then ready-made presets, then the editor).
-- Player rework (resume / Start Over still use the old StreamsView).
+- Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
+  are gone there (a second FFmpeg can take the engine's calls, so they can't
+  sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):
+  playback, subtitles, progress, track choice, failover and scrubbing are in
+  (a press is 10 s, presses add up; one seek 0.3 s after the last input,
+  playback goes on until then; playing, a press held 0.5 s starts the scan,
+  Apple's: picture paused, the slider runs on by itself at 30, 120, 300 or 600 s a
+  second (the same way faster, the other way slower, then it turns round;
+  Select, Play or Back land there and play). Not real fast-forward: the
+  engine plays 2× at most, never backwards. The bar follows at 30 Hz, stills never wait:
+  a disk window, 10 min ahead in a 6 GB budget (a quarter of free space at
+  most; packets on disk on both engine paths, the software default is
+  memory; a kill's leftovers go at launch, `PlayerTempSweep`), so seeks and
+  stills inside it use no network; `loadPreview` asks
+  the engine first, its own connection only for what it doesn't hold);
+  the bar shows every span on disk in the dimmer white wherever the fill isn't (`residentRanges`: islands left by a seek stay; what's behind shows when the fill pulls back in a scrub); in the scan or paused scrubbing the scrub's span is only a thin line where it began and one at the marker (the span in that white took its meaning; two levels: a third wouldn't read on the bar). A press while playing doesn't detach: line, fill, time and preview glide as one on the move spring, as Apple's. Paused, with the bar focused: a swipe
+  is fine control: slow, about 45 s across the pad whatever the length, the
+  gain growing evenly with the speed up to 3 min across, with a glide;
+  keyframe stills while moving, the exact frame 0.25 s after it rests; the preview follows the marker,
+  not there until its first still, then fading in (0.25 s), only the time under the marker until then (the loading dots, glass breathing as the placeholders, fainter and brighter, a light sweeping the glass, and the last still kept and dimmed while the next is late were tried); nothing lands until Select (which plays), Back cancels.
+  Skip (IntroDB, by IMDb id, no key; crowd-sourced, a 5 s intro can be right):
+  glass pill left above the bar, no icon, a rounded rectangle as the tall Settings rows (a capsule was wrong), focused white with dark text (a soft veil looked worse), in the title's place while it's up, with where it ends,
+  inside recap, intro or a film's outro; up until 3 s before the span ends, controls or not; focused only with the controls up, so Select skips (controls gone, Up or Select brings them up on it and does nothing else; Left and Right scrub as usual); paused or
+  scrubbing it goes (Select keeps its job); never automatic. A prompt takes focus; Down steps off it to the bar,
+  Up back to it. The time always sits under the marker, Apple's icon to its right (pause; a press: 10 s back or on; the scan: rewind or forward, its level from 2 on as a number), the time left stays at the bar's end (it makes way only when they'd touch). In the scan or paused scrubbing the title and buttons go; a press while playing leaves them up. No track line and no "Paused": codecs are in the diagnostics HUD. Next episode: the link is sought
+  60 s before the card, same `bingeGroup` first, else the first; the card, right
+  above the bar, at the outro, else 2 min before the end, only once its link is found. Select
+  plays, Back dismisses it; at the end 5 s "Next in", then it plays in the same
+  player. Going on counts as finished, however early.
+  Home and back: the engine drops its picture in the background, so a return
+  loads the same way, then stops paused with the controls up, the disk window
+  empty; it loads playing but silent, since a paused load draws no picture.
+  A stream lost mid-play (an error, an end 30 s or more short, or 20 s stalled
+  with nothing ahead): the same link from where the picture stopped, then the
+  next links, then the source list. A link is held as long as it works: only
+  a failure with a list over 5 min old searches again (the same file, freshly
+  signed, then the same `bingeGroup`, then the order), the old list if nothing
+  comes. The engine's clock runs on, still
+  "playing", over a frozen picture: don't trust it (`dryAt`). Controls are ours, in tvOS's look (the system's player
+  loses the software path): the timeline; left above the bar the episode's name over the show's title (no season or episode number: those are in Details), level with the buttons; round glass Audio and Subtitles
+  buttons above the bar on the right, a glass `MenuPanel` rising from them, titled, with pages, each page as wide as its widest row (400 to 620 pt; a fixed 620 was far wider than its rows); buttons and rows focus as the hold menus' rows (0.12 s both ways, a soft shadow, pressed −3 %), not the billboard's slow way out; prompts 0.2 s (0.12 too snappy on them), and they grow 12 pt, not 5 % (too much on a wide card) (tvOS's own glass buttons and menu were tried: Cue's stay)
+  (picking closes it; Back steps back a page). Subtitles, Apple's order: On, Off (On brings back the last track, else the preferred language), a line, Track, Delay (0.25 s a press, until the track or episode changes), Style. Track's page: Included, then External (the subtitle add-ons', loaded once the link plays, the preferred language first), each row the language over the format and the add-on; the file's title only where two rows would read the same ("Full", "Signs & Songs": it mostly repeats the format). Audio: Audio Track, rows the same way (the format); a row too long runs while focused (Enhance Dialogue and Reduce Loud Sounds through the engine's `AudioShaping` were tried: they sounded weird, and tvOS has no API for its own). Skip and Next Episode above the bar on the left, level
+  with the buttons. Up: a prompt on screen, else the buttons (Right off the prompt
+  reaches them, Left off Audio the prompt), but with the controls gone Up brings them back on the bar; focused, the bar is 12 pt, not 8, its fill 85 % white (10 pt and 75 % were hard to notice, 14 pt and full white too much); a soft black shadow under it; Down from them: the bar; Up off them or a prompt: the controls go, a way out that can't close the player. Every press brings the controls up (Up and Down do nothing else, Left and Right scrub, Select pauses). The shelf goes through them, YouTube's way: its tabs, plain words apart from the page's glass, the chosen one keeping a pill at rest once focus leaves the tabs (`FlatControl.selected`, as Details' season; not in the peek), focus 0.2 s as the prompts (a slab of glass in the peek outweighed the bar; glass pills and Details' season buttons were tried), peek up the bottom edge with the controls (no focus; gone in the scan and paused scrubbing); the controls, the peek and a prompt go together, a fade and 24 pt down, the prompt staying visible (120 pt was too much, a plain fade was tried). Click Down from the bar opens it, rising and pushing bar, title, buttons and any prompt up as they fade (they don't stay attached; a prompt left still had the shelf slide over it); Up from the tabs drops it to the peek, on the bar; never a swipe, to open or close (stray touches). The shelf is its own thing (decided; attached to the bar as YouTube's was tried: it left subtitles no room). Subtitles (`SubtitleText`): the look is set under Style in the player only, no Settings page: a few named options each, kept across launches: Font (SF Pro, Inter, bundled for its weights), Weight (Regular to Bold, in both fonts), Size (40 to 64), Colour (Pure, Soft, Warm: content, so past the text limit), Outline (Off to Heavy, 0 to 4 pt), Outline Opacity (gone with the outline off), Background (a bar behind each line, tight to the text, 4 pt apart, up to 80 % black, no blur; one block looked heavy). Picture tracks (PGS, VobSub, DVB) stay as drawn, no OCR: the Style row says "Not used by PGS", pick a text track instead. Default: SF medium 48 pt, Warm FFF9E6, a solid black 3.5 pt edge, no bar, no shadow. centred in 70 % of the width, the file's line breaks kept, a long line wrapped into even ones, the file's italics. ASS (`AssTrack`): dialogue is ours, the file's fonts and colours ignored, a line asking for the top stays there; a line with placement, motion, clipping, rotation, drawing or karaoke tags, an Effect, or a sign or song style goes to libass (`swift-ass-renderer`, pinned; 4K fine on the TV) with the file's fonts, in a layer that doesn't rise with the controls. Every active cue shows, on its frame: the engine's clock updates at 10 Hz, so `subtitleTime` runs on between updates and a display link waits for the next cue edge. Low at rest, up on the controls' spring to clear what comes up (title and buttons, a prompt, the shelf), gone while scrubbing. Back: from the shelf or buttons all the controls go in one press; a list steps back a page, a scrub cancels; only with nothing up does it close; for 1 s after the controls hide by themselves it does nothing (that Back was meant for them). Languages (Settings → Playback, synced; everything else is chosen in the player): one Language for audio and subtitles (a separate subtitle language was dropped); Original Audio Off / Anime / All Titles: TMDB's original language over Language where the link has it (Anime: Japanese in TMDB's Animation genre); Subtitles Auto / Always / Off: Auto, decided from the audio that plays (an untagged track counts as the title's own language): not Language, full subtitles in Language; Language, only forced ones (flagged, or "Forced"/"Signs" in the name). A pick by hand for the title (`PlaybackMemory`: a show for all its episodes, on this device; the language, from the tag or else the track's name, and forced or full) wins over all of it, set again once the tracks are known. Audio: that pick, the original, Language (the device's if none); E-AC-3 Atmos over TrueHD (the bridge
+  drops TrueHD's objects). Sonos' Atmos badge proves nothing: check the readout
+  (Developer → Playback diagnostics HUD).
+  The shelf (`PlayerShelf`), glass from the bottom, its foot 30 pt above the screen's (60 was too high), the episodes' one caption line evenly padded above and below (room for a second line left a gap; running the glass on past the screen's foot was tried: it didn't work), corners as the collections' panel (`panelRadius`, 32 pt: panels of cards; 61 pt, concentric with its capsule rows, is `MenuPanel`'s and looked too round here) (the top was tried twice: bottom liked better): Details (stream info, to check a stream against what it claims: two columns, spread as the cards (first line's capitals at their tops, the last baseline at their caption's), the file left (title, episode, add-on, file, length, size, bitrate; size and bitrate as the source card says them, decimal GB), what plays right (video, range, audio, output: where the sound goes and its channels, subtitles as the Subtitles list names them, container, decoding: Hardware or Software) (a value too long runs: a rest, then round),
+  what's really sent, so a converted track never says Atmos), Episodes and
+  Sources (films: no Episodes), Home's cards; Sources unfolds in its place into the add-ons' tabs (one add-on too: it names it) as focus reaches it, a 32 pt gap opening before them (16 pt before Refresh), back to Sources as it goes to Episodes or the shelf closes (closed on an add-on, it opens unfolded on it again), opening on the playing add-on, after them, only while Sources or an add-on is chosen, a round glass Refresh, a button at rest as Audio and Subtitles (it needs a press; the tabs act on focus) (asks every add-on again, past the caches; what plays goes on; its arrows (`arrow.trianglehead.2.clockwise.rotate.90`, round; `arrow.clockwise` wobbled) going a half turn, then a brief rest, as the dots (a steady spin was tried) turning while it searches (the one exception to the loading symbol: the button's own symbol at work; the dots were tried), stopping at once (on the next half turn within 0.4 s; finishing a full turn felt delayed), "Searching" in place of the time; at the end the cards swell a little and settle, as Search's new results (`FixedFocusMotion.pulse`); each add-on's links replacing its old ones as it answers, a page whose links changed swapping them in one fade, the same links staying put (the cards stay while it searches: no removing them, no placeholders, no dots), a press mid-search starts again; on its own line's end it looked random) and "Found 4 min ago" in the body level (the dimmest was hard to read) (a second row of tabs would make every page taller; tabs under the cards read backwards); every card a little smaller than Details' episode cards (498 × 280; 533 × 300 left no peek past three), episodes and sources alike, card and caption centred in the page, the rows as Details' (`ShelfRow`, the stage's too): 40 pt apart whatever the card (24 pt, for a peek past three cards, was tried), moving focus, their window of cards in full with slivers on the move spring (focus in place at the first spot, as Details' episodes, was tried: not here), the row a card past the page each side so cards slide under the glass's edge, a source card's row keeping an episode's caption room so the tops line up (wider sources, as tall as an episode card with its caption, is the fallback), two looks, Settings → Appearance → Source Cards (`SourceCardStyle`). Styled, the default, built on what AIOStreams sends, read by known words from the add-on's text and file name (`StreamFacts`). Every fact has one fixed place and a place with nothing to show stays clear: no stand-ins, no falling back to Raw (consistency: you always know where quality is). Top: quality left, resolution right, shaped as the billboard's status badge (`TitleBadge`, larger: outline and a plate). Playing and Didn't play under the card, in its caption room as the episodes' names (22 pt, the caption's white, its indent), Playing led by three moving bars (`PlayingBars`), Didn't play by `play.slash`; Raw keeps it at its foot (on the card left of the badge, then under it, were tried; the foot's spaced capitals were too loud; a status colour was talked over). Quality 28 pt bold, the facts 23 pt, near Raw's 26 and 23 (32 and Details' 24 looked large beside Raw; the foot's spaced capitals for quality, 23 and 26 pt, were tried; larger looked too big on the card); under quality, in words, "27 GB at 55 Mbps" (a decimal only under 10; the numbers in equal-width digits at the line's level, units and "at" a level down; a bitrate bar against the list's highest was talked over) (as badges, capsules or outlined, they looked wrong). Above the language, dimmer (stacked from the rule up, the room left above them), one line for the picture ("DV · HDR10+ · HEVC"), one for the audio ("TrueHD Atmos · 7.1"), each listing what's there (a fixed column per fact left gaps; a grid of facts over badges looked wrong). Just above the rule, language left (three, then "+2"), right a bolt for cached or a dimmer hourglass for not cached (the words were tried; only "Not cached" was talked over: blank would mean cached and unknown alike), only as the add-on states it (`statedCached`; a playable link proves nothing), so AIOStreams' template must carry it. Under a thin rule (as far from the language's baseline as from the foot's capitals) in spaced capitals the add-on (with AIOStreams the one behind the link, the first part of the template's last line), release group or provider, and edition; at that line's end the score, a number starting the add-on's first line (a 150 pt ring, and a small ring with the number inside, were tried). Raw: the add-on's own text with its line breaks, its first line 26 pt semibold, the rest 23 (the floor: descriptions run long) (32 bold was too large; as a caption under the card it would be cut), from the top, the card down to the episodes' caption baseline and 16:9, so wider (571 × 321; Styled keeps the episode card's size), Playing at the foot's right (no add-on name: the tabs say it), too many lines fade (the AIOStreams template's reasoning and indexer only show here). Running lines were tried: cards are for comparing. Every card of a list the stage picture's dominant colour, flat and opaque (on the player's shelf at 60 %, its glass, coloured by the film, showing through: a full colour clashed with it; a neutral slate there and the colour sampled from the frame were talked over), always dark enough for the text (`SourceTint`; grey pictures a quiet slate), dimmed at rest (brightness 0.24), less for what's playing (0.3), lit when focused (0.4), its words in an ink of the card's hue (14 % saturation at most, full brightness: printed on the card, not white over it), the words letterpressed (a 1 pt dark edge above each letter at 45 %, a light one below at 18 % white), the colour plain (the words cut out of it, the shelf showing through, read too faint; a sheen from above, a soft white over the top half, under and over the words, was tried; a bright top rim and a shine following the thumb, as tvOS's posters, were talked over), lifting and growing with a soft shadow, no outline (kept to go back to: the words on the shelf's glass with a 5 % white behind them, 9 % playing, 18 % focused: fine for Styled, but Raw's text read as highlighted areas, not a card) (tried and dropped: glass on the shelf's glass, tinted and clear; the app's Bands picture; a white wash, smoked glass, a graphite gradient: washed out, flat or boring; a painting per card, a full colour per card from the title's palette: different colours read as different kinds, as quality; the same on pale paper with dark ink; a night painting); the text is past the usual levels here, on purpose. Windows onto one sharp backdrop were too noisy; a dark 90 % blur was dull; flat white too solid; light frost with dark text, grey panes and the blurred episode picture looked bad; the same growth in points as an episode card (a side panel with a button beside Subtitles was tried: too wide, the moves looked off; Audio and Subtitles as shelf tabs, with the buttons gone and the prompts right, were tried and dropped: the buttons stay); one shelf height for every tab; opens on the tabs, a page on what's
+  playing; An episode: what plays goes on until
+  its link is found (same `bingeGroup` first), the source list if none. A source:
+  the same spot on that link.
   Decided (2026-10-27): the engine is AetherEngine (superuser404notfound,
   LGPL-3 + App Store exception; FFmpeg demux → AVPlayer, VideoToolbox;
   DV / HDR10+ / Atmos; we ship the UI) — liked in the unofficial Nuvio
-  tvOS app. The player code came with the fork (Orivio's, never reworked
-  here, many issues): replace it, don't patch it. It replaces today's five paths (KSPlayer's AVPlayer and
+  tvOS app. The player is built from scratch: Orivio's is no reference or feature list;
+  add only what we decide is important. It replaces today's five paths (KSPlayer's AVPlayer and
   FFmpeg, VLC, `DVSampleEngine`, the loopback remux) and their timer
   failovers; no engine setting. Needs tvOS 18 (we target 17). To watch:
-  memory over a long film (the loopback path's leak), styled ASS (it
-  hands raw ASS; we draw it). A fallback engine only if Aether shows a
+  memory over a long film (the loopback path's leak), A fallback engine only if Aether shows a
   real gap. Trailers keep their own `AVPlayer`.

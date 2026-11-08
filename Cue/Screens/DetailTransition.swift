@@ -903,7 +903,7 @@ final class DetailTransitionOverlay {
     /// Details' shade over the picture (the cover is Details without its
     /// text — the reveal only adds things).
     let shade = UIImageView()
-    private let spinner = UIActivityIndicatorView(style: .large)
+    private let spinner = LoadingSymbol(size: 64)
 
     init() {
         root.isUserInteractionEnabled = false
@@ -925,9 +925,7 @@ final class DetailTransitionOverlay {
         pictureFrame.addSubview(shade)
         placeOpen()
         root.addSubview(pictureFrame)
-        spinner.color = .white
         spinner.center = CGPoint(x: 960, y: 540)
-        spinner.hidesWhenStopped = true
         root.addSubview(spinner)
     }
 

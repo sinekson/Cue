@@ -11,7 +11,6 @@ import SwiftUI
 /// The server runs ONLY while this screen is up (see `onAppear`/`onDisappear`)
 /// — it is a tool the viewer opened, not a service left listening.
 struct AddonPhoneAddView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject var addonManager: AddonManager
     @StateObject private var server = AddonImportServer()
     var configuring: InstalledAddon? = nil
@@ -22,25 +21,25 @@ struct AddonPhoneAddView: View {
             ATVBackground()
             VStack(spacing: CueSpacing.lg) {
                 Text(configuring.map { "Configure \($0.displayName)" } ?? "Add from your phone")
-                    .font(FusionType.pageTitle(theme.font))
-                    .foregroundStyle(theme.palette.textPrimary)
+                    .font(FusionType.pageTitle)
+                    .foregroundStyle(CuePalette.textPrimary)
 
                 if let address = server.address {
                     Text(configuring == nil
                          ? "Scan with your phone, or open \(address) in its browser. Both devices have to be on the same network."
                          : "Scan with your phone: it opens the add-on's settings. If they give you a new link, paste it there — it replaces this add-on. Both devices have to be on the same network.")
-                        .font(FusionType.bodyText(theme.font))
-                        .foregroundStyle(theme.palette.textSecondary)
+                        .font(FusionType.bodyText)
+                        .foregroundStyle(CuePalette.textSecondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 900)
                         .fixedSize(horizontal: false, vertical: true)
                     QRCodeView(string: address, side: 360)
                     Text(address)
                         .font(.system(size: 24, weight: .medium, design: .monospaced))
-                        .foregroundStyle(theme.palette.secondary)
+                        .foregroundStyle(CuePalette.secondary)
                 } else if let error = server.lastError {
                     Text(error)
-                        .font(FusionType.bodyText(theme.font))
+                        .font(FusionType.bodyText)
                         .foregroundStyle(CuePrimitives.red300)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 900)
@@ -65,7 +64,7 @@ struct AddonPhoneAddView: View {
                                                 in: RoundedRectangle(cornerRadius: 8))
                                 Text(addon.name)
                                     .font(.system(size: 24, weight: .semibold))
-                                    .foregroundStyle(theme.palette.textPrimary)
+                                    .foregroundStyle(CuePalette.textPrimary)
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 22))
                                     .foregroundStyle(CuePrimitives.success)

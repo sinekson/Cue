@@ -119,10 +119,8 @@ enum InputHold {
 
 @main
 struct CueApp: App {
-    /// Reclaim orphaned player scratch space before anything else runs. A
-    /// remux session that got jetsammed leaves its segment directory behind
-    /// with no owner left to delete it, and nothing else in the app ever
-    /// swept them — launch is the one moment we know none of them are live.
+    /// Reclaim orphaned player scratch space before anything else runs
+    /// (`PlayerTempSweep`): launch is the one moment none of it is live.
     init() {
         // FIRST of all, before ANY UserDefaults write below: shrink an
         // oversized add-on blob a pre-compression build left behind. On a box
@@ -132,8 +130,8 @@ struct CueApp: App {
         // remove the add-on. This is a reducing write, which CFPreferences
         // accepts, so it breaks the loop. See AddonManager.
         AddonManager.reclaimUncompressedStorage()
-        // Same emergency reclaim for the content stores. A large SIMKL/Trakt
-        // import can put the watched history or the library past the ~1 MB
+        // Same emergency reclaim for the content stores. A long history
+        // can put the watched history or the library past the ~1 MB
         // CFPreferences abort on its own, and on such a box the first save
         // crash-loops the app before it can ever compress — so shrink those
         // blobs here, first. Both namespaces: the rename migration below would
@@ -171,7 +169,6 @@ struct CueApp: App {
         BandsPictureStore.shared.load()
     }
 
-    @StateObject private var theme = ThemeManager()
     @StateObject private var addonManager = AddonManager()
     @StateObject private var progressStore = ProgressStore()
     @StateObject private var account = NuvioAccountManager()
@@ -183,13 +180,11 @@ struct CueApp: App {
     @StateObject private var tmdbSettings = TMDBSettingsStore()
     @StateObject private var mdblistSettings = MDBListSettingsStore()
     @StateObject private var playerSettings = PlayerSettingsStore()
-    @StateObject private var streamBadges = StreamBadgeStore()
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .fontDesign(theme.rootFontDesign)   // app-wide font family (Fusion routes serif to headings only)
-                .environmentObject(theme)
+
                 .environmentObject(addonManager)
                 .environmentObject(progressStore)
                 .environmentObject(account)
@@ -201,8 +196,7 @@ struct CueApp: App {
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
                 .environmentObject(playerSettings)
-                .environmentObject(streamBadges)
-                .preferredColorScheme(theme.preferredColorScheme)
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -219,9 +213,6 @@ extension Route {
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
         case .keyword: return "Tag"
-        case .streams: return "Sources"
-        case .streamsFromStart: return "Sources (from start)"
-        case .streamsResume: return "Sources (resume)"
         }
     }
 
@@ -233,10 +224,6 @@ extension Route {
         case .tmdbCompany(_, let name, _, _): return name
         case .genre(_, let name, _, _): return name
         case .keyword(_, let name, _, _): return name
-        case .streams(let meta, let video),
-             .streamsFromStart(let meta, let video),
-             .streamsResume(let meta, let video, _):
-            return meta.name + (video.map { " S\($0.season ?? 0)E\($0.episode ?? 0)" } ?? "")
         default: return ""
         }
     }
@@ -275,13 +262,6 @@ extension Route {
 
 enum Route: Hashable {
     case detail(MetaItem)
-    case streams(MetaItem, MetaVideo?)
-    /// Source picker that plays from 0:00 (the Detail page's Start Over).
-    case streamsFromStart(MetaItem, MetaVideo?)
-    /// Continue Watching resume: re-scrape fresh sources and auto-play the one
-    /// matching what was last watched. `fromStart` plays it from 0:00 (Start
-    /// Over) instead of the saved position.
-    case streamsResume(MetaItem, MetaVideo?, fromStart: Bool)
     /// A folder of a collection, opened from its Home row — on Movies /
     /// Series, only that type (`type`).
     case folder(CueCollection, CueCollectionFolder, type: String? = nil)
@@ -309,10 +289,9 @@ enum Route: Hashable {
 }
 
 struct RootView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var modeSwap = ModeSwap.shared
     @ObservedObject private var sourcePicker = SourcePicker.shared
-    @ObservedObject private var launcher = PlayLauncher.shared
+    @ObservedObject private var stage = PlayStage.shared
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
@@ -323,7 +302,6 @@ struct RootView: View {
     @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var playerSettings: PlayerSettingsStore
-    @EnvironmentObject private var streamBadges: StreamBadgeStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var mdblistSettings: MDBListSettingsStore
     @Environment(\.scenePhase) private var scenePhase
@@ -343,16 +321,6 @@ struct RootView: View {
     /// The layer has its own stack for the pages opened from Details.
     @State private var detailLayers: [Int: DetailLayer] = [:]
 
-    /// The navigation stack of the Home-like tab in front (Home, Movies,
-    /// Series): plays and sources opened from its rows are pushed there.
-    private var homeLikePath: Binding<[Route]> {
-        switch selectedTab {
-        case AppTab.movies.rawValue: return $moviesPath
-        case AppTab.series.rawValue: return $seriesPath
-        default: return $homePath
-        }
-    }
-
     // Persisted here (not inside HomeView) so switching tabs and coming back
     // doesn't rebuild it and re-trigger the catalog load / loading spinner.
     @StateObject private var homeViewModel = HomeViewModel()
@@ -364,7 +332,6 @@ struct RootView: View {
     /// player closes so Back returns to the title page, not the source list.
     /// Deferred (not popped at play time) so StreamsView isn't torn down while
     /// its resolve Task is still running.
-    @State private var pendingAutoPlayPop = false
     /// A deep-link add-on install waiting for the viewer to say yes.
     ///
     /// A `stremio://` / `https://…/manifest.json` / `cue://<host>` link used
@@ -425,39 +392,37 @@ struct RootView: View {
 
     var body: some View {
         content
-            // While the source picker (or a search) is up, nothing under it
-            // takes focus — nor under the launch screen.
-            .disabled(sourcePicker.request != nil || launcher.search?.overlay == true || launch.curtain)
+            // While the stage is up, nothing under it takes focus — nor
+            // under the launch screen.
+            .disabled(stage.scene != nil || launch.curtain)
             // THE LAUNCH (docs/LOADING-PLAN.md §4): over everything on a cold
             // start while the closest things get ready; Home is built under
             // it.
             .overlay { LaunchCurtain() }
             .animation(.easeOut(duration: 0.35), value: launch.curtain)
-            .task { launch.run(home: homeViewModel, addonManager: addonManager) }
+            .task {
+                launch.run(home: homeViewModel, addonManager: addonManager, progress: progressStore,
+                           homeSettings: homeCatalogSettings, tmdb: tmdbSettings)
+            }
             // The welcome screen up: it covers it — no curtain on top (the
             // preload carries on behind). The profile gate is on the curtain.
             .onChange(of: showWelcome) { _, on in if on { launch.skip() } }
-            // Play from a card or an episode: finding its source, over the
-            // app (Back cancels — see `PlayLauncher`).
+            // The way into the player, over everything (`PlayStage`): the
+            // player's cover is clear until its first frame, so this stays
+            // under it, and holds focus until then. Back cancels; the list
+            // plays what's picked.
             .overlay {
-                if let search = launcher.search, search.overlay {
-                    ZStack {
-                        Color.black.opacity(0.45).ignoresSafeArea()
-                        FindingSourceCard(search: search) { launcher.cancel() }
-                            .transition(.scale(scale: 0.96).combined(with: .opacity))
-                    }
-                    .transition(.opacity)
+                if let scene = stage.scene {
+                    PlayStageView(scene: scene, onBack: {
+                        PlayLauncher.shared.cancel()
+                        // A link already loading goes too, or it would come up later.
+                        setPlayback(nil)
+                        playerClosed()
+                    }) { request in sources(request) }
+                    .transition(.asymmetric(insertion: .opacity.animation(PlayStage.fadeIn), removal: .opacity))
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: launcher.search?.overlay == true)
-            // The source picker, over everything (`SourcePicker`): pops in
-            // like a menu over the app; plays what's picked.
-            .overlay {
-                if let request = sourcePicker.request {
-                    sources(request).transition(.opacity)
-                }
-            }
-            .animation(Motion.fade, value: sourcePicker.request?.id)
+            .animation(Motion.fade, value: stage.scene != nil)
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -466,10 +431,8 @@ struct RootView: View {
                 FocusTrace.installIfRequested()
                 startPlayerDemoIfRequested()
                 startDetailDemoIfRequested()
-                ScrubThumbnailer.runSelfTestIfRequested()
                 PlayLauncher.shared.configure(.init(
                     addonManager: addonManager, progress: progressStore, watched: watched,
-                    settings: { [playerSettings] in playerSettings.settings },
                     start: { meta, video, entry, all, fromStart in
                         play(meta, video, entry, all, fromStart: fromStart)
                     }))
@@ -502,27 +465,24 @@ struct RootView: View {
                         profileStore: profiles,
                         collectionsStore: collections,
                         homeCatalogSettings: homeCatalogSettings,
-                        streamBadges: streamBadges,
                         playerSettings: playerSettings,
-                        tmdbSettings: tmdbSettings,
-                        themeManager: theme
+                        tmdbSettings: tmdbSettings
                     )
                     sync = nuvioSync
                     // Everything personal rescopes on a switch, even when
                     // signed out of Cue (the sync manager only runs while
                     // signed in): add-ons (honouring the
                     // profile's use-primary fallbacks), player
-                    // settings, TMDB, theme, badges — upstream Nuvio's
+                    // settings, TMDB, theme — upstream Nuvio's
                     // per-profile boundary, ported wholesale.
                     profiles.onSwitchLocal = { [weak addonManager,
                                                 weak playerSettings,
-                                                weak tmdbSettings, weak streamBadges,
+                                                weak tmdbSettings,
                                                 weak searchViewModel, weak profiles] id in
                         let flags = profiles?.profiles.first { $0.id == id }
                         addonManager?.setProfile(flags?.usesPrimaryAddons == true ? 1 : id)
                         playerSettings?.setProfile(id)
                         tmdbSettings?.setProfile(id)
-                        streamBadges?.setProfile(id)
                         searchViewModel?.setProfile(id)
                         // Home's rows and billboard picks for this profile.
                         homeViewModel.profileSwitched()
@@ -546,12 +506,11 @@ struct RootView: View {
                           AppGroupResolver.sharedFile("topshelf.json")?.path ?? "UNAVAILABLE")
                     profiles.onProfileDeleted = { [weak addonManager,
                                                    weak playerSettings,
-                                                   weak tmdbSettings, weak streamBadges,
+                                                   weak tmdbSettings,
                                                    weak searchViewModel, weak nuvioSync] id in
                         addonManager?.forgetProfile(id)
                         playerSettings?.forgetProfile(id)
                         tmdbSettings?.forgetProfile(id)
-                        streamBadges?.forgetProfile(id)
                         searchViewModel?.forgetProfile(id)
                         nuvioSync?.syncProfilesNow()
                         SyncCoordinator.shared.requestFullSync("profile deleted")
@@ -560,11 +519,6 @@ struct RootView: View {
                     // full sync of every destination, debounced (see
                     // SyncCoordinator). Registered by name, so this is safe to
                     // reach twice.
-                    // Coming back from Picture in Picture: re-present the
-                    // cover for the session PiPHandoff kept alive.
-                    PiPHandoff.shared.present = { request in
-                        playback = request
-                    }
                     let coordinator = SyncCoordinator.shared
                     coordinator.observe(watched: watched, library: library,
                                         progress: progressStore)
@@ -766,7 +720,7 @@ struct RootView: View {
                     showWelcome = false
                     if gateNeeded { launch.showGate(.resume) }
                 }
-                .environmentObject(theme)
+
             }
             // Returning to the app pulls the latest Continue Watching so changes
             // made on another device show up without a relaunch (local edits
@@ -839,7 +793,8 @@ struct RootView: View {
     private func startPlayerDemoIfRequested() {
         let args = ProcessInfo.processInfo.arguments
         let wantsMKV = args.contains("-playerDemoMKV")
-        guard wantsMKV || args.contains("-playerDemo") else { return }
+        guard wantsMKV || args.contains("-playerDemo") || args.contains("-playerDemoFailover")
+                || args.contains("-playerDemoDead") else { return }
         // Once per process: the root content re-appears whenever the player
         // cover dismisses — including the Picture in Picture handoff — and a
         // second demo session would tear the parked one down.
@@ -857,11 +812,22 @@ struct RootView: View {
                 : "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8",
             infoHash: nil, behaviorHints: nil
         )
-        playback = PlaybackRequest(
-            meta: meta, video: nil,
-            entry: StreamEntry(addonName: "Demo", stream: stream),
-            allEntries: [], resumePosition: nil
-        )
+        // `-playerDemoFailover`: dead links first, then the stream;
+        // `-playerDemoDead`: dead links only.
+        func entry(_ url: String) -> StreamEntry {
+            StreamEntry(addonName: "Demo", stream: Stream(name: url, title: url, description: nil, url: url,
+                                                          infoHash: nil, behaviorHints: nil))
+        }
+        let good = StreamEntry(addonName: "Demo", stream: stream)
+        var entries = [good]
+        if args.contains("-playerDemoFailover") || args.contains("-playerDemoDead") {
+            let dead = (1...4).map { entry("http://127.0.0.1:9/dead\($0).mkv") }
+            entries = args.contains("-playerDemoDead") ? dead : Array(dead.prefix(3)) + [good]
+        }
+        startPlayback(PlaybackRequest(
+            meta: meta, video: nil, entry: entries[0],
+            allEntries: entries, resumePosition: nil, isDemo: true
+        ))
     }
 
     /// Dev-only: `-detailDemo` jumps straight to a Detail screen for a known
@@ -898,13 +864,13 @@ struct RootView: View {
             if let picked {
                 let type = args.contains("-detailMovie") ? "movie" : "series"
                 return AnyView(ZStack {
-                    theme.palette.background.ignoresSafeArea()
+                    CuePalette.background.ignoresSafeArea()
                     DetailView(item: MetaItem(id: picked, type: type, name: picked))
                 })
             }
             return AnyView(
                 ZStack {
-                    theme.palette.background.ignoresSafeArea()
+                    CuePalette.background.ignoresSafeArea()
                     DetailView(
                         item: series
                             ? MetaItem(id: "tt0903747", type: "series", name: "Breaking Bad",
@@ -927,29 +893,15 @@ struct RootView: View {
         // App-wide toast (Fusion): Added to Library / Marked Watched / etc.
         .overlay { FusionToastHost() }
         // Playing: no billboard trailer under it.
-        .onChange(of: playback == nil) { _, none in TrailerGate.shared.playerUp = !none }
+        .onChange(of: playback == nil && stage.scene == nil) { _, none in TrailerGate.shared.playerUp = !none }
+        .onChange(of: playback == nil) { _, none in if none { playerClosed() } }
         .onChange(of: launch.gate != nil || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
-        .fullScreenCover(item: $playback, onDismiss: {
-            // Pop the auto-played source page ONLY after the cover has fully
-            // torn down. Mutating the NavigationStack path in the same runloop
-            // tick that dismisses the cover desyncs the stack — the path empties
-            // but the pushed source view lingers as a focused "ghost" (looks
-            // glitched; Back on it escapes to tvOS and quits the app). The extra
-            // TabView layer in the Fusion layout makes that race fire reliably.
-            // Deferring to onDismiss + the next tick sequences the two mutations.
-            guard pendingAutoPlayPop else { return }
-            pendingAutoPlayPop = false
-            DispatchQueue.main.async { popActivePathForAutoPlay() }
-        }) { request in
-            PlayerScreen(
-                request: request,
-                addonManager: addonManager,
-                progressStore: progressStore,
-                playerSettings: playerSettings.settings
-            ) {
-                // Just dismiss the cover; the auto-play pop runs in onDismiss.
-                playback = nil
-            }
+        .fullScreenCover(item: $playback) { request in
+            CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings,
+                      onShown: { sourcePicker.close() },
+                      onClose: { setPlayback(nil) })
+                .ignoresSafeArea()
+                .presentationBackground(.clear)
         }
         // Deep-link add-on install confirmation. A tvOS alert is fully
         // focusable and remote-navigable, and Cancel carries the `.cancel`
@@ -1482,8 +1434,6 @@ struct RootView: View {
                     // a pushed screen — tvOS sometimes delivers a lingering
                     // second Menu, which would spuriously open the rail.
                     if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
-                    // The billboard's Play finding a source: it stops.
-                    if launcher.search != nil { launcher.cancel(); return }
                     // Below the billboard: up to it first.
                     if HomeBack.shared.handle() { return }
                     focusSidebar(tab.rawValue)
@@ -1873,75 +1823,6 @@ struct RootView: View {
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                           onOpenInPlace: openInPlace(path), backdrop: backdrop)
-        case .streams(let meta, let video):
-            StreamsView(
-                meta: meta, video: video,
-                // Auto Link Selector auto-played: flag a deferred pop; the real
-                // pop happens when the player closes (see the player cover),
-                // never while this view's resolve Task is still running.
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                let key = ProgressStore.key(metaID: meta.id, video: video)
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: progressStore.progress(for: key)?.positionSeconds
-                ))
-            }
-        case .streamsFromStart(let meta, let video):
-            // Same picker, but playback ignores any saved progress (Start Over).
-            // Carries `onAutoDismiss` like every other automatic route: without
-            // it an auto-picked Start Over had nothing to pop, so the source
-            // list uncovered itself behind the player and Back landed on it.
-            StreamsView(
-                meta: meta, video: video,
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: nil
-                ))
-            }
-        case .streamsResume(let meta, let video, let fromStart):
-            // Continue Watching: re-scrape and auto-play the best format match,
-            // with the full list as the player's failover. Start Over plays the
-            // matched link from 0:00; a normal resume from the saved position.
-            let key = ProgressStore.key(metaID: meta.id, video: video)
-            let progress = progressStore.progress(for: key)
-            StreamsView(
-                meta: meta, video: video,
-                resumeAutoPlay: true,
-                resumeSignature: progress?.streamSignature,
-                onAutoDismiss: { pendingAutoPlayPop = true }
-            ) { entry, all in
-                startPlayback(PlaybackRequest(
-                    meta: meta,
-                    video: video,
-                    entry: entry,
-                    allEntries: all,
-                    resumePosition: fromStart ? nil : progress?.positionSeconds
-                ))
-            }
-        }
-    }
-
-    /// Pop the source page off the active tab's stack after an Auto Link
-    /// Selector auto-play, so backing out of the player returns to the title
-    /// page. Safe here because the player has fully closed by now. The player
-    /// covers the stack while it's up, so the top entry is still the source page.
-    private func popActivePathForAutoPlay() {
-        switch selectedTab {
-        case 0: if !homePath.isEmpty { homePath.removeLast() }
-        case 1: if !searchPath.isEmpty { searchPath.removeLast() }
-        case 2: if !libraryPath.isEmpty { libraryPath.removeLast() }
-        case 4: if !moviesPath.isEmpty { moviesPath.removeLast() }
-        case 5: if !seriesPath.isEmpty { seriesPath.removeLast() }
-        default: break
         }
     }
 
@@ -1953,27 +1834,22 @@ struct RootView: View {
                                       resumePosition: fromStart ? nil : progressStore.progress(for: key)?.positionSeconds))
     }
 
+    /// In and out at once: the fades are the stage's and the player's own.
     private func startPlayback(_ request: PlaybackRequest) {
-        // A session parked in the Picture in Picture window is still decoding
-        // and still owns the audio route, and nothing in the app ever ended
-        // one — `stop()` had no callers at all. Opening a different title over
-        // it left two engines live: two soundtracks at once and two pipelines
-        // on a 3 GB A10X, and with the hybrid cache on, `beginSession` for the
-        // new origin tore down the parked session's connections and deleted
-        // the cache file its reader was still reading.
-        if PiPHandoff.shared.isActive {
-            // Window first: `finish()` on its own runs the teardown but leaves
-            // AVKit's window up over a view model that no longer exists.
-            PiPHandoff.shared.viewModel?.pictureInPicture.stop()
-            // Then the teardown `onDidStop` would have run — synchronously,
-            // BEFORE the new cover. Teardown resets state the two sessions
-            // share (the cache server's session, the audio session, the sync
-            // pause), so letting it land after the new load has started strips
-            // that out from under the new engine. AVKit's own `didStop` still
-            // arrives later and finds nothing parked, which is a no-op.
-            PiPHandoff.shared.finish()
-        }
-        playback = request
+        PlayStage.shared.show(request.meta, request.video)
+        setPlayback(request)
+    }
+
+    private func setPlayback(_ request: PlaybackRequest?) {
+        var quiet = Transaction()
+        quiet.disablesAnimations = true
+        withTransaction(quiet) { playback = request }
+    }
+
+    /// Before its first frame the stage is still under the player: Back from
+    /// a picked link lands on the list, else it goes.
+    private func playerClosed() {
+        if sourcePicker.request != nil { sourcePicker.picked = false } else { stage.clear() }
     }
 
     /// Route an incoming `cue://` / `stremio://` deep link.
@@ -2049,20 +1925,16 @@ struct RootView: View {
     @MainActor
     private func resumeResolved(_ progress: WatchProgress, fromBeginning: Bool) async {
         let (meta, video) = await canonicalResumeIdentity(progress)
-        // Resume ALWAYS re-scrapes a fresh link now: a remembered URL from a
-        // debrid/Comet-style addon expires, so replaying it "fails to load" and
-        // (with no failover alternates) drops you back to 0:00. Instead route to
-        // the source picker, which auto-plays the link best matching what was
-        // last watched, with the full list as failover. Start Over takes the
-        // same matched-link path but plays from 0:00.
-        homeLikePath.wrappedValue.append(Route.streamsResume(meta, video, fromStart: fromBeginning))
+        // Always a fresh link, the first one, as Play: a remembered URL expires.
+        PlayLauncher.shared.play(meta, video, fromStart: fromBeginning)
     }
 
-    /// The source picker's screen: full screen over the page blurred.
+    /// The source list on the stage.
     private func sources(_ request: SourcePicker.Request) -> some View {
         SourcePanel(meta: request.meta, video: request.video,
                     onPlay: { entry, all in
-            sourcePicker.close()
+            sourcePicker.picked = true
+            stage.note = nil
             play(request.meta, request.video, entry, all, fromStart: request.fromStart)
         }, onClose: { sourcePicker.close() })
         .id(request.id)
@@ -2274,14 +2146,21 @@ final class LaunchPreloader: ObservableObject {
     private var elapsed: Double { CACurrentMediaTime() - stepsStarted }
     private weak var home: HomeViewModel?
     private weak var addonManager: AddonManager?
+    private weak var progress: ProgressStore?
+    private weak var homeSettings: HomeCatalogSettingsStore?
+    private weak var tmdb: TMDBSettingsStore?
     private var generation = 0
     private var wentAwayAt: Date?
 
-    func run(home: HomeViewModel, addonManager: AddonManager) {
+    func run(home: HomeViewModel, addonManager: AddonManager, progress: ProgressStore,
+             homeSettings: HomeCatalogSettingsStore, tmdb: TMDBSettingsStore) {
         guard !started else { return }
         started = true
         self.home = home
         self.addonManager = addonManager
+        self.progress = progress
+        self.homeSettings = homeSettings
+        self.tmdb = tmdb
         start(firstLaunch: true)
     }
 
@@ -2446,6 +2325,16 @@ final class LaunchPreloader: ObservableObject {
                     rows.count, picks.count, home.billboardPicks.isEmpty ? " (highlights)" : "",
                     picksWait, records, firstTitles.count, (CACurrentMediaTime() - t) * 1000))
 
+        // Continue Watching's episode stills (TMDB's seasons, on disk once
+        // seen), so its cards come up with them.
+        t = CACurrentMediaTime()
+        var stills: [String] = []
+        if let progress, let homeSettings, let tmdb {
+            let rows = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
+            stills = await ContinueStills.shared.load(rows, useEpisodes: tmdb.settings.useEpisodes)
+        }
+        line(String(format: "Stills    %d · %.0f ms", stills.count, (CACurrentMediaTime() - t) * 1000))
+
         // ③ One-time artwork (cheap; first so it's off the way), on the main
         // actor — under the curtain.
         t = CACurrentMediaTime()
@@ -2479,6 +2368,9 @@ final class LaunchPreloader: ObservableObject {
                 }))
             }
         }
+        for url in stills {
+            jobs.append(("still", { await ImageCache.shared.preloadFromDisk(url, maxDimension: Spotlight.boxWidth) }))
+        }
         for item in (rows.first?.items ?? []).prefix(8) {
             if let url = item.poster ?? item.background {
                 jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: FixedFocusMetrics.height) }))
@@ -2503,7 +2395,7 @@ final class LaunchPreloader: ObservableObject {
                 start()
             }
         }
-        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters")]
+        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters"), ("still", "stills")]
             .compactMap { kind, label -> String? in
                 guard let entry = done[kind] else { return nil }
                 return "\(label) \(entry.ok)/\(entry.all)"
@@ -2790,7 +2682,7 @@ final class TitlePreloader {
 
     private func pump() {
         while running < Self.parallel, !queue.isEmpty {
-            guard PlayerViewModel.liveInstances == 0 else { queue.removeAll(); return }
+            guard !PlayerController.isPlaying else { queue.removeAll(); return }
             let (item, depth) = queue.removeFirst()
             if let had = done[item.id], had >= depth { continue }
             let first = done[item.id] == nil

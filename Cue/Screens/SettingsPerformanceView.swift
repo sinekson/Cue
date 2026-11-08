@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// Settings → Developer, second half: the diagnostics (player HUD, scrub
-/// previews, input debug, the LAN log).
+/// Settings → Developer, second half: the diagnostics (player HUD, the LAN
+/// log).
 struct PerformanceSettings: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var playerStore: PlayerSettingsStore
     @ObservedObject private var store = PerformanceSettingsStore.shared
 
     private var s: Binding<PerformanceSettingsStore.Settings> {
@@ -22,23 +20,6 @@ struct PerformanceSettings: View {
                     title: "Playback diagnostics HUD",
                     subtitle: "Live engine, fps, dropped frames, A/V drift, bitrate and buffer depth over the video. For chasing stutter on this box.",
                     isOn: s.showPlayerDiagnostics
-                )
-
-                // Lived under Playback → Seeking; it's a diagnostic overlay, so
-                // it belongs with the other two.
-                PerfToggleRow(
-                    icon: "photo.stack",
-                    title: "Scrub preview frames",
-                    subtitle: "Decode a frame every 30s so the progress bar can show the scene you're seeking to. Costs a second connection and decoder alongside playback — turn off if a stream stutters.",
-                    isOn: Binding(get: { playerStore.settings.scrubPreviewsEnabled },
-                                  set: { playerStore.settings.scrubPreviewsEnabled = $0 })
-                )
-                PerfToggleRow(
-                    icon: "ladybug.fill",
-                    title: "Show input debug",
-                    subtitle: "Overlay the last trackpad/remote event in the player, for tuning gestures on a real Apple TV.",
-                    isOn: Binding(get: { playerStore.settings.showInputDebug },
-                                  set: { playerStore.settings.showInputDebug = $0 })
                 )
 
                 // The one switch that makes everything else diagnosable on a
@@ -62,7 +43,7 @@ struct PerformanceSettings: View {
 
             Text("These switches are per-device and don't sync to your account.")
                 .font(.system(size: 18))
-                .foregroundStyle(theme.palette.textTertiary)
+                .foregroundStyle(CuePalette.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -90,7 +71,6 @@ private struct PerfToggleRow: View {
 /// accessory (switch, or nothing). Flat until focused, matching the other
 /// redesigned settings panes.
 private struct PerfRowLabel<Accessory: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
     @Environment(\.isFocused) private var isFocused
     let icon: String
     let title: String
@@ -103,10 +83,10 @@ private struct PerfRowLabel<Accessory: View>: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(theme.palette.textPrimary)
+                    .foregroundStyle(CuePalette.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 20))
-                    .foregroundStyle(theme.palette.textSecondary)
+                    .foregroundStyle(CuePalette.textSecondary)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 1000, alignment: .leading)
@@ -122,7 +102,6 @@ private struct PerfRowLabel<Accessory: View>: View {
         .background(SettingsRowBackground(isFocused: isFocused))
     }
 }
-
 
 /// Settings → Developer, first half: the FPS overlay.
 struct MeasureSettings: View {

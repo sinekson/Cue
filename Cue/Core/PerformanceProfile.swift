@@ -45,60 +45,6 @@ enum PerformanceProfile {
         return ProcessInfo.processInfo.physicalMemory < 3_500_000_000
     }()
 
-    /// Major number of the machine id ("AppleTV14,1" → 14), or 0 when the id
-    /// isn't an Apple TV (the Simulator reports the host Mac's).
-    static let machineGeneration: Int = {
-        guard machine.hasPrefix("AppleTV"),
-              let major = machine.dropFirst("AppleTV".count).split(separator: ",").first
-        else { return 0 }
-        return Int(major) ?? 0
-    }()
-
-    /// HDR10+ output, which needs BOTH:
-    ///
-    /// - **Apple TV 4K 3rd gen or newer** (AppleTV14,1 · A15 · 2022). Apple
-    ///   added HDR10+ in tvOS 18.4, and only on that hardware — the 2nd gen
-    ///   (AppleTV11,1) and 1st gen (AppleTV6,2) never got it, and no software
-    ///   update will change that.
-    /// - **tvOS 18.4 or newer**, where the support shipped.
-    ///
-    /// Everything else falls back to the HDR10 base layer, which every HDR10+
-    /// stream carries by design — so a non-capable box loses the dynamic
-    /// metadata, never the picture.
-    ///
-    /// Dev override: `-hdr10Plus` forces this true, the only way to exercise
-    /// the path in the Simulator (which reports the host Mac's machine id).
-    static let supportsHDR10Plus: Bool = {
-        if ProcessInfo.processInfo.arguments.contains("-hdr10Plus") { return true }
-        guard machineGeneration >= 14 else { return false }
-        if #available(tvOS 18.4, *) { return true }
-        return false
-    }()
-
-    /// Why HDR10+ is unavailable, for the settings row and the decision log.
-    /// nil when it IS available.
-    static var hdr10PlusUnavailableReason: String? {
-        guard !supportsHDR10Plus else { return nil }
-        if machineGeneration > 0, machineGeneration < 14 {
-            return "needs an Apple TV 4K (3rd gen) or newer — this is \(tierLabel)"
-        }
-        if #available(tvOS 18.4, *) {} else {
-            return "needs tvOS 18.4 or newer"
-        }
-        return "not supported by this Apple TV"
-    }
-
-    /// Friendly hardware-tier name for the "Reset to recommended" affordance.
-    static var tierLabel: String {
-        if machine.hasPrefix("AppleTV5") { return "Apple TV HD" }
-        if machine.hasPrefix("AppleTV6") { return "Apple TV 4K (1st gen)" }
-        if machine.hasPrefix("AppleTV11") { return "Apple TV 4K (2nd gen)" }
-        if machine.hasPrefix("AppleTV14") { return "Apple TV 4K (3rd gen)" }
-        if isLowPower { return "this Apple TV" }
-        if isMidPower { return "this Apple TV 4K" }
-        return "Apple TV 4K"
-    }
-
     /// Longest decoded image dimension. 1080p HD caps at 1920 (its own panel
     /// width); 4K devices cap at 3840 (the framebuffer — art beyond that cannot
     /// render more detail, so the cap is pixel-identical). Individual views
@@ -131,26 +77,4 @@ enum PerformanceProfile {
         if isMidPower { return 300 }
         return 400
     }
-
-    /// Hard ceiling on the video read-ahead cache (compressed packets held in
-    /// RAM by KSPlayer). tvOS has no working disk cache (FFmpeg's cache:
-    /// protocol can't open a temp file in the sandbox), so the buffer lives in
-    /// memory and an oversized one jetsams the app. These are the most a box
-    /// can safely spare on top of decode + Metal render + the rest of the app.
-    /// Apple TV HD (2 GB), 4K gen-1 (3 GB), 4K gen-2/3 (4 GB+).
-    static var maxBufferBytes: Int {
-        if isLowPower { return 220 << 20 }   // ~220 MB (Apple TV HD, 2 GB)
-        if isMidPower { return 400 << 20 }   // ~400 MB (4K gen 1/2, 3 GB)
-        return 1000 << 20                    // ~1 GB (4K gen 3, 4 GB+)
-    }
-
-    /// Whether native Dolby Vision **Profile 7** (the dual-layer → 8.1 remux)
-    /// should default ON here. Unlike profiles 5/8 (cheap, tag-only), the DV7
-    /// path re-reads and RPU-rewrites the *entire* file with libdovi while
-    /// playback streams in parallel — a heavy CPU + memory + network load that
-    /// the 3 GB gen-1/2 4K (and the 2 GB HD) can't sustain, so it hangs the app
-    /// mid-play. Only the 4 GB+ boxes (gen-3) get it on by default. This gates
-    /// only the DEFAULT; the toggle stays user-flippable on every device, so an
-    /// older box can still opt in (at the risk of the freeze).
-    static var recommendsDolbyVisionProfile7: Bool { !isLowPower && !isMidPower }
 }

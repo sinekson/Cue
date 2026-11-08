@@ -22,7 +22,6 @@ enum CuePrimitives {
     static let neutral875 = Color(hex: 0x1E1E1E)
     static let neutral850 = Color(hex: 0x222222)
     static let neutral825 = Color(hex: 0x242424)
-    static let neutral800 = Color(hex: 0x2D2D2D)
     static let neutral750 = Color(hex: 0x333333)
     static let neutral200 = Color(hex: 0xE0E0E0)
     static let neutral100 = Color(hex: 0xF5F5F5)
@@ -35,108 +34,28 @@ enum CuePrimitives {
     static let error = Color(hex: 0xCF6679)
 }
 
-struct ThemePalette: Identifiable, Equatable {
-    let id: String
-    let displayName: String
-    var secondary: Color
-    var secondaryVariant: Color
-    var onSecondary: Color = CuePrimitives.white
-    var focusRing: Color
-    var focusBackground: Color
-    var background: Color = CuePrimitives.neutral950
-    var backgroundElevated: Color = CuePrimitives.neutral900
-    var backgroundCard: Color = CuePrimitives.neutral825
-    var surface: Color = CuePrimitives.neutral875
-    var panel: Color = CuePrimitives.neutral900
-    var overlay: Color = Color.black.opacity(0.85)
-    var field: Color = CuePrimitives.neutral850
-
-    // Stored (not computed) so the Apple TV theme's light palette can swap
-    // them for dark-on-light text; every palette in CueThemes keeps these
-    // defaults.
-    // The app's text levels (`FixedFocusText`).
-    var textPrimary: Color = Color.white.opacity(FixedFocusText.primary)
-    var textSecondary: Color = Color.white.opacity(FixedFocusText.secondary)
-    var textTertiary: Color = Color.white.opacity(FixedFocusText.tertiary)
-
-    /// The accent is LIGHT — White, Lavender, Mint. Their own ink
-    /// (`onSecondary`) is dark, which is exactly what a translucent tint of
-    /// them needs: a 28% tint of a light accent over the dark card is itself
-    /// light, so the usual white label vanished into it. A dark accent keeps
-    /// the normal light text.
-    var hasLightAccent: Bool { onSecondary != CuePrimitives.white }
-
+/// The app's one look: neutral white, no accent colour, always dark.
+enum CuePalette {
+    static let secondary = CuePrimitives.neutral100
+    static let onSecondary = CuePrimitives.neutral925
+    static let focusRing = CuePrimitives.white
+    static let focusBackground = Color(hex: 0x303030)
+    static let background = CuePrimitives.neutral950
+    static let backgroundCard = CuePrimitives.neutral850
+    /// The app's text levels (`FixedFocusText`).
+    static let textPrimary = Color.white.opacity(FixedFocusText.primary)
+    static let textSecondary = Color.white.opacity(FixedFocusText.secondary)
+    static let textTertiary = Color.white.opacity(FixedFocusText.tertiary)
 }
 
-/// The app's single palette: neutral white, no accent colour.
-enum CueThemes {
-    static let white = ThemePalette(
-        id: "white", displayName: "White",
-        secondary: CuePrimitives.neutral100,
-        secondaryVariant: CuePrimitives.neutral200,
-        onSecondary: CuePrimitives.neutral925,
-        focusRing: CuePrimitives.white,
-        focusBackground: Color(hex: 0x303030),
-        backgroundCard: CuePrimitives.neutral850
-    )
-}
-
-/// App-wide font family (applied at the root via `.fontDesign`).
-enum AppFont: String, CaseIterable, Identifiable, Codable {
-    case system, rounded, serif, monospaced
-    var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .system: return "System"
-        case .rounded: return "Rounded"
-        case .serif: return "Serif"
-        case .monospaced: return "Monospaced"
-        }
-    }
-    var design: Font.Design {
-        switch self {
-        case .system: return .default
-        case .rounded: return .rounded
-        case .serif: return .serif
-        case .monospaced: return .monospaced
-        }
-    }
-}
-
-/// The synced slice of the theme. Every field is fixed now but still written
-/// so the blob keeps its shape; fields older builds wrote are ignored.
+/// The synced slice of the old theme settings. Fixed now, but still written so
+/// the preferences blob keeps its shape; nothing reads it back.
 struct ThemeSnapshot: Codable, Equatable {
     var paletteID: String
     var amoled: Bool
-    var font: AppFont
-}
+    var font: String
 
-/// The app's single look. Nothing here is configurable any more — one
-/// palette, the system font, always dark — but screens read it from the
-/// environment, so it stays one object.
-@MainActor
-final class ThemeManager: ObservableObject {
-    /// App-wide font family.
-    var font: AppFont { .system }
-    /// Root-level font design applied app-wide.
-    var rootFontDesign: Font.Design { font.design }
-
-    /// Corner radius for settings rows.
-    var settingsRowRadius: CGFloat { 12 }
-    /// Corner radius for the larger settings group cards.
-    var settingsCardRadius: CGFloat { 18 }
-
-    /// The app renders dark, always.
-    var preferredColorScheme: ColorScheme? { .dark }
-
-    /// The one palette used across the app: neutral, no accent colour.
-    var palette: ThemePalette { CueThemes.white }
-
-    /// Written into the synced preferences blob so it keeps its shape; the
-    /// values are the fixed look, and nothing reads them back.
-    var snapshot: ThemeSnapshot {
-        ThemeSnapshot(paletteID: CueThemes.white.id, amoled: false, font: font)
-    }
+    static let fixed = ThemeSnapshot(paletteID: "white", amoled: false, font: "system")
 }
 
 /// Spacing scale ported from Cue's SpacingTokens.

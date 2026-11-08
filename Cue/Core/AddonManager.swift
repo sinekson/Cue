@@ -112,15 +112,6 @@ final class AddonManager: ObservableObject {
         onLocalChange?()
     }
 
-    /// Add-ons just merged from the Stremio account need to reach the Cue
-    /// account too. `applyRemote` deliberately fires no change hook (the
-    /// account's own pull must not echo), so a tracker merge asks explicitly —
-    /// the full sync no longer re-uploads the list unconditionally.
-    func requestSyncPush() {
-        guard !suppressChange else { return }
-        onLocalChange?()
-    }
-
     /// Normalizes any user/remote addon reference to its canonical
     /// `…/manifest.json` URL (handles bare base URLs and `stremio://` links).
     static func normalizeManifestURL(_ raw: String) -> String {

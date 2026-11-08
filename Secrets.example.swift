@@ -29,9 +29,4 @@ enum Secrets {
 
     // Trakt OAuth app credentials (create one at https://trakt.tv/oauth/applications).
     static let traktClientID = ""
-    static let traktClientSecret = ""
-
-    // SIMKL client id (create an app at https://simkl.com/settings/developer).
-    // SIMKL's PIN login needs only the id — there is no secret to supply.
-    static let simklClientID = ""
 }

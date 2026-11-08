@@ -5,6 +5,7 @@ struct AppearanceSettingsDetail: View {
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
     @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
+    @AppStorage(SourceCardStyle.key) private var sourceCards = SourceCardStyle.current.rawValue
 
     var body: some View {
         SettingsPage(title: SettingsCategory.appearance.title) {
@@ -25,6 +26,13 @@ struct AppearanceSettingsDetail: View {
                     options: FixedFocusRing.Outlines.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                     selection: outlines
                 ) { FixedFocusRing.outlines = FixedFocusRing.Outlines(rawValue: $0) ?? .high }
+                SettingsOptionsRow(
+                    title: "Source Cards",
+                    pageDescription: "Choose how links read when you pick a source. Styled makes a tidy card from "
+                        + "the file name, with the add-on's score. Raw shows the add-on's own text, as it sends it.",
+                    options: SourceCardStyle.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
+                    selection: sourceCards
+                ) { sourceCards = $0 }
                 SettingsToggleRow(
                     title: "Auto-Hide Top Bar",
                     isOn: $settings.autoHideSidebar

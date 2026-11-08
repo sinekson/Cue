@@ -226,9 +226,10 @@ struct TitleChipsLine: View {
 enum ContinueMenuAction: CaseIterable {
     case details, startOver, chooseSource, markWatched, remove
 
-    var title: String {
+    /// `series`: the card is an episode, so Details is the show's.
+    func title(series: Bool) -> String {
         switch self {
-        case .details: return "Go to Details"
+        case .details: return series ? "Go to Show" : "Go to Movie"
         case .startOver: return "Start Over"
         case .chooseSource: return "Choose Source"
         case .markWatched: return "Mark as Watched"
@@ -242,7 +243,7 @@ enum ContinueMenuAction: CaseIterable {
         case .startOver: return "gobackward"
         case .chooseSource: return "list.and.film"
         case .markWatched: return "checkmark.circle"
-        case .remove: return "xmark"
+        case .remove: return "minus.circle"
         }
     }
 }
@@ -448,7 +449,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
         // (As on Continue Watching's fixed-focus cards.)
-        state.frame = CGRect(x: 24, y: card.height - 22 - 34, width: card.width - 48, height: 34)
+        state.frame = card
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         stateShade.frame = picture.bounds
@@ -476,6 +477,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         return HoldMenuRequest(entries: entries, anchor: sized(scale), from: sized(now),
                                rest: sized(scale == 1 ? 1 : 1 + lift),
                                onHeld: { [weak self] in self?.setHeld($0) })
+    }
+
+    /// New progress for the title it already shows.
+    func showProgress(_ progress: WatchProgress) {
+        detail.text = progress.episodeTitle ?? detail.text
+        state.show(progress)
     }
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
@@ -854,8 +861,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         placeholderCard.isHidden = !placeholder
         poster.isHidden = placeholder
         backdrop.isHidden = placeholder
-        state.frame = CGRect(x: 24, y: cardHeight - 22 - 34,
-                             width: landscapeWidth - 48, height: 34)
+        state.frame = CGRect(x: 0, y: 0, width: landscapeWidth, height: cardHeight)
         // (Bounds and centre: it may be counter-scaled — see `apply`.)
         let infoRect = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.boxInfoGap,
                               width: landscapeWidth - 2 * FixedFocusMetrics.textIndent,
@@ -883,6 +889,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         captionName.frame = CGRect(x: 0, y: 0, width: caption.bounds.width, height: 30)
         captionYear.frame = CGRect(x: 0, y: FixedFocusMetrics.captionLineOffset,
                                    width: caption.bounds.width, height: 30)
+    }
+
+    /// New progress for the title it already shows.
+    func showProgress(_ progress: WatchProgress) {
+        facts.text = progress.episodeTitle ?? facts.text
+        state.show(progress)
     }
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell,
@@ -1633,38 +1645,48 @@ final class FixedFocusChipsView: UIView {
     }
 }
 
-/// Continue Watching's state line on a card, as on the original Home:
-/// "S1:E5" · progress bar · "20 min left" — or, not started, "Up Next".
+/// A card's state line, laid over the whole card: the player's bar
+/// (`Spotlight.stateBarHeight`) at the foot, above it "S1:E5" on the left
+/// and "20m left" / "Up Next" / "Watched" at its end.
 final class FixedFocusProgressView: UIView {
     private let episode = UILabel()
     private let remaining = UILabel()
+    private let barShadow = UIView()
     private let track = UIView()
     private let fill = UIView()
     private var fraction: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        isUserInteractionEnabled = false
+        episode.font = .systemFont(ofSize: Spotlight.stateTextSize, weight: .medium)
+        remaining.font = .monospacedDigitSystemFont(ofSize: Spotlight.stateTextSize, weight: .medium)
         for label in [episode, remaining] {
-            label.font = .systemFont(ofSize: Spotlight.continueStateSize, weight: .semibold)
             label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
             label.layer.shadowColor = UIColor.black.cgColor
-            label.layer.shadowOpacity = 0.6
-            label.layer.shadowRadius = 6
-            label.layer.shadowOffset = CGSize(width: 0, height: 1)
+            label.layer.shadowOpacity = 0.8
+            label.layer.shadowRadius = 8
+            label.layer.shadowOffset = .zero
             addSubview(label)
         }
-        track.backgroundColor = UIColor.white.withAlphaComponent(0.3)
-        track.layer.cornerRadius = Spotlight.continueProgressBarHeight / 2
-        fill.backgroundColor = .white
-        fill.layer.cornerRadius = Spotlight.continueProgressBarHeight / 2
+        // The player's: a capsule at 25 %, the fill at 56 % cut flat, a soft shadow.
+        barShadow.layer.shadowColor = UIColor.black.cgColor
+        barShadow.layer.shadowOpacity = 0.4
+        barShadow.layer.shadowRadius = 4
+        barShadow.layer.shadowOffset = .zero
+        track.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        track.layer.cornerRadius = Spotlight.stateBarHeight / 2
+        track.clipsToBounds = true
+        fill.backgroundColor = UIColor.white.withAlphaComponent(0.56)
         track.addSubview(fill)
+        addSubview(barShadow)
         addSubview(track)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// A state given as such (Details' episodes): the label left, a bar (in
-    /// progress) or nothing, the text right.
+    /// A state given as such (Details' episodes): the label and the text,
+    /// a bar (in progress) or nothing.
     func show(_ state: FixedFocusCardState) {
         episode.text = state.label
         remaining.text = state.right
@@ -1676,7 +1698,7 @@ final class FixedFocusProgressView: UIView {
     func show(_ entry: WatchProgress?) {
         guard let entry else { return }
         episode.text = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
-        let started = entry.fraction > 0.02
+        let started = entry.isStarted
         remaining.text = started ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress") : "Up Next"
         fraction = started ? CGFloat(entry.fraction) : 0
         track.isHidden = !started
@@ -1685,21 +1707,24 @@ final class FixedFocusProgressView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let gap = Spotlight.continueStateGap
+        let inset = Spotlight.stateInset
+        let width = bounds.width - inset * 2
+        let barH = Spotlight.stateBarHeight
+        let barTop = bounds.height - inset - barH
         episode.sizeToFit()
         remaining.sizeToFit()
-        let h = bounds.height
-        episode.frame = CGRect(x: 0, y: (h - episode.bounds.height) / 2,
-                               width: episode.text == nil ? 0 : episode.bounds.width,
-                               height: episode.bounds.height)
-        remaining.frame = CGRect(x: bounds.width - remaining.bounds.width,
-                                 y: (h - remaining.bounds.height) / 2,
+        // Both on one baseline, `stateBaselineGap` above the bar.
+        let lineBottom = barTop - Spotlight.stateBaselineGap - episode.font.descender
+        remaining.frame = CGRect(x: inset + width - remaining.bounds.width, y: lineBottom - remaining.bounds.height,
                                  width: remaining.bounds.width, height: remaining.bounds.height)
-        let barX = episode.frame.maxX + (episode.text == nil ? 0 : gap)
-        let barWidth = max(remaining.frame.minX - gap - barX, 0)
-        let barH = Spotlight.continueProgressBarHeight
-        track.frame = CGRect(x: barX, y: (h - barH) / 2, width: barWidth, height: barH)
-        fill.frame = CGRect(x: 0, y: 0, width: max(barWidth * fraction, barH), height: barH)
+        episode.frame = CGRect(x: inset, y: lineBottom - episode.bounds.height,
+                               width: max(min(episode.bounds.width, width - remaining.bounds.width - 16), 0),
+                               height: episode.bounds.height)
+        track.frame = CGRect(x: inset, y: barTop, width: max(width, 0), height: barH)
+        fill.frame = CGRect(x: 0, y: 0, width: track.bounds.width * min(max(fraction, 0), 1), height: barH)
+        barShadow.frame = track.frame
+        barShadow.isHidden = track.isHidden
+        barShadow.layer.shadowPath = UIBezierPath(roundedRect: barShadow.bounds, cornerRadius: barH / 2).cgPath
     }
 }
 
@@ -1708,6 +1733,24 @@ final class FixedFocusProgressView: UIView {
 /// cells' size changes.
 @MainActor
 enum FixedFocusMotion {
+    /// Cards whose content is new (Search's results, the shelf's links after
+    /// Refresh) swell a little and settle — the Apple TV app's sign that
+    /// they changed — all at once, no cascade; on the cards' content, so a
+    /// focused card's growth stays.
+    static func pulse(_ cells: [UICollectionViewCell]) {
+        let swell = CAKeyframeAnimation(keyPath: "transform.scale")
+        swell.values = [1, pulseScale, 1]
+        swell.keyTimes = [0, 0.4, 1]
+        swell.duration = pulseDuration
+        swell.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        for cell in cells {
+            cell.contentView.layer.add(swell, forKey: "pulse")
+        }
+    }
+
+    private static let pulseScale: CGFloat = 1.02
+    private static let pulseDuration: CFTimeInterval = 0.35
+
     /// A focus movement (Left/Right and Up/Down alike) on UIKit's own
     /// spring (duration + bounce 0): a new press during the move carries
     /// its speed on instead of starting from rest. (Always UIView.animate:

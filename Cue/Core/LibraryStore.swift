@@ -113,9 +113,8 @@ final class LibraryStore: ObservableObject {
     /// removal lost to a killed app, an offline moment or an expired token was
     /// never represented anywhere, and the next pull re-added the item for good.
     var onRemove: (([SavedLibraryItem]) -> Void)?
-    /// Tracking-service watchlist hooks, fired on a genuine local add /
-    /// remove. Lists, not single closures — see the note in WatchedStore:
-    /// Trakt and SIMKL both subscribe, and one property could only hold one.
+    /// Fired on a genuine local add / remove (the sync coordinator kicks a
+    /// full sync). Lists, so more than one observer can listen.
     var onTrackerAdd: [(SavedLibraryItem) -> Void] = []
     var onTrackerRemove: [(SavedLibraryItem) -> Void] = []
     private var suppressChange = false
@@ -163,10 +162,9 @@ final class LibraryStore: ObservableObject {
 
     func setProfile(_ id: Int) {
         guard id != profileID else { return }
-        // Tombstones belong to the profile being left — but they are its ONLY
-        // protection against the Trakt/SIMKL/Stremio merges (which have no
-        // delete queue) re-adding what it removed, so park them per profile
-        // rather than dropping them.
+        // Tombstones belong to the profile being left, and still protect its
+        // removals on its next pull, so park them per profile rather than
+        // dropping them.
         tombstonesByProfile[profileID] = tombstones
         profileID = id
         loadGeneration &+= 1   // invalidate any in-flight load; see clearAll
@@ -184,17 +182,12 @@ final class LibraryStore: ObservableObject {
     ///
     /// The in-memory tombstone above lasts three minutes and dies with the
     /// process, and it is lifted whenever an incoming row's `addedAt` is
-    /// newer. Both tracker merges build their rows with `addedAt` defaulted to
-    /// NOW (they have no real added-date to carry), so a Trakt watchlist or
-    /// SIMKL plan-to-watch pull lifted the tombstone on the very next sync and
-    /// re-added the title the user had just removed — which `requestSyncPush`
-    /// then propagated to the account and the other trackers. One removal,
-    /// undone everywhere.
+    /// newer. A row whose `addedAt` was made up as NOW would lift it at once.
     ///
     /// So the removal is remembered here instead, and a merge may only lift it
-    /// when the caller is TRUSTED — the Nuvio account, whose `addedAt`
-    /// round-trips as the real value, so "newer than the removal" genuinely
-    /// means re-added on another device. A tracker echo never lifts it.
+    /// when the caller is TRUSTED — the Nuvio account's full pull, whose
+    /// `addedAt` round-trips as the real value, so "newer than the removal"
+    /// genuinely means re-added on another device.
     /// Persisted per profile, never synced.
     private var removedItems: [String: Date] = [:]
     private var removedItemsKey: String {
@@ -271,8 +264,8 @@ final class LibraryStore: ObservableObject {
         let key = "\(type)|\(id)"
         guard let removed = items.removeValue(forKey: key) else { return }
         tombstones[key] = Date()
-        // Remembered past the grace window and across launches, so a tracker
-        // echo can't put it back (see `removedItems`).
+        // Remembered past the grace window and across launches (see
+        // `removedItems`).
         if !suppressChange { recordRemoval(key) }
         save()
         if !suppressChange {
@@ -317,27 +310,6 @@ final class LibraryStore: ObservableObject {
 
     func allForSync() -> [SavedLibraryItem] { Array(items.values) }
 
-    /// A local backup restore: every row is adopted, INCLUDING titles the user
-    /// had removed since (their tombstones are cleared, as `add` does) — the
-    /// backup is the user's explicit word. Silent: no per-item tracker hooks
-    /// (a big restore fanned out one Trakt/SIMKL POST per title); the caller
-    /// pings `onLocalChange` once so the account push runs.
-    func importItems(_ imported: [SavedLibraryItem]) {
-        guard !imported.isEmpty else { return }
-        suppressChange = true
-        defer { suppressChange = false }
-        for item in imported {
-            tombstones.removeValue(forKey: item.key)
-            clearRemoval(item.key)   // a restore is the user's explicit word
-            if let local = items[item.key] {
-                items[item.key] = local.withFallbackMetadata(item.metaItem)
-            } else {
-                items[item.key] = item
-            }
-        }
-        save()
-    }
-
     /// Merge a FULL remote snapshot. Two-way, mirroring Progress/Watched: rows
     /// from the account are added AND (when `reconcile`) local rows the server
     /// no longer has are removed — otherwise a removal made on another device
@@ -349,11 +321,9 @@ final class LibraryStore: ObservableObject {
     /// get pushed up rather than treated as remote deletions.
     /// - Parameter trusted: whether this source's `addedAt` is a REAL added
     ///   date that round-trips (the Nuvio account), as opposed to one the
-    ///   caller fabricated with `Date()` (every tracker merge). Only a trusted
-    ///   source may lift a removal record — otherwise a Trakt watchlist or
-    ///   SIMKL plan-to-watch echo, which always stamps NOW, would re-add the
-    ///   title the user just removed on its very next sync.
-    /// Returns whether anything changed — see `requestSyncPush`.
+    ///   caller fabricated with `Date()`. Only a trusted source may lift a
+    ///   removal record.
+    /// Returns whether anything changed.
     @discardableResult
     func mergeRemote(_ remote: [SavedLibraryItem], reconcile: Bool = true,
                      trusted: Bool = false) -> Bool {
@@ -416,14 +386,6 @@ final class LibraryStore: ObservableObject {
         }
         if changed { save() }
         return changed
-    }
-
-    /// Rows just merged from a tracker (Trakt watchlist, SIMKL plan-to-watch,
-    /// the Stremio library) need to reach the ACCOUNT too — see the note on
-    /// `WatchedStore.requestSyncPush`.
-    func requestSyncPush() {
-        guard !suppressChange else { return }
-        onLocalChange?()
     }
 
     // MARK: - Persistence

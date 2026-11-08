@@ -240,7 +240,6 @@ private struct HomeRowPage: View {
 /// device only). (Tried: each one line with Configure, Rename, Move, a
 /// switch and Remove — too many buttons; a round + by the heading.)
 struct AddonsPage: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var nav: SettingsNav
     @Environment(\.settingsRowFocus) private var rowFocus
@@ -301,7 +300,7 @@ struct AddonsPage: View {
         .onDisappear { TopBarLock.shared.locked = false }
         .fullScreenCover(isPresented: $adding) {
             AddonPhoneAddView(addonManager: addonManager) { adding = false }
-                .environmentObject(theme)
+
         }
     }
 
@@ -326,7 +325,6 @@ struct AddonsPage: View {
 /// your phone), Rename (the keyboard; empty: its own name again), Remove
 /// (confirmed; back to the list).
 private struct AddonPage: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var nav: SettingsNav
     let addonID: String
@@ -355,7 +353,7 @@ private struct AddonPage: View {
             .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
             .fullScreenCover(isPresented: $configuring) {
                 AddonPhoneAddView(addonManager: addonManager, configuring: addon) { configuring = false }
-                    .environmentObject(theme)
+
             }
             .alert("Remove \(addon.displayName)?", isPresented: $confirmRemove) {
                 Button("Remove", role: .destructive) {

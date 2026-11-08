@@ -135,7 +135,7 @@ struct DetailAbout: View {
         VStack(alignment: .leading, spacing: 30) {
             if !genres.isEmpty {
                 labelled("Genres") {
-                    InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                    WrapRow(spacing: 10, lineSpacing: 10) {
                         ForEach(genres, id: \.self) { genre in
                             Button { onSelectGenre(genre) } label: { Text(genre.name) }
                                 .buttonStyle(AboutChipStyle())
@@ -146,7 +146,7 @@ struct DetailAbout: View {
             }
             if !keywords.isEmpty {
                 labelled("Tags") {
-                    InfuseWrapRow(spacing: 10, lineSpacing: 10) {
+                    WrapRow(spacing: 10, lineSpacing: 10) {
                         ForEach(keywords, id: \.self) { keyword in
                             Button { onSelectKeyword(keyword) } label: { Text(keyword.name) }
                                 .buttonStyle(AboutChipStyle())

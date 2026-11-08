@@ -1,21 +1,83 @@
 {
   "pins" : [
     {
-      "identity" : "ffmpegkit",
+      "identity" : "aetherengine",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/kingslay/FFmpegKit.git",
+      "location" : "https://github.com/superuser404notfound/AetherEngine",
       "state" : {
-        "revision" : "c32be9bfb628042737ad3ef622e930c5c7b15954",
-        "version" : "6.1.4"
+        "revision" : "4a82484b256deb70a2ae80d6923707d1fe54c6e7",
+        "version" : "7.53.0"
       }
     },
     {
-      "identity" : "vlckit-spm",
+      "identity" : "combine-schedulers",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tylerjonesio/vlckit-spm",
+      "location" : "https://github.com/pointfreeco/combine-schedulers",
       "state" : {
-        "revision" : "e932bbd488872fdb74f6654d28c2f291eae03daf",
-        "version" : "3.6.0"
+        "revision" : "114354e8c1667a2edc4993700fb9fa4f90157b56",
+        "version" : "1.2.2"
+      }
+    },
+    {
+      "identity" : "ffmpegbuild",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/superuser404notfound/FFmpegBuild",
+      "state" : {
+        "revision" : "6b5d084664234649c258248d16111dbac64684be",
+        "version" : "3.11.1"
+      }
+    },
+    {
+      "identity" : "libdovi",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/superuser404notfound/LibDovi",
+      "state" : {
+        "revision" : "0d7cce1d6836a30d13a3a2326e50a153af53f014",
+        "version" : "2.1.0"
+      }
+    },
+    {
+      "identity" : "smbclient",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kishikawakatsumi/SMBClient",
+      "state" : {
+        "revision" : "e636c2b2458930770932a36d311ec9d478575b90",
+        "version" : "0.3.1"
+      }
+    },
+    {
+      "identity" : "swift-ass-renderer",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mihai8804858/swift-ass-renderer",
+      "state" : {
+        "revision" : "28919f6b5ddd896d327b0283f8d97624902236e6"
+      }
+    },
+    {
+      "identity" : "swift-concurrency-extras",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/swift-concurrency-extras",
+      "state" : {
+        "revision" : "8a4260f7373493435bd21194585c95b72bfdd401",
+        "version" : "1.4.3"
+      }
+    },
+    {
+      "identity" : "swift-issue-reporting",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/swift-issue-reporting",
+      "state" : {
+        "revision" : "b23bb4493c439d3e05152bc167014235ba3d47fc",
+        "version" : "2.1.2"
+      }
+    },
+    {
+      "identity" : "swift-libass",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mihai8804858/swift-libass",
+      "state" : {
+        "revision" : "6513c488e377a26c06db327fb2acfc2653a041d5",
+        "version" : "1.4.0"
       }
     }
   ],

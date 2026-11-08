@@ -588,7 +588,6 @@ final class HomeViewModel: ObservableObject {
 }
 
 struct HomeView: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
     @EnvironmentObject private var collections: CollectionsStore
@@ -668,6 +667,7 @@ struct HomeView: View {
     /// at) — left out of the rows with Hide watched titles.
     @State private var finishedShows: Set<String> = []
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
+    @ObservedObject private var stills = ContinueStills.shared
 
     /// False while Home is covered (player fullScreenCover, pushed screen,
     /// other tab). Home stays mounted in those states, so without this gate the
@@ -928,6 +928,9 @@ struct HomeView: View {
         .onChange(of: homeCatalogSettings.disabledKeys) { _, _ in scheduleReload() }
         .onChange(of: homeCatalogSettings.customTitles) { _, _ in scheduleReload() }
         .task(id: nextUpRefreshKey) { await refreshNextUpContinueItems() }
+        .task(id: continueStillsKey) {
+            await stills.load(mergedContinueItems(), useEpisodes: tmdbSettings.settings.useEpisodes)
+        }
         // Hourly clock nudge so the day bucket in `nextUpRefreshKey` notices a
         // midnight rollover while Home is left open. The key only changes once
         // per day, so this does NOT re-run the Next Up fetch every hour.
@@ -1041,7 +1044,7 @@ struct HomeView: View {
         case .recentlyWatched:
             return byRecency
         case .streamingStyle:
-            return byRecency.filter { $0.fraction >= 0.02 } + byRecency.filter { $0.fraction < 0.02 }
+            return byRecency.filter(\.isStarted) + byRecency.filter { !$0.isStarted }
         }
     }
 
@@ -1196,10 +1199,9 @@ struct HomeView: View {
     /// metaID → when this viewer first watched anything of that title.
     ///
     /// Derived rather than stored, from the two things that already sync
-    /// everywhere: watch history (account, Trakt, SIMKL, Stremio) and stored
-    /// playback positions. That is what makes the badge agree across devices
-    /// without a new synced field — and it means an imported Trakt history,
-    /// which carries each episode's ORIGINAL watch time, gives the true start
+    /// everywhere: watch history and stored playback positions. That is what
+    /// makes the badge agree across devices without a new synced field — and
+    /// it means an imported history, which carries each episode's ORIGINAL watch time, gives the true start
     /// date rather than the import date.
     private func startedWatchingByShow() -> [String: Date] {
         var out: [String: Date] = [:]
@@ -1362,11 +1364,19 @@ struct HomeView: View {
 
     // MARK: Rows
 
-    /// Continue Watching card art: the episode's still (variety — the
-    /// backdrops are everywhere else), else the show's backdrop/poster.
+    /// Continue Watching card art: the episode's still, as Details shows it
+    /// (TMDB's, else the add-on's), else the show's backdrop/poster.
     private func continueImage(_ progress: WatchProgress) -> String? {
+        if let still = stills.still(for: progress) { return still }
         if let thumb = progress.episodeThumbnail, !thumb.isEmpty { return thumb }
         return progress.background ?? progress.poster ?? catalogMeta(for: progress.metaID)?.background ?? catalogMeta(for: progress.metaID)?.poster
+    }
+
+    /// The episodes on Continue Watching, to look their stills up again
+    /// when they change.
+    private var continueStillsKey: String {
+        guard tmdbSettings.settings.useEpisodes else { return "" }
+        return mergedContinueItems().compactMap(ContinueStills.key).joined(separator: ",")
     }
 
     /// A hero-bar item for a Continue Watching entry. Progress rows only carry
@@ -1386,26 +1396,52 @@ struct HomeView: View {
     }
 }
 
-/// Focus-styled "Try Again" pill shared by network-failure empty states.
-struct RetryLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @Environment(\.isFocused) private var isFocused
+/// TMDB's episode stills for Continue Watching, as Details' episodes show
+/// them; the add-on's thumbnail only where TMDB has none (Cinemeta's are
+/// often missing). Looked up under the launch curtain (`LaunchPreloader`),
+/// then whenever the row's episodes change; TMDB's seasons are on disk.
+@MainActor
+final class ContinueStills: ObservableObject {
+    static let shared = ContinueStills()
+    @Published private(set) var stills: [String: String] = [:]
 
-    var body: some View {
-        HStack(spacing: CueSpacing.sm) {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 20, weight: .semibold))
-            Text("Try Again")
-                .font(.system(size: 24, weight: .semibold))
+    nonisolated static func key(_ progress: WatchProgress) -> String? {
+        guard let season = progress.season, let episode = progress.episode else { return nil }
+        return "\(progress.metaID):\(season):\(episode)"
+    }
+
+    func still(for progress: WatchProgress) -> String? {
+        Self.key(progress).flatMap { stills[$0] }
+    }
+
+    /// Looks up the episodes not yet known, a season at a time; returns
+    /// the stills of `rows` (known or found).
+    @discardableResult
+    func load(_ rows: [WatchProgress], useEpisodes: Bool) async -> [String] {
+        guard useEpisodes, TMDBService.hasAPIKey else { return [] }
+        var seasons: [String: (metaID: String, type: String, season: Int, episodes: [Int: String])] = [:]
+        for row in rows {
+            guard let key = Self.key(row), stills[key] == nil,
+                  let season = row.season, let episode = row.episode else { continue }
+            seasons["\(row.metaID):\(season)", default: (row.metaID, row.type, season, [:])].episodes[episode] = key
         }
-        .foregroundStyle(isFocused ? theme.palette.onSecondary : theme.palette.textPrimary)
-        .padding(.horizontal, 30)
-        .padding(.vertical, 12)
-        .background(Capsule().fill(isFocused ? theme.palette.secondary : Color.primary.opacity(0.1)))
-        .overlay(Capsule().strokeBorder(isFocused ? theme.palette.focusRing : .clear, lineWidth: 3))
-        .focusLift(CueFocus.card, isFocused)
-        .animation(PerformanceSettingsStore.shared.buttonMotion(FusionMotion.focusEntry),
-                   value: isFocused)
+        if !seasons.isEmpty {
+            let found = await withTaskGroup(of: [String: String].self) { group in
+                for job in seasons.values {
+                    group.addTask {
+                        let extras = await TMDBService.seasonEpisodes(imdbID: job.metaID, type: job.type, season: job.season)
+                        var out: [String: String] = [:]
+                        for (episode, key) in job.episodes {
+                            if let still = TMDBService.originalSize(extras[episode]?.still) { out[key] = still }
+                        }
+                        return out
+                    }
+                }
+                return await group.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
+            }
+            if !found.isEmpty { stills.merge(found) { _, new in new } }
+        }
+        return rows.compactMap(still(for:))
     }
 }
 
@@ -1539,7 +1575,6 @@ struct HomeUIKitView: View {
     /// Details is up over Home (the billboard doesn't page behind it).
     @ObservedObject private var detailsOpen = DetailsOpen.shared
     /// …and its picture has stepped closer (see `StagePictureView`).
-    @EnvironmentObject private var theme: ThemeManager
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
@@ -2045,7 +2080,6 @@ enum FixedFocusTint {
 /// the status badge and ratings, the facts and the tagline — no summary,
 /// within the box's width less the text indent on both sides.
 struct FixedFocusBillboardText: View {
-    @EnvironmentObject private var theme: ThemeManager
     let item: MetaItem
     /// TMDB's season count, once loaded.
     let info: TMDBService.ShowSize?
@@ -2131,8 +2165,8 @@ struct FixedFocusBillboardText: View {
     }
     private var nameText: some View {
         Text(item.name)
-            .font(FusionType.heroTitle(theme.font))
-            .foregroundStyle(theme.palette.textPrimary)
+            .font(FusionType.heroTitle)
+            .foregroundStyle(CuePalette.textPrimary)
             .lineLimit(2)
             .minimumScaleFactor(0.74)
             .frame(maxWidth: TitleBlock.logoWidth, alignment: .bottomLeading)

@@ -1096,7 +1096,6 @@ struct WatchedTitlePage: View {
 
 /// One line of the sync log (Settings → Developer).
 struct SyncLogRow: View {
-    @EnvironmentObject private var theme: ThemeManager
     let entry: NuvioSyncLogEntry
 
     var body: some View {
@@ -1107,15 +1106,15 @@ struct SyncLogRow: View {
                 .frame(width: 28)
             Text(entry.timeLabel)
                 .font(.system(size: 16, weight: .medium).monospacedDigit())
-                .foregroundStyle(theme.palette.textTertiary)
+                .foregroundStyle(CuePalette.textTertiary)
                 .frame(width: 90, alignment: .leading)
             Text(entry.area)
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(theme.palette.secondary)
+                .foregroundStyle(CuePalette.secondary)
                 .frame(width: 90, alignment: .leading)
             Text(entry.message)
                 .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(theme.palette.textSecondary)
+                .foregroundStyle(CuePalette.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -1124,7 +1123,7 @@ struct SyncLogRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.palette.background.opacity(0.32))
+                .fill(CuePalette.background.opacity(0.32))
         )
     }
 
@@ -1139,9 +1138,9 @@ struct SyncLogRow: View {
 
     private var color: Color {
         switch entry.level {
-        case .info: return theme.palette.textTertiary
+        case .info: return CuePalette.textTertiary
         case .success: return CuePrimitives.success
-        case .warning: return theme.palette.secondary
+        case .warning: return CuePalette.secondary
         case .failure: return CuePrimitives.error
         }
     }

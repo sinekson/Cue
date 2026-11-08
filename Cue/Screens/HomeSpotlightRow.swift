@@ -29,15 +29,17 @@ enum Spotlight {
     static let logoInset: CGFloat = 28
     /// How dark the gradient behind the logo gets at the box's bottom edge.
     static let logoScrimOpacity: Double = 0.75
-    /// Watch-progress pill inside the box (grey track, white fill — the
-    /// tvOS look), inset from the box's edges. Continue Watching only: in
-    /// the other rows the "38m left" chip already says it.
-    static let continueProgressBarHeight: CGFloat = 10
-    /// Continue Watching: the time left beside the bar ("38m left"), or
-    /// "Up Next" with no bar — the card's STATE, inside it (its identity,
-    /// name and episode, is under the box).
-    static let continueStateSize: CGFloat = 22
-    static let continueStateGap: CGFloat = 14
+    /// A card's state line (Continue Watching, Details' episodes, the Top
+    /// Shelf's cards): the player's bar, thicker for the card (3 pt, scaled,
+    /// was too faint), at the foot, as far from it as from the sides; one line
+    /// above it: the episode on the left, the time left at its end (text above
+    /// and below the bar looked odd).
+    static let stateBarHeight: CGFloat = 6
+    static let stateInset: CGFloat = 30
+    /// The caption's size under the card (24 read larger than it), medium.
+    static let stateTextSize: CGFloat = FixedFocusMetrics.captionSize
+    /// From the line's baseline to the bar's top.
+    static let stateBaselineGap: CGFloat = 12
 
     /// The billboard's / Details' trailer starts after resting on a title
     /// this long (`StageTrailer`; Settings → Home & Details → Trailers,

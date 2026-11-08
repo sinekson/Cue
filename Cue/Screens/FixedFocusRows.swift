@@ -10,7 +10,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     }
 
     @EnvironmentObject private var mdblist: MDBListSettingsStore
-    @EnvironmentObject private var theme: ThemeManager
     let rows: [HomeRow]
     let featuredRowID: String
     let continueRowID: String
@@ -187,8 +186,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.onContinueMenu = onContinueMenu
         controller.titleMenu = titleMenu
         // SwiftUI inside the cells (the banner's chips) gets the app's stores.
-        controller.environment = { [mdblist, theme] in
-            AnyView($0.environmentObject(mdblist).environmentObject(theme))
+        controller.environment = { [mdblist] in
+            AnyView($0.environmentObject(mdblist))
         }
         controller.billboardPageText = billboardPageText
         controller.onBillboardStep = onBillboardStep
@@ -234,6 +233,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         // transparent SwiftUI layer alone doesn't guarantee that) —
         // `setActive`.
         if controller.isViewLoaded { controller.setActive(active) }
+        let progressChanged = controller.progress != progress
         controller.progress = progress
         if controller.isPlaceholder, !placeholder, controller.isViewLoaded, !PageFade.shared.covering {
             // The content takes over the placeholders: one fade, the page.
@@ -244,6 +244,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         } else {
             controller.update(rows)
         }
+        // The same titles with new positions don't reload: the visible cards
+        // take them here.
+        if progressChanged, controller.isViewLoaded { controller.showProgress() }
         controller.setPlaceholder(placeholder)
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
@@ -450,6 +453,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var continueRowID = ""
     var progress: [String: WatchProgress] = [:]
 
+    func showProgress() {
+        for case let cell as FixedFocusRowCell in outer.visibleCells where isContinue(cell.rowIndex) {
+            cell.showProgress()
+        }
+    }
+
     func isContinue(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && rows[rowIndex].id == continueRowID
     }
@@ -585,7 +594,49 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     var startsOverOnChange = false
 
-    func update(_ rows: [HomeRow]) {
+    /// New rows held back while focus is in a row whose content they
+    /// change (`update`), and that row's id: applied once focus leaves it.
+    private var heldRows: (rows: [HomeRow], rowID: String)?
+
+    /// The row focus is in now (a hold menu open on one of its cards
+    /// counts); nil while Home is covered or focus is elsewhere.
+    private var rowHoldingFocus: Int? {
+        guard isViewLoaded, view.isUserInteractionEnabled, view.window != nil else { return nil }
+        if HoldMenu.shared.isOpen { return focusedRow }
+        guard let focused = UIFocusSystem.focusSystem(for: view)?.focusedItem as? UIView,
+              focused.isDescendant(of: outer), let cell = Self.rowCell(containing: focused) else { return nil }
+        return cell.rowIndex
+    }
+
+    /// Focus moved: held rows go in once it has left their row.
+    private func applyHeldRows() {
+        guard let held = heldRows else { return }
+        if let index = rowHoldingFocus, rows.indices.contains(index), rows[index].id == held.rowID { return }
+        heldRows = nil
+        update(held.rows)
+    }
+
+    /// What a row shows is what Select acts on: the row focus is in keeps
+    /// its titles, order and pictures until focus leaves it (else a
+    /// reordered Continue Watching showed one title and played another);
+    /// every other row takes its new content at once.
+    func update(_ incoming: [HomeRow]) {
+        var rows = incoming
+        heldRows = nil
+        if !startsOverOnChange, let index = rowHoldingFocus, !isFeatured(index), self.rows.indices.contains(index) {
+            let shown = self.rows[index]
+            if let at = rows.firstIndex(where: { $0.id == shown.id }), rows[at].contentKey != shown.contentKey {
+                rows[at] = shown
+                heldRows = (incoming, shown.id)
+            }
+        }
+        // A row's titles reordered: its selected title kept by id.
+        for row in rows {
+            guard let was = self.rows.first(where: { $0.id == row.id }), was.contentKey != row.contentKey,
+                  let index = selected[row.id], was.items.indices.contains(index),
+                  let now = row.items.firstIndex(where: { $0.id == was.items[index].id }), now != index else { continue }
+            selected[row.id] = now
+        }
         // The titles and their art compared, not just the counts — a new
         // search brings as many results; a setting changes the art — except
         // while focus may be in the rows: a background refresh of Home must
@@ -607,6 +658,26 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if !changed, isViewLoaded {
             for case let cell as FixedFocusRowCell in outer.visibleCells where rows.indices.contains(cell.rowIndex) {
                 cell.showTitle(rows[cell.rowIndex].title)
+            }
+        }
+        // Rows focus isn't in (it's held above), changed in place: the same
+        // titles with new pictures keep their cards (reconfigured); other
+        // changes reload that row alone. (Left for a full reload, which
+        // waits while focus is in the rows, the screen fell behind.)
+        if !changed, isViewLoaded {
+            for case let cell as FixedFocusRowCell in outer.visibleCells
+            where cell.rowIndex != featured && rows.indices.contains(cell.rowIndex) && old.indices.contains(cell.rowIndex) {
+                let new = rows[cell.rowIndex], was = old[cell.rowIndex]
+                guard new.contentKey != was.contentKey else { continue }
+                if new.items.map(\.id) == was.items.map(\.id) {
+                    cell.refreshArt()
+                } else {
+                    cell.configure(rowIndex: cell.rowIndex, controller: self)
+                }
+                if cell.rowIndex == focusedRow, box.alpha > 0 {
+                    let index = selected[new.id] ?? 0
+                    if new.items.indices.contains(index) { box.show(new.items[index], animated: false) }
+                }
             }
         }
         if !changed, featuredChanged, let featured, isViewLoaded {
@@ -850,6 +921,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     override func didUpdateFocus(in context: UIFocusUpdateContext,
                                  with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
+        if heldRows != nil { DispatchQueue.main.async { self.applyHeldRows() } }
         // Back in view after hiding, the system puts focus on the first
         // card on screen (without asking): on to `returnRow`'s instead,
         // nothing moving meanwhile.
@@ -1348,7 +1420,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if isContinue(rowIndex) {
             guard let onContinueMenu, let entry = progress[item.id] else { return nil }
             return (entry.name, ContinueMenuAction.allCases.map { action in
-                MenuEntry(title: action.title, icon: action.icon, destructive: action == .remove) {
+                MenuEntry(title: action.title(series: entry.season != nil), icon: action.icon, destructive: action == .remove) {
                     onContinueMenu(action, entry)
                 }
             })
@@ -3970,6 +4042,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         setNeedsLayout()
     }
 
+    func showProgress() {
+        guard let row, let controller else { return }
+        func entry(_ index: Int) -> WatchProgress? {
+            row.items.indices.contains(index) ? controller.progress[row.items[index].id] : nil
+        }
+        for case let card as FixedFocusDestinationCell in destinationStrip?.visibleCells ?? [] {
+            if let progress = entry(card.itemIndex) { card.showProgress(progress) }
+        }
+        for case let card as FixedFocusPosterCell in strip.visibleCells {
+            if let progress = entry(card.itemIndex) { card.showProgress(progress) }
+        }
+    }
+
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {
         self.rowIndex = rowIndex
         self.controller = controller
@@ -4030,6 +4115,16 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         strip.reloadData()
         strip.layoutIfNeeded()
         strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0)
+    }
+
+    /// The same titles with new pictures: the cards on screen reconfigured
+    /// in place (focus, scroll and cells kept), the rest as they come.
+    func refreshArt() {
+        guard let row else { return }
+        shownRow = (row.id, row.contentKey)
+        for cv in [strip, destinationStrip].compactMap({ $0 }) where !cv.isHidden {
+            cv.reconfigureItems(at: cv.indexPathsForVisibleItems)
+        }
     }
 
     /// Select pressed on a fixed row's card (the box shows it).

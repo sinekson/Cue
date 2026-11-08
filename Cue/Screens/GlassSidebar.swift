@@ -56,7 +56,6 @@ enum TopBarAvatar {
 /// The top navigation: `🔍 Home Library Settings (avatar)`, centred as one
 /// group (see docs/UI-DESIGN.md §3).
 struct GlassSidebar: View {
-    @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var profiles: ProfileStore
     @Binding var selected: Int
     var focusBinding: FocusState<Int?>.Binding
@@ -193,7 +192,6 @@ struct GlassSidebar: View {
 /// One tab in the top navigation: its name, grey — white when it's the
 /// current or focused tab. Nothing else.
 private struct TopNavLabel: View {
-    @EnvironmentObject private var theme: ThemeManager
     let tab: AppTab
     /// Highlighted (the current tab, or the focused one): white text.
     let lit: Bool

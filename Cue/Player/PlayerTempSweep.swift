@@ -1,40 +1,21 @@
 import AVFoundation
 import Foundation
-import KSPlayer
 import Network
 import SwiftUI
 import UIKit
 
 /// Reclaims the player's scratch space in `tmp/` at launch.
 ///
-/// The DV remuxer writes its fMP4 segments to `tmp/dv-remux-<uuid>/` and
-/// deletes the directory when the session ends. That deletion is best-effort
-/// by construction — it runs as the player is being dismissed, and a remux
-/// session is exactly the workload most likely to get the app jetsammed on a
-/// 3 GB box, so the process is often gone before the delete completes. Every
-/// time that happens the directory is orphaned with no owner left to remove
-/// it: found on a real Apple TV 4K (1st gen) as **3.2 GB across 15 leaked
-/// directories**, three of them ~1 GB each.
-///
-/// Nothing else ever cleaned them up. tvOS does purge `tmp/` under storage
-/// pressure, but only once the box is nearly full — long after the app has
-/// been swapping, stuttering and getting killed. So the sweep has to be ours,
-/// and it has to run at LAUNCH: that is the one moment we know for certain
-/// that no remuxer owns any of these directories.
-///
-/// CFNetwork's response spool files (`tmp/CFNetworkDownload_*.tmp`) leak the
-/// same way and for the same reason — the app dies with requests in flight —
-/// so they are swept on the same pass (179 MB / 12,231 files on that device).
-///
-/// The hybrid disk cache's file (`Caches/hybrid-cache/current.bin`) is the
-/// third case, and the largest of them: `MediaCacheServer.endSession()` deletes
-/// it on player teardown, but teardown only runs on a normal exit. A crash, a
-/// jetsam kill, or the user force-quitting mid-film leaves TENS OF GIGABYTES
-/// stranded, and nothing would ever remove it — the next `beginSession` only
-/// clears the file if a cache session actually starts, so turning the feature
-/// off (or never playing a cacheable stream again) strands it permanently.
+/// The engine's disk window (`tmp/aether-*`, up to 6 GB a session) is deleted
+/// when the player closes, but a jetsam kill or a force-quit mid-film leaves
+/// it behind with no owner. tvOS only purges `tmp/` once the box is nearly
+/// full, so the sweep is ours, at launch: the one moment no session can own
+/// any of it. CFNetwork's response spools (`tmp/CFNetworkDownload_*.tmp`)
+/// leak the same way and go on the same pass.
 enum PlayerTempSweep {
-    private static let remuxPrefix = "dv-remux-"
+    /// The engine's own sweeps wait hours, to be sure a directory isn't
+    /// another session's.
+    private static let scratchPrefixes = ["aether-"]
     private static let spoolPrefix = "CFNetworkDownload_"
 
     /// Delete every orphaned player scratch directory and network spool file.
@@ -46,34 +27,9 @@ enum PlayerTempSweep {
         Task.detached(priority: .utility) { sweep() }
     }
 
-    /// Delete a hybrid-cache file orphaned by a kill. Launch is the one moment
-    /// no session can own it: `MediaCacheServer` creates its file inside
-    /// `beginSession`, which cannot have run yet.
-    private static func sweepHybridCache() {
-        let fm = FileManager.default
-        guard let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = caches.appendingPathComponent("hybrid-cache", isDirectory: true)
-        guard let entries = try? fm.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]
-        ), !entries.isEmpty else { return }
-        var reclaimed: Int64 = 0
-        for entry in entries {
-            reclaimed += Int64(
-                (try? entry.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?
-                    .totalFileAllocatedSize ?? 0
-            )
-            try? fm.removeItem(at: entry)
-        }
-        if reclaimed > 0 {
-            NSLog("[CueSweep] reclaimed %.2f GB of orphaned hybrid cache at launch",
-                  Double(reclaimed) / 1e9)
-        }
-    }
-
     /// The sweep itself. Synchronous — call it directly only from a background
     /// context (or a test).
     static func sweep() {
-        sweepHybridCache()
         let fm = FileManager.default
         let tmp = fm.temporaryDirectory
         guard let entries = try? fm.contentsOfDirectory(
@@ -86,7 +42,7 @@ enum PlayerTempSweep {
 
         for entry in entries {
             let name = entry.lastPathComponent
-            if name.hasPrefix(remuxPrefix) {
+            if scratchPrefixes.contains(where: name.hasPrefix) {
                 reclaimed += directorySize(of: entry, fm: fm)
                 try? fm.removeItem(at: entry)
                 directories += 1
@@ -101,7 +57,7 @@ enum PlayerTempSweep {
         }
 
         guard directories > 0 || spools > 0 else { return }
-        NSLog("[CueSweep] reclaimed %.1f MB — %d orphaned remux dirs, %d network spool files",
+        NSLog("[CueSweep] reclaimed %.1f MB — %d orphaned scratch dirs, %d network spool files",
               Double(reclaimed) / (1024 * 1024), directories, spools)
     }
 
@@ -248,21 +204,6 @@ enum PlayerProbe {
         lock.unlock()
     }
 
-    /// Drop every counter and note. Called when a new playback session starts
-    /// so the numbers describe THIS title, not the afternoon.
-    nonisolated static func resetHealth(keeping prefix: String? = nil) {
-        guard ProbeGate.isEnabled else { return }
-        lock.lock()
-        if let prefix {
-            counters = counters.filter { $0.key.hasPrefix(prefix) }
-            counterOrder = counterOrder.filter { $0.hasPrefix(prefix) }
-            notes = notes.filter { $0.key.hasPrefix(prefix) }
-        } else {
-            counters = [:]; counterOrder = []; notes = []
-        }
-        lock.unlock()
-    }
-
     nonisolated static func healthLines() -> [String] {
         guard ProbeGate.isEnabled else { return [] }
         lock.lock()
@@ -348,11 +289,6 @@ enum PlayerProbe {
             out.append("[\(sampler.name)]")
             out.append(contentsOf: lines.map { "  " + $0 })
         }
-        let cache = MediaCacheServer.shared.probeLines
-        if !cache.isEmpty {
-            out.append("[cache]")
-            out.append(contentsOf: cache.map { "  " + $0 })
-        }
         // Last, and deliberately so: it is the block to read when nothing in
         // the live state looks wrong but the session still feels broken.
         let health = healthLines()
@@ -425,14 +361,6 @@ final class ColorProbeServer {
                     // session would run and reports the listener's state — the
                     // way to prove, from outside, that a listener killed by a
                     // suspension is rebuilt rather than handed out dead.
-                    case let p where p.hasPrefix("/cachecheck"):
-                        #if DEBUG
-                        MediaCacheServer.shared.debugCheckListener { line in
-                            Task { @MainActor in Self.sendText(on: connection, line + "\n") }
-                        }
-                        #else
-                        Self.sendText(on: connection, "cachecheck: debug builds only\n")
-                        #endif
                     case let p where p.hasPrefix("/health"):
                         Self.sendText(on: connection,
                                       PlayerProbe.healthLines().joined(separator: "\n") + "\n")
@@ -534,9 +462,6 @@ final class ColorProbeServer {
             trail.append("--- dv trail ---")
             trail.append(contentsOf: dv)
         }
-        // Live cache state on every read — the trail only records EVENTS, and
-        // "how much has actually downloaded" is a level, not an event.
-        trail.append(MediaCacheServer.shared.statusLine)
         let body = Data((trail.joined(separator: "\n") + "\n").utf8)
         let head = """
         HTTP/1.1 200 OK\r
@@ -573,12 +498,9 @@ final class ColorProbeServer {
 /// - **mem** — footprint in MB, app-wide and continuous. The existing memory
 ///   line only runs while the player is open, which is why the staircase that
 ///   ended in the panic was invisible.
-/// - **vms** — live `PlayerViewModel` count. Leaked players are what fills the
-///   memory; the leak probe already counts them but only shouted into NSLog.
 /// - **state** — foreground / inactive / background, tracked from the lifecycle
 ///   notifications rather than read from `UIApplication`, because
 ///   `applicationState` is main-thread-only and this runs on a utility queue.
-/// - **cache** — the hybrid cache's own status line (file size, window, pool).
 ///
 /// Deliberately cheap and deliberately boring: two timers, a few lock-guarded
 /// reads, a bounded ring, no retained references to anything it observes, and
@@ -588,7 +510,7 @@ enum FlightRecorder {
     /// `plistlib.load(open(prefs))["dev.flight"]`
     private static let key = "dev.flight"
     /// ~40 minutes at the tick below. Bounded so it can never grow without
-    /// limit — the same discipline `dvTrail` learned the hard way.
+    /// limit.
     private static let capacity = 240
     private static let tick: TimeInterval = 10
     /// How often the main queue stamps its heartbeat. Finer than the tick so a
@@ -682,16 +604,12 @@ enum FlightRecorder {
     /// which is the whole point: it has to keep recording while main is stuck.
     private static func line(mainStall: Double, note: String?) -> String {
         var out = String(
-            format: "%@ mem=%.0fMB vms=%d state=%@ mainStall=%.0fs",
+            format: "%@ mem=%.0fMB state=%@ mainStall=%.0fs",
             Self.stamp(),
             PlayerProbe.footprintMB(),
-            PlayerViewModel.liveInstanceCounter.wrappedValue,
             appState.wrappedValue,
             mainStall
         )
-        // The cache's own snapshot is lock-guarded and built for cross-thread
-        // reads (`statusLine`), so this costs a lock and a string.
-        out += " | " + MediaCacheServer.shared.statusLine
         if let note { out += " | " + note }
         return out
     }
@@ -719,91 +637,6 @@ enum FlightRecorder {
         UserDefaults.standard.set(trail, forKey: key)
     }
 }
-
-/// The electronic equivalent of toggling the TV input, used to recover a panel
-/// wedged grey by a bad HDMI mode switch.
-///
-/// Deliberately GLOBAL (not owned by a player): the wedge is most often escaped
-/// by backing out of the player, and at that point there is no view model left
-/// to run a recovery — the display manager is still there, though, so this is
-/// driven straight off it. `sessionTarget` lets a live player put its own mode
-/// back; with no player the target is home mode (nil).
-@MainActor
-enum DisplayResync {
-    /// Set by the active player so step 3 restores the SESSION's HDR/DV mode
-    /// rather than dropping to SDR. Cleared on teardown.
-    static var sessionTarget: (() -> AVDisplayCriteria?)?
-
-    static func force(reason: String) {
-        guard let manager = UIApplication.shared.ks_keyWindow?.avDisplayManager else {
-            PlayerProbe.event("display", "force re-sync: no display manager")
-            return
-        }
-        let held = manager.preferredDisplayCriteria
-        let target = held ?? sessionTarget?()
-        // 1/3 — drop the criteria and the app's pin, so tvOS is allowed to move
-        // the panel and a later request is not deduped.
-        manager.preferredDisplayCriteria = nil
-        SessionDisplayMode.resetPinForResync()
-        PlayerProbe.event("display", "force re-sync 1/3 — dropped criteria (held="
-            + (held != nil ? "set" : "nil") + ") reason=\(reason)")
-        // 2/3 — force a DEFINITE different mode (SDR) so the link re-trains even
-        // if tvOS thought it was already home.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            let sdr = AVDisplayCriteria(
-                refreshRate: Float(UIScreen.main.maximumFramesPerSecond),
-                videoDynamicRange: DynamicRange.sdr.rawValue
-            )
-            manager.preferredDisplayCriteria = sdr
-            PlayerProbe.event("display", "force re-sync 2/3 — stepped through SDR")
-            // 3/3 — restore.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                manager.preferredDisplayCriteria = target
-                PlayerProbe.event("display", "force re-sync 3/3 — restored "
-                    + (target == nil ? "home mode" : "session mode"))
-            }
-        }
-    }
-}
-
-/// Remote probe commands, fired from the Mac with:
-///
-///   xcrun devicectl device notification post --device <id> \
-///     --name app.cue.tv.probe.resyncDisplay
-///
-/// The grey-screen wedge leaves the WHOLE TV grey, so recovery must not depend
-/// on the viewer finding the remote gesture. This lets the person reading the
-/// probe trigger the SAME display re-sync from outside, and lets a support
-/// session recover the panel without touching the Apple TV.
-enum ProbeRemote {
-    static let resyncDarwinName = "app.cue.tv.probe.resyncDisplay"
-    static let resyncNotification = Notification.Name("cue.probe.resyncDisplay")
-
-    private static let callback: CFNotificationCallback = { _, _, _, _, _ in
-        // Darwin callbacks are not on a known queue; hop to main and run the
-        // GLOBAL display re-sync (works even with no player open, which is the
-        // case the moment the viewer backs out of a wedged grey player).
-        DispatchQueue.main.async {
-            PlayerProbe.event("display", "remote re-sync command received")
-            MainActor.assumeIsolated { DisplayResync.force(reason: "remote") }
-            NotificationCenter.default.post(name: resyncNotification, object: nil)
-        }
-    }
-
-    nonisolated(unsafe) private static var installed = false
-    static func install() {
-        guard !installed else { return }
-        installed = true
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            nil, callback,
-            resyncDarwinName as CFString, nil, .deliverImmediately
-        )
-        PlayerProbe.event("life", "remote probe commands armed — \(resyncDarwinName)")
-    }
-}
-
-// MARK: - App-wide probe
 
 /// Everything the player probe never reached: browsing, focus, data loads,
 /// sync and app lifecycle.
@@ -981,7 +814,6 @@ enum AppProbe {
         // without this it was first touched when a client read the log —
         // making every event logged before that read show a NEGATIVE time.
         _ = PlayerProbe.startedAt
-        ProbeRemote.install()
         PlayerProbe.register("app") {
             [
                 "tab=\(tab)  screen=\(screen)  depth=\(depth)  scene=\(scene)",
@@ -990,11 +822,7 @@ enum AppProbe {
                 "thermal=\(thermalLabel(ProcessInfo.processInfo.thermalState))"
                     + "  lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled.probe)"
                     + "  cpus=\(ProcessInfo.processInfo.activeProcessorCount)",
-                // Live player-model census. More than 1 while nothing is being
-                // handed to PiP is a leak, and this is the block a browse is
-                // read against.
-                "playerVMs=\(PlayerViewModel.liveInstanceCounter.wrappedValue)"
-                    + "  mem=\(String(format: "%.0fMB", PlayerProbe.footprintMB()))",
+                "mem=\(String(format: "%.0fMB", PlayerProbe.footprintMB()))",
                 "audio=\(audioRouteLabel)",
             ]
         }

@@ -33,9 +33,9 @@ enum WatchHistoryClearState {
 
     /// Adopt a clear point learned from the account (synced prefs blob). The
     /// clear point used to be CONTAINER-LOCAL only — so any other install of
-    /// the app (a dev build, a fresh sideload) had none, re-imported the
-    /// user's entire Trakt history unfiltered, and pushed the flood up to the
-    /// account, undoing the curation done on the device that cleared. Newest
+    /// the app (a dev build, a fresh sideload) had none and pushed old history
+    /// back up to the account, undoing the curation done on the device that
+    /// cleared. Newest
     /// wins; nil never regresses an existing local clear.
     static func adopt(_ remote: Date?) {
         // A device that reset its horizon must not have it handed back by the
@@ -80,7 +80,7 @@ struct WatchProgress: Codable, Identifiable, Hashable {
     ///
     /// Derived, never synced as a field: the backend stores no column for it,
     /// and it is a pure function of watch history (which DOES sync to the
-    /// account, Trakt, SIMKL and Stremio) plus episode air dates, so every
+    /// account) plus episode air dates, so every
     /// device arrives at the same number on its own.
     var newEpisodeCount: Int? = nil
 
@@ -93,6 +93,9 @@ struct WatchProgress: Codable, Identifiable, Hashable {
         guard durationSeconds > 0 else { return 0 }
         return min(max(positionSeconds / durationSeconds, 0), 1)
     }
+
+    /// Past 30 s and not finished. Under that it's unstarted: "Up Next", no bar.
+    var isStarted: Bool { positionSeconds >= 30 && fraction < 0.95 }
 
     var remainingTimeText: String? {
         guard durationSeconds.isFinite,
@@ -199,27 +202,19 @@ final class ProgressStore: ObservableObject {
     /// resurrect on the next pull.
     var onRemove: (([String]) -> Void)?
     /// Fired when the USER removes a title from Continue Watching (with its
-    /// metaID), so Trakt sync can delete the matching playback rows there too
-    /// and the coordinator can kick a full sync. A LIST for the same reason as
+    /// metaID), so the coordinator can kick a full sync. A LIST for the same reason as
     /// the WatchedStore hooks: more than one thing needs to hear it. Not fired
     /// for internal migrations (recanonicalize) — the title is still being
     /// watched, its key just changed.
     var onTrackerProgressRemove: [(String) -> Void] = []
-    /// Fired with the metaID when a title leaves Continue Watching, so the
-    /// Stremio sync can clear it THERE too. Stremio's continue watching is
-    /// derived from each library item's playback state, and the push only
-    /// carries rows that still exist locally — so without this a removal was
-    /// invisible to Stremio and the card simply came back on the next pull.
-    var onStremioClearProgress: ((String) -> Void)?
     /// Whether a row's episode was marked watched AFTER the row was last
     /// written (installed by the app from `WatchedStore`). Such a row is a
     /// stale copy of an episode the viewer has since finished, and no merge
     /// may put it back.
     ///
     /// Finishing retires the row here, but copies elsewhere outlive it: the
-    /// account row the periodic pushes wrote, a Trakt playback row, Stremio's
-    /// resume state. Each handed the episode back once the three-minute
-    /// tombstone lapsed, at the position it had reached before the credits,
+    /// account row the periodic pushes wrote handed the episode back once the
+    /// three-minute tombstone lapsed, at the position it had reached before the credits,
     /// and Continue Watching went back to an episode already watched. The
     /// watched mark is the record that outlives them all.
     var episodeWatchedAfter: ((WatchProgress) -> Bool)?
@@ -233,21 +228,6 @@ final class ProgressStore: ObservableObject {
     /// server no longer returns it). A local re-watch clears the tombstone.
     private var tombstones: [String: Date] = [:]
     private static let tombstoneGrace: TimeInterval = 180
-
-    /// Keys that arrived from an EXTERNAL source (Trakt playback) this session
-    /// — PERMANENT for the session. Trakt sync consults this to avoid pushing
-    /// Trakt's own rows back at it, which would resurrect items the user
-    /// deleted on trakt.tv.
-    private var externallyMerged: Set<String> = []
-
-    /// Externally-merged keys whose account push hasn't been CONFIRMED by a
-    /// server snapshot yet — TEMPORARY. The account reconcile must not delete
-    /// these as "absent from the server": they carry their real (old) watch
-    /// timestamps, so the 2-minute deletion grace — which protects fresh local
-    /// rows while their push is in flight — offers them no protection. Once a
-    /// snapshot contains the key (the push landed) it's pruned, so a removal
-    /// made on another device can still propagate here afterwards.
-    private var awaitingServerAck: Set<String> = []
 
     private func pruneTombstones() {
         let cutoff = Date().addingTimeInterval(-Self.tombstoneGrace)
@@ -271,7 +251,6 @@ final class ProgressStore: ObservableObject {
     /// but defaulting to 1 here meant a device on any other profile decoded
     /// profile 1's blob on the main actor and then decoded the correct one a
     /// moment later — twice the launch cost, and a reload cascade on top.
-    /// `RatingsStore` and `TraktStore` already do this.
     private static let activeProfileKey = "cue.profiles.active"
     private var profileID = UserDefaults.standard.object(forKey: activeProfileKey) as? Int ?? 1
     private var storageKey: String {
@@ -317,19 +296,11 @@ final class ProgressStore: ObservableObject {
     ///
     /// The per-key tombstones above protect a removal for three minutes and
     /// die with the process. That is not enough, because a removal has to
-    /// outlast every source that can hand the title back:
-    ///
-    /// * the ACCOUNT, when the server delete is still retrying, when an
+    /// outlast the ACCOUNT handing the title back: when the server delete is still retrying, when an
     ///   in-flight push captured the row before the removal and re-upserted it
     ///   right after the delete landed, or when the key the server holds is
     ///   not one this device ever knew (another client keys episodes
-    ///   differently);
-    /// * TRAKT, whose playback-row delete runs concurrently with the full sync
-    ///   the same removal kicks off — the pull can read the row before the
-    ///   delete has gone through;
-    /// * SIMKL, which cannot be told at all: it re-seeds "the next episode" of
-    ///   every show in its watching bucket on every five-minute sync, so a
-    ///   removed show came back on the first sync after the tombstone expired.
+    ///   differently).
     ///
     /// So every merge path consults this: an incoming row for a removed show
     /// is dropped unless it is NEWER than the removal, which means the title
@@ -377,11 +348,8 @@ final class ProgressStore: ObservableObject {
     /// since. A row newer than the removal WITH real progress is a re-watch
     /// elsewhere: it lifts the removal and is accepted.
     ///
-    /// The progress requirement is load-bearing: SIMKL's Continue Watching
-    /// seeds are synthesized "start the next episode" rows at position 0, and
-    /// their timestamp can fall back to now() when SIMKL reports no date — so
-    /// without it the very source this record exists to block could lift the
-    /// removal on its first sync.
+    /// The progress requirement keeps a synthesized "start the next episode"
+    /// row at position 0, stamped now, from lifting the removal.
     private func isBlockedByRemoval(_ entry: WatchProgress) -> Bool {
         guard let removedAt = removedShows[entry.metaID] else { return false }
         if entry.updatedAt > removedAt, entry.positionSeconds > 0 {
@@ -397,7 +365,7 @@ final class ProgressStore: ObservableObject {
     /// Suppressing a row locally is this device's own business and can last as
     /// long as the record does. Deleting it from the ACCOUNT reaches every
     /// other device, and the only evidence here is a timestamp comparison —
-    /// which is not a reliable ordering signal: a Stremio import carries the
+    /// which is not a reliable ordering signal: an import carries the
     /// ORIGINAL watch time, so a title legitimately re-added on a phone months
     /// later can arrive stamped older than the removal. Left unbounded, this
     /// device would keep deleting it from everyone's account for half a year.
@@ -458,7 +426,7 @@ final class ProgressStore: ObservableObject {
         // The removal tombstones belong to the profile being left — carried
         // over, a title profile A just removed was skipped from profile B's
         // first pull for the whole grace window. Parked per profile rather
-        // than dropped: they are the only guard the Trakt/Stremio merges have
+        // than dropped: they are the only guard the account merges have
         // against re-adding what that profile removed.
         tombstonesByProfile[profileID] = tombstones
         profileID = id
@@ -472,8 +440,6 @@ final class ProgressStore: ObservableObject {
         // in place, the next save/push folds them into the new profile's data.
         transientOverrides.removeAll()
         tombstones = tombstonesByProfile[id] ?? [:]
-        externallyMerged.removeAll()
-        awaitingServerAck.removeAll()
         load()   // also re-reads this profile's removal record
         suppressChange = false
     }
@@ -499,8 +465,8 @@ final class ProgressStore: ObservableObject {
     /// Nuvio Sync names an episode `<metaID>_s<season>e<episode>` — the phone
     /// app, the Android TV app and the reference tvOS client all key it that
     /// way — while this store keys a row by the add-on's video id
-    /// (`tt123:2:2`), which is what the player, the details page and the
-    /// tracker merges look rows up by. Pushed, deleted and pulled under the
+    /// (`tt123:2:2`), which is what the player and the details page look
+    /// rows up by. Pushed, deleted and pulled under the
     /// local key, the two never met: a pull never returned the `:2:2` row, so
     /// the reconcile dropped what the player had just saved and kept the
     /// account's older `_s2e2` copy, and a delete sent as `:2:2` deleted
@@ -565,19 +531,6 @@ final class ProgressStore: ObservableObject {
         )
     }
 
-    /// Sources whose rows are real, syncable Continue Watching — as opposed to
-    /// a device-local scratch row. A row whose source is NOT in this set is
-    /// dropped by `removeLocalOnlyProgress`, never uploaded to the account,
-    /// and not preserved by a first-pull snapshot merge.
-    ///
-    /// `"simkl"` was missing here for as long as the SIMKL manager has been
-    /// seeding Continue Watching. Every card it produced was invisible to the
-    /// account push AND deleted outright by the next Stremio tick (which calls
-    /// `removeLocalOnlyProgress` on every successful sync) — so SIMKL cards
-    /// appeared, vanished within thirty seconds, came back on SIMKL's next
-    /// five-minute sync, and never reached any other device.
-    private static let serviceSyncSources: Set<String> = ["local", "nuvio", "stremio", "trakt", "simkl"]
-
     func serviceBackedForSync() -> [WatchProgress] {
         // Fold in the periodic in-playback saves, exactly as `save()` does.
         // Without this the account was pushed the position from when the film
@@ -593,13 +546,13 @@ final class ProgressStore: ObservableObject {
             if transient.updatedAt > live.updatedAt { merged[key] = transient }
         }
         return merged.values.filter { item in
-            guard let source = item.syncSource else { return false }
+            guard item.syncSource != nil else { return false }
             // A row for a show the user removed is never uploaded again — the
             // periodic override of the title that was playing when they
             // removed it, or a row an external merge slipped in, would
             // otherwise re-create on the server what the delete just retired.
             if let removedAt = removedShows[item.metaID], item.updatedAt <= removedAt { return false }
-            return Self.serviceSyncSources.contains(source)
+            return true
         }
     }
 
@@ -692,12 +645,8 @@ final class ProgressStore: ObservableObject {
         let remoteIDs = Set(remote.map(\.id))
         let cutoff = Date().addingTimeInterval(-Self.deletionGrace)
         // Collect first, then remove — mutating `items` mid-iteration is unsafe.
-        // A snapshot that CONTAINS an externally-merged key proves its push
-        // landed — release the exemption so future reconciles govern it.
-        awaitingServerAck.subtract(remoteIDs)
         let staleIDs = items.compactMap { id, local in
-            (!remoteIDs.contains(id) && local.updatedAt < cutoff
-             && !awaitingServerAck.contains(id)) ? id : nil
+            (!remoteIDs.contains(id) && local.updatedAt < cutoff) ? id : nil
         }
         let staleRemovalTime = Date()
         for id in staleIDs {
@@ -755,59 +704,19 @@ final class ProgressStore: ObservableObject {
         if changed { save() }
     }
 
-    /// Drop every row a given sync source contributed (a Stremio account
-    /// switch retiring the previous account's Continue Watching). No
-    /// tombstones and no callbacks: the rows are not being removed by the
-    /// user, and the incoming account's copies must not be blocked.
-    func removeRows(syncSource source: String) {
-        suppressChange = true
-        defer { suppressChange = false }
-        let next = items.filter { _, item in item.syncSource != source }
-        guard next.count != items.count else { return }
-        for id in items.keys where next[id] == nil {
-            transientOverrides.removeValue(forKey: id)
-        }
-        items = next
-        save()
-    }
-
-    func removeLocalOnlyProgress() {
-        let next = items.filter { _, item in
-            guard let source = item.syncSource else { return false }
-            return Self.serviceSyncSources.contains(source)
-        }
-        guard next.count != items.count else { return }
-        // Retire the periodic in-playback rows of the keys being dropped, like
-        // every other removal path — otherwise `save()` folds a purged row
-        // straight back onto disk from `transientOverrides`. No tombstone here:
-        // unlike the reconcile-deletes, this is a local filter that runs either
-        // side of a Stremio merge, and tombstoning would block that merge from
-        // (re)adding the same key for the whole grace window.
-        for id in items.keys where next[id] == nil {
-            transientOverrides.removeValue(forKey: id)
-        }
-        items = next
-        awaitingServerAck.formIntersection(Set(items.keys))
-        externallyMerged.formIntersection(Set(items.keys))
-        save()
-    }
-
-    /// Replace local Continue Watching with the Nuvio account snapshot, keeping
-    /// only external rows that were just merged from Stremio/Trakt and have not
-    /// been acknowledged by Cue yet. This removes stale device-local Cue
-    /// progress that otherwise bloats Continue Watching forever.
+    /// Replace local Continue Watching with the Nuvio account snapshot. This
+    /// removes stale device-local progress that otherwise bloats Continue
+    /// Watching forever.
     func replaceWithNuvioSnapshot(_ remote: [WatchProgress], preserveLocalAdditions: Bool = false) {
         suppressChange = true
         defer { suppressChange = false }
 
         let sanitizedRemote = remote.compactMap(Self.sanitized)
-        let remoteIDs = Set(sanitizedRemote.map(\.id))
-        awaitingServerAck.subtract(remoteIDs)
         pruneTombstones()
 
         // A local row for the same EPISODE under another key is the same row,
         // not a second one. Rows pulled before the account keys were translated
-        // sit here under the account's `_sXeY` form, and a tracker or another
+        // sit here under the account's `_sXeY` form, and another
         // client can key an episode its own way. Matched by key alone, the
         // pulled row landed beside them without their title, still or stream
         // signature, and the leftover was dropped as absent from the server.
@@ -875,16 +784,9 @@ final class ProgressStore: ObservableObject {
             if episodeWatchedAfter?(merged) == true { continue }
             next[entry.id] = merged
         }
-        for id in awaitingServerAck where !mergedLocalIDs.contains(id) {
-            if let local = items[id], Self.sanitized(local) != nil {
-                next[id] = local
-            }
-        }
         if preserveLocalAdditions {
             for (id, local) in items where next[id] == nil && !mergedLocalIDs.contains(id) {
-                guard Self.sanitized(local) != nil,
-                      let source = local.syncSource,
-                      Self.serviceSyncSources.contains(source) else { continue }
+                guard Self.sanitized(local) != nil, local.syncSource != nil else { continue }
                 next[id] = local
             }
         }
@@ -955,45 +857,16 @@ final class ProgressStore: ObservableObject {
         if changed { save() }
     }
 
-    /// Additively merge externally-sourced progress (Trakt playback) — adds a
-    /// row only when the key is absent, or updates position when the external
-    /// one is clearly further AND the local row is older. Never deletes, so it
-    /// can't fight the Cue full-snapshot reconcile.
-    /// The key an incoming row should land on: its own if we already hold that
-    /// key, otherwise any existing row for the SAME title and episode.
-    ///
-    /// Sources disagree on how to key an episode — Trakt builds
-    /// `tt1234:1:1` while the player uses the addon's own video id, which can
-    /// be `tt1234_s1e1`. Keyed literally, the same episode lands twice and the
-    /// two copies never merge: two rows, two positions, and whichever sorts
-    /// first wins the card. Matching on identity instead is what makes the
-    /// account a real hub rather than three parallel lists.
-    private func mergeKey(for entry: WatchProgress, index: [String: String]) -> String {
-        if items[entry.id] != nil { return entry.id }
-        return index[Self.identity(of: entry)] ?? entry.id
-    }
-
     /// metaID + season + episode — the same episode however it was keyed.
     private static func identity(of item: WatchProgress) -> String {
         "\(item.metaID)|\(item.season.map(String.init) ?? "-")|\(item.episode.map(String.init) ?? "-")"
     }
 
-    private func identityIndex() -> [String: String] {
-        var index: [String: String] = [:]
-        for (key, item) in items where index[Self.identity(of: item)] == nil {
-            index[Self.identity(of: item)] = key
-        }
-        return index
-    }
-
     /// Collapse rows that are the same episode under different keys, keeping
     /// one and deleting the rest from the account too.
     ///
-    /// Merging by identity (see mergeKey) stops new duplicates, but installs
-    /// that already synced a Trakt-keyed copy alongside the player's own hold
-    /// both. The survivor is the most recently updated row; on a tie the one
-    /// the player itself writes (anything not sourced from Trakt) wins, since
-    /// that is the key future playback will keep updating.
+    /// The survivor is the most recently updated row; on a tie the first by
+    /// key, so the choice is the same every run.
     @discardableResult
     func collapseDuplicateEpisodes() -> [String] {
         var best: [String: String] = [:]      // identity -> winning key
@@ -1004,12 +877,7 @@ final class ProgressStore: ObservableObject {
                 best[id] = key
                 continue
             }
-            let heldWins: Bool
-            if held.updatedAt != item.updatedAt {
-                heldWins = held.updatedAt > item.updatedAt
-            } else {
-                heldWins = held.syncSource != "trakt" || item.syncSource == "trakt"
-            }
+            let heldWins = held.updatedAt >= item.updatedAt
             if heldWins { losers.append(key) } else { best[id] = key; losers.append(current) }
         }
         guard !losers.isEmpty else { return [] }
@@ -1037,59 +905,6 @@ final class ProgressStore: ObservableObject {
             onLocalUpdate?()
         }
         return losers
-    }
-
-    func mergeExternal(_ remote: [WatchProgress]) {
-        suppressChange = true
-        var changed = false
-        let index = identityIndex()
-        for rawEntry in remote {
-            guard let entry = Self.sanitized(rawEntry) else { continue }
-            // Trakt's playback list and SIMKL's watching bucket both hand a
-            // removed show straight back; the removal record is what makes
-            // "Remove from Continue Watching" stick against them.
-            if isBlockedByRemoval(entry) { continue }
-            // A playback row or resume state written before the episode was
-            // finished: Trakt keeps the row when the stop scrobble never
-            // reached it, Stremio keeps its state until something replaces it.
-            if episodeWatchedAfter?(entry) == true { continue }
-            let key = mergeKey(for: entry, index: index)
-            if let local = items[key] {
-                // Only advance position if external is further and MEANINGFULLY
-                // newer (60s slack). External positions are rebuilt from a
-                // percentage × a guessed runtime, so they're approximate — the
-                // slack keeps a row this device just scrobble-pushed (whose
-                // paused_at lands seconds after our own updatedAt) from
-                // clobbering the precise local resume point with the
-                // round-tripped estimate. A genuine watch on another device is
-                // comfortably past 60s.
-                if entry.positionSeconds > local.positionSeconds + 5,
-                   entry.updatedAt > local.updatedAt.addingTimeInterval(60) {
-                    var merged = local
-                    merged.positionSeconds = entry.positionSeconds
-                    if entry.durationSeconds > 0 { merged.durationSeconds = entry.durationSeconds }
-                    merged.updatedAt = entry.updatedAt
-                    items[key] = merged
-                    externallyMerged.insert(key)
-                    awaitingServerAck.insert(key)
-                    changed = true
-                }
-            } else if tombstones[entry.id] == nil {
-                items[entry.id] = entry
-                externallyMerged.insert(entry.id)
-                awaitingServerAck.insert(entry.id)
-                changed = true
-            }
-        }
-        if changed { save() }
-        suppressChange = false
-        // Push the merged rows to the ACCOUNT server too. Without this, the
-        // account's full-snapshot reconcile (mergeRemote, run by the 30s
-        // Continue Watching poll) saw Trakt-pulled rows as "absent from the
-        // server" and deleted them within seconds — Trakt items flashed into
-        // Continue Watching and then silently vanished, which is why Trakt
-        // sync never seemed to show everything.
-        if changed { onLocalUpdate?() }
     }
 
     /// Items that should appear in the Continue Watching row.
@@ -1129,8 +944,7 @@ final class ProgressStore: ObservableObject {
         // Watching row visibly reshuffling while you sit on the home screen.
         //
         // Ties are not rare: anything imported in a batch shares a timestamp —
-        // a Trakt history import stamps hundreds of rows within the same
-        // moment, and a restore writes them all at once.
+        // a restore writes them all within the same moment.
         let byRecency = latestPerShow.values.sorted {
             ($0.updatedAt, $0.id) > ($1.updatedAt, $1.id)
         }
@@ -1139,8 +953,8 @@ final class ProgressStore: ObservableObject {
         case .recentlyWatched:
             result = byRecency
         case .streamingStyle:
-            let inProgress = byRecency.filter { $0.fraction >= 0.02 }
-            let fresh = byRecency.filter { $0.fraction < 0.02 }
+            let inProgress = byRecency.filter(\.isStarted)
+            let fresh = byRecency.filter { !$0.isStarted }
             result = inProgress + fresh
         }
         continueWatchingMemo[sortMode] = result
@@ -1178,7 +992,7 @@ final class ProgressStore: ObservableObject {
         // never offered that show again.
         clearNextUpDismissal(metaID: meta.id)
         // Every row that IS this episode, not only the one under the player's
-        // key: a copy under another key (the account's `_sXeY`, a tracker's)
+        // key: a copy under another key (the account's `_sXeY`, another client's)
         // kept the finished episode on the row at its old position.
         //
         // And a row that exists only as a periodic save counts as removed. An
@@ -1212,13 +1026,6 @@ final class ProgressStore: ObservableObject {
         }
         if !suppressChange {
             if !finished.isEmpty { onRemove?(accountDeleteKeys(for: Array(finished.values))) }
-            // Stremio keeps its resume point per SHOW and its watched pass skips
-            // series episodes, so a finished episode never cleared it — the next
-            // Stremio pull re-added the card at the credits position. The push's
-            // clear pass skips any id that still has an in-progress row, so this
-            // is safe even when the viewer moved straight on to the next episode
-            // (the progress pass nominates that one instead).
-            onStremioClearProgress?(meta.id)
             onFinished?(meta, video)
         }
         if shouldSave {
@@ -1368,9 +1175,7 @@ final class ProgressStore: ObservableObject {
             // suppresses the incoming account's rows sharing those keys for the
             // whole grace period.
             tombstones.removeAll()
-            externallyMerged.removeAll()
-            awaitingServerAck.removeAll()
-            // Likewise the previous user's Continue Watching removals.
+                    // Likewise the previous user's Continue Watching removals.
             removedShows.removeAll()
             saveRemovedShows()
         }
@@ -1382,8 +1187,6 @@ final class ProgressStore: ObservableObject {
             for key in removedKeys { tombstones[key] = now }
         }
         items.removeAll()
-        externallyMerged.removeAll()
-        awaitingServerAck.removeAll()
         // Periodic in-playback rows are part of "all progress" too — leaving
         // them behind let the very next save re-materialise the history the
         // user just cleared.
@@ -1472,7 +1275,6 @@ final class ProgressStore: ObservableObject {
             if !suppressChange {
                 onRemove?([metaID])
                 if notifySync { for hook in onTrackerProgressRemove { hook(metaID) } }
-                onStremioClearProgress?(metaID)
                 onLocalUpdate?()
             }
             return
@@ -1487,7 +1289,6 @@ final class ProgressStore: ObservableObject {
         if !suppressChange {
             onRemove?(accountDeleteKeys(for: removedRows))
             if notifySync { for hook in onTrackerProgressRemove { hook(metaID) } }
-            onStremioClearProgress?(metaID)
             onLocalUpdate?()
         }
     }
@@ -1505,8 +1306,7 @@ final class ProgressStore: ObservableObject {
         // With `existing.0 >= item.updatedAt` the winner among equal timestamps
         // was whichever row the (unordered) dictionary happened to yield first,
         // while the Continue Watching card picked the highest id — so for
-        // batch-imported rows sharing a timestamp (a Trakt history import
-        // stamps hundreds within the same moment) a poster's progress bar
+        // batch-imported rows sharing a timestamp a poster's progress bar
         // showed a DIFFERENT episode's fraction than the card for that show.
         var latest: [String: (updatedAt: Date, id: String, fraction: Double)] = [:]
         for item in items.values where item.fraction < 0.95 {
