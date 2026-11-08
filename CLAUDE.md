@@ -154,7 +154,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`WatchProgress.isStarted`); "Up Next" only ever means unstarted.
 - **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): 2 s rest on the
   buttons, one `AVPlayer` handed between Home, Details and full screen, YouTube
-  HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Be gentle on YouTube:
+  HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Full screen
+  (`TrailerController`) has the player's bar and presses (`PlayerTransport`,
+  `PlayerOverlay`, shared with `PlayerController`): the title's name, no
+  buttons, shelf or stills; with the controls up, Up hides them and Down
+  closes ("Back to Details" with a chevron where the shelf's tabs peek).
+  It has no picture of its own: a clear cover, at once, over Details'
+  picture where the trailer plays; Details' text, buttons and shade fade
+  out under it and back as it goes (0.45 s), the sound rising from silence
+  (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer` through the player rework.
 - **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
@@ -225,8 +233,6 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   consistency pass.
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
-- Trailers: the full-screen trailer's controls to move to the playback
-  refactor's player (now the system's).
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
 - Inter's OFL text and copyright notice to ship with the fonts (`Cue/Player/Fonts/`); Licenses & Credits lists it.
 - A proper cache setting (every cache — pictures, title records,

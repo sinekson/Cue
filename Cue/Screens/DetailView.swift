@@ -572,6 +572,10 @@ struct DetailView: View {
     /// From a box: the scrim arrives half-way (the growing box took it that
     /// far) and finishes with the page's parts; Back takes it half-way back.
     @State private var scrim: Double
+    /// The trailer full screen: its cover, at once…
+    @State private var trailerCover = false
+    /// …and the page's text, buttons and shade fading out under it.
+    @State private var trailerFull = false
     /// The billboard's season count ("3 Seasons") when opened from there.
     /// State, not a plain property: SwiftUI re-creates this view while the
     /// page is up, and only the FIRST creation still sees the handoff.
@@ -733,11 +737,21 @@ struct DetailView: View {
         .onChange(of: detailScenePhase) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailersEnabled) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailerSound) { _, _ in restTrailer() }
-        // The Trailer button: the trailer on the picture full screen (from
+        // Up from the buttons: the trailer on the picture full screen (from
         // its start if none is on), playing on behind once closed.
-        .fullScreenCover(isPresented: Binding(get: { trailer.full }, set: { if !$0 { closeFullTrailer() } }),
+        // The cover comes and goes at once, clear (the picture under it is
+        // the trailer's); what's over the picture fades out and back in.
+        .onChange(of: trailer.full) { _, full in
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) { trailerCover = full }
+            withAnimation(Motion.present) { trailerFull = full }
+        }
+        .fullScreenCover(isPresented: Binding(get: { trailerCover }, set: { if !$0 { closeFullTrailer() } }),
                          onDismiss: closeFullTrailer) {
-            TrailerFullScreen(trailer: trailer, close: closeFullTrailer)
+            TrailerFullScreen(trailer: trailer, title: viewModel.meta.name, close: closeFullTrailer)
+                .ignoresSafeArea()
+                .presentationBackground(.clear)
         }
     }
 
@@ -858,6 +872,8 @@ struct DetailView: View {
                 if item.type == "episode" { focusedRowEpisode = item.id }
             }
             .ignoresSafeArea()
+            // Under the full-screen trailer: out, the picture alone.
+            .opacity(trailerFull ? 0 : 1)
             // (Again once the episode list is in: opened from a card, the page
             // starts with the card's data — no seasons yet.)
             .task(id: "\(viewModel.meta.id)|\(viewModel.meta.seasons.count)") {
@@ -938,7 +954,7 @@ struct DetailView: View {
                 }
             }
             .frame(width: 1920, height: 1080)
-            .opacity(below ? 0 : scrim)
+            .opacity(below || trailerFull ? 0 : scrim)
         }
         .frame(width: 1920, height: 1080)
         // (On the backdrop itself: an empty view never starts a task. By the

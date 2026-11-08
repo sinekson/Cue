@@ -36,7 +36,7 @@ struct CuePlayer: UIViewControllerRepresentable {
 }
 
 /// Takes focus, so the remote's presses reach the controller.
-private final class PlayerFocusView: UIView {
+final class PlayerFocusView: UIView {
     var takesFocus = true
     override var canBecomeFocused: Bool { takesFocus }
 }
@@ -2430,7 +2430,7 @@ private final class SubtitleText: UIView {
 
 /// The bare overlay: what's playing, where it is, and a spinner while the
 /// engine waits. Shows nothing that takes focus.
-private final class PlayerOverlay: UIView {
+final class PlayerOverlay: UIView {
     /// A view, so the gradient follows the bounds without its own animation.
     /// What goes beside the time, as Apple's.
     enum Mark: Equatable {
@@ -2958,6 +2958,329 @@ private final class PlayerPrompt: UIView {
     }
 }
 
+/// What the bar plays: the engine (`PlayerController`) or a trailer's
+/// `AVPlayer` (`TrailerController`).
+@MainActor protocol TransportMedia: AnyObject {
+    var duration: Double { get }
+    /// Where the bar stands while nothing is scrubbed.
+    var position: Double { get }
+    var isPaused: Bool { get }
+    func play()
+    func pause()
+    func togglePlayPause()
+    func seek(to seconds: Double) async
+}
+
+/// The bar's behaviour, one for the player and the trailer: a press is 10 s
+/// and presses add up, one seek 0.3 s after the last input; held 0.5 s
+/// playing, the scan; paused, a swipe is fine control with a glide; and the
+/// controls' own timing (up 3 s after a press, Back's grace once they hide by
+/// themselves). Drives `overlay`; what's around the bar stays the owner's.
+@MainActor final class PlayerTransport: NSObject {
+    let overlay: PlayerOverlay
+    weak var media: TransportMedia?
+    /// Scrubbing is allowed (the player: once the picture has played).
+    var canScrub: () -> Bool = { true }
+    /// The target moved (the player's preview stills).
+    var moved: () -> Void = {}
+    /// A seek is on its way (the player's resume floor goes).
+    var committed: () -> Void = {}
+
+    /// How long the overlay stays after a press.
+    private static let overlaySeconds: TimeInterval = 3
+    /// Back in this long after the controls hid by themselves was meant for them.
+    private static let backGuardSeconds: TimeInterval = 1
+    /// A press moves the target this far, paused or playing.
+    private static let scrubStep: Double = 10
+    /// Paused, a swipe is fine control: about 45 s across the pad, whatever the
+    /// title's length, so going far stays a job for the scan.
+    private static let swipeSecondsPerPoint: Double = 0.03
+    /// A swipe lets go with its speed and eases out over this.
+    private static let swipeFastSpeed: Double = 2000
+    private static let swipeMostGain: Double = 4
+    private static let glideSeconds: Double = 0.25
+    private static let glideStop: Double = 1
+    /// Playing, a press held this long starts the scan, which goes on by itself.
+    private static let scanHoldSeconds: TimeInterval = 0.5
+    /// The scan's slider, in seconds of title per second. The picture is paused:
+    /// the engine plays 2× at most and never backwards.
+    private static let scanSpeeds: [Double] = [30, 120, 300, 600]
+    /// The seek waits this long after the last input, so a run of inputs is one seek.
+    private static let scrubCommitSeconds: TimeInterval = 0.3
+    /// The bar follows at this rate; the swipe comes in at twice it.
+    private static let scrubDrawInterval: TimeInterval = 1.0 / 30
+
+    private var overlayUntil = Date.distantPast
+    private var backGuardUntil = Date.distantPast
+    /// Back put them away: they stay gone, even paused, until the next press.
+    var dismissed = false
+
+    /// Where the viewer is scrubbing to; playback goes on until it lands.
+    private(set) var target: Double?
+    private var commitAt = Date.distantPast
+    private var lastDraw = Date.distantPast
+    /// Where a commit is going: the bar stays there until the seek is done.
+    private(set) var landing: Double?
+    /// The arrow going down, until it's up or the scan takes over.
+    private var holdDirection: Double = 0
+    private var holdWait: Task<Void, Never>?
+    private(set) var scan: (direction: Double, level: Int)?
+    /// The way of the last arrow press in this scrub; 0 once a swipe took over.
+    private var stepDirection: Double = 0
+    private var glide: Double = 0
+    private var runLink: CADisplayLink?
+    private(set) var panning = false
+    private var panLast: CGFloat = 0
+
+    init(overlay: PlayerOverlay) {
+        self.overlay = overlay
+        super.init()
+    }
+
+    // MARK: The controls' timing
+
+    /// A press: the controls up for a while, Back's dismissal forgotten.
+    func wake() {
+        dismissed = false
+        overlayUntil = Date().addingTimeInterval(Self.overlaySeconds)
+    }
+
+    /// Back put them away.
+    func dismiss() { dismissed = true }
+
+    /// The press's while is over (the shelf took over).
+    func expire() { overlayUntil = .distantPast }
+
+    /// Up for a press's while, or paused, unless Back put them away.
+    var wantsShown: Bool {
+        !dismissed && (media?.isPaused == true || Date() < overlayUntil)
+    }
+
+    /// The overlay is about to be `shown`; `byThemselves`: if they go now, it's
+    /// their own timing, so Back's grace starts.
+    func noteShown(_ shown: Bool, byThemselves: Bool) {
+        if overlay.isShown, !shown, !dismissed, byThemselves {
+            backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)
+        }
+    }
+
+    /// Back just after they hid by themselves: meant for them.
+    var inBackGrace: Bool { Date() < backGuardUntil }
+
+    // MARK: The bar
+
+    var isScrubbing: Bool { target != nil || scan != nil }
+    var isFine: Bool { media?.isPaused == true && scan == nil }
+    /// The scan and anything paused: nothing has landed, so the fill stays.
+    var isDetached: Bool { scan != nil || isFine }
+    /// Where the bar stands.
+    var time: Double { target ?? landing ?? media?.position ?? 0 }
+
+    var mark: PlayerOverlay.Mark? {
+        if let scan { return .scan(forward: scan.direction > 0, level: scan.level) }
+        if stepDirection != 0, target != nil { return .step(forward: stepDirection > 0) }
+        return media?.isPaused == true && landing == nil ? .paused : nil
+    }
+
+    /// Select, Play, Left and Right on the bar; false: not the bar's.
+    func press(_ type: UIPress.PressType) -> Bool {
+        switch type {
+        case .select where target != nil, .playPause where target != nil:
+            wake()
+            commit(resume: true)
+        case .select, .playPause:
+            wake()
+            media?.togglePlayPause()
+        case .leftArrow:
+            wake()
+            arrowPressed(-1)
+        case .rightArrow:
+            wake()
+            arrowPressed(1)
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// Back's part: a scan lands, a scrub cancels; false: nothing of the bar's.
+    func back() -> Bool {
+        if scan != nil {
+            commit(resume: true)
+        } else if target != nil {
+            end()
+            wake()
+        } else {
+            return false
+        }
+        return true
+    }
+
+    /// The scrub, landed (a prompt's skip: straight there).
+    func seek(to seconds: Double) {
+        guard let media else { return }
+        target = min(seconds, max(media.duration - 1, 0))
+        commit()
+    }
+
+    /// A new title in the same player: nothing of the last one's.
+    func reset() {
+        end()
+        landing = nil
+    }
+
+    func move(to seconds: Double, press: Bool = false) {
+        guard let media, canScrub(), media.duration > 0 else { return }
+        let target = min(max(seconds, 0), max(media.duration - 1, 0))
+        self.target = target
+        commitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
+        overlay.setScrubbing(true, detached: isDetached)
+        moved()
+        guard press || Date().timeIntervalSince(lastDraw) >= Self.scrubDrawInterval else { return }
+        lastDraw = Date()
+        overlay.move(time: target, duration: media.duration, mark: mark, animated: press)
+    }
+
+    private func arrowPressed(_ direction: Double) {
+        if scan != nil {
+            shiftScan(direction)
+        } else if panning, target != nil {
+            // A swipe ending in a click on the pad's edge.
+            commit(resume: true)
+        } else {
+            glide = 0
+            stepDirection = direction
+            move(to: (target ?? media?.position ?? 0) + direction * Self.scrubStep, press: true)
+            if target != nil, !isFine { waitForHold(direction) }
+        }
+    }
+
+    private func waitForHold(_ direction: Double) {
+        holdDirection = direction
+        holdWait?.cancel()
+        holdWait = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.scanHoldSeconds))
+            guard let self, !Task.isCancelled, self.holdDirection == direction else { return }
+            self.holdDirection = 0
+            self.scan = (direction, 0)
+            self.media?.pause()
+            self.startRun()
+        }
+    }
+
+    /// An arrow let go: no scan, and the seek waits from here.
+    func endHold(_ presses: Set<UIPress>) {
+        guard presses.contains(where: { $0.type == .leftArrow || $0.type == .rightArrow }) else { return }
+        stopHold()
+        commitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
+    }
+
+    private func stopHold() {
+        holdDirection = 0
+        holdWait?.cancel()
+    }
+
+    /// The same way, faster; the other way, slower, and through the slowest
+    /// speed it turns round.
+    private func shiftScan(_ direction: Double) {
+        guard let current = scan else { return }
+        if direction == current.direction {
+            scan?.level = min(current.level + 1, Self.scanSpeeds.count - 1)
+        } else if current.level > 0 {
+            scan?.level = current.level - 1
+        } else {
+            scan?.direction = direction
+        }
+    }
+
+    private func startRun() {
+        guard runLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(runStep))
+        link.add(to: .main, forMode: .common)
+        runLink = link
+    }
+
+    private func stopRun() {
+        glide = 0
+        runLink?.invalidate()
+        runLink = nil
+    }
+
+    @objc private func runStep(_ link: CADisplayLink) {
+        guard let target, let media else { return stopRun() }
+        if let scan {
+            let next = target + scan.direction * Self.scanSpeeds[scan.level] * link.duration
+            move(to: next)
+            if next <= 0 || next >= media.duration - 1 { commit(resume: true) }
+        } else {
+            move(to: target + glide * link.duration)
+            glide *= exp(-link.duration / Self.glideSeconds)
+            if abs(glide) < Self.glideStop { stopRun() }
+        }
+    }
+
+    /// The owner's clock: a scrub left alone lands (paused, it waits for Select).
+    func tick() {
+        guard target != nil, holdDirection == 0, scan == nil, !panning, !isFine,
+              Date() > commitAt else { return }
+        commit()
+    }
+
+    func commit(resume: Bool = false) {
+        guard let media, let target else { return }
+        end()
+        committed()
+        landing = target
+        Task {
+            await media.seek(to: target)
+            if resume { media.play() }
+            landing = nil
+        }
+    }
+
+    func end() {
+        target = nil
+        stopHold()
+        scan = nil
+        stepDirection = 0
+        stopRun()
+        overlay.setPreview(nil)
+    }
+
+    /// Slow stays exact; the gain grows evenly with the speed, so no point in the swipe jumps.
+    private static func swipeSeconds(_ speed: Double) -> Double {
+        swipeSecondsPerPoint * min(1 + abs(speed) / swipeFastSpeed, swipeMostGain)
+    }
+
+    /// A sideways swipe (paused: the owner's recognizer lets only those begin).
+    func pan(_ pan: UIPanGestureRecognizer, in view: UIView) {
+        switch pan.state {
+        case .began:
+            panning = true
+            stepDirection = 0
+            stopRun()
+            panLast = pan.translation(in: view).x
+        case .changed:
+            let x = pan.translation(in: view).x
+            defer { panLast = x }
+            let speed = Double(pan.velocity(in: view).x)
+            move(to: (target ?? media?.position ?? 0) + Double(x - panLast) * Self.swipeSeconds(speed))
+            wake()
+        default:
+            panning = false
+            let speed = Double(pan.velocity(in: view).x)
+            glide = speed * Self.swipeSeconds(speed)
+            if abs(glide) >= Self.glideStop { startRun() }
+        }
+    }
+
+    /// Gone with its owner.
+    func stop() {
+        stopHold()
+        stopRun()
+    }
+}
+
 final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// What's on disk around the playhead: 10 minutes ahead at most, and the
     /// budget (the engine keeps it under a quarter of free space) holds that
@@ -3084,58 +3407,17 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// paused at first), and presses dropped but Back (most are a stray
     /// second Play).
     private var arriving = false
-    /// How long the overlay stays after a press.
-    private static let overlaySeconds: TimeInterval = 3
-    private var overlayUntil = Date.distantPast
-    /// Back in this long after the controls hid by themselves was meant for them.
-    private static let backGuardSeconds: TimeInterval = 1
-    private var backGuardUntil = Date.distantPast
-    /// Back put them away: they stay gone, even paused, until the next press.
-    private var controlsDismissed = false
+    /// The bar's behaviour and the controls' timing, shared with the trailer.
+    private let transport: PlayerTransport
 
-    /// A press moves the target this far, paused or playing.
-    private static let scrubStep: Double = 10
-    /// Paused, a swipe is fine control: about 45 s across the pad, whatever the
-    /// title's length, so going far stays a job for the scan.
-    private static let swipeSecondsPerPoint: Double = 0.03
-    /// A swipe lets go with its speed and eases out over this.
-    private static let swipeFastSpeed: Double = 2000
-    private static let swipeMostGain: Double = 4
     /// A swipe only opens something when it's clearly up or down; the rest scrubs.
     private static let verticalSwipeRatio: CGFloat = 2
-    private static let glideSeconds: Double = 0.25
-    private static let glideStop: Double = 1
-    /// Playing, a press held this long starts the scan, which goes on by itself.
-    private static let scanHoldSeconds: TimeInterval = 0.5
-    /// The scan's slider, in seconds of title per second. The picture is paused:
-    /// the engine plays 2× at most and never backwards.
-    private static let scanSpeeds: [Double] = [30, 120, 300, 600]
-    /// The seek waits this long after the last input, so a run of inputs is one seek.
-    private static let scrubCommitSeconds: TimeInterval = 0.3
-    /// The bar follows at this rate; the swipe comes in at twice it.
-    private static let scrubDrawInterval: TimeInterval = 1.0 / 30
     private static let stillWidth = 480
     /// Past what's on disk, a still waits for the target to stop.
     private static let stillSettleSeconds: TimeInterval = 0.3
     private static let stillRestSeconds: TimeInterval = 0.25
 
-    /// Where the viewer is scrubbing to; playback goes on until it lands.
-    private var scrubTarget: Double?
-    private var scrubCommitAt = Date.distantPast
-    private var lastScrubDraw = Date.distantPast
-    /// Where a commit is going: the bar stays there until the seek is done.
-    private var landing: Double?
-    /// The arrow going down, until it's up or the scan takes over.
-    private var holdDirection: Double = 0
-    private var holdWait: Task<Void, Never>?
-    private var scan: (direction: Double, level: Int)?
-    /// The way of the last arrow press in this scrub; 0 once a swipe took over.
-    private var stepDirection: Double = 0
-    private var glide: Double = 0
-    private var runLink: CADisplayLink?
-    private var panning = false
     private var panVertical = false
-    private var panLast: CGFloat = 0
     private var previewBusy = false
     /// Stills for what the engine doesn't hold: its own connection to the link,
     /// made at the first such scrub.
@@ -3214,6 +3496,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         entry = request.entry
         tried = [request.entry.rejectionKey]
         overlay = PlayerOverlay(title: request.meta.name, episode: request.video?.title)
+        transport = PlayerTransport(overlay: overlay)
         do {
             engine = try AetherEngine()
         } catch {
@@ -3259,6 +3542,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             (self?.shelfEpisodes() ?? [], self?.shelfSources() ?? [])
         }
         shelf.again.action = { [weak self] in self?.refreshLinks() }
+
+        transport.media = self
+        transport.canScrub = { [weak self] in self?.hasPlayed ?? false }
+        transport.moved = { [weak self] in
+            self?.waitForRest()
+            self?.loadPreview()
+        }
+        transport.committed = { [weak self] in self?.resumeFloor = 0 }
 
         let back = UITapGestureRecognizer(target: self, action: #selector(backPressed))
         back.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
@@ -3559,7 +3850,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         linkSearch?.cancel()
         linkSearch = nil
         dryAt = nil
-        endScrub()
+        transport.end()
         hasPlayed = false
         audioPicked = false
         if here > 0 {
@@ -3701,7 +3992,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     // MARK: Progress
 
-    private var position: Double {
+    var position: Double {
         dryAt ?? max(engine?.currentTime ?? 0, resumeFloor)
     }
 
@@ -3750,7 +4041,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         // Silent, because a paused load (`autoplay`) draws no picture, even after a seek.
         mountPaused = hasPlayed
         if mountPaused { engine.volume = 0 }
-        controlsDismissed = false
+        transport.dismissed = false
         reload(engine, from: leftAt)
         tick()
     }
@@ -3837,7 +4128,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         timer = nil
         subtitleLink?.invalidate()
         subtitleLink = nil
-        endScrub()
+        transport.end()
+        transport.stop()
         saveFinal()
         loadTask?.cancel()
         linkSearch?.cancel()
@@ -3899,21 +4191,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         switch press.type {
         case .upArrow: stepVertically(down: false, engine)
         case .downArrow: stepVertically(down: true, engine)
-        case .select where scrubTarget != nil, .playPause where scrubTarget != nil:
-            showControls()
-            commitScrub(resume: true)
-        case .select, .playPause:
-            showControls()
-            engine.togglePlayPause()
-        case .leftArrow:
-            showControls()
-            arrowPressed(-1)
         case .rightArrow where promptView.takesFocus:
             setMenu(.buttons)
-        case .rightArrow:
-            showControls()
-            arrowPressed(1)
         default:
+            if transport.press(press.type) { return }
             showControls()
             super.pressesBegan(presses, with: event)
         }
@@ -3924,7 +4205,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// either the controls go (Right is the way from a prompt to the buttons).
     /// With the controls gone, either brings them back and does nothing else.
     private func stepVertically(down: Bool, _ engine: AetherEngine) {
-        guard scan == nil, hasPlayed else { return }
+        guard transport.scan == nil, hasPlayed else { return }
         if menu == .buttons {
             if down { promptLeft = true }
             setMenu(.none)
@@ -3954,7 +4235,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// system takes Back first and dismisses the player.
     @objc private func backPressed() {
         guard !shelfOpen else {
-            controlsDismissed = true
+            transport.dismiss()
             return setShelf(false)
         }
         switch menu {
@@ -3966,14 +4247,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             return hideControls()
         case .none: break
         }
-        if scan != nil {
-            commitScrub(resume: true)
-        } else if scrubTarget != nil {
-            endScrub()
-            showControls()
+        if transport.back() {
+            return
         } else if hasPlayed, overlay.isShown {
             hideControls()
-        } else if Date() < backGuardUntil {
+        } else if transport.inBackGrace {
             return
         } else if promptView.alpha > 0, let prompt {
             dismissedPrompt = prompt
@@ -3983,13 +4261,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    private func showControls() {
-        controlsDismissed = false
-        overlayUntil = Date().addingTimeInterval(Self.overlaySeconds)
-    }
+    private func showControls() { transport.wake() }
 
     private func hideControls() {
-        controlsDismissed = true
+        transport.dismiss()
         if let engine { updateOverlay(engine) }
     }
 
@@ -3999,137 +4274,16 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        endHold(presses)
+        transport.endHold(presses)
         super.pressesEnded(presses, with: event)
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        endHold(presses)
+        transport.endHold(presses)
         super.pressesCancelled(presses, with: event)
     }
 
     // MARK: Scrubbing
-
-    private func moveScrub(to seconds: Double, press: Bool = false) {
-        guard let engine, hasPlayed, engine.duration > 0 else { return }
-        scrubTarget = min(max(seconds, 0), max(engine.duration - 1, 0))
-        scrubCommitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
-        guard let target = scrubTarget else { return }
-        overlay.setScrubbing(true, detached: isDetached)
-        waitForRest()
-        loadPreview()
-        guard press || Date().timeIntervalSince(lastScrubDraw) >= Self.scrubDrawInterval else { return }
-        lastScrubDraw = Date()
-        overlay.move(time: target, duration: engine.duration, mark: mark, animated: press)
-    }
-
-    private var isFine: Bool { engine?.state == .paused && scan == nil }
-    /// The scan and anything paused: nothing has landed, so the fill stays.
-    private var isDetached: Bool { scan != nil || isFine }
-
-    private func arrowPressed(_ direction: Double) {
-        if scan != nil {
-            shiftScan(direction)
-        } else if panning, scrubTarget != nil {
-            // A swipe ending in a click on the pad's edge.
-            commitScrub(resume: true)
-        } else {
-            glide = 0
-            stepDirection = direction
-            moveScrub(to: (scrubTarget ?? position) + direction * Self.scrubStep, press: true)
-            if scrubTarget != nil, !isFine { waitForHold(direction) }
-        }
-    }
-
-    private func waitForHold(_ direction: Double) {
-        holdDirection = direction
-        holdWait?.cancel()
-        holdWait = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.scanHoldSeconds))
-            guard let self, !Task.isCancelled, self.holdDirection == direction else { return }
-            self.holdDirection = 0
-            self.scan = (direction, 0)
-            self.engine?.pause()
-            self.startRun()
-        }
-    }
-
-    private func endHold(_ presses: Set<UIPress>) {
-        guard presses.contains(where: { $0.type == .leftArrow || $0.type == .rightArrow }) else { return }
-        stopHold()
-        scrubCommitAt = Date().addingTimeInterval(Self.scrubCommitSeconds)
-    }
-
-    private func stopHold() {
-        holdDirection = 0
-        holdWait?.cancel()
-    }
-
-    /// The same way, faster; the other way, slower, and through the slowest
-    /// speed it turns round.
-    private func shiftScan(_ direction: Double) {
-        guard let current = scan else { return }
-        if direction == current.direction {
-            scan?.level = min(current.level + 1, Self.scanSpeeds.count - 1)
-        } else if current.level > 0 {
-            scan?.level = current.level - 1
-        } else {
-            scan?.direction = direction
-        }
-    }
-
-    private func startRun() {
-        guard runLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(runStep))
-        link.add(to: .main, forMode: .common)
-        runLink = link
-    }
-
-    private func stopRun() {
-        glide = 0
-        runLink?.invalidate()
-        runLink = nil
-    }
-
-    @objc private func runStep(_ link: CADisplayLink) {
-        guard let target = scrubTarget, let engine else { return stopRun() }
-        if let scan {
-            let next = target + scan.direction * Self.scanSpeeds[scan.level] * link.duration
-            moveScrub(to: next)
-            if next <= 0 || next >= engine.duration - 1 { commitScrub(resume: true) }
-        } else {
-            moveScrub(to: target + glide * link.duration)
-            glide *= exp(-link.duration / Self.glideSeconds)
-            if abs(glide) < Self.glideStop { stopRun() }
-        }
-    }
-
-    private func tickScrub() {
-        guard scrubTarget != nil, holdDirection == 0, scan == nil, !panning, !isFine,
-              Date() > scrubCommitAt else { return }
-        commitScrub()
-    }
-
-    private func commitScrub(resume: Bool = false) {
-        guard let engine, let target = scrubTarget else { return }
-        endScrub()
-        resumeFloor = 0
-        landing = target
-        Task {
-            await engine.seek(to: target)
-            if resume { engine.play() }
-            landing = nil
-        }
-    }
-
-    private func endScrub() {
-        scrubTarget = nil
-        stopHold()
-        scan = nil
-        stepDirection = 0
-        stopRun()
-        overlay.setPreview(nil)
-    }
 
     private func dropStills() {
         let old = stills
@@ -4143,7 +4297,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// decodes from there to the frame, too much for a 4K file on every move,
     /// so it waits for a rest and is dropped as soon as the target moves.
     private func loadPreview(exact: Bool = false) {
-        guard let engine, let target = scrubTarget, !previewBusy else { return }
+        guard let engine, let target = transport.target, !previewBusy else { return }
         previewBusy = true
         if exact { exactWanted = false }
         let stale = OSAllocatedUnfairLock(initialState: false)
@@ -4155,7 +4309,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             var image = held?.image
             if image == nil, !stale.withLock({ $0 }) { image = await self.fetchStill(target, exact: exact) }
             self.previewBusy = false
-            guard let latest = self.scrubTarget else { return }
+            guard let latest = self.transport.target else { return }
             if let image { self.overlay.setPreview(image) }
             if latest != target {
                 self.loadPreview()
@@ -4169,10 +4323,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         exactStale?.withLock { $0 = true }
         exactWanted = false
         restWait?.cancel()
-        guard isFine, let target = scrubTarget else { return }
+        guard transport.isFine, let target = transport.target else { return }
         restWait = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.stillRestSeconds))
-            guard let self, !Task.isCancelled, self.scrubTarget == target, self.isFine else { return }
+            guard let self, !Task.isCancelled, self.transport.target == target, self.transport.isFine else { return }
             self.exactWanted = true
             self.loadPreview(exact: true)
         }
@@ -4180,7 +4334,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func fetchStill(_ target: Double, exact: Bool) async -> CGImage? {
         try? await Task.sleep(for: .seconds(Self.stillSettleSeconds))
-        guard let engine, scrubTarget == target else { return nil }
+        guard let engine, transport.target == target else { return nil }
         if stills == nil { stills = engine.makeFrameExtractor() }
         return exact ? await stills?.preview(at: target, maxWidth: Self.stillWidth)
                      : await stills?.thumbnail(at: target, maxWidth: Self.stillWidth)
@@ -4194,12 +4348,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if shelfOpen { return false }
         if menu != .none { return menu == .buttons && panVertical }
         guard hasPlayed else { return false }
-        return panVertical ? scan == nil : isFine && abs(velocity.x) > abs(velocity.y)
-    }
-
-    /// Slow stays exact; the gain grows evenly with the speed, so no point in the swipe jumps.
-    private static func swipeSeconds(_ speed: Double) -> Double {
-        swipeSecondsPerPoint * min(1 + abs(speed) / swipeFastSpeed, swipeMostGain)
+        return panVertical ? transport.scan == nil : transport.isFine && abs(velocity.x) > abs(velocity.y)
     }
 
     @objc private func panned(_ pan: UIPanGestureRecognizer) {
@@ -4211,24 +4360,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             }
             return
         }
-        switch pan.state {
-        case .began:
-            panning = true
-            stepDirection = 0
-            stopRun()
-            panLast = pan.translation(in: view).x
-        case .changed:
-            let x = pan.translation(in: view).x
-            defer { panLast = x }
-            let speed = Double(pan.velocity(in: view).x)
-            moveScrub(to: (scrubTarget ?? position) + Double(x - panLast) * Self.swipeSeconds(speed))
-            showControls()
-        default:
-            panning = false
-            let speed = Double(pan.velocity(in: view).x)
-            glide = speed * Self.swipeSeconds(speed)
-            if abs(glide) >= Self.glideStop { startRun() }
-        }
+        transport.pan(pan, in: view)
     }
 
     // MARK: Skip and next episode
@@ -4272,7 +4404,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func wantedPrompt(_ engine: AetherEngine) -> Prompt? {
         guard hasPlayed, engine.duration > 0 else { return nil }
-        let time = landing ?? position
+        let time = transport.landing ?? position
         let gone = time + Self.skipGoneSeconds
         if nextUp != nil, engine.state == .ended || time >= nextStart(engine) { return .next }
         if let recap = segments?.recap, recap.contains(time), recap.contains(gone) { return .skip("Skip Recap", to: recap.upperBound) }
@@ -4300,7 +4432,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             }
         }
         // Scrubbing or paused, Select keeps its usual job, so no prompt.
-        let busy = shelfOpen || menu == .tracks || scrubTarget != nil || scan != nil || engine.state == .paused
+        let busy = shelfOpen || menu == .tracks || transport.isScrubbing || engine.state == .paused
         let shown = wanted != nil && wanted != dismissedPrompt && !busy
         let alpha: CGFloat = shown ? 1 : 0
         overlay.setPromptUp(shown)
@@ -4308,7 +4440,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             UIView.animate(withDuration: Motion.fadeDuration) { self.promptView.alpha = alpha }
         }
         // Scrubbing is being on the bar; with the controls gone, nothing holds focus there.
-        if scrubTarget != nil || scan != nil { promptLeft = true } else if !overlay.isShown { promptLeft = false }
+        if transport.isScrubbing { promptLeft = true } else if !overlay.isShown { promptLeft = false }
         let focused = shown && overlay.isShown && (menu == .buttons || (menu == .none && !shelfOpen && !promptLeft))
         guard focused != promptView.takesFocus else { return }
         promptView.takesFocus = focused
@@ -4321,8 +4453,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func promptPressed(_ engine: AetherEngine) {
         switch prompt {
         case .skip(_, let end):
-            scrubTarget = min(end, max(engine.duration - 1, 0))
-            commitScrub()
+            transport.seek(to: end)
         case .next: playNext()
         case nil: break
         }
@@ -4349,7 +4480,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     /// The same player goes on: new link, new window, as a fresh start.
     private func play(_ next: PlayLauncher.NextEpisode, finished: Bool) {
-        endScrub()
+        transport.end()
         saveFinal(finished: finished)
         loadTask?.cancel()
         segmentsTask?.cancel()
@@ -4373,7 +4504,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         lastSave = .distantPast
         saves = 0
         audioPicked = false
-        landing = nil
+        transport.reset()
         dryAt = nil
         probe = nil
         segments = nil
@@ -4422,8 +4553,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func setShelf(_ open: Bool) {
         if open {
-            commitScrub()
-            overlayUntil = .distantPast
+            transport.commit()
+            transport.expire()
             if let engine { showFacts(engine) }
             shelf.foundAt = linksFound
             shelf.details.startRunning()
@@ -4443,7 +4574,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func setMenu(_ new: Menu) {
-        if new != .none { commitScrub() }
+        if new != .none { transport.commit() }
         // Audio first; the button a list opened from only when the list closes.
         if menu == .none { lastButton = nil }
         menu = new
@@ -4734,7 +4865,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             showSubtitle(engine)
             preferAtmos(engine)
             saveDuringPlayback(engine)
-            tickScrub()
+            transport.tick()
             updateOverlay(engine)
             findNext(engine)
             updatePrompt(engine)
@@ -4748,12 +4879,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         readout.frame = CGRect(x: 60, y: 40, width: size.width, height: size.height + 16)
     }
 
-    private var mark: PlayerOverlay.Mark? {
-        if let scan { return .scan(forward: scan.direction > 0, level: scan.level) }
-        if stepDirection != 0, scrubTarget != nil { return .step(forward: stepDirection > 0) }
-        return engine?.state == .paused && landing == nil ? .paused : nil
-    }
-
     /// A prompt keeps its claim while the controls are gone, so they come up on it.
     private var barHasFocus: Bool {
         menu == .none && !shelfOpen && (promptView.alpha == 0 || promptLeft)
@@ -4763,28 +4888,26 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let waiting = revealed && (!hasPlayed || episodeTask != nil || dryAt != nil || engine.state == .seeking || engine.isBuffering)
         overlay.setBarFocused(barHasFocus)
         overlay.update(
-            time: scrubTarget ?? landing ?? position, duration: engine.duration,
-            mark: mark, waiting: waiting
+            time: transport.time, duration: engine.duration,
+            mark: transport.mark, waiting: waiting
         )
         let resident = engine.residentRanges
         overlay.setHeld(resident.isEmpty ? [position...max(position, engine.bufferedPosition)] : resident,
                         duration: engine.duration)
-        let shown = !shelfOpen && !arriving && (menu != .none || scrubTarget != nil || revealed && !hasPlayed
-            || (!controlsDismissed && (engine.state == .paused || Date() < overlayUntil)))
-        if overlay.isShown, !shown, !controlsDismissed, menu == .none, !shelfOpen {
-            backGuardUntil = Date().addingTimeInterval(Self.backGuardSeconds)
-        }
+        let shown = !shelfOpen && !arriving && (menu != .none || transport.target != nil || revealed && !hasPlayed
+            || transport.wantsShown)
+        transport.noteShown(shown, byThemselves: menu == .none && !shelfOpen)
         overlay.setShown(shown)
         moveControls()
         placeSubtitles()
-        let alpha: CGFloat = shown && !(scrubTarget != nil && isDetached) ? 1 : 0
+        let alpha: CGFloat = shown && !(transport.target != nil && transport.isDetached) ? 1 : 0
         if audioButton.alpha != alpha {
             UIView.animate(withDuration: Motion.fadeDuration) {
                 for button in self.buttons { button.alpha = alpha }
             }
         }
         if !shelfOpen { shelf.move(to: alpha > 0 && hasPlayed ? .peek : .away) }
-        overlay.setScrubbing(scrubTarget != nil || scan != nil, detached: isDetached)
+        overlay.setScrubbing(transport.isScrubbing, detached: transport.isDetached)
     }
 
     /// What's really playing, to check against what the stream claims.
@@ -4958,7 +5081,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 self.subtitles.transform = CGAffineTransform(translationX: 0, y: Self.subtitleRest - floor)
             }
         }
-        let alpha: CGFloat = scrubTarget != nil || scan != nil ? 0 : 1
+        let alpha: CGFloat = transport.isScrubbing ? 0 : 1
         if subtitles.alpha != alpha {
             UIView.animate(withDuration: Motion.fadeDuration) {
                 self.subtitles.alpha = alpha
@@ -5095,4 +5218,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : 0
     }
+}
+
+/// The engine, for the bar (`PlayerTransport`).
+extension PlayerController: TransportMedia {
+    var duration: Double { engine?.duration ?? 0 }
+    var isPaused: Bool { engine?.state == .paused }
+    func play() { engine?.play() }
+    func pause() { engine?.pause() }
+    func togglePlayPause() { engine?.togglePlayPause() }
+    func seek(to seconds: Double) async { await engine?.seek(to: seconds) }
 }

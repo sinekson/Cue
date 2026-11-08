@@ -697,7 +697,7 @@ final class StageTrailer: ObservableObject {
     /// (the peek; Home's dots too).
     @Published private(set) var shown = false
     /// Full screen (Details' Trailer button): the same player, with sound
-    /// and the system's controls (`TrailerFullScreen`) — nil while it loads.
+    /// and the player's controls (`TrailerFullScreen`) — nil while it loads.
     @Published private(set) var full = false
     @Published private(set) var fullPlayer: AVPlayer?
     @Published private(set) var fullFailed = false
@@ -764,7 +764,7 @@ final class StageTrailer: ObservableObject {
             let left = Spotlight.trailerDelay - Date().timeIntervalSince(begun)
             if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             guard !Task.isCancelled, self.itemID == id, let player = self.player else { return }
-            player.isMuted = !sound
+            self.setSound(sound)
             self.show(player)
         }
     }
@@ -871,19 +871,59 @@ final class StageTrailer: ObservableObject {
         full = false
         fullPlayer = nil
         pending?.cancel()
-        guard let player else { return }
-        player.isMuted = !sound
+        guard player != nil else { return }
+        // The sound back to the page's: without, it falls away as the text
+        // comes back.
+        if sound { setSound(true) } else { fadeSound(to: 0, over: Motion.presentDuration) { $0.isMuted = true; $0.volume = 1 } }
         if resting { carriedIn = true } else { pause() }
     }
 
     private func goFull(_ player: AVPlayer) {
-        player.isMuted = false
+        // The sound rises from where it was (silent on the page: from nothing).
+        if player.isMuted {
+            player.volume = 0
+            player.isMuted = false
+        }
+        fadeSound(to: 1, over: Self.soundRise)
         // Loaded just now (nothing on the picture): played at once, it
         // stalls before its first segment — and, not waiting, never goes on.
         player.automaticallyWaitsToMinimizeStalling = true
         fullPlayer = player
         // On the picture too, for after.
         show(player)
+    }
+
+    /// Full screen's sound rising from silence (as the player's start).
+    private static let soundRise: Double = 0.8
+    private var soundFade: Timer?
+
+    /// On or off at once, a fade under way dropped.
+    private func setSound(_ on: Bool) {
+        soundFade?.invalidate()
+        soundFade = nil
+        player?.volume = 1
+        player?.isMuted = !on
+    }
+
+    /// The volume to `target` evenly over `seconds`; `done` once there, if
+    /// it's still this page's player.
+    private func fadeSound(to target: Float, over seconds: Double, done: ((AVPlayer) -> Void)? = nil) {
+        soundFade?.invalidate()
+        guard let player else { return }
+        let id = ObjectIdentifier(player)
+        let from = player.volume
+        let began = CACurrentMediaTime()
+        soundFade = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self, let player = self.player, ObjectIdentifier(player) == id else { return timer.invalidate() }
+                let progress = min(1, (CACurrentMediaTime() - began) / seconds)
+                player.volume = from + (target - from) * Float(progress)
+                guard progress >= 1 else { return }
+                timer.invalidate()
+                self.soundFade = nil
+                done?(player)
+            }
+        }
     }
 
     /// The player, loading behind the picture (not playing yet).
@@ -1050,169 +1090,303 @@ final class TrailerSurface: UIView {
     }
 }
 
-/// Details' trailer full screen: its player with the system's controls
-/// (pause, scrubbing); Back or Down closes it, the trailer playing on behind.
+/// Details' trailer full screen: the player's controls over Details' own
+/// picture, where the trailer plays (`TrailerController`) — the page's text
+/// fades out under it (`DetailView`); Back closes it, the trailer playing on.
 struct TrailerFullScreen: View {
     @ObservedObject var trailer: StageTrailer
+    /// The title's name over the bar.
+    let title: String
     let close: () -> Void
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
             if let player = trailer.fullPlayer {
-                TrailerControls(player: player, close: close).ignoresSafeArea()
+                TrailerControls(player: player, title: title, close: close).ignoresSafeArea()
             } else if trailer.fullFailed {
+                Color.black.opacity(0.6).ignoresSafeArea()
                 CueEmptyState(icon: "play.slash.fill", title: "Trailer unavailable",
                               message: "This trailer couldn't be loaded. Press Menu to go back.")
+                    .onExitCommand(perform: close)
             } else {
                 CueLoadingView(label: "Loading trailer")
+                    .onExitCommand(perform: close)
             }
         }
-        // The player's Back is `TrailerControls`' — taken here too, or it
-        // goes on up and the system closes the cover (on the TV it did,
-        // with the controls up).
-        .onExitCommand { if trailer.fullPlayer == nil { close() } }
+        // Not over the controls: SwiftUI's took Back before `TrailerController`.
         .interactiveDismissDisabled()
     }
 }
 
-/// The system's player, no info panel. Down (a press or a swipe) closes
-/// it, as Back does — unless focus is on the buttons above the bar (then
-/// it moves down to the bar, the player's own). Back with the controls up
-/// hides them (ours: handed to the player, on the TV it went on and closed
-/// the cover); for `backGrace` after they hide by themselves Back does
-/// nothing (pressed to hide them just as they went).
 private struct TrailerControls: UIViewControllerRepresentable {
     let player: AVPlayer
+    let title: String
     let close: () -> Void
 
-    static let backGrace: TimeInterval = 1
+    func makeUIViewController(context: Context) -> TrailerController {
+        TrailerController(player: player, title: title, close: close)
+    }
+    func updateUIViewController(_ controller: TrailerController, context: Context) {
+        controller.close = close
+    }
+    static func dismantleUIViewController(_ controller: TrailerController, coordinator: ()) {
+        controller.teardown()
+    }
+}
 
-    func makeCoordinator() -> Coordinator { Coordinator(close: close) }
+/// The player's bar and its presses (`PlayerTransport`, `PlayerOverlay`) on a
+/// trailer: the title's name over it, no buttons, no shelf, no stills. Every
+/// press brings the controls up; with them up Up puts them away and Down
+/// closes (the hint where the shelf would peek says so). Back hides them,
+/// then closes; for 1 s after they hide by themselves Back and Down do nothing.
+final class TrailerController: UIViewController, UIGestureRecognizerDelegate, TransportMedia {
+    var close: () -> Void
+    private let player: AVPlayer
+    private let focusView = PlayerFocusView()
+    private let overlay: PlayerOverlay
+    private let transport: PlayerTransport
+    private var timer: Timer?
+    private let hint = TrailerDownHint()
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.player = player
-        controller.playbackControlsIncludeInfoViews = false
-        let coordinator = context.coordinator
-        let press = UITapGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
-        press.allowedPressTypes = [NSNumber(value: UIPress.PressType.downArrow.rawValue)]
-        let swipe = UISwipeGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
-        swipe.direction = .down
-        let back = UITapGestureRecognizer(target: coordinator, action: #selector(Coordinator.out(_:)))
+    init(player: AVPlayer, title: String, close: @escaping () -> Void) {
+        self.player = player
+        self.close = close
+        overlay = PlayerOverlay(title: title, episode: nil)
+        transport = PlayerTransport(overlay: overlay)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] { [focusView] }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        for sub in [focusView, overlay, hint] as [UIView] { view.addSubview(sub) }
+        transport.media = self
+        overlay.setBarFocused(true)
+
+        let back = UITapGestureRecognizer(target: self, action: #selector(backPressed))
         back.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
-        coordinator.back = back
-        for recognizer in [press, swipe, back] as [UIGestureRecognizer] {
-            recognizer.delegate = coordinator
-            controller.view.addGestureRecognizer(recognizer)
+        view.addGestureRecognizer(back)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(panned))
+        pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+        pan.delegate = self
+        view.addGestureRecognizer(pan)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        for sub in [focusView, overlay] as [UIView] { sub.frame = view.bounds }
+        // Where the shelf's tabs peek in the player: the words in line with the bar.
+        let size = hint.intrinsicContentSize
+        hint.bounds = CGRect(origin: .zero, size: size)
+        hint.center = CGPoint(x: TrailerDownHint.inset + size.width / 2,
+                              y: view.bounds.height - TrailerDownHint.fromFoot)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        setNeedsFocusUpdate()
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
-        coordinator.watch(controller)
-        return controller
-    }
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        if controller.player !== player { controller.player = player }
-        context.coordinator.close = close
-    }
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
-        coordinator.stop()
-        controller.player = nil
+        tick()
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var close: () -> Void
-        weak var back: UIGestureRecognizer?
-        private weak var controller: AVPlayerViewController?
-        private weak var root: UIView?
-        private var timer: Timer?
-        /// When the controls were last seen up.
-        private var upAt: Date?
-        init(close: @escaping () -> Void) { self.close = close }
+    func teardown() {
+        timer?.invalidate()
+        timer = nil
+        transport.end()
+        transport.stop()
+    }
 
-        /// The Back being handled: hides the controls, or falls in the grace.
-        private var hideBack = false
-        private var dropBack = false
-        /// A Back that hid the controls: the next one goes out at once.
-        private var backHidAt: Date?
+    // MARK: TransportMedia
 
-        @objc func out(_ recognizer: UIGestureRecognizer) {
-            if recognizer === back {
-                if hideBack { return hideControls() }
-                if dropBack { return }
+    var duration: Double {
+        let seconds = player.currentItem?.duration.seconds ?? 0
+        return seconds.isFinite ? seconds : 0
+    }
+    var position: Double {
+        let seconds = player.currentTime().seconds
+        return seconds.isFinite ? seconds : 0
+    }
+    var isPaused: Bool { player.timeControlStatus == .paused }
+    func play() { player.play() }
+    func pause() { player.pause() }
+    func togglePlayPause() { isPaused ? play() : pause() }
+    func seek(to seconds: Double) async {
+        await player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
+                          toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    // MARK: Remote
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let press = presses.first else { return }
+        // Back is `backPressed`'s: here it would bring the controls back up.
+        guard press.type != .menu else { return super.pressesBegan(presses, with: event) }
+        switch press.type {
+        case .upArrow, .downArrow:
+            // Gone, either brings them up; up, Up puts them away and Down
+            // closes. Scrubbing or in the scan, both only keep them up.
+            let up = overlay.isShown && !transport.isScrubbing
+            if up, press.type == .upArrow {
+                transport.dismiss()
+            } else if up, press.type == .downArrow {
+                return close()
+            } else if press.type == .downArrow, transport.inBackGrace {
+                // Just after they went by themselves, as Back: meant for them.
+                return
+            } else {
+                transport.wake()
             }
+            return tick()
+        default:
+            if transport.press(press.type) { return tick() }
+            transport.wake()
+            tick()
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        transport.endHold(presses)
+        super.pressesEnded(presses, with: event)
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        transport.endHold(presses)
+        super.pressesCancelled(presses, with: event)
+    }
+
+    /// A recognizer, as the player's: handed on, Back reached the cover, which closed.
+    @objc private func backPressed() {
+        if transport.back() {
+            tick()
+        } else if overlay.isShown {
+            transport.dismiss()
+            tick()
+        } else if !transport.inBackGrace {
             close()
         }
+    }
 
-        /// No call for it: the controls switched off and on hides them.
-        private func hideControls() {
-            guard let controller else { return }
-            backHidAt = Date()
-            upAt = nil
-            controller.showsPlaybackControls = false
-            DispatchQueue.main.async { controller.showsPlaybackControls = true }
-        }
+    /// Paused, a sideways swipe scrubs; nothing else does anything.
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: view)
+        return transport.isFine && abs(velocity.x) > abs(velocity.y)
+    }
 
-        /// The controls coming and going: no notice for that, so looked at
-        /// every 0.1 s.
-        func watch(_ controller: AVPlayerViewController) {
-            self.controller = controller
-            root = controller.view
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { if let self, self.controlsUp { self.upAt = Date() } }
-            }
-        }
-        func stop() { timer?.invalidate() }
+    @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        transport.pan(pan, in: view)
+    }
 
-        /// The system's bar (its class isn't public).
-        private var bar: UIView? {
-            func find(in view: UIView) -> UIView? {
-                let name = "\(type(of: view))"
-                if name.contains("TransportBar"), !name.contains("Interstitial") { return view }
-                for sub in view.subviews { if let found = find(in: sub) { return found } }
-                return nil
-            }
-            return root.flatMap(find)
-        }
-        /// Shown: the bar and every view it's in (any of them may be what
-        /// fades).
-        private var controlsUp: Bool {
-            var view = bar
-            while let current = view, current !== root {
-                if current.isHidden || current.alpha < 0.01 { return false }
-                view = current.superview
-            }
-            return view != nil
-        }
-        /// Focus on a button above the bar (with the controls hidden it's
-        /// on the player's own full-screen view).
-        private var focusAbove: Bool {
-            guard controlsUp, let root, let bar,
-                  var view = root.window?.windowScene?.focusSystem?.focusedItem as? UIView,
-                  !view.isDescendant(of: bar) else { return false }
-            while view !== root {
-                if view is UICollectionViewCell || view is UIControl { return true }
-                guard let parent = view.superview else { return false }
-                view = parent
-            }
-            return false
-        }
+    // MARK: Screen
 
-        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool {
-            if recognizer === back {
-                // Always ours: handed on, it reached the cover, which closed.
-                hideBack = controlsUp
-                let gone = upAt.map { Date().timeIntervalSince($0) < TrailerControls.backGrace } ?? false
-                let byBack = backHidAt.map { Date().timeIntervalSince($0) < TrailerControls.backGrace } ?? false
-                dropBack = gone && !byBack
-                return true
-            }
-            return !focusAbove
+    private func tick() {
+        transport.tick()
+        let duration = duration
+        overlay.update(time: transport.time, duration: duration, mark: transport.mark,
+                       waiting: player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+        let loaded = player.currentItem?.loadedTimeRanges.map(\.timeRangeValue).compactMap { range -> ClosedRange<Double>? in
+            let (from, to) = (range.start.seconds, range.end.seconds)
+            return from.isFinite && to.isFinite && to >= from ? from...to : nil
+        } ?? []
+        overlay.setHeld(loaded, duration: duration)
+        let shown = transport.target != nil || transport.wantsShown
+        transport.noteShown(shown, byThemselves: true)
+        if shown != overlay.isShown {
+            // Gone, they rest a little lower, as the player's.
+            overlay.setShift(shown ? 0 : TrailerDownHint.drop)
+            hint.move(shown: shown)
         }
-        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            !focusAbove
+        overlay.setShown(shown)
+        overlay.setScrubbing(transport.isScrubbing, detached: transport.isDetached)
+        hint.setAway(transport.target != nil && transport.isDetached)
+    }
+}
+
+/// In the shelf's place: a chevron and "Back to Details", the tabs' words
+/// at rest (26 pt medium, the body level, their shadow); Down closes. With
+/// the controls, gone in the scan and paused scrubbing as the peek is.
+private final class TrailerDownHint: UIView {
+    /// The bar's inset: the words line up with it, as the peek's.
+    static let inset: CGFloat = 80
+    /// The tab row's middle, measured from the screen's foot (the peek).
+    static let fromFoot: CGFloat = 52
+    /// How much lower it and the controls rest while gone.
+    static let drop: CGFloat = 24
+    private static let gap: CGFloat = 12
+
+    private let chevron = UIImageView()
+    private let label = UILabel()
+    private var shown = false
+    private var away = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        alpha = 0
+        transform = CGAffineTransform(translationX: 0, y: Self.drop)
+        let color = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        chevron.image = UIImage(systemName: "chevron.down",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        chevron.tintColor = color
+        chevron.contentMode = .center
+        label.text = "Back to Details"
+        label.font = .systemFont(ofSize: 26, weight: .medium)
+        label.textColor = color
+        for sub in [chevron, label] as [UIView] {
+            sub.layer.shadowColor = UIColor.black.cgColor
+            sub.layer.shadowOffset = .zero
+            sub.layer.shadowRadius = 8
+            sub.layer.shadowOpacity = 0.8
+            addSubview(sub)
         }
-        // Alongside the player's own (they'd take it first).
-        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: CGSize {
+        let text = label.intrinsicContentSize
+        let mark = chevron.intrinsicContentSize
+        return CGSize(width: mark.width + Self.gap + text.width, height: max(text.height, mark.height))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let mark = chevron.intrinsicContentSize
+        chevron.frame = CGRect(x: 0, y: 0, width: mark.width, height: bounds.height)
+        label.frame = CGRect(x: mark.width + Self.gap, y: 0,
+                             width: bounds.width - mark.width - Self.gap, height: bounds.height)
+    }
+
+    /// With the controls: a fade and the same short way up or down.
+    func move(shown: Bool) {
+        self.shown = shown
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
+            self.transform = shown ? .identity : CGAffineTransform(translationX: 0, y: Self.drop)
+        }
+        fade()
+    }
+
+    func setAway(_ away: Bool) {
+        guard away != self.away else { return }
+        self.away = away
+        fade()
+    }
+
+    private func fade() {
+        let alpha: CGFloat = shown && !away ? 1 : 0
+        guard alpha != self.alpha else { return }
+        UIView.animate(withDuration: Motion.fadeDuration) { self.alpha = alpha }
     }
 }
 
