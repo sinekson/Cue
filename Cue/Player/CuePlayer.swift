@@ -1170,8 +1170,8 @@ final class SourceCard: UICollectionViewCell {
     private static let ruleGap: CGFloat = 18
     /// Room for the cached mark.
     private static let cachedRoom: CGFloat = 40
-    /// The foot stops short of the score at its end.
-    private static let scoreRoom: CGFloat = 110
+    /// A line's words stop this short of what sits at its end (score, cached mark).
+    private static let endGap: CGFloat = 20
     /// The resolution's widest, so quality keeps its room.
     private static let playingEnd: CGFloat = 140
     /// Raw's first line: leading the card, not shouting.
@@ -1358,11 +1358,14 @@ final class SourceCard: UICollectionViewCell {
             // The tabs name the add-on; the foot is only for Playing.
             layoutRaw(in: inner, bottom: playing.isHidden ? inner.maxY : footY - Self.footGap)
         } else {
-            foot.frame = CGRect(x: inner.minX, y: footY, width: inner.width - Self.scoreRoom, height: footHeight)
+            // The foot runs up to the score, as wide as it is, or the card's end.
+            let scoreWidth = score.text?.isEmpty == false ? ceil(score.intrinsicContentSize.width) : 0
+            let scoreRoom = scoreWidth > 0 ? scoreWidth + Self.endGap : 0
+            foot.frame = CGRect(x: inner.minX, y: footY, width: inner.width - scoreRoom, height: footHeight)
             // As far from the foot's capitals as from the language's baseline.
             let capsTop = footY + (footHeight - Self.footFont.lineHeight) / 2 + Self.footFont.ascender - Self.footFont.capHeight
             rule.frame = CGRect(x: inner.minX, y: capsTop - Self.ruleGap - 2, width: inner.width, height: 2)
-            score.frame = CGRect(x: inner.maxX - Self.scoreRoom, y: foot.frame.midY - 20, width: Self.scoreRoom, height: 40)
+            score.frame = CGRect(x: inner.maxX - scoreWidth, y: foot.frame.midY - 20, width: scoreWidth, height: 40)
             layoutStyled(in: inner)
             placeNote()
         }
@@ -1378,7 +1381,8 @@ final class SourceCard: UICollectionViewCell {
         weight.frame = CGRect(x: inner.minX, y: title.frame.maxY, width: inner.width, height: Self.rowHeight)
         let baseline = rule.frame.minY - Self.ruleGap
         let lastY = baseline - (Self.rowHeight - Self.detailFont.lineHeight) / 2 - Self.detailFont.ascender
-        language.frame = CGRect(x: inner.minX, y: lastY, width: inner.width - Self.cachedRoom, height: Self.rowHeight)
+        let markRoom = cached.image == nil ? 0 : Self.cachedRoom
+        language.frame = CGRect(x: inner.minX, y: lastY, width: inner.width - markRoom, height: Self.rowHeight)
         cached.frame = CGRect(x: inner.maxX - Self.cachedRoom, y: lastY, width: Self.cachedRoom, height: Self.rowHeight)
         audio.frame = CGRect(x: inner.minX, y: lastY - Self.rowHeight, width: inner.width, height: Self.rowHeight)
         video.frame = audio.frame.offsetBy(dx: 0, dy: -Self.rowHeight)
