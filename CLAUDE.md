@@ -194,8 +194,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
   What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.
-- **Background**: one still picture, Bands (`BandsPicture`); Dynamic follows
-  the focused title (`TitleBackground`).
+- **Background**: one still picture, Bands (`BandsPicture`); Dynamic (default) follows
+  the focused title (`TitleBackground`): its two main colours, one even,
+  the second towards the bottom left (the picture's 4 × 3 colour layout was
+  too distracting).
 - **App icon and Top Shelf** are generated, never hand-edited:
   `swift Tools/AppIcon/render.swift`.
 

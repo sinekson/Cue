@@ -2363,7 +2363,6 @@ final class LaunchPreloader: ObservableObject {
                 jobs.append(("colours", {
                     guard await ImageCache.shared.preloadFromDisk(url, maxDimension: 64) else { return false }
                     _ = await FixedFocusTint.colors(for: url)
-                    _ = await FixedFocusTint.layout(for: url)
                     return true
                 }))
             }

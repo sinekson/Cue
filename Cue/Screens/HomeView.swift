@@ -1578,7 +1578,7 @@ struct HomeUIKitView: View {
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
-    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
+    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = true
 
     /// The billboard's titles' taglines (TMDB), as they come.
     @State var billboardTaglines: [String: String] = [:]
@@ -1737,7 +1737,7 @@ struct HomeUIKitView: View {
             // Scrolling to or from the billboard: over the whole scroll.
             let scrolling = tintScroll
             tintScroll = false
-            TitleBackground.shared.follow(url, key: item.id,
+            TitleBackground.shared.follow(url,
                                           over: scrolling ? FixedFocusMotion.billboardScroll : nil)
         }
     }
@@ -1757,7 +1757,6 @@ final class TitleBackground: ObservableObject {
 
     @Published private(set) var tint: Color?
     @Published private(set) var second: Color?
-    @Published private(set) var picture: FixedFocusPicture?
 
     /// Presses closer together than this are fast scrolling: the colours
     /// calm down (change now and then, over a blend).
@@ -1779,14 +1778,14 @@ final class TitleBackground: ObservableObject {
     /// Follows a picture. `over`: a fixed blend (the billboard's scroll);
     /// nil: with focus — the focus move's curve and time, calmed
     /// while scrolling fast. The same picture again: nothing.
-    func follow(_ url: String, key: String, over: Double? = nil) {
+    func follow(_ url: String, over: Double? = nil) {
         guard AppBackground.followsTitle, url != self.url else { return }
         self.url = url
         task?.cancel()
-        task = Task { [weak self] in await self?.run(url, key: key, over: over) }
+        task = Task { [weak self] in await self?.run(url, over: over) }
     }
 
-    private func run(_ url: String, key: String, over: Double?) async {
+    private func run(_ url: String, over: Double?) async {
         var follows = over == nil
         var fade = over ?? Motion.moveDuration
         // FAST SCROLLING: a press soon after the last is part of a burst.
@@ -1810,13 +1809,8 @@ final class TitleBackground: ObservableObject {
                 }
             }
         }
-        // Picture's colour layout: the background is the picture's own
-        // colours where they sit (`FixedFocusTint.layout`) — made while the
-        // colours are found, not after.
-        async let layoutImage = FixedFocusTint.layout(for: url)
-        async let found = FixedFocusTint.colors(for: url)
-        let (layout, colorsFound) = await (layoutImage, found)
-        guard !Task.isCancelled, let colors = colorsFound else { return }
+        // The picture's two main colours (`FixedFocusTint.colors`).
+        guard let colors = await FixedFocusTint.colors(for: url), !Task.isCancelled else { return }
         lastChange = Date()
         let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
         withAnimation(animation) {
@@ -1826,11 +1820,6 @@ final class TitleBackground: ObservableObject {
         panelColor = UIColor(colors.first)
         panelFollows = follows
         refreshPanels(fade: fade)
-        if let layout {
-            // Crossfaded by its own view (`LayoutPictureView`), from what is
-            // on screen at that moment.
-            picture = FixedFocusPicture(key: key, image: layout, fade: fade, follows: follows)
-        }
     }
 
     // MARK: Collection panels
@@ -1859,50 +1848,11 @@ struct TitleBackgroundView: View {
     var body: some View {
         ZStack {
             TitleTintBackground.base
-            TitleTintBackground(tint: background.tint, second: background.second, picture: background.picture)
+            TitleTintBackground(tint: background.tint, second: background.second)
                 .frame(width: 1920, height: 1080)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
-    }
-}
-
-struct FixedFocusPicture: Equatable {
-    let key: String
-    let image: UIImage
-    /// Colour layout: how it crossfades in (`LayoutPictureView`).
-    var fade: Double = 0
-    var follows = false
-}
-
-/// The colour layout, crossfading in UIKit: a Core Animation fade always
-/// starts from what is ON SCREEN, so a press mid-fade carries on from there
-/// (no jump, no dip to the dark base).
-struct LayoutPictureView: UIViewRepresentable {
-    let picture: FixedFocusPicture
-
-    final class Coordinator { var key: String? }
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> UIImageView {
-        let view = UIImageView()
-        view.contentMode = .scaleToFill
-        return view
-    }
-
-    func updateUIView(_ view: UIImageView, context: Context) {
-        guard context.coordinator.key != picture.key else { return }
-        let first = context.coordinator.key == nil
-        context.coordinator.key = picture.key
-        if !first, picture.fade > 0 {
-            let fade = CATransition()
-            fade.type = .fade
-            fade.duration = picture.fade
-            fade.timingFunction = picture.follows ? FixedFocusTint.focusTiming
-                : CAMediaTimingFunction(name: .easeInEaseOut)
-            view.layer.add(fade, forKey: "layout")
-        }
-        view.image = picture.image
     }
 }
 
@@ -1911,8 +1861,6 @@ struct LayoutPictureView: UIViewRepresentable {
 struct TitleTintBackground: View {
     let tint: Color?
     var second: Color? = nil
-    /// The picture's colour layout (Home); without it, the title's colour.
-    var picture: FixedFocusPicture? = nil
 
     /// Under it (Home, a folder): dark, a little lighter at the top.
     static var base: some View {
@@ -1927,12 +1875,7 @@ struct TitleTintBackground: View {
         ZStack {
             // Even from top to bottom: no darker lower half, no corners.
             Color(white: 0.06)
-            if let picture {
-                // The picture's colour layout, at the tint's strength.
-                LayoutPictureView(picture: picture)
-                    .frame(width: 1920, height: 1080)
-                    .opacity(Self.tintStrength)
-            } else if let tint {
+            if let tint {
                 // The title's colour, evenly over the whole surface.
                 Rectangle().fill(tint.opacity(Self.tintStrength))
                 // Two colours: the second one comes in towards the bottom
@@ -1951,24 +1894,22 @@ struct TitleTintBackground: View {
     }
 }
 
-/// The background's colours from the title's artwork: the picture's colour
-/// layout (`layout`), and its main colours (`colors` — where there is no
-/// layout, the title's colour).
+/// The background's colours from the title's artwork: its two main colours
+/// (`colors`).
 @MainActor
 enum FixedFocusTint {
     static func colors(for url: String) async
-        -> (first: Color, second: Color?, deep: Color)? {
+        -> (first: Color, second: Color?)? {
         guard let palette = await SpotlightTint.areaPalette(for: url) else { return nil }
         return colors(from: palette)
     }
 
     private static func colors(from palette: [SpotlightTint.Swatch])
-        -> (first: Color, second: Color?, deep: Color)? {
+        -> (first: Color, second: Color?)? {
         guard let first = palette.first else { return nil }
         let second = palette.count > 1 ? palette[1] : nil
         return (shown(hue: first.hue, saturation: first.saturation),
-                second.map { shown(hue: $0.hue, saturation: $0.saturation) },
-                deep(hue: first.hue, saturation: first.saturation))
+                second.map { shown(hue: $0.hue, saturation: $0.saturation) })
     }
 
     /// "Tint: move with focus": the focus move's own curve and time.
@@ -1976,95 +1917,21 @@ enum FixedFocusTint {
         FixedFocusMotion.animation(duration: Motion.moveDuration)
     }
 
-    /// The same for the colour layout's Core Animation fade (a fade takes a
+    /// The same for the collection panels' Core Animation fade (a fade takes a
     /// curve, not a spring: the no-bounce spring's shape, fast then a long
     /// settle).
     @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
 
-    /// The tint moves with focus: the colours (and layout) of the cards you
-    /// may go to next, found beforehand — on the press there is nothing left
-    /// to work out. (Both are cached per picture.)
+    /// The tint moves with focus: the colours of the cards you may go to
+    /// next, found beforehand — on the press there is nothing left to work
+    /// out. (Cached per picture.)
     @MainActor static func prepare(_ urls: [String]) {
         guard !urls.isEmpty else { return }
         Task { @MainActor in
             for url in urls {
                 _ = await colors(for: url)
-                _ = await self.layout(for: url)
             }
         }
-    }
-
-    @MainActor private static var layouts: [String: UIImage] = [:]
-
-    /// "Picture's colour layout": the backdrop as a 4 × 3 grid of its own
-    /// colours — each the average of its part of the picture (sky on top,
-    /// the ground below, …) — every one at the tint's brightness and a
-    /// little fuller (a calm, even, dark ground: no bright patches), blended
-    /// smoothly across the screen. Made once per picture, a small still
-    /// (it is all soft), stretched.
-    @MainActor
-    static func layout(for url: String) async -> UIImage? {
-        if let hit = layouts[url] { return hit }
-        // Four across, three down.
-        let columns = 4, rows = 3
-        guard let cells = await SpotlightTint.grid(for: url, columns: columns, rows: rows) else { return nil }
-        // Every cell equally bright (the tint's brightness), a little fuller.
-        let ceiling = min(0.9, Double(Spotlight.tintMaxSaturation + 0.05) / 1.1)
-        // Each cell as the background shows a colour (`shown`).
-        let shownCells: [[(Double, Double, Double)]] = cells.map { row in
-            row.map { rgb in
-                var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
-                UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
-                let saturation = min(Double(s * Spotlight.tintSaturationBoost), ceiling)
-                let ui = UIColor(shown(hue: h, saturation: CGFloat(saturation)))
-                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
-                ui.getRed(&r, green: &g, blue: &b, alpha: &a)
-                return (Double(r), Double(g), Double(b))
-            }
-        }
-        let image = await Task.detached(priority: .userInitiated) { meshImage(shownCells) }.value
-        if layouts.count > 60 { layouts.removeAll() }
-        layouts[url] = image
-        return image
-    }
-
-    /// The grid blended smoothly: each cell's colour at its centre, eased
-    /// (smoothstep) between neighbours, flat beyond the outer centres.
-    nonisolated private static func meshImage(_ cells: [[(Double, Double, Double)]]) -> UIImage {
-        // Small: it is all soft gradients (stretched with smoothing).
-        let w = 192, h = 108
-        let rows = cells.count, columns = cells[0].count
-        var pixels = [UInt8](repeating: 255, count: w * h * 4)
-        func ease(_ t: Double) -> Double { t * t * (3 - 2 * t) }
-        for y in 0..<h {
-            let gy = min(max((Double(y) + 0.5) / Double(h) * Double(rows) - 0.5, 0), Double(rows - 1))
-            let y0 = min(Int(gy), rows - 2 < 0 ? 0 : rows - 2), ty = ease(gy - Double(y0))
-            for x in 0..<w {
-                let gx = min(max((Double(x) + 0.5) / Double(w) * Double(columns) - 0.5, 0), Double(columns - 1))
-                let x0 = min(Int(gx), columns - 2 < 0 ? 0 : columns - 2), tx = ease(gx - Double(x0))
-                let c00 = cells[y0][x0], c01 = cells[y0][x0 + 1], c10 = cells[y0 + 1][x0], c11 = cells[y0 + 1][x0 + 1]
-                func mix(_ a: Double, _ b: Double, _ c: Double, _ d: Double) -> UInt8 {
-                    let top = a + (b - a) * tx, bottom = c + (d - c) * tx
-                    return UInt8(min(max((top + (bottom - top) * ty) * 255, 0), 255).rounded())
-                }
-                let i = (y * w + x) * 4
-                pixels[i] = mix(c00.0, c01.0, c10.0, c11.0)
-                pixels[i + 1] = mix(c00.1, c01.1, c10.1, c11.1)
-                pixels[i + 2] = mix(c00.2, c01.2, c10.2, c11.2)
-            }
-        }
-        let provider = CGDataProvider(data: Data(pixels) as CFData)!
-        let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-                         space: CGColorSpaceCreateDeviceRGB(),
-                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: cg)
-    }
-
-    /// The billboard's scrim: the title's main colour, nearly black — it
-    /// darkens the artwork towards its own colour instead of grey.
-    private static func deep(hue: CGFloat, saturation: CGFloat) -> Color {
-        Color(hue: Double(hue), saturation: min(Double(saturation) * 1.2, 0.75), brightness: 0.1)
     }
 
     /// How bright the colour is before it is laid over the dark base.

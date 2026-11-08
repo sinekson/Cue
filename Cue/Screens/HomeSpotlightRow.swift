@@ -97,8 +97,7 @@ enum Spotlight {
 
     // Background
 
-    /// Extracted colours are forced to this brightness (deep, muted tones).
-    static let tintBrightness: CGFloat = 0.34
+    /// Extracted colours: a little fuller, never loud.
     static let tintSaturationBoost: CGFloat = 1.2
     static let tintMaxSaturation: CGFloat = 0.6
 }
@@ -202,36 +201,9 @@ enum DetailHideSpoilers {
 
 // MARK: - Place memory
 
-/// Pulls one representative colour out of a backdrop and tames it into a
-/// deep, muted background tone. Cheap: the image is decoded at 64px (from
-/// the disk cache — the box has usually downloaded it already) and sampled
-/// at 16×16. Results are cached per URL.
+/// The artwork's colours for the title background, from a 64 px copy of
+/// the picture (the disk cache — the box has usually downloaded it already).
 enum SpotlightTint {
-    @MainActor private static var cache: [String: Color] = [:]
-
-    /// Compute and cache colours ahead of time (nearest first). Stops early
-    /// if the viewer moves on — the next position warms its own neighbours.
-    @MainActor
-    static func warm(urls: [String]) async {
-        for url in urls where cache[url] == nil {
-            if Task.isCancelled { return }
-            _ = await color(for: url)
-        }
-    }
-
-    @MainActor
-    static func color(for url: String) async -> Color? {
-        if let cached = cache[url] { return cached }
-        let tuned: UIColor? = await Task.detached(priority: .utility) {
-            guard let image = await smallImage(url) else { return nil }
-            return extract(from: image)
-        }.value
-        guard let tuned else { return nil }
-        let color = Color(uiColor: tuned)
-        cache[url] = color
-        return color
-    }
-
     private static func smallImage(_ url: String) async -> UIImage? {
         // Separate memory key so this 64px copy never replaces a full-size
         // decode the rows are using.
@@ -247,96 +219,11 @@ enum SpotlightTint {
         return ImageCache.decodeDownsampled(data, budget: 64)
     }
 
-    /// Saturation-weighted average: colourful pixels count far more than
-    /// grey ones, so a mostly-dark frame with a red sky reads as red rather
-    /// than as a muddy brown. Near-black and near-white pixels are ignored.
-    private static func extract(from image: UIImage) -> UIColor? {
-        guard let cg = image.cgImage else { return nil }
-        let side = 16
-        var pixels = [UInt8](repeating: 0, count: side * side * 4)
-        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
-            guard let ctx = CGContext(data: buffer.baseAddress, width: side, height: side,
-                                      bitsPerComponent: 8, bytesPerRow: side * 4,
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-            else { return false }
-            ctx.interpolationQuality = .medium
-            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
-            return true
-        }
-        guard drawn else { return nil }
-
-        var r = 0.0, g = 0.0, b = 0.0, total = 0.0
-        for i in stride(from: 0, to: pixels.count, by: 4) {
-            let pr = Double(pixels[i]) / 255
-            let pg = Double(pixels[i + 1]) / 255
-            let pb = Double(pixels[i + 2]) / 255
-            let hi = max(pr, pg, pb), lo = min(pr, pg, pb)
-            if hi < 0.08 || lo > 0.92 { continue }
-            let saturation = hi == 0 ? 0 : (hi - lo) / hi
-            let weight = 0.05 + saturation * saturation
-            r += pr * weight; g += pg * weight; b += pb * weight; total += weight
-        }
-        guard total > 0 else { return nil }
-
-        let average = UIColor(red: r / total, green: g / total, blue: b / total, alpha: 1)
-        var hue: CGFloat = 0, sat: CGFloat = 0, bright: CGFloat = 0, alpha: CGFloat = 0
-        average.getHue(&hue, saturation: &sat, brightness: &bright, alpha: &alpha)
-        return UIColor(hue: hue,
-                       saturation: min(sat * Spotlight.tintSaturationBoost, Spotlight.tintMaxSaturation),
-                       brightness: Spotlight.tintBrightness,
-                       alpha: 1)
-    }
-}
-
-extension SpotlightTint {
     /// One of the artwork's main colours (hue and saturation only; whoever
     /// shows it picks the brightness).
     struct Swatch {
         let hue: CGFloat
         let saturation: CGFloat
-    }
-
-}
-
-// MARK: - Colour grid
-
-extension SpotlightTint {
-    /// The picture's average colour in each cell of a grid (row 0 at the
-    /// top; sRGB 0…1) — "Picture's colour layout". Near-black pixels count
-    /// little, so a dark corner doesn't turn its cell grey-black.
-    @MainActor
-    static func grid(for url: String, columns: Int, rows: Int) async -> [[(Double, Double, Double)]]? {
-        await Task.detached(priority: .userInitiated) { () -> [[(Double, Double, Double)]]? in
-            guard let image = await smallImage(url), let cg = image.cgImage else { return nil }
-            let w = columns * 8, h = rows * 8
-            var pixels = [UInt8](repeating: 0, count: w * h * 4)
-            let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
-                guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h,
-                                          bitsPerComponent: 8, bytesPerRow: w * 4,
-                                          space: CGColorSpaceCreateDeviceRGB(),
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-                else { return false }
-                ctx.interpolationQuality = .medium
-                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
-                return true
-            }
-            guard drawn else { return nil }
-            return (0..<rows).map { row in
-                (0..<columns).map { column in
-                    var r = 0.0, g = 0.0, b = 0.0, total = 0.0
-                    for y in row * 8..<(row + 1) * 8 {
-                        for x in column * 8..<(column + 1) * 8 {
-                            let i = (y * w + x) * 4
-                            let pr = Double(pixels[i]) / 255, pg = Double(pixels[i + 1]) / 255, pb = Double(pixels[i + 2]) / 255
-                            let weight = 0.15 + max(pr, pg, pb)
-                            r += pr * weight; g += pg * weight; b += pb * weight; total += weight
-                        }
-                    }
-                    return (r / total, g / total, b / total)
-                }
-            }
-        }.value
     }
 }
 

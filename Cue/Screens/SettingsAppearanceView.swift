@@ -3,7 +3,7 @@ import SwiftUI
 /// Settings → Appearance: one list, no sections — switches, Background and Card outlines' choices.
 struct AppearanceSettingsDetail: View {
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
-    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
+    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = true
     @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
     @AppStorage(SourceCardStyle.key) private var sourceCards = SourceCardStyle.current.rawValue
 

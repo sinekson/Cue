@@ -153,7 +153,7 @@ struct FolderView: View {
             }
         }
         .onAppear {
-            if let cover = folder.tileCoverImageUrl { TitleBackground.shared.follow(cover, key: folder.id) }
+            if let cover = folder.tileCoverImageUrl { TitleBackground.shared.follow(cover) }
         }
     }
 

@@ -13,7 +13,7 @@ enum AppBackground {
     static let followsTitleKey = "cue.appearance.backgroundFollowsTitle"
 
     /// The setting (outside SwiftUI).
-    static var followsTitle: Bool { UserDefaults.standard.bool(forKey: followsTitleKey) }
+    static var followsTitle: Bool { UserDefaults.standard.object(forKey: followsTitleKey) as? Bool ?? true }
 }
 
 /// The app's still background, tvOS's light Settings backdrop gone dark:
@@ -165,7 +165,7 @@ final class BandsPictureStore: ObservableObject {
 /// Home, Movies, Series and a folder (`titles`) with Background: Dynamic,
 /// the title background (`TitleBackground`).
 struct ATVBackground: View {
-    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = false
+    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = true
     @ObservedObject private var picture = BandsPictureStore.shared
     /// Home, Movies, Series, a folder: pages that follow the title.
     var titles = false

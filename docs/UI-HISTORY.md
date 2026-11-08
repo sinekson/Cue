@@ -671,9 +671,9 @@ matching section before changing that part of the UI. Where this differs from
   tvOS's own dark backdrop recreated (Photos, the TV app; no API), a dark
   warm grey with a cool shadow and a mauve warmth — it read brownish;
   warmer and darker versions of it; tvOS Settings' backdrop itself, flat
-  grey.) Settings → Appearance → Background, Static (default) / Dynamic
+  grey.) Settings → Appearance → Background, Static / Dynamic (default)
   (was the "Colours from the title" switch; same key). Dynamic: Home, Movies, Series follow the focused title
-  (`TitleBackground`: Home's tint logic — pacing, colour layout, fades;
+  (`TitleBackground`: Home's tint logic — pacing, fades; the picture's two main colours over a dark base, the first even over the screen at 50 %, the second coming in towards the bottom left; tried: the picture's colour layout, a 4 × 3 grid of its own colours where they sit — too distracting;
   only the tab in front sets it), the collection panels take its colour;
   a folder keeps the colour its tile set on Home (draws Home's
   background, so opening it changes nothing). Either way, a page opened from
