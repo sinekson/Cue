@@ -164,7 +164,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   out under it and back as it goes (0.45 s), the sound rising from silence
   (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
-  keep their own `AVPlayer` through the player rework.
+  keep their own `AVPlayer`.
 - **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
   take the first link (`PlayLauncher`); a link that fails or shows
   no frame in 20 s: the next, silently, once (3 was the fork's: two failing usually share a cause), then the source list; 5-min cache; none remembered; each add-on gets 20 s to answer (Play waits on them in order). Hold Play: the source list
@@ -245,8 +245,8 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
   Collections row stays a count with no page (talked over, not built: a
   list as the add-ons', then ready-made presets, then the editor).
-- Player rework, on branch `player-rework`: KSPlayer, VLC and the old player
-  are gone there (a second FFmpeg can take the engine's calls, so they can't
+- Player rework (merged into main 2026-11-08): KSPlayer, VLC and the old player
+  are gone (a second FFmpeg can take the engine's calls, so they can't
   sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):
   playback, subtitles, progress, track choice, failover and scrubbing are in
   (a press is 10 s, presses add up; one seek 0.3 s after the last input,
