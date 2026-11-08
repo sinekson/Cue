@@ -1762,8 +1762,8 @@ final class TitleBackground: ObservableObject {
     /// calm down (change now and then, over a blend).
     static let burstGap: Double = 0.3
     /// …then they change at most this often, over this blend.
-    static let burstEvery: Double = 0.3
-    static let burstBlend: Double = 0.5
+    static let burstEvery: Double = 0.45
+    static let burstBlend: Double = 0.7
 
     private var url: String?
     private var task: Task<Void, Never>?
