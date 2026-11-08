@@ -281,7 +281,7 @@ final class MDBListUsage: ObservableObject {
 enum MDBListService {
     private static let base = "https://api.mdblist.com"
 
-    private static let session: URLSession = {
+    static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         return URLSession(configuration: config)

@@ -190,7 +190,7 @@ enum TMDBService {
         return f
     }()
 
-    private static let session: URLSession = {
+    static let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         config.requestCachePolicy = .useProtocolCachePolicy
@@ -1162,11 +1162,6 @@ enum TMDBService {
         factsCache[key] = facts
     }
 
-    /// The facts if already loaded (no wait) — e.g. the tagline for a view
-    /// drawn at once.
-    static func knownFacts(for meta: MetaItem) -> TitleFacts? {
-        cachedFacts("v3:\(meta.type):\(meta.id):\(preferredLanguage)")
-    }
 
     /// The title block's facts on their own — for Home's billboard, which
     /// has no Detail page load behind it. One light request per title

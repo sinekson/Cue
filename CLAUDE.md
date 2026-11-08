@@ -133,6 +133,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   new pictures in place (`heldRows`, `refreshArt`).
   Continue Watching's art is the episode's TMDB still as Details', else the
   add-on's, looked up under the launch curtain (`ContinueStills`).
+- **Catalogs** are pulled: fresh at every launch (under the curtain), then
+  again once an hour old — on coming back, a tab switch, and while Home sits
+  open (checked every 5 min). A refresh's billboard picks swap in only while
+  no billboard is on screen (`BillboardSight`).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`). No Play button: Details is the way to play.
@@ -146,7 +150,33 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Loading**: nothing pops in. Pages wait under their background until data
   and first-screen pictures are ready (`PagePreparer`, `PageLoad`, 4 s cap,
   then placeholders in the final layout: `FixedFocusPlaceholder`). Launch runs
-  under a curtain (`LaunchPreloader`, `ProfileGate` for "Who's watching?").
+  under a curtain (`LaunchPreloader`): "Who's watching?" (`ProfileGate`)
+  from the first frame tvOS gives us, always, one profile too (a choice:
+  Add Profile is there); no play. No press for 5 s: the focused profile is
+  picked (not a locked one), "Continuing as …" under the names for the last
+  2 s; any press stops it for good (`autoPick`). Picked before Home is
+  ready: the rest fades, the avatar waits in the middle (no breathing) over
+  the stage's status line (`SweepLine`): one line, a hint, not the steps
+  (those only in the probe), one of three per launch, never changing
+  mid-wait: "Assembling the lineup", "Gathering the cast", "Aligning the
+  satellites" (`LaunchPreloader.lines`; two lines, then plain wording, were
+  tried). Ready at the pick: it flies at once. The curtain lifts once the minimum is in and 3 s have passed
+  (`minimum`, the floor), whichever is later, however long the minimum
+  takes; 15 s is only a safety ceiling for a broken network (`ceiling`, then
+  placeholders). Back from the background instant (no curtain; the gate at
+  once after 4 h). The minimum, in order: saved rows; every catalog fresh
+  (each at most 8 s, `catalogWait`, then its saved copy) and the Nuvio pull
+  (`sync`); the picks from those; what the first screen draws and one press
+  reaches (`minimumJobs`: the billboard's first three, the first row's
+  cards, the box's first card in the 3 rows below, Continue Watching's
+  stills). Then the rest of Home, nearest first (`deep`: Details' data,
+  every row's records, their pictures on disk at their sizes, not decoded:
+  at 4K that would evict the first screen's), on the curtain until the
+  floor, then on behind Home. One queue for all loading ahead
+  (`LoadQueue`, after `LaunchPreloader`): bands focus, launch, deep; lanes
+  data and pictures, 3 each, deep leaving room for focus; each kind's count
+  and time to the probe when it runs dry. Warm, the whole of Home was done
+  5.7 s after launch.
 - **Pictures**: posters and the box from add-ons (honoured: we're a Nuvio
   client); billboard and Details from TMDB's backdrop. Decoded at a few
   named sizes (`PictureSize`: poster, landscape, card logo, screen, logo),
@@ -157,15 +187,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   never on the main thread (`DecodeGate`): what's on screen first, with a
   slot of its own; ahead at most two, newest first, dropped once focus has
   moved on (a held Left/Right ran dozens at once: under 30 fps, the box
-  waiting behind passed titles). Decoded ahead in one place
-  (`PicturePreloader`): Home's reachable titles at once
+  waiting behind passed titles). Decoded ahead through the queue's focus
+  band (`LoadQueue`, `PicturePreloader`): Home's reachable titles at once
   (`preloadReachable`: Left/Right's next, and Up/Down's one title per row in
   the 3 nearest rows each way — every row would evict the cache at 4K), and
   Details' one picture as focus settles (`TitlePreloader`). A grown card's
   picture still late: the poster stays until it's in. The same titles'
-  status, ratings and (billboard) tagline load ahead too, after a 0.3 s
-  rest (MDBList counts requests), chips drawn ahead (`TitleExtras`); what's
-  in memory draws with the text, never a moment after it.
+  records are brought up to date ahead too, after a 0.3 s rest (MDBList
+  counts requests), chips drawn ahead (`TitleExtras`).
+- **Title records** (`TitleRecords`, end of `RequestCache.swift`): per title
+  what its text draws beyond the catalog — a series' size and episode dates
+  (AIRING is read from them when drawn), TMDB's status and tagline,
+  MDBList's ratings — all in one file read into memory at launch, so a title
+  seen before draws badge, ratings and season count with its text (separate
+  async caches per kind came late). Shown as stored, asked again once a day,
+  redrawn only if the answer differs. Launch refreshes what's reachable first
+  under the curtain, then every Home row's (first 15 each) in the queue's
+  deep band, again on coming back if an hour has passed. Not pictures, not the
+  facts line or logo (in time already).
 - **Progress**: under 30 s played in a session, nothing is saved (a Start Over
   keeps its old position). After that the real position, seeks included: to
   the device every 10 s, to Nuvio on the first save and every 30 s; both on
@@ -211,6 +250,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
   What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.
+- **Storage** (Settings → Storage, `CacheStorage` at the end of
+  `RequestCache.swift`): every cache by kind with its size and allowance
+  (pictures, add-on data, TMDB, ratings & badges, trailers, the network's
+  responses, playback files in `tmp`), free space, one Clear Cache, no
+  confirmation. Never cleared: account, profiles, progress, library,
+  collections, settings. A new cache gets a row there. Playback scratch
+  (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background**: one still picture, Bands (`BandsPicture`); Dynamic (default) follows
   the focused title (`TitleBackground`): its two main colours, one even,
   the second towards the bottom left (the picture's 4 × 3 colour layout was
@@ -258,9 +304,6 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
 - Inter's OFL text and copyright notice to ship with the fonts (`Cue/Player/Fonts/`); Licenses & Credits lists it.
-- A proper cache setting (every cache — pictures, title records,
-  TMDB's, trailers — what it holds and one honest clear), replacing the
-  TMDB page's old Clear Cache and About's (both gone).
 - A collection editor (create and edit Cue's collections) — wanted back,
   in the new Settings look; the old one (`CollectionsSettingsDetail`,
   `CollectionSourcePickerView`, old cards) is deleted: last in commit

@@ -12,9 +12,7 @@
 // The launch screen (`LaunchScreen`) is the app's background colour (read from
 // the `AppBackground` colour set) full-screen, nothing on it: tvOS flies the
 // icon's front layer onto it and holds it in the middle until the app's first
-// frame. The launch curtain takes over from that with the same play
-// (`LaunchPlay`, `launchPlayHeight` tall in a `launchFrame` square, centred —
-// measured on the system's: the same pixels), held, then fading into the gate.
+// frame; the launch curtain's "Who's watching?" takes over from that.
 // Colours are Display P3 values (as on the TV — sRGB was too tame).
 
 import AppKit
@@ -37,8 +35,6 @@ let playCorner: CGFloat = 0.13          // × height
 let playWidthRatio: CGFloat = 0.9       // width ÷ height
 let opticalNudge: CGFloat = 0.03        // × height, right of the drawn shape's centre
 let topShelfPlayShare: CGFloat = 0.4    // the play's height ÷ a Top Shelf image's height
-let launchPlayHeight: CGFloat = 220     // points on the 1920 × 1080 screen: the system's held play
-let launchFrame: CGFloat = 640          // the play's picture, square, centred
 
 // MARK: - Drawing
 
@@ -212,10 +208,9 @@ let appBackground: CGColor = {
     func v(_ key: String) -> CGFloat { CGFloat(Int(c[key]!.dropFirst(2), radix: 16)!) / 255 }
     return CGColor(srgbRed: v("red"), green: v("green"), blue: v("blue"), alpha: 1)
 }()
-let screen = CGSize(width: 1920, height: 1080), frame = CGSize(width: launchFrame, height: launchFrame)
+let screen = CGSize(width: 1920, height: 1080)
 imageSet("LaunchScreen", [1, 2].map { ($0, renderPicture(points: screen, scale: CGFloat($0), play: playHeight,
                                                         fill: appBackground, [])) })
-imageSet("LaunchPlay", [1, 2].map { ($0, renderPicture(points: frame, scale: CGFloat($0), play: launchPlayHeight, [.front])) })
 
 if CommandLine.arguments.count > 1 {
     try! render([.back, .middle, .front], pixels: CGSize(width: 800, height: 480))

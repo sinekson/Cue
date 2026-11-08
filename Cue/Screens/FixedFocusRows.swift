@@ -1154,9 +1154,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     static let reachRows = 3
     private func preloadReachable(row rowIndex: Int, index itemIndex: Int) {
         var wants: [PicturePreloader.Want] = []
-        var extras: [(item: MetaItem, billboard: Bool)] = []
+        var extras: [MetaItem] = []
         func add(_ item: MetaItem, in index: Int) {
-            if !isDestination(index), custom(index) == nil { extras.append((item, isFeatured(index))) }
+            if !isDestination(index), custom(index) == nil { extras.append(item) }
             if isFeatured(index) {
                 wants.append(.init(TMDBService.originalSize(item.background) ?? item.poster, PictureSize.screen))
                 wants.append(.init(item.logo, PictureSize.logo))
@@ -1430,8 +1430,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         infoLoading = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            if FixedFocusShowInfo.known(item) == nil, await FixedFocusShowInfo.load(item) != nil,
-               !Task.isCancelled {
+            if await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]), !Task.isCancelled {
                 self?.box.refreshInfo(for: item)
             }
         }
@@ -3366,61 +3365,54 @@ final class PicturePreloader {
     /// (`DecodeGate`) when focus has moved on is dropped, not decoded.
     private var wanted = Set<String>()
 
-    /// Decodes what isn't in memory or on its way, in decoding's ahead
-    /// turn; returns at once. Replaces the last call's wishes.
+    /// Decodes what isn't in memory, through the queue's focus band
+    /// (`LoadQueue`), in order; returns at once. Replaces the last call's
+    /// wishes.
     func want(_ wants: [Want]) {
         wanted = Set(wants.compactMap { want in
             want.url.map { RemoteImage.memoryKey($0, maxDimension: want.size, maxPixels: nil) }
         })
-        for want in wants { Task { await load(want, dropped: true) } }
+        var jobs: [LoadQueue.Job] = []
+        for want in wants {
+            guard let url = want.url else { continue }
+            let key = RemoteImage.memoryKey(url, maxDimension: want.size, maxPixels: nil)
+            guard ImageCache.shared.image(for: key) == nil else { continue }
+            jobs.append(.picture(url, want.size, band: .focus, order: jobs.count, source: "reach",
+                                 still: { [weak self] in self?.wanted.contains(key) ?? false }))
+        }
+        LoadQueue.shared.replace(source: "reach", with: jobs)
     }
 
     /// Decodes it unless it's in memory; returns once it is (or failed).
-    func load(_ want: Want) async { await load(want, dropped: false) }
-
-    private func load(_ want: Want, dropped: Bool) async {
+    func load(_ want: Want) async {
         guard let url = want.url else { return }
         let key = RemoteImage.memoryKey(url, maxDimension: want.size, maxPixels: nil)
         guard ImageCache.shared.image(for: key) == nil, loading.insert(key).inserted else { return }
-        var still: (@MainActor () -> Bool)?
-        if dropped { still = { [weak self] in self?.wanted.contains(key) ?? false } }
-        await ImageCache.shared.preload(url, maxDimension: want.size, turn: .ahead, still: still)
+        await ImageCache.shared.preload(url, maxDimension: want.size, turn: .ahead)
         loading.remove(key)
     }
 }
 
-/// What the text under a title needs besides its picture, loaded ahead
-/// for what focus can reach (`preloadReachable`'s titles): the status
-/// (`FixedFocusShowInfo`, from the episode list), the ratings (MDBList),
-/// on the billboard the tagline (TMDB's facts) — and the chips drawn
-/// (`FixedFocusChipsView.prepare`). They came in only once a title was
-/// shown, the chips a moment after the text. After a 0.3 s rest, so a
-/// held Left/Right doesn't ask for every title it passes (MDBList counts
-/// requests); all cached on disk, so asked once a day at most.
+/// The records (`TitleRecords`) of what focus can reach
+/// (`preloadReachable`'s titles) brought up to date, and their chips drawn
+/// (`FixedFocusChipsView.prepare`), in the queue's focus band behind the
+/// pictures (`LoadQueue`). After a 0.3 s rest, so a held Left/Right
+/// doesn't ask for every title it passes (MDBList counts requests); a
+/// record is asked again once a day at most.
 @MainActor
 final class TitleExtras {
     static let shared = TitleExtras()
     private var task: Task<Void, Never>?
 
-    func want(_ titles: [(item: MetaItem, billboard: Bool)]) {
+    func want(_ titles: [MetaItem]) {
         task?.cancel()
         task = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            let settings = MDBListSettingsStore.current
-            let ratings = settings.isConfigured && settings.showsRatings(onDetails: false)
-            await withTaskGroup(of: Void.self) { group in
-                for (item, billboard) in titles {
-                    group.addTask { @MainActor in
-                        async let info: Void = { if item.isSeries { _ = await FixedFocusShowInfo.load(item) } }()
-                        async let rated: Void = { if ratings { _ = await MDBListService.ratings(for: item, settings: settings) } }()
-                        async let facts: Void = { if billboard { _ = await TMDBService.facts(for: item) } }()
-                        _ = await (info, rated, facts)
-                        guard !Task.isCancelled else { return }
-                        FixedFocusChipsView.prepare(item)
-                    }
-                }
-            }
+            LoadQueue.shared.replace(source: "extras", with: titles.enumerated().map { index, item in
+                .record(item, band: .focus, order: 100 + index, source: "extras",
+                        then: { FixedFocusChipsView.prepare(item) })
+            })
         }
     }
 }

@@ -242,3 +242,332 @@ actor SourceListCache {
         lists[id] = (entries, Date())
     }
 }
+
+// MARK: - Title records
+
+/// One small record per title: what its text draws besides the catalog's —
+/// a series' size, the dates its status is read from, TMDB's status and
+/// tagline, MDBList's ratings. A few hundred bytes each, all of them in
+/// one file, read into memory at launch (`load`, under the curtain): every
+/// title seen before draws its badge, ratings and season count with its
+/// text, never a moment after (one small file per kind, read async, came
+/// late; an expired one waited for the network). Shown as they are, then
+/// asked again once a day (`maxAge`): a new answer replaces them only
+/// where it differs. Pictures are not here: `ImageCache`, shared by URL.
+@MainActor
+final class TitleRecords {
+    static let shared = TitleRecords()
+
+    struct Record: Codable {
+        /// A series' seasons and episodes (specials left out).
+        var size: TMDBService.ShowSize?
+        /// The latest episode aired when the list was read, and the ones
+        /// still to come: AIRING is read from them when shown, so it can't
+        /// go stale between lookups.
+        var lastAired: Date?
+        var upcoming: [Date]?
+        var showAt: Date?
+        /// TMDB's: "ENDED", "ONGOING"…, and the tagline.
+        var tmdbStatus: String?
+        var tagline: String?
+        var factsAt: Date?
+        /// MDBList's (nil with a date: it has none).
+        var ratings: MDBListRatings?
+        var ratingsAt: Date?
+        /// Last asked for: unused for `forgetAfter`, dropped.
+        var usedAt: Date = Date()
+    }
+
+    enum Part { case show, facts, ratings }
+
+    static let maxAge: TimeInterval = 24 * 60 * 60
+    static let forgetAfter: TimeInterval = 60 * 24 * 60 * 60
+
+    private var records: [String: Record] = [:]
+    private var running: [String: Task<Void, Never>] = [:]
+    private var saveTask: Task<Void, Never>?
+    private let file: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("CueCache/title-records.json")
+
+    private init() {
+        if let data = try? Data(contentsOf: file),
+           let stored = try? JSONDecoder().decode([String: Record].self, from: data) {
+            let cutoff = Date().addingTimeInterval(-Self.forgetAfter)
+            records = stored.filter { $0.value.usedAt > cutoff }
+        }
+        // (The separate caches these replace.)
+        Task.detached(priority: .utility) {
+            let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            for name in ["show-sizes-v2", "series-status"] {
+                try? FileManager.default.removeItem(at: base.appendingPathComponent("CueCache/\(name)"))
+            }
+        }
+    }
+
+    /// Read into memory (the launch, under the curtain).
+    func load() { _ = records.count }
+
+    /// Everything forgotten, in memory and on disk (Settings → Storage):
+    /// asked again as titles are drawn.
+    func clear() {
+        records = [:]
+        saveTask?.cancel()
+        saveTask = nil
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    // MARK: Reading — at once, from memory
+
+    func size(_ item: MetaItem) -> TMDBService.ShowSize? { records[item.id]?.size }
+    func tagline(_ item: MetaItem) -> String? { records[item.id]?.tagline }
+    /// nil: not known yet; `.some(nil)`: known to have none.
+    func ratings(_ item: MetaItem) -> MDBListRatings?? {
+        guard let record = records[item.id], record.ratingsAt != nil else { return nil }
+        return .some(record.ratings)
+    }
+
+    /// - AIRING: an episode aired within `airingWindow`, or the next is due
+    ///   within it.
+    /// - ENDED + the year of its last episode: TMDB says ended or cancelled.
+    /// - RETURNING: neither — between seasons (TMDB "Returning Series").
+    /// Without TMDB (or until it's known), the catalog's years.
+    func status(_ item: MetaItem) -> String? {
+        guard item.isSeries, let record = records[item.id] else { return TitleBlock.catalogStatus(item) }
+        let now = Date()
+        let window = FixedFocusShowInfo.airingWindow
+        let upcoming = record.upcoming ?? []
+        let lastAired = ([record.lastAired].compactMap { $0 } + upcoming.filter { $0 <= now }).max()
+        let nextDue = upcoming.filter { $0 > now }.min()
+        if let lastAired, now.timeIntervalSince(lastAired) <= window { return "AIRING" }
+        if let nextDue, nextDue.timeIntervalSince(now) <= window { return "AIRING" }
+        switch record.tmdbStatus {
+        case "ENDED":
+            let year = lastAired.map { String(Calendar.current.component(.year, from: $0)) }
+                ?? TitleBlock.catalogYears(item)?.end
+            return year.map { "ENDED \($0)" } ?? "ENDED"
+        case "ONGOING":
+            return "RETURNING"
+        default:
+            return TitleBlock.catalogStatus(item)
+        }
+    }
+
+    // MARK: Asking
+
+    /// The parts missing or a day old asked again (each once at a time);
+    /// returns once they're in. True when something shown changed.
+    @discardableResult
+    func refresh(_ item: MetaItem, _ parts: Set<Part>) async -> Bool {
+        let before = records[item.id]
+        var record = before ?? Record()
+        record.usedAt = Date()
+        records[item.id] = record
+        let stale = { (at: Date?) in at.map { Date().timeIntervalSince($0) > Self.maxAge } ?? true }
+        let settings = MDBListSettingsStore.current
+        await withTaskGroup(of: Void.self) { group in
+            if parts.contains(.show), item.isSeries, stale(record.showAt) {
+                group.addTask { await self.once(item.id + ":show") { await self.askShow(item) } }
+            }
+            if parts.contains(.facts), TMDBService.hasAPIKey, stale(record.factsAt) {
+                group.addTask { await self.once(item.id + ":facts") { await self.askFacts(item) } }
+            }
+            if parts.contains(.ratings), settings.isConfigured, settings.showsRatings(onDetails: false),
+               stale(record.ratingsAt) {
+                group.addTask { await self.once(item.id + ":ratings") { await self.askRatings(item, settings) } }
+            }
+        }
+        let after = records[item.id]
+        if before == nil || after?.size != before?.size || after?.ratings != before?.ratings
+            || after?.tagline != before?.tagline || after?.tmdbStatus != before?.tmdbStatus
+            || after?.lastAired != before?.lastAired || after?.upcoming != before?.upcoming {
+            scheduleSave()
+            return true
+        }
+        scheduleSave()
+        return false
+    }
+
+    private func once(_ key: String, _ work: @escaping @MainActor () async -> Void) async {
+        if let task = running[key] { return await task.value }
+        let task = Task { @MainActor in await work() }
+        running[key] = task
+        await task.value
+        running[key] = nil
+    }
+
+    private func askShow(_ item: MetaItem) async {
+        guard let addonManager = AddonManager.shared else { return }
+        let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: addonManager)
+        // (No list: asked again next time, what's known kept.)
+        guard let size = SeriesEpisodes.size(of: meta) else { return }
+        let now = Date()
+        let dates = (meta.videos ?? []).filter { ($0.season ?? 0) > 0 }.compactMap(\.airedDate)
+        var record = records[item.id] ?? Record()
+        record.size = size
+        record.lastAired = dates.filter { $0 <= now }.max()
+        record.upcoming = dates.filter { $0 > now }.sorted()
+        record.showAt = now
+        records[item.id] = record
+    }
+
+    private func askFacts(_ item: MetaItem) async {
+        guard let facts = await TMDBService.facts(for: item) else { return }
+        var record = records[item.id] ?? Record()
+        record.tmdbStatus = facts.status
+        record.tagline = facts.tagline
+        record.factsAt = Date()
+        records[item.id] = record
+    }
+
+    private func askRatings(_ item: MetaItem, _ settings: MDBListSettings) async {
+        _ = await MDBListService.ratings(for: item, settings: settings)
+        // (nil from the service is "none" and "failed" alike: only an
+        // answer it has kept counts.)
+        guard let known = MDBListService.cachedRatings(for: item) else { return }
+        var record = records[item.id] ?? Record()
+        record.ratings = known
+        record.ratingsAt = Date()
+        records[item.id] = record
+    }
+
+    private func scheduleSave() {
+        guard saveTask == nil else { return }
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            saveTask = nil
+            let snapshot = records
+            let file = file
+            Task.detached(priority: .utility) {
+                guard let data = try? JSONEncoder().encode(snapshot) else { return }
+                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
+                                                         withIntermediateDirectories: true)
+                try? data.write(to: file, options: .atomic)
+            }
+        }
+    }
+}
+
+/// WHAT CUE KEEPS ON DISK, by kind, and one clear for all of it
+/// (Settings → Storage). Every cache, honestly: pictures, the add-ons'
+/// and TMDB's answers, the titles' records and ratings, trailers' links,
+/// the network's own response cache, and what playback left in `tmp`.
+/// Not caches, never cleared: the account, profiles, progress, library,
+/// collections, settings.
+enum CacheStorage {
+    struct Part: Identifiable, Sendable {
+        let id: String
+        let name: String
+        let bytes: Int64
+        /// Its allowance on disk, where it has one (older entries go past it).
+        let limit: Int64?
+    }
+
+    private static var caches: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0] }
+    private static var cue: URL { caches.appendingPathComponent("CueCache", isDirectory: true) }
+    private static var responses: URL {
+        caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "app.cue.tv", isDirectory: true)
+    }
+    private static let addonFiles = ["meta"]
+    private static let tmdbFiles = ["tmdb-raw", "tmdb-imdb-ids", "tmdb-facts"]
+    private static let ratingFiles = ["title-records.json", "mdblist-ratings-v2"]
+    private static let trailerFiles = ["trailers.json"]
+    /// In CueCache but not a cache: kept.
+    private static func kept(_ name: String) -> Bool {
+        name == "collections-library.json" || name.hasPrefix("background-")
+    }
+    /// The network's response cache (URLCache's database and bodies; not
+    /// the system's shader cache beside them).
+    private static func isResponse(_ name: String) -> Bool {
+        name.hasPrefix("Cache.db") || name == "fsCachedData"
+    }
+    private static func isPlayback(_ name: String) -> Bool {
+        PlayerTempSweep.scratchPrefixes.contains(where: name.hasPrefix) || name.hasPrefix(PlayerTempSweep.spoolPrefix)
+    }
+    /// The responses' allowance: the add-ons' session's and TMDB's.
+    static let responseLimit: Int64 = (256 + 128) << 20
+    /// The player's disk window, at most (a quarter of free space).
+    static let playbackLimit: Int64 = 6 << 30
+
+    /// Each kind's size, off the main thread.
+    static func measure() async -> [Part] {
+        await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            let cueNames = (try? fm.contentsOfDirectory(atPath: cue.path)) ?? []
+            func size(_ urls: [URL]) -> Int64 { urls.reduce(0) { $0 + allocated($1, fm) } }
+            func inCue(_ names: [String]) -> Int64 { size(names.map { cue.appendingPathComponent($0) }) }
+            let known = Set(addonFiles + tmdbFiles + ratingFiles + trailerFiles)
+            let other = cueNames.filter { !known.contains($0) && !kept($0) }
+            let responseNames = ((try? fm.contentsOfDirectory(atPath: responses.path)) ?? []).filter(isResponse)
+            let tmp = fm.temporaryDirectory
+            let playbackNames = ((try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []).filter(isPlayback)
+            var parts = [
+                Part(id: "pictures", name: "Pictures", bytes: size([ImageCache.diskFolder]),
+                     limit: Int64(ImageCache.diskLimit)),
+                Part(id: "addons", name: "Add-on Data",
+                     bytes: inCue(addonFiles) + size([caches.appendingPathComponent("cue-home-catalogs.json")]),
+                     limit: nil),
+                Part(id: "tmdb", name: "TMDB Data", bytes: inCue(tmdbFiles), limit: nil),
+                Part(id: "ratings", name: "Ratings & Badges", bytes: inCue(ratingFiles), limit: nil),
+                Part(id: "trailers", name: "Trailers", bytes: inCue(trailerFiles), limit: nil),
+                Part(id: "responses", name: "Network Responses",
+                     bytes: size(responseNames.map { responses.appendingPathComponent($0) }), limit: responseLimit),
+                Part(id: "playback", name: "Playback Files",
+                     bytes: size(playbackNames.map { tmp.appendingPathComponent($0) }), limit: playbackLimit),
+            ]
+            let otherBytes = inCue(other)
+            if otherBytes > 0 { parts.append(Part(id: "other", name: "Other", bytes: otherBytes, limit: nil)) }
+            return parts
+        }.value
+    }
+
+    /// Free space on this Apple TV.
+    static func available() -> Int64? {
+        let values = try? URL(fileURLWithPath: NSHomeDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        return values?.volumeAvailableCapacity.map(Int64.init)
+    }
+
+    /// All of it cleared. What's in memory for this session stays where
+    /// clearing it would empty what's on screen (pictures); the records go
+    /// too (asked again as titles are drawn).
+    @MainActor
+    static func clear() async {
+        await ImageCache.shared.clearDisk()
+        TitleRecords.shared.clear()
+        TrailerResolver.clearChoices()
+        for session in [StremioAPI.session, TMDBService.session, MDBListService.session] {
+            session.configuration.urlCache?.removeAllCachedResponses()
+        }
+        URLCache.shared.removeAllCachedResponses()
+        let playing = PlayerController.isPlaying
+        await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            for name in (try? fm.contentsOfDirectory(atPath: cue.path)) ?? [] where !kept(name) {
+                let url = cue.appendingPathComponent(name)
+                var directory: ObjCBool = false
+                if fm.fileExists(atPath: url.path, isDirectory: &directory), directory.boolValue {
+                    // Emptied, not removed: the disk caches write into it.
+                    for file in (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] {
+                        try? fm.removeItem(at: file)
+                    }
+                } else {
+                    try? fm.removeItem(at: url)
+                }
+            }
+            try? fm.removeItem(at: caches.appendingPathComponent("cue-home-catalogs.json"))
+            if !playing { PlayerTempSweep.sweep() }
+        }.value
+    }
+
+    private static func allocated(_ url: URL, _ fm: FileManager) -> Int64 {
+        let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isDirectoryKey]
+        guard let values = try? url.resourceValues(forKeys: keys) else { return 0 }
+        guard values.isDirectory == true else { return Int64(values.totalFileAllocatedSize ?? 0) }
+        var total: Int64 = 0
+        let walker = fm.enumerator(at: url, includingPropertiesForKeys: Array(keys))
+        while let file = walker?.nextObject() as? URL {
+            total += Int64((try? file.resourceValues(forKeys: keys))?.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+}

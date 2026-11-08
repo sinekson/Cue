@@ -369,6 +369,14 @@ enum TrailerResolver {
         value.refused = value.refused.filter { now.timeIntervalSince($0.value.at) < refusalTTL }
         return value
     }()
+    /// The found trailers' links forgotten (Settings → Storage); the
+    /// refusals stay, so YouTube isn't asked again for titles it refused.
+    static func clearChoices() {
+        backdropCacheLock.withLock {
+            stored.choices = [:]
+            saveLocked()
+        }
+    }
     /// Written behind, in order. Called under `backdropCacheLock`.
     private static func saveLocked() {
         let snapshot = stored

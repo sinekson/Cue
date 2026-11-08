@@ -19,6 +19,8 @@ final class NuvioSyncManager: ObservableObject {
     /// Account's "Sync now" shows it). Not persisted: nil until the first
     /// sync of this launch, which runs on its own soon after it.
     @Published private(set) var lastSyncedAt: Date?
+    /// Signed in to Nuvio (the launch waits for the first sync only then).
+    var signedIn: Bool { account.accessToken != nil }
 
     /// The live instance, so views that aren't handed one (Settings →
     /// Account) can trigger a manual sync.

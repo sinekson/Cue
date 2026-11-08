@@ -13,10 +13,12 @@ import UIKit
 /// any of it. CFNetwork's response spools (`tmp/CFNetworkDownload_*.tmp`)
 /// leak the same way and go on the same pass.
 enum PlayerTempSweep {
-    /// The engine's own sweeps wait hours, to be sure a directory isn't
-    /// another session's.
-    private static let scratchPrefixes = ["aether-"]
-    private static let spoolPrefix = "CFNetworkDownload_"
+    /// The engine's disk window (its own sweeps wait hours, to be sure a
+    /// directory isn't another session's), and the subtitle fonts libass
+    /// was given (`cue-ass-fonts`, removed with the track — a kill left
+    /// them: 192 MB seen).
+    static let scratchPrefixes = ["aether-", "cue-ass-fonts"]
+    static let spoolPrefix = "CFNetworkDownload_"
 
     /// Delete every orphaned player scratch directory and network spool file.
     ///

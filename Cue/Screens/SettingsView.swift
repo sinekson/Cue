@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Settings categories, each a pushed pane on the Settings screen.
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case account, tmdb, mdblist, appearance, homeContent, playback, about, developer
+    case account, tmdb, mdblist, appearance, homeContent, playback, storage, about, developer
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .homeContent: return "Home & Details"
         case .playback: return "Playback"
+        case .storage: return "Storage"
         case .about: return "About"
         case .developer: return "Developer"
         }
@@ -27,6 +28,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "Change how Cue's pages and cards look."
         case .homeContent: return "Choose what Home shows and how titles behave."
         case .playback: return "Choose the language titles play in."
+        case .storage: return "See what Cue keeps on this Apple TV and clear it."
         case .about: return "See Cue's version, privacy and licenses."
         case .developer: return "Test Cue's rendering and performance."
         }
@@ -41,6 +43,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .homeContent: return "rectangle.grid.3x1"
         case .playback: return "playpause"
+        case .storage: return "internaldrive"
         case .about: return "info.circle"
         case .developer: return "chevron.left.forwardslash.chevron.right"
         }
@@ -61,6 +64,7 @@ struct SettingsCategoryPane: View {
         case .appearance:   AppearanceSettingsDetail()
         case .homeContent:  HomeContentSettingsDetail()
         case .playback:     PlaybackSettingsDetail()
+        case .storage:      StorageSettingsDetail()
         case .about:        AboutDetail()
         case .developer:    DeveloperSettingsDetail()
         }
@@ -326,6 +330,72 @@ struct CueSwitch: View {
                 .padding(4)
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isOn)
+    }
+}
+
+/// Storage: what Cue keeps on this Apple TV, by kind, its size and
+/// allowance, and one clear for all of it (`CacheStorage`). No
+/// confirmation: everything here loads again as needed.
+struct StorageSettingsDetail: View {
+    @State private var parts: [CacheStorage.Part] = []
+    @State private var free: Int64?
+    @State private var measured = false
+    @State private var clearing = false
+
+    var body: some View {
+        SettingsPage(title: SettingsCategory.storage.title,
+                     subtitle: "Cue keeps pictures and title details on this Apple TV so pages open at once. "
+                        + "Clearing them is safe: they load again as needed.") {
+            SettingsSection {
+                SettingsButtonRow(title: "Clear Cache",
+                                  description: "Removes everything below. Your account, profiles, progress, "
+                                    + "library and settings stay.",
+                                  value: clearing ? "Clearing…" : (measured ? Self.size(total) : nil)) {
+                    clear()
+                }
+            }
+            SettingsSection(title: "Cache") {
+                VStack(spacing: 0) {
+                    ForEach(parts) { part in
+                        SettingsInfoRow(title: part.name, value: Self.value(part))
+                    }
+                }
+            }
+            SettingsSection {
+                VStack(spacing: 0) {
+                    SettingsInfoRow(title: "Free on This Apple TV", value: free.map(Self.size) ?? "—")
+                }
+            }
+        }
+        .task { await measure() }
+    }
+
+    private var total: Int64 { parts.reduce(0) { $0 + $1.bytes } }
+
+    private func measure() async {
+        parts = await CacheStorage.measure()
+        free = CacheStorage.available()
+        measured = true
+    }
+
+    private func clear() {
+        guard !clearing else { return }
+        clearing = true
+        Task {
+            await CacheStorage.clear()
+            await measure()
+            clearing = false
+        }
+    }
+
+    private static func size(_ bytes: Int64) -> String {
+        bytes == 0 ? "Empty" : ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
+    }
+
+    private static func value(_ part: CacheStorage.Part) -> String {
+        guard let limit = part.limit else { return size(part.bytes) }
+        let limitText = ByteCountFormatter.string(fromByteCount: limit, countStyle: .memory)
+        return part.bytes == 0 ? "Empty, up to \(limitText)" : "\(size(part.bytes)) of \(limitText)"
     }
 }
 

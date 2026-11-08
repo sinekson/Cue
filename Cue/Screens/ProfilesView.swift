@@ -91,7 +91,10 @@ struct ProfileAvatarView: View {
 /// asks its PIN first; nothing switches). The picked avatar flies to the top bar's as Home dissolves in;
 /// Home not ready yet for that profile (the launch's preload, or another
 /// profile's after a switch — `LaunchPreloader.picked`), it waits in the
-/// middle, breathing as the launch's play.
+/// middle over the launch's status line. At launch and coming back, the
+/// focused profile is picked by itself after `autoPick` with no press (not
+/// a locked one), "Continuing as …" under the names for its last
+/// `autoPickNotice`; any press stops it for good.
 struct ProfileGate: View {
     @EnvironmentObject private var profiles: ProfileStore
     @ObservedObject private var launch = LaunchPreloader.shared
@@ -104,8 +107,12 @@ struct ProfileGate: View {
     static let avatarSize: CGFloat = 180
     /// Focused, as the cards' moving focus.
     static let focusScale: CGFloat = 1.05
-    /// Waiting, as the launch's play.
-    static let breath: (scale: CGFloat, duration: Double) = (1.08, 0.8)
+    /// No press this long: the focused profile is picked.
+    static let autoPick: Double = 5
+    /// "Continuing as …" for the auto-pick's last seconds.
+    static let autoPickNotice: Double = 2
+    /// The status line's baseline room under the waiting avatar.
+    static let statusGap: CGFloat = 64
 
     private enum Phase { case choosing, waiting, flying }
     @State private var phase = Phase.choosing
@@ -115,7 +122,12 @@ struct ProfileGate: View {
     @State private var centres: [Int: CGPoint] = [:]
     @State private var flyerCentre = CGPoint.zero
     @State private var flyerScale: CGFloat = 1
-    @State private var breathing = false
+    /// The status line up under the waiting avatar (once it's in the middle).
+    @State private var statusUp = false
+    /// The profile about to be picked by itself ("Continuing as …").
+    @State private var continuing: UserProfile?
+    /// A press or a focus move: no auto-pick any more.
+    @State private var touched = false
     @State private var screen = CGSize.zero
     @State private var adding = false
     /// The PIN asked to edit a profile (held), not to pick it.
@@ -186,12 +198,21 @@ struct ProfileGate: View {
             if let picked, phase != .choosing {
                 flyer(picked)
             }
+            if phase == .waiting, statusUp {
+                SweepLine(text: launch.status, sweeping: true)
+                    .frame(width: 1200, height: 44)
+                    .position(x: screen.width / 2,
+                              y: screen.height / 2 + Self.avatarSize / 2 + Self.statusGap)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { screen = $0 }
         .animation(Motion.fade, value: pinProfile?.id)
         .animation(Motion.fade, value: adding)
         .animation(Motion.fade, value: editing)
+        .animation(Motion.fade, value: phase == .waiting && statusUp)
         // At launch and coming back there's nothing to go back to (the
         // window drops it — `BackCatch`); from the top bar, Back closes it.
         .onExitCommand { if phase == .choosing, !adding, editing == nil { launch.cancelGate() } }
@@ -202,6 +223,37 @@ struct ProfileGate: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = profiles.activeProfileID }
         }
         .task { await profiles.loadAvatarCatalog() }
+        .task { await autoPickAfterRest() }
+        .onChange(of: focused) { old, _ in if old != nil { stopAutoPick() } }
+    }
+
+    /// The focused profile picked by itself after `autoPick` with no press
+    /// (at launch and coming back; not from the top bar, not a locked one).
+    private func autoPickAfterRest() async {
+        guard mode != .topBar else { return }
+        let appeared = CACurrentMediaTime()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+            if InputHold.lastPress > appeared { stopAutoPick() }
+            guard !touched, phase == .choosing, !adding, pinProfile == nil, editing == nil,
+                  let id = focused, let profile = profiles.profiles.first(where: { $0.id == id }),
+                  !profile.pinEnabled else {
+                if touched { return }
+                continue
+            }
+            let rested = CACurrentMediaTime() - appeared
+            if rested >= Self.autoPick {
+                continuing = nil
+                select(profile)
+                return
+            }
+            if rested >= Self.autoPick - Self.autoPickNotice, continuing == nil { continuing = profile }
+        }
+    }
+
+    private func stopAutoPick() {
+        touched = true
+        continuing = nil
     }
 
     private var chooser: some View {
@@ -234,6 +286,13 @@ struct ProfileGate: View {
                 }
             }
             .defaultFocus($focused, profiles.activeProfileID)
+            // Room kept, so nothing moves as it shows.
+            Text("Continuing as \(continuing?.name ?? " ")")
+                .font(.system(size: 24))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                .opacity(continuing == nil ? 0 : 1)
+                .animation(Motion.fade, value: continuing == nil)
+                .padding(.top, -24)
         }
         .task(id: focused) {
             hinted = nil
@@ -252,9 +311,6 @@ struct ProfileGate: View {
     private func flyer(_ profile: UserProfile) -> some View {
         GateAvatarFace(profile: profile, size: Self.avatarSize, lit: phase == .waiting,
                        edges: phase != .flying)
-            .scaleEffect(breathing ? Self.breath.scale : 1)
-            .animation(breathing ? .easeInOut(duration: Self.breath.duration).repeatForever(autoreverses: true)
-                       : Motion.focus, value: breathing)
             .scaleEffect(flyerScale)
             .position(flyerCentre)
             .allowsHitTesting(false)
@@ -302,13 +358,12 @@ struct ProfileGate: View {
             flyerScale = 1
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Motion.presentDuration) {
-            if phase == .waiting { breathing = true }
+            if phase == .waiting { statusUp = true }
         }
     }
 
     /// Up into the top bar's avatar, Home dissolving in under it.
     private func fly() {
-        breathing = false
         phase = .flying
         onFly()
         if let target = TopBarAvatar.frame {

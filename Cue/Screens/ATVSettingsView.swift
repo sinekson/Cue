@@ -254,7 +254,7 @@ private struct SettingsIcon: View {
 
 extension SettingsCategoryPane {
     /// Categories on the new rows.
-    private static let rowCategories: Set<SettingsCategory> = [.account, .tmdb, .mdblist, .appearance, .homeContent, .playback, .about]
+    private static let rowCategories: Set<SettingsCategory> = [.account, .tmdb, .mdblist, .appearance, .homeContent, .playback, .storage, .about]
 
     /// A category's settings in the column. Pages not yet on the new rows
     /// keep their own layout, from the same top.

@@ -1,5 +1,22 @@
 import Foundation
 
+struct DeadlinePassed: Error {}
+
+/// `work`, or `DeadlinePassed` after `seconds` — wall-clock, unlike a
+/// request's own timeout (which only counts silence).
+func withDeadline<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await work() }
+        group.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw DeadlinePassed()
+        }
+        defer { group.cancelAll() }
+        guard let first = try await group.next() else { throw DeadlinePassed() }
+        return first
+    }
+}
+
 /// Runs `work` over `items` with at most `limit` tasks in flight, returning the
 /// results in the ORIGINAL order of `items`.
 ///

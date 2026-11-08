@@ -105,7 +105,13 @@ final class ImageCache: @unchecked Sendable {
                                         qos: .userInitiated, attributes: .concurrent)
     private let fm = FileManager.default
     private let diskURL: URL
-    private let diskBudget = 512 * 1024 * 1024   // ~512 MB of encoded images
+    static let diskLimit = 512 * 1024 * 1024   // ~512 MB of encoded images
+    private let diskBudget = ImageCache.diskLimit
+    /// Its folder on disk (Settings → Storage measures it).
+    static var diskFolder: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("cue-images", isDirectory: true)
+    }
 
     private init() {
         // Sized to the hardware: the Apple TV HD has 2 GB total — a 256 MB
@@ -476,6 +482,49 @@ final class ImageCache: @unchecked Sendable {
         guard let url = URL(string: value), let data = try? await download(url) else { return false }
         ioQueue.async { self.writeCacheFile(data, to: fileURL) }
         return true
+    }
+
+    /// On DISK at `maxDimension`, not kept in memory: the original
+    /// downloaded if it isn't there, and its copy at that size made
+    /// (`keepResized`), so a later decode reads a small file (the queue's
+    /// further titles — decoding all into memory would evict the first
+    /// screen's). Once per launch per size.
+    @discardableResult
+    @MainActor func keepOnDisk(_ value: String, maxDimension: CGFloat) async -> Bool {
+        let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: nil)
+        if image(for: key) != nil || keptOnDisk.contains(key) { return true }
+        let resizedURL = fileURL(for: key)
+        if fm.fileExists(atPath: resizedURL.path) { keptOnDisk.insert(key); return true }
+        let data: Data
+        if let saved = await diskData(for: value) {
+            data = saved
+        } else {
+            guard let url = URL(string: value), let downloaded = try? await download(url) else { return false }
+            data = downloaded
+            let fileURL = fileURL(for: value)
+            ioQueue.async { self.writeCacheFile(downloaded, to: fileURL) }
+        }
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        if let image = await DecodeGate.shared.run(.ahead, { ImageCache.decodeDownsampled(data, budget: budget) }) {
+            ioQueue.async { self.keepResized(image, of: data, at: resizedURL) }
+        }
+        keptOnDisk.insert(key)
+        return true
+    }
+    @MainActor private var keptOnDisk = Set<String>()
+
+    /// Every picture on disk removed (Settings → Storage); what's decoded
+    /// in memory stays (cards on screen keep theirs) until it's evicted.
+    @MainActor func clearDisk() async {
+        keptOnDisk = []
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            ioQueue.async(flags: .barrier) { [self] in
+                for file in (try? fm.contentsOfDirectory(at: diskURL, includingPropertiesForKeys: nil)) ?? [] {
+                    try? fm.removeItem(at: file)
+                }
+                done.resume()
+            }
+        }
     }
 
     /// As `preload`, from MEMORY or DISK only — never the network (the

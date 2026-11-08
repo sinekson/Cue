@@ -121,15 +121,13 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         chips.rootView = rowCell?.hosted(TitleChipsLine(item: item)) ?? environment(AnyView(TitleChipsLine(item: item)))
         if changed {
             facts.text = FixedFocusShowInfo.factsLine(item)
-            tagline.text = TMDBService.knownFacts(for: item)?.tagline ?? item.name
+            tagline.text = TitleRecords.shared.tagline(item) ?? item.name
             extras?.cancel()
             extras = Task { @MainActor [weak self] in
-                async let info = FixedFocusShowInfo.load(item)
-                async let facts = TMDBService.facts(for: item)
-                let (size, titleFacts) = await (info, facts)
-                guard let self, !Task.isCancelled, self.item?.id == item.id else { return }
-                self.facts.text = FixedFocusShowInfo.factsLine(item, info: size)
-                if let line = titleFacts?.tagline { self.tagline.text = line }
+                guard await TitleRecords.shared.refresh(item, [.show, .facts]),
+                      let self, !Task.isCancelled, self.item?.id == item.id else { return }
+                self.facts.text = FixedFocusShowInfo.factsLine(item)
+                self.tagline.text = TitleRecords.shared.tagline(item) ?? item.name
             }
         }
         applyFocus(isFocused)
@@ -205,18 +203,21 @@ struct TitleChipsLine: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     let item: MetaItem
     var includesStatus = true
-    @State private var ratings: MDBListRatings?
+    /// Bumped when its record changes (`TitleRecords`).
+    @State private var record = 0
 
     var body: some View {
+        let _ = record
         HStack(spacing: 10) {
             if includesStatus, let status = FixedFocusShowInfo.status(item) {
                 TitleBadge(text: status)
             }
-            FixedFocusBillboardText.ratingsChips(ratings, settings: mdblist.settings, item: item)
+            FixedFocusBillboardText.ratingsChips(TitleRecords.shared.ratings(item) ?? nil,
+                                                 settings: mdblist.settings, item: item)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: item.id) {
-            ratings = await MDBListService.ratings(for: item, settings: mdblist.settings)
+            if await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]) { record += 1 }
         }
     }
 }
@@ -1626,7 +1627,7 @@ final class FixedFocusChipsView: UIView {
     static func prepare(_ item: MetaItem) {
         _ = statusImage(item)
         let settings = MDBListSettingsStore.current
-        _ = ratingImage(MDBListService.cachedRatings(for: item) ?? nil, item: item, settings: settings)
+        _ = ratingImage(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
     }
 
     private static func statusImage(_ item: MetaItem) -> UIImage? {
@@ -1647,16 +1648,16 @@ final class FixedFocusChipsView: UIView {
         status.sizeToFit()
         ratingTask?.cancel()
         let settings = MDBListSettingsStore.current
-        if let known = MDBListService.cachedRatings(for: item) {
-            showRating(known, item: item, settings: settings)
-        } else {
-            showRating(nil, item: item, settings: settings)
-            guard settings.isConfigured, settings.showsRatings(onDetails: false) else { return }
-            ratingTask = Task { @MainActor [weak self] in
-                let ratings = await MDBListService.ratings(for: item, settings: settings)
-                guard !Task.isCancelled, let ratings else { return }
-                self?.showRating(ratings, item: item, settings: settings)
-            }
+        // What the record holds at once; asked again if missing or a day
+        // old, redrawn only if the answer differs.
+        showRating(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
+        ratingTask = Task { @MainActor [weak self] in
+            guard await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]), !Task.isCancelled,
+                  let self else { return }
+            self.status.image = Self.statusImage(item)
+            self.status.isHidden = self.status.image == nil
+            self.status.sizeToFit()
+            self.showRating(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
         }
     }
 

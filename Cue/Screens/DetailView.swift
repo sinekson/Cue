@@ -1073,11 +1073,15 @@ struct DetailView: View {
             // Home's billboard text exactly (no summary: the tagline), on
             // its bottom line, the buttons below.
             FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
-                                    tagline: billboardTagline ?? TMDBService.knownFacts(for: viewModel.meta)?.tagline,
+                                    tagline: billboardTagline ?? TitleRecords.shared.tagline(viewModel.meta),
                                     logo: viewModel.shownLogo,
                                     lead: AnyView(DetailTrailerHint(model: viewModel, trailer: trailer)))
-                .task(id: viewModel.meta.id) { showInfo = await FixedFocusShowInfo.load(viewModel.meta) }
-                .task(id: viewModel.meta.id) { billboardTagline = await TMDBService.facts(for: viewModel.meta)?.tagline }
+                .task(id: viewModel.meta.id) {
+                    let meta = viewModel.meta
+                    await TitleRecords.shared.refresh(meta, [.show, .facts])
+                    showInfo = TitleRecords.shared.size(meta)
+                    billboardTagline = TitleRecords.shared.tagline(meta)
+                }
                 .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
                 .padding(.leading, FixedFocusMetrics.titleInset)
             headerExtras
@@ -2030,10 +2034,9 @@ final class DetailPreparer {
         startedAt = CACurrentMediaTime()
         let tmdb = context.tmdb
         Task { @MainActor in
-            async let info = FixedFocusShowInfo.load(item)
-            async let facts = TMDBService.hasAPIKey ? TMDBService.facts(for: item) : nil
-            prepared.showInfo = await info
-            prepared.tagline = await facts?.tagline
+            await TitleRecords.shared.refresh(item, [.show, .facts])
+            prepared.showInfo = TitleRecords.shared.size(item)
+            prepared.tagline = TitleRecords.shared.tagline(item)
             prepared.textReady = true
         }
         Task { @MainActor in

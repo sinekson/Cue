@@ -93,20 +93,37 @@ final class HomeViewModel: ObservableObject {
     /// Catalogs are pulled (add-ons can't push): an hour covers lists that
     /// change daily or hourly, at a handful of requests a day.
     static let refreshAge: TimeInterval = 60 * 60
+    /// One catalog's fetch, at most: then its saved copy stands.
+    static let catalogWait: Double = 8
     var isStale: Bool { loadedAt.map { Date().timeIntervalSince($0) > Self.refreshAge } ?? false }
 
     /// The billboard's picks (see `BillboardPicks`), made once per catalog
     /// fetch — the same rhythm, so the billboard doesn't reshuffle between.
     @Published private(set) var billboardPicks: [BillboardPick] = []
     private var picksMadeFor: Date?
+    /// A later fetch's picks, waiting for the billboard to be out of view.
+    private var nextPicks: [BillboardPick]?
 
     /// Make the picks for the catalogs fetched at `loadedAt` (once: Home,
-    /// Movies and Series share this model and all ask).
+    /// Movies and Series share this model and all ask). A refresh's new
+    /// picks swap in out of view (`BillboardSight`): never under your eyes.
     func refreshPicks(history: BillboardPicks.History, addonManager: AddonManager, tmdb: Bool) async {
         guard let loadedAt, picksMadeFor != loadedAt else { return }
         picksMadeFor = loadedAt
-        billboardPicks = await BillboardPicks.make(history: history, addonManager: addonManager,
-                                                   tmdb: tmdb, fallback: highlights(max: 20))
+        let made = await BillboardPicks.make(history: history, addonManager: addonManager,
+                                             tmdb: tmdb, fallback: highlights(max: 20))
+        guard picksMadeFor == loadedAt else { return }
+        if billboardPicks.isEmpty || LaunchPreloader.shared.curtain || !BillboardSight.shared.inView {
+            nextPicks = nil
+            billboardPicks = made
+        } else {
+            nextPicks = made
+            BillboardSight.shared.onAway = { [weak self] in
+                guard let self, let next = self.nextPicks else { return }
+                self.nextPicks = nil
+                self.billboardPicks = next
+            }
+        }
     }
 
     /// The picks are this fetch's (not still the one before — another
@@ -428,7 +445,11 @@ final class HomeViewModel: ObservableObject {
                     // we say which happened, so log the reason.
                     var items: [MetaItem]
                     do {
-                        items = try await StremioAPI.catalog(addon: request.addon, catalog: request.catalog)
+                        // At most `catalogWait`: past it the row keeps its
+                        // saved copy (the launch waits for these).
+                        items = try await withDeadline(Self.catalogWait) {
+                            try await StremioAPI.catalog(addon: request.addon, catalog: request.catalog)
+                        }
                     } catch {
                         NSLog("[CueHome] row dropped — fetch failed: %@ (%@): %@",
                               title, key, error.localizedDescription)
@@ -912,6 +933,15 @@ struct HomeView: View {
         // a day. (The rows under your focus don't reshuffle: the row view
         // only takes count changes while you're in it.)
         .onChange(of: active) { _, isActive in if isActive { refreshIfStale() } }
+        // …and while it sits open: checked every 5 min, so a list an hour
+        // old is fetched again without a press (the row under focus held).
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5 * 60))
+                guard !Task.isCancelled else { return }
+                refreshIfStale()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshIfStale() } }
         // Eight separate triggers, ONE debounced reload. Each of these used to
         // fire its own unthrottled `reload()`, and at launch they arrive in a
@@ -1491,6 +1521,23 @@ private struct FocusChangeModifier: ViewModifier {
 /// the page in front first (`HomeUIKitView.backToBillboard`), else the top
 /// bar. (One handler: a nested `onExitCommand` took every press, even
 /// without an action.)
+/// Whether a billboard is on screen — Home, Movies and Series each say for
+/// their own; the picks (shared) swap only once none is (`onAway`).
+@MainActor
+final class BillboardSight {
+    static let shared = BillboardSight()
+    private var seen: Set<UUID> = []
+    var inView: Bool { !seen.isEmpty }
+    var onAway: (() -> Void)?
+
+    func set(_ inView: Bool, for key: UUID) {
+        if inView { seen.insert(key) } else { seen.remove(key) }
+        guard !self.inView, let away = onAway else { return }
+        onAway = nil
+        away()
+    }
+}
+
 @MainActor
 final class HomeBack {
     static let shared = HomeBack()
@@ -1564,24 +1611,23 @@ struct HomeUIKitView: View {
     @State var dotsDepth = DetailRowsDepth()
     /// The billboard's title (kept while it fades out on Down).
     @State private var billboardItem: MetaItem?
-    /// Its MDBList ratings, per title (as on Details).
-    @State private var billboardRatings: [String: MDBListRatings] = [:]
-    /// Its season count from TMDB, per title.
-    @State private var billboardInfo: [String: TMDBService.ShowSize] = [:]
+    /// Bumped when the billboard title's record changes (`TitleRecords`):
+    /// its text reads the record.
+    @State private var billboardRecord = 0
     /// The colours shift through the scroll to or from the billboard.
     @State private var tintScroll = false
     /// Details (opened from the billboard) is taking / has taken over: the
     /// billboard's own cues (hint, dots) are out.
     /// Details is up over Home (the billboard doesn't page behind it).
     @ObservedObject private var detailsOpen = DetailsOpen.shared
+    /// This tab's say in `BillboardSight`.
+    @State private var sightKey = UUID()
     /// …and its picture has stepped closer (see `StagePictureView`).
 
     /// Below the billboard: the focused title's colours, or the app
     /// background (Settings → Appearance).
     @AppStorage(AppBackground.followsTitleKey) private var followsTitle = true
 
-    /// The billboard's titles' taglines (TMDB), as they come.
-    @State var billboardTaglines: [String: String] = [:]
     /// The dots' last state (so they fade out unchanged).
     @State private var lastBillboard: FixedFocusBillboardPosition?
     /// The billboard's buttons' focus.
@@ -2133,88 +2179,26 @@ private struct BillboardReasonLabel: View {
     }
 }
 
-/// What Home's text needs from TMDB for a series: its season count (catalog
-/// entries often carry no episode list) — one light request per title, kept
-/// for the session.
+/// What Home's text needs for a series beyond the catalog — its size and
+/// status — read from its record (`TitleRecords`).
 @MainActor
 enum FixedFocusShowInfo {
-    private static var cache: [String: TMDBService.ShowSize] = [:]
-    private static var statuses: [String: String] = [:]
-    private static var loading: [String: Task<TMDBService.ShowSize?, Never>] = [:]
-
-    static func known(_ item: MetaItem) -> TMDBService.ShowSize? { cache[item.id] }
-
-    /// On disk for a day: a relaunch doesn't ask again. (v2: from the
-    /// add-on's episode list — TMDB's counts, kept before, numbered some
-    /// shows differently from the Episodes page.)
-    private static let disk = DiskCache<TMDBService.ShowSize>(name: "show-sizes-v2")
-    /// The status for half a day: AIRING follows the air dates.
-    private static let statusDisk = DiskCache<String>(name: "series-status")
-    private static let statusTTL: TimeInterval = 12 * 60 * 60
+    static func known(_ item: MetaItem) -> TMDBService.ShowSize? { TitleRecords.shared.size(item) }
 
     /// A series' status chip: AIRING, RETURNING or "ENDED 2019" (see
-    /// `status(for:facts:)`) — the catalog's years until it's known.
-    static func status(_ item: MetaItem) -> String? {
-        statuses[item.id] ?? TitleBlock.catalogStatus(item)
-    }
+    /// `TitleRecords.status`) — the catalog's years until it's known.
+    static func status(_ item: MetaItem) -> String? { TitleRecords.shared.status(item) }
 
-    /// Seasons and episodes from the title's episode list (`SeriesEpisodes`
-    /// — the Episodes page's), specials not counted — and the status.
+    /// Seasons and episodes, specials not counted — once its record has
+    /// them (looked up if missing or a day old).
     static func load(_ item: MetaItem) async -> TMDBService.ShowSize? {
-        guard item.isSeries, let addonManager = AddonManager.shared else { return nil }
-        if let hit = cache[item.id], statuses[item.id] != nil { return hit }
-        if let stored = await disk.value(for: item.id, ttl: 24 * 60 * 60),
-           let status = await statusDisk.value(for: item.id, ttl: statusTTL) {
-            cache[item.id] = stored
-            statuses[item.id] = status
-            return stored
-        }
-        if let running = loading[item.id] { return await running.value }
-        let task = Task { () -> TMDBService.ShowSize? in
-            let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: addonManager)
-            if let status = status(for: meta, facts: await TMDBService.facts(for: item)) {
-                statuses[item.id] = status
-                await statusDisk.store(status, for: item.id)
-            }
-            return SeriesEpisodes.size(of: meta)
-        }
-        loading[item.id] = task
-        let result = await task.value
-        loading[item.id] = nil
-        if let result {
-            cache[item.id] = result
-            await disk.store(result, for: item.id)
-        }
-        return result
+        guard item.isSeries else { return nil }
+        await TitleRecords.shared.refresh(item, [.show, .facts])
+        return TitleRecords.shared.size(item)
     }
 
     /// How close "airing" is: an episode out within this, or due within it.
     static let airingWindow: TimeInterval = 10 * 24 * 60 * 60
-
-    /// - AIRING: an episode aired in the last `airingWindow`, or the next is
-    ///   due within it (the episode list's dates — the billboard's "New
-    ///   episode" data).
-    /// - ENDED + the year of its last episode: TMDB says ended or cancelled.
-    /// - RETURNING: neither — between seasons (TMDB "Returning Series").
-    /// Without TMDB, the catalog's years decide ENDED / RETURNING.
-    private static func status(for meta: MetaItem, facts: TMDBService.TitleFacts?) -> String? {
-        let now = Date()
-        let dated = (meta.videos ?? []).filter { ($0.season ?? 0) > 0 }.compactMap(\.airedDate)
-        let lastAired = dated.filter { $0 <= now }.max()
-        let nextDue = dated.filter { $0 > now }.min()
-        if let lastAired, now.timeIntervalSince(lastAired) <= airingWindow { return "AIRING" }
-        if let nextDue, nextDue.timeIntervalSince(now) <= airingWindow { return "AIRING" }
-        switch facts?.status {
-        case "ENDED":
-            let year = lastAired.map { String(Calendar.current.component(.year, from: $0)) }
-                ?? TitleBlock.catalogYears(meta)?.end
-            return year.map { "ENDED \($0)" } ?? "ENDED"
-        case "ONGOING":
-            return "RETURNING"
-        default:
-            return TitleBlock.catalogStatus(meta)
-        }
-    }
 
     /// Home's facts line (under the box, on the billboard): type, genre,
     /// the START year, size — no rating and no end year (the chips below
@@ -2223,7 +2207,7 @@ enum FixedFocusShowInfo {
     static func factsLine(_ item: MetaItem, info: TMDBService.ShowSize? = nil) -> String {
         // A collection's folder: how many catalogs it holds.
         if item.type == "collection" { return item.description ?? "" }
-        let info = info ?? cache[item.id]
+        let info = info ?? TitleRecords.shared.size(item)
         let size = item.regularSeasons.isEmpty && info != nil
             ? TitleBlock.seriesSizeText(item, seasons: info?.seasons, episodes: info?.episodes)
             : TitleBlock.seriesSizeText(item)
@@ -2481,6 +2465,12 @@ extension HomeUIKitView {
         // its text, hint and dots — not just its picture.
         .onAppear { primeBillboard(); autoPageDone = false }
         .onChange(of: homeScenePhase) { _, phase in if phase == .active { autoPageDone = false } }
+        // Whether this tab's billboard is on screen (or under Details): new
+        // picks wait until it isn't.
+        .onChange(of: active && (billboard != nil || detailsOpen.depth > 0), initial: true) { _, seen in
+            BillboardSight.shared.set(seen, for: sightKey)
+        }
+        .onDisappear { BillboardSight.shared.set(false, for: sightKey) }
         // THE BILLBOARD PAGING BY ITSELF: resting on it, the next title
         // after `BillboardAutoPage.interval` (the current segment fills over
         // it). Any press — a new title — starts it over; off the billboard,
@@ -2536,22 +2526,12 @@ extension HomeUIKitView {
                 // (The text itself is on the picture — `billboardPageText`;
                 // its data loads here.)
                 Color.clear.frame(width: 0, height: 0)
-                    // The ratings (cached by the service), as on Details.
+                    // Its record (size, status, tagline, ratings), brought
+                    // up to date if a day old.
                     .task(id: item.id) {
-                        if billboardInfo[item.id] == nil, let info = await FixedFocusShowInfo.load(item) {
-                            billboardInfo[item.id] = info
+                        if await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]) {
+                            billboardRecord += 1
                         }
-                    }
-                    .task(id: item.id) {
-                        guard billboardTaglines[item.id] == nil,
-                              let tagline = await TMDBService.facts(for: item)?.tagline else { return }
-                        billboardTaglines[item.id] = tagline
-                    }
-                    .task(id: item.id) {
-                        guard billboardRatings[item.id] == nil,
-                              let ratings = await MDBListService.ratings(for: item, settings: mdblist.settings)
-                        else { return }
-                        billboardRatings[item.id] = ratings
                     }
             }
             // The position, bottom centre (Left/Right): it stays in the strip
@@ -2668,10 +2648,12 @@ extension HomeUIKitView {
     private func billboardText(_ item: MetaItem, opened: Bool) -> some View {
         // (What's in memory already — loaded ahead, `TitleExtras` — draws
         // with the text, not a moment after it.)
-        FixedFocusBillboardText(item: item, info: billboardInfo[item.id] ?? FixedFocusShowInfo.known(item),
+        let _ = billboardRecord
+        let records = TitleRecords.shared
+        return FixedFocusBillboardText(item: item, info: records.size(item),
                                 reason: opened ? nil : billboardReasons[item.id],
                                 ratings: billboardRatingsRow(item),
-                                tagline: billboardTaglines[item.id] ?? TMDBService.knownFacts(for: item)?.tagline)
+                                tagline: records.tagline(item))
             .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
             .padding(.leading, FixedFocusMetrics.titleInset)
     }
@@ -2679,7 +2661,7 @@ extension HomeUIKitView {
     /// The ratings chips (nil: none at all) — the catalog's IMDb score until
     /// MDBList's arrive, as on the Detail page.
     private func billboardRatingsRow(_ item: MetaItem) -> AnyView? {
-        FixedFocusBillboardText.ratingsChips(billboardRatings[item.id] ?? MDBListService.cachedRatings(for: item) ?? nil,
+        FixedFocusBillboardText.ratingsChips(TitleRecords.shared.ratings(item) ?? nil,
                                              settings: mdblist.settings, item: item)
     }
 }

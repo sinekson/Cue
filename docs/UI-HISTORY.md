@@ -1199,8 +1199,19 @@ matching section before changing that part of the UI. Where this differs from
   shrinking while the preload ran, then pushed (`LaunchStageView`); no play
   of ours — the system's went too quick; the pink picture full-screen (too
   bright); the play opening into the app (Home through its growing shape).
-  **Who's watching?** (`ProfileGate`, 2+ profiles or the active one
-  locked — `gateNeeded`): the curtain itself, after the held play
+  (2026-11-08: the play is gone; the gate comes at the first frame, with no
+  hold, for every launch and every return after 4 hours, one profile too —
+  a choice, so Add Profile is reachable; the focused unlocked profile is
+  picked after 5 s with no press, "Continuing as …" at the tertiary level
+  for the last 2 s, any press stopping it (tried: no gate with one profile,
+  the status line alone on the curtain — five exact lines read as a
+  log). The waiting avatar no longer breathes: the status line under it,
+  one line per launch, at random: "Assembling the lineup", "Gathering
+  the cast", "Aligning the satellites" (tried: "Seeing what's new" then
+  "Getting things ready"; talked over: a cinema set, "Opening the doors"
+  etc.; three beats; plain lines as "Getting your Home ready").)
+  **Who's watching?** (`ProfileGate`, formerly 2+ profiles or the active
+  one locked — `gateNeeded`, gone): the curtain itself, after the held play
   (`LaunchCurtain.gate`, expected before the root decides) — not a
   system cover. The preload runs under it
   for the last profile (focus starts there). Picked: the stores switch at

@@ -49,7 +49,7 @@ enum InputHold {
     static func begin() { on = true }
     static func end() { on = false }
     /// The last press's start (any button).
-    private static var lastPress: CFTimeInterval = 0
+    private(set) static var lastPress: CFTimeInterval = 0
 
     /// `body` once the remote has been still for `idle` seconds — for
     /// main-thread work that's out of sight but long enough to delay a
@@ -165,7 +165,7 @@ struct CueApp: App {
         AppProbe.installLevels()
         BackCatch.install()
         InputHold.install()
-        // The background, in before the gate (it fades in under the play).
+        // The background, in before the gate (it fades in under the line).
         BandsPictureStore.shared.load()
     }
 
@@ -469,6 +469,7 @@ struct RootView: View {
                         tmdbSettings: tmdbSettings
                     )
                     sync = nuvioSync
+                    LaunchPreloader.shared.sync = nuvioSync
                     // Everything personal rescopes on a switch, even when
                     // signed out of Cue (the sync manager only runs while
                     // signed in): add-ons (honouring the
@@ -562,9 +563,9 @@ struct RootView: View {
                         || args.contains("-welcomeOfferDemo")
                     showWelcome = (forceWelcome || OnboardingState.shouldShow(
                         signedIn: account.authState.isSignedIn)) && !demoMode
-                    // "Who's watching?" on the launch curtain (`gateNeeded`).
+                    // "Who's watching?" on the launch curtain.
                     launch.onGateClosed = { picked in afterProfileGate(picked: picked) }
-                    if gateNeeded, !showWelcome, !demoMode { launch.showGate(.launch) } else { launch.noGate() }
+                    if !showWelcome, !demoMode { launch.showGate(.launch) } else { launch.noGate() }
                     if args.contains("-settingsDemo") { selectedTab = 3 }
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
@@ -718,7 +719,7 @@ struct RootView: View {
                 WelcomeView(account: account, addonManager: addonManager) {
                     OnboardingState.completed = true
                     showWelcome = false
-                    if gateNeeded { launch.showGate(.resume) }
+                    launch.showGate(.resume)
                 }
 
             }
@@ -728,12 +729,12 @@ struct RootView: View {
             .onChange(of: scenePhase) { old, phase in
                 AppProbe.scene = "\(phase)"
                 AppProbe.life("scene → \(phase)")
-                // Coming back: the held play, then the app — or after hours
-                // away, who's watching, again. From the first phase out of
-                // the background, so the play is there as the app shows.
+                // Coming back after hours away: who's watching, again. From
+                // the first phase out of the background, so it's there as
+                // the app shows.
                 if phase == .background { launch.wentAway() }
                 if old == .background, phase != .background {
-                    launch.cameBack(needed: gateNeeded && playback == nil && !showWelcome)
+                    launch.cameBack(needed: playback == nil && !showWelcome)
                 }
                 if phase == .active {
                     // Opening the app syncs the whole account, not just
@@ -1607,13 +1608,6 @@ struct RootView: View {
         }
     }
 
-    /// "Who's watching?" — at launch, after the welcome, after 4 hours away:
-    /// 2+ profiles, or the active one PIN locked (with only the count test, a
-    /// device with a single locked profile booted straight into it).
-    private var gateNeeded: Bool { Self.gateNeeded(profiles) }
-    static func gateNeeded(_ profiles: ProfileStore) -> Bool {
-        profiles.profiles.count >= 2 || profiles.active.pinEnabled
-    }
     /// Launched into a screen to look at: no gate covering it.
     static var demoMode: Bool {
         let args = ProcessInfo.processInfo.arguments
@@ -2093,19 +2087,22 @@ enum FocusTrace {
 // MARK: - Launch (docs/LOADING-PLAN.md §4)
 
 /// THE LAUNCH: on a cold start, under the launch curtain (the app's background,
-/// as the launch screen — no play, no spinner),
-/// the closest things get ready — Home's rows and billboard from disk, the
-/// billboard's pictures and colours decoded, the first row's posters, the
-/// one-time artwork — and Home is built under it. That ends when it's done (at least `minimum` shown), or at `cap`
-/// — never waiting on the network: what isn't on disk loads as usual
-/// afterwards. Then the curtain fades into Home; input
+/// as the launch screen, and a line saying what's under way — `status`),
+/// Home gets ready: its saved rows, then the minimum — every catalog fresh
+/// and the Nuvio pull, the billboard's picks from those, what the first
+/// screen draws and one press reaches (`minimumJobs`) — and Home is built
+/// under it. Then the rest of Home, nearest first (`deep`, `LoadQueue`),
+/// until `minimum` has passed; it goes on behind Home. The curtain waits
+/// for the minimum however long it takes, up to `ceiling`. Then the
+/// curtain fades into Home; input
 /// comes back with the fade (`lift`). Every step logs a count and its time to
 /// the probe.
-/// With profiles to choose from, "Who's watching?" (`ProfileGate`) is the
-/// curtain from its first frame: the preload runs under it for the last
-/// profile (focus starts there); another one picked, the same steps again for
-/// it (`restart`) while its avatar breathes; ready, the avatar flies to the
-/// top bar as Home dissolves in (`gateLanded`). The same gate after 4 hours
+/// "Who's watching?" (`ProfileGate`) is the curtain from its first frame,
+/// one profile or more (a choice always: Add Profile is there): the preload
+/// runs under it for the last profile (focus starts there, picked by itself
+/// after a rest); another one picked, the same steps again for it
+/// (`restart`); not ready, its avatar waits in the middle over the status
+/// line; ready, it flies to the top bar as Home dissolves in (`gateLanded`). The same gate after 4 hours
 /// away (`resume`) and from the top bar's avatar (`topBar`, Back closes it).
 @MainActor
 final class LaunchPreloader: ObservableObject {
@@ -2114,16 +2111,12 @@ final class LaunchPreloader: ObservableObject {
     /// Over the app, input off — until everything's ready (or the gate has
     /// landed).
     @Published private(set) var curtain = true
-    /// The play on the curtain: tvOS holds the icon's play in the middle
-    /// until our first frame (~0.35 s in, mid-zoom — too quick; coming back,
-    /// at once); the curtain carries on with the same play (`LaunchPlay`,
-    /// the system's pixels), still, for `playHold`, then it fades as the
-    /// gate or the app comes in (as the system hands off to Settings).
-    @Published private(set) var playing = true
-    static let playHold: Duration = .seconds(0.6)
-    /// Coming back the system's play goes at once (the app's frame is
-    /// ready): ours holds as long as the two together at a cold start.
-    static let resumeHold: Duration = .seconds(0.95)
+    /// Under the picked avatar while Home gets ready (`ProfileGate`), the
+    /// stage's style (`SweepLine`): one line, a hint, not the steps (they
+    /// go to the probe) — one of `lines` per launch, never changing
+    /// mid-wait.
+    @Published private(set) var status = LaunchPreloader.lines[0]
+    static let lines = ["Assembling the lineup", "Gathering the cast", "Aligning the satellites"]
 
     enum GateMode { case launch, resume, topBar }
     /// "Who's watching?" on the curtain.
@@ -2135,8 +2128,14 @@ final class LaunchPreloader: ObservableObject {
     /// billboard), false when Back closed it (focus back on the avatar).
     var onGateClosed: (Bool) -> Void = { _ in }
 
-    static let minimum: Double = 0.6
-    static let cap: Double = 2.5
+    /// Up at least this long, the time past the minimum spent going deeper
+    /// (`deep`): a fast launch gets more ready, not a flash.
+    static let minimum: Double = 3
+    /// The safety ceiling: the curtain waits for the minimum however long
+    /// it takes — only a broken network gets here; then placeholders.
+    static let ceiling: Double = 15
+    /// The account's sync (Continue Watching, library), waited for at launch.
+    weak var sync: NuvioSyncManager?
     /// Away this long, the gate asks again.
     static let awayForGate: TimeInterval = 4 * 60 * 60
 
@@ -2169,11 +2168,12 @@ final class LaunchPreloader: ObservableObject {
         let current = generation
         finished = false
         ready = false
+        status = Self.lines.randomElement() ?? Self.lines[0]
         stepsStarted = CACurrentMediaTime()
         Task { await steps(firstLaunch: firstLaunch, generation: current) }
         Task {
-            try? await Task.sleep(for: .seconds(Self.cap))
-            if current == generation { finish(note: "cap reached") }
+            try? await Task.sleep(for: .seconds(Self.ceiling))
+            if current == generation { finish(note: "ceiling reached") }
         }
     }
 
@@ -2202,7 +2202,6 @@ final class LaunchPreloader: ObservableObject {
     func lift() {
         guard curtain else { return }
         curtain = false
-        playing = false
         // The focus engine doesn't pick a focus by itself — the first press
         // only woke it. Asked to, once the page is enabled.
         Task {
@@ -2220,9 +2219,6 @@ final class LaunchPreloader: ObservableObject {
     /// the gate it expects — the gate from the first frame, no play before it.
     @Published private(set) var gateDecided = false
     func noGate() { gateDecided = true }
-    /// The held play gives way to the gate (it stays until the curtain lifts
-    /// without one).
-    func endPlay() { playing = false }
 
     /// "Who's watching?" over the app. At launch the preload carries on
     /// under it; coming back or from the top bar Home is already there.
@@ -2231,7 +2227,6 @@ final class LaunchPreloader: ObservableObject {
         guard gate == nil else { return }
         gate = mode
         curtain = true
-        playing = false
         if mode != .launch {
             ready = true
         }
@@ -2262,28 +2257,20 @@ final class LaunchPreloader: ObservableObject {
     }
 
     /// The app went to the background / came back: after `awayForGate`,
-    /// the gate (if there is one to show — `needed`). The gate on the
-    /// curtain (due, or left up): the play first, held as at launch (the
-    /// system's play goes at once — the app's frame is ready), the gate
-    /// fading in after. Back to the page: the page as it was.
+    /// the gate (if there is one to show — `needed`), at once (the system's
+    /// play goes at once: the app's frame is ready). Back to the page: the
+    /// page as it was.
     func wentAway() { wentAwayAt = Date() }
     func cameBack(needed: Bool) {
         defer { wentAwayAt = nil }
-        // Still held (the launch's play, a resume's): nothing more.
-        guard let away = wentAwayAt, !playing else { return }
+        if !curtain { deep() }
+        guard let away = wentAwayAt else { return }
         let gateDue = needed && gate == nil && !curtain
             && Date().timeIntervalSince(away) >= Self.awayForGate
-        guard gateDue || gate != nil else { return }
+        guard gateDue else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            if gateDue { showGate(.resume) }
-            playing = true
-        }
-        Task {
-            try? await Task.sleep(for: Self.resumeHold)
-            if curtain { playing = false }
-        }
+        withTransaction(transaction) { showGate(.resume) }
     }
 
     private func line(_ text: String) {
@@ -2292,132 +2279,349 @@ final class LaunchPreloader: ObservableObject {
 
     private func steps(firstLaunch: Bool, generation current: Int) async {
         guard let home, let addonManager else { return }
+        // The titles' records (`TitleRecords`): one small file, into memory.
+        TitleRecords.shared.load()
         // ① From disk: Home's rows and billboard picks (Home reads its cache
-        // as it's built under the curtain) — and the titles to open first.
+        // as it's built under the curtain).
         var t = CACurrentMediaTime()
+        let launchedAt = Date()
         // After a switch at the gate: the new profile's reload (`profileSwitched`)
         // — its rows and picks replace the old profile's.
         let loadedBefore = firstLaunch ? nil : home.loadedAt
-        if !firstLaunch {
-            while home.loadedAt == loadedBefore, elapsed < 2.0 { try? await Task.sleep(for: .milliseconds(25)) }
-        }
         while home.entries.isEmpty, elapsed < 1.0 { try? await Task.sleep(for: .milliseconds(25)) }
-        // The billboard's own picks (made once the catalogs are in): waited
-        // for — they replaced the rows' highlights a moment after Home
-        // appeared, a visible swap. At most until 2 s (room for the decodes
-        // before the cap).
-        let picksStarted = CACurrentMediaTime()
-        while home.billboardPicks.isEmpty || !home.picksCurrent, elapsed < 2.0 {
+        line(String(format: "Disk      rows %d · %.0f ms", home.entries.count, (CACurrentMediaTime() - t) * 1000))
+
+        // ② The minimum begins with the network: every catalog fresh (Home's
+        // own load, started as it was built; each one at most
+        // `HomeViewModel.catalogWait`, then its saved copy) and the account's
+        // pull (Continue Watching, library — `syncOnAppOpen`), so Home shows
+        // the latest and nothing changes under you after the curtain.
+        t = CACurrentMediaTime()
+        var sawSyncing = false
+        func catalogsIn() -> Bool { home.loadedAt != nil && home.loadedAt != loadedBefore }
+        func syncIn() -> Bool {
+            guard let sync, sync.signedIn else { return true }
+            if sync.isSyncing { sawSyncing = true; return false }
+            if let at = sync.lastSyncedAt, at >= launchedAt { return true }
+            return sawSyncing   // ended without a success (failed, abandoned)
+        }
+        while current == generation {
+            let catalogs = catalogsIn(), synced = syncIn()
+            if catalogs, synced { break }
             try? await Task.sleep(for: .milliseconds(25))
         }
-        let picksWait = (CACurrentMediaTime() - picksStarted) * 1000
+        guard current == generation else { return }
+        line(String(format: "Network   catalogs and sync · %.0f ms", (CACurrentMediaTime() - t) * 1000))
+
+        // The billboard's own picks, made from the fresh rows.
+        t = CACurrentMediaTime()
+        while !home.picksCurrent, current == generation { try? await Task.sleep(for: .milliseconds(25)) }
+        guard current == generation else { return }
         // (Home's own: its first `BillboardPicks.count` — the model holds
         // every tab's.)
         let picks = home.billboard(type: nil).map(\.item)
-        let rows: [HomeRow] = home.entries.compactMap { if case .catalog(let row) = $0 { return row } else { return nil } }
-        var records = 0
-        let firstTitles = Array(picks.prefix(6)) + Array((rows.first?.items ?? []).prefix(6))
-        for item in firstTitles {
-            if let addon = addonManager.metaAddons(for: item.type, id: item.id).first,
-               await StremioAPI.warmMeta(addon: addon, type: item.type, id: item.id) { records += 1 }
-        }
-        line(String(format: "Disk      rows %d · picks %d%@ (waited %.0f ms) · records %d/%d · %.0f ms",
-                    rows.count, picks.count, home.billboardPicks.isEmpty ? " (highlights)" : "",
-                    picksWait, records, firstTitles.count, (CACurrentMediaTime() - t) * 1000))
+        let rows = catalogRows(home)
+        line(String(format: "Picks     %d · %.0f ms", picks.count, (CACurrentMediaTime() - t) * 1000))
 
-        // Continue Watching's episode stills (TMDB's seasons, on disk once
-        // seen), so its cards come up with them.
-        t = CACurrentMediaTime()
-        var stills: [String] = []
-        if let progress, let homeSettings, let tmdb {
-            let rows = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
-            stills = await ContinueStills.shared.load(rows, useEpisodes: tmdb.settings.useEpisodes)
-        }
-        line(String(format: "Stills    %d · %.0f ms", stills.count, (CACurrentMediaTime() - t) * 1000))
-
-        // ③ One-time artwork (cheap; first so it's off the way), on the main
-        // actor — under the curtain.
-        t = CACurrentMediaTime()
+        // One-time artwork (cheap), on the main actor — under the curtain.
         _ = StageArt.shade
         _ = FixedFocusCardEdge.shadowImage
         _ = BillboardShade.image
-        line(String(format: "Setup     artwork 3 · %.0f ms", (CACurrentMediaTime() - t) * 1000))
 
-        // ② Decodes, from disk only, a few at a time: the billboard's first
-        // backdrops (the stage's own size), every logo, the first colours, the
-        // first row's posters (the cards' size).
+        // ③ The rest of the minimum, through the queue (`LoadQueue`): what
+        // the first screen draws and one press reaches — records, pictures.
         t = CACurrentMediaTime()
-        var jobs: [(kind: String, run: () async -> Bool)] = []
-        for item in picks.prefix(3) {
-            if let url = TMDBService.originalSize(item.background) ?? item.poster {
-                jobs.append(("backdrop", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.screen) }))
-            }
+        let jobs = minimumJobs(picks: picks, rows: rows, addonManager: addonManager)
+        let keys = jobs.map(\.key)
+        LoadQueue.shared.add(jobs)
+        while LoadQueue.shared.busy(keys), current == generation {
+            try? await Task.sleep(for: .milliseconds(25))
         }
-        for item in picks {
-            if let logo = item.logo {
-                jobs.append(("logo", { await ImageCache.shared.preloadFromDisk(logo, maxDimension: PictureSize.logo) }))
-            }
-        }
-        for item in picks.prefix(3) {
-            if let url = item.background ?? item.poster {
-                jobs.append(("colours", {
-                    await FixedFocusTint.colors(for: url) != nil
-                }))
-            }
-        }
-        for url in stills {
-            jobs.append(("still", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.landscape) }))
-        }
-        for item in (rows.first?.items ?? []).prefix(8) {
-            if let url = item.poster ?? item.background {
-                jobs.append(("poster", { await ImageCache.shared.preloadFromDisk(url, maxDimension: PictureSize.poster) }))
-            }
-        }
-        var done: [String: (ok: Int, all: Int)] = [:]
-        // A few at a time (the decodes themselves are off the main actor).
-        var next = 0
-        await withTaskGroup(of: (String, Bool).self) { group in
-            func start() {
-                guard next < jobs.count else { return }
-                let job = jobs[next]
-                next += 1
-                group.addTask { (job.kind, await job.run()) }
-            }
-            for _ in 0..<3 { start() }
-            for await (kind, ok) in group {
-                var entry = done[kind] ?? (0, 0)
-                entry.all += 1
-                if ok { entry.ok += 1 }
-                done[kind] = entry
-                start()
-            }
-        }
-        let summary = [("backdrop", "backdrops"), ("logo", "logos"), ("colours", "colours"), ("poster", "posters"), ("still", "stills")]
-            .compactMap { kind, label -> String? in
-                guard let entry = done[kind] else { return nil }
-                return "\(label) \(entry.ok)/\(entry.all)"
-            }.joined(separator: " · ")
-        line(String(format: "Decode    %@ · %.0f ms", summary, (CACurrentMediaTime() - t) * 1000))
+        guard current == generation else { return }
+        line(String(format: "Minimum   %d jobs · %.0f ms (at %.2f s)", jobs.count,
+                    (CACurrentMediaTime() - t) * 1000, elapsed))
 
-        // Shown at least `minimum` (the play breathes once, not a flash).
-        if elapsed < Self.minimum { try? await Task.sleep(for: .seconds(Self.minimum - elapsed)) }
+        // ④ The rest of Home, nearest first: on the curtain until `minimum`
+        // (the floor), then on behind Home.
+        LoadQueue.shared.launchStartedAt = stepsStarted
+        deep(force: true)
+        if elapsed < Self.minimum {
+            try? await Task.sleep(for: .seconds(Self.minimum - elapsed))
+        }
         guard current == generation else { return }
         finish(note: "ready")
     }
+
+    private func catalogRows(_ home: HomeViewModel) -> [HomeRow] {
+        home.entries.compactMap { if case .catalog(let row) = $0 { return row } else { return nil } }
+    }
+
+    /// What the first screen draws and one press reaches: the billboard's
+    /// first three titles (records, Details' data, picture, logo, colours),
+    /// the first row's cards (records, posters), the first card of each of
+    /// the 3 rows below in the box (its picture and logo), Continue
+    /// Watching's episode stills.
+    private func minimumJobs(picks: [MetaItem], rows: [HomeRow], addonManager: AddonManager) -> [LoadQueue.Job] {
+        var jobs: [LoadQueue.Job] = []
+        func record(_ item: MetaItem) {
+            jobs.append(.record(item, band: .launch, order: jobs.count, source: "launch"))
+        }
+        func picture(_ url: String?, _ size: CGFloat) {
+            guard let url else { return }
+            jobs.append(.picture(url, size, band: .launch, order: jobs.count, source: "launch"))
+        }
+        for item in picks.prefix(3) {
+            record(item)
+            picture(TMDBService.originalSize(item.background) ?? item.poster, PictureSize.screen)
+            picture(item.logo, PictureSize.logo)
+            if let art = item.background ?? item.poster {
+                jobs.append(.init(key: "colours:\(art)", kind: "colours", lane: .picture, band: .launch,
+                                  order: jobs.count, source: "launch") { _ = await FixedFocusTint.colors(for: art) })
+            }
+            if let addon = addonManager.metaAddons(for: item.type, id: item.id).first {
+                jobs.append(.init(key: "meta:\(item.id)", kind: "meta", lane: .data, band: .launch,
+                                  order: jobs.count, source: "launch") {
+                    _ = await StremioAPI.warmMeta(addon: addon, type: item.type, id: item.id)
+                })
+            }
+        }
+        for item in (rows.first?.items ?? []).prefix(8) {
+            record(item)
+            picture(item.poster ?? item.background, PictureSize.poster)
+        }
+        for row in rows.prefix(4) {
+            guard let first = row.items.first else { continue }
+            record(first)
+            picture(first.background ?? first.poster, PictureSize.landscape)
+            picture(first.logo, PictureSize.cardLogo)
+        }
+        if let progress, let homeSettings, let tmdb {
+            let watching = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
+            let useEpisodes = tmdb.settings.useEpisodes
+            jobs.append(.init(key: "stills", kind: "stills", lane: .data, band: .launch,
+                              order: jobs.count, source: "launch") {
+                let stills = await ContinueStills.shared.load(watching, useEpisodes: useEpisodes)
+                await withTaskGroup(of: Void.self) { group in
+                    for url in stills {
+                        group.addTask { @MainActor in
+                            _ = await ImageCache.shared.preload(url, maxDimension: PictureSize.landscape)
+                        }
+                    }
+                }
+            })
+        }
+        return jobs
+    }
+
+    /// The rest of Home behind the minimum, nearest first (`LoadQueue`'s
+    /// deep band): Details for the billboard's first title and the rows'
+    /// (`TitlePreloader`, as if focus rested on the billboard), every title's
+    /// record (the billboard's, each row's first 15), and their pictures on
+    /// disk at the size they show at — not decoded into memory (that would
+    /// evict the first screen's). At launch, and coming back once an hour
+    /// has passed; only what's a day old asks the network.
+    private var deepAt: Date?
+    private func deep(force: Bool = false) {
+        guard let home else { return }
+        if !force, let deepAt, Date().timeIntervalSince(deepAt) < 60 * 60 { return }
+        deepAt = Date()
+        let picks = home.billboard(type: nil).map(\.item)
+        let rows = catalogRows(home)
+        let featured = HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: picks)
+        TitlePreloader.shared.focused(rows: [featured] + rows, row: 0, index: 0)
+        var jobs: [LoadQueue.Job] = []
+        for (i, item) in picks.enumerated() {
+            jobs.append(.record(item, band: .deep, order: i, source: "deep"))
+            if let url = TMDBService.originalSize(item.background) ?? item.poster {
+                jobs.append(.disk(url, PictureSize.screen, order: i))
+            }
+            if let logo = item.logo { jobs.append(.disk(logo, PictureSize.logo, order: i)) }
+        }
+        for (r, row) in rows.enumerated() {
+            for (i, item) in row.items.prefix(15).enumerated() {
+                let order = (r + 1) * 100 + i
+                jobs.append(.record(item, band: .deep, order: order, source: "deep"))
+                if let url = item.poster ?? item.background { jobs.append(.disk(url, PictureSize.poster, order: order)) }
+                // The box's picture for the first few (Left/Right's next).
+                guard i < 4 else { continue }
+                if let url = item.background ?? item.poster { jobs.append(.disk(url, PictureSize.landscape, order: order)) }
+                if let logo = item.logo { jobs.append(.disk(logo, PictureSize.cardLogo, order: order)) }
+            }
+        }
+        LoadQueue.shared.replace(source: "deep", with: jobs)
+    }
 }
 
-/// The launch curtain (the background, or the gate on it — `ProfileGate`).
+/// ONE QUEUE for what's loaded ahead — records, Details' data, pictures —
+/// nearest first. Three bands: focus (what the next press reaches —
+/// `PicturePreloader`, `TitleExtras`, `TitlePreloader`, each replacing its
+/// own waiting jobs as focus moves), the launch's minimum, and the rest of
+/// Home (`deep`). Two lanes, 3 jobs each: data (requests) and pictures
+/// (decodes, under `DecodeGate`); the deep band leaves room in each for
+/// focus. A key is loaded once at a time; asked again nearer, a waiting job
+/// moves up. Nothing new starts outside the launch while the player is up.
+/// Each kind's count and time go to the probe when it runs dry (`queue`).
+@MainActor
+final class LoadQueue {
+    static let shared = LoadQueue()
+
+    enum Lane { case data, picture }
+    enum Band: Int { case focus, launch, deep }
+
+    struct Job {
+        let key: String
+        let kind: String
+        let lane: Lane
+        let band: Band
+        let order: Int
+        let source: String
+        let run: @MainActor () async -> Void
+
+        init(key: String, kind: String, lane: Lane, band: Band, order: Int, source: String,
+             run: @escaping @MainActor () async -> Void) {
+            self.key = key; self.kind = kind; self.lane = lane; self.band = band
+            self.order = order; self.source = source; self.run = run
+        }
+
+        /// A title's record (`TitleRecords`): its size, facts, ratings.
+        static func record(_ item: MetaItem, band: Band, order: Int, source: String,
+                           then: (@MainActor () -> Void)? = nil) -> Job {
+            Job(key: "record:\(item.id)", kind: "record", lane: .data, band: band, order: order, source: source) {
+                await TitleRecords.shared.refresh(item, [.show, .facts, .ratings])
+                then?()
+            }
+        }
+
+        /// Decoded into memory at `size`.
+        static func picture(_ url: String, _ size: CGFloat, band: Band, order: Int, source: String,
+                            still: (@MainActor () -> Bool)? = nil) -> Job {
+            Job(key: "picture:\(RemoteImage.memoryKey(url, maxDimension: size, maxPixels: nil))", kind: "picture",
+                lane: .picture, band: band, order: order, source: source) {
+                _ = await ImageCache.shared.preload(url, maxDimension: size, turn: band == .launch ? .now : .ahead,
+                                                    still: still)
+            }
+        }
+
+        /// On disk at `size`, not in memory (`keepOnDisk`): the deep band.
+        static func disk(_ url: String, _ size: CGFloat, order: Int) -> Job {
+            Job(key: "disk:\(RemoteImage.memoryKey(url, maxDimension: size, maxPixels: nil))", kind: "disk",
+                lane: .picture, band: .deep, order: order, source: "deep") {
+                _ = await ImageCache.shared.keepOnDisk(url, maxDimension: size)
+            }
+        }
+    }
+
+    static let perLane = 3
+    /// The deep band's share: one picture (decodes compete with focus's in
+    /// `DecodeGate`), two requests.
+    static func deepShare(_ lane: Lane) -> Int { lane == .picture ? 1 : 2 }
+
+    private var waiting: [Job] = []
+    private var keys = Set<String>()
+    private var running: [Lane: Int] = [:]
+    private var runningDeep: [Lane: Int] = [:]
+    private var stats: [String: (count: Int, ms: Double)] = [:]
+    private var playerWait: Task<Void, Never>?
+    /// The launch's start, for the probe's "full Home at" line.
+    var launchStartedAt: Double?
+
+    /// Any of `keys` still waiting or running.
+    func busy(_ keys: [String]) -> Bool { keys.contains { self.keys.contains($0) } }
+
+    func add(_ jobs: [Job]) {
+        for job in jobs {
+            if keys.insert(job.key).inserted {
+                waiting.append(job)
+            } else if let at = waiting.firstIndex(where: { $0.key == job.key }),
+                      (job.band.rawValue, job.order) < (waiting[at].band.rawValue, waiting[at].order) {
+                waiting[at] = job   // asked nearer: up it goes
+            }
+        }
+        pump()
+    }
+
+    /// `source`'s waiting jobs replaced by `jobs` (focus has moved on).
+    func replace(source: String, with jobs: [Job]) {
+        waiting.removeAll { job in
+            guard job.source == source else { return false }
+            keys.remove(job.key)
+            return true
+        }
+        add(jobs)
+    }
+
+    private func pump() {
+        let playing = PlayerController.isPlaying
+        waiting.sort { ($0.band.rawValue, $0.order) < ($1.band.rawValue, $1.order) }
+        var i = 0
+        while i < waiting.count {
+            let job = waiting[i]
+            let lane = job.lane
+            let full = running[lane, default: 0] >= Self.perLane
+                || (job.band == .deep && runningDeep[lane, default: 0] >= Self.deepShare(lane))
+                || (playing && job.band != .launch)
+            if full { i += 1; continue }
+            waiting.remove(at: i)
+            start(job)
+        }
+        // Held for the player: looked at again every few seconds.
+        if playing, !waiting.isEmpty, playerWait == nil {
+            playerWait = Task { @MainActor [weak self] in
+                while PlayerController.isPlaying { try? await Task.sleep(for: .seconds(5)) }
+                self?.playerWait = nil
+                self?.pump()
+            }
+        }
+    }
+
+    private func start(_ job: Job) {
+        running[job.lane, default: 0] += 1
+        if job.band == .deep { runningDeep[job.lane, default: 0] += 1 }
+        Task { @MainActor in
+            let t = CACurrentMediaTime()
+            await job.run()
+            running[job.lane, default: 0] -= 1
+            if job.band == .deep { runningDeep[job.lane, default: 0] -= 1 }
+            keys.remove(job.key)
+            var entry = stats[job.kind] ?? (0, 0)
+            entry.count += 1
+            entry.ms += (CACurrentMediaTime() - t) * 1000
+            stats[job.kind] = entry
+            pump()
+            if waiting.isEmpty, running.values.allSatisfy({ $0 == 0 }) { ranDry() }
+        }
+    }
+
+    /// The probe: what ran since it last ran dry — each kind's count and
+    /// its jobs' summed time — and when (from the launch, the first time:
+    /// the full variant's cost).
+    private func ranDry() {
+        let summary = stats.sorted { $0.key < $1.key }
+            .map { String(format: "%@ %d (%.1f s)", $0.key, $0.value.count, $0.value.ms / 1000) }
+            .joined(separator: " · ")
+        let at = launchStartedAt.map { String(format: " · at %.2f s from launch", CACurrentMediaTime() - $0) } ?? ""
+        PlayerProbe.event("queue", "Dry       \(summary)\(at)")
+        stats = [:]
+        launchStartedAt = nil
+    }
+}
+
+/// The launch curtain: the background and the gate on it (`ProfileGate`),
+/// from the first frame tvOS gives us — the status line alone only where
+/// there's no gate (the demos).
 struct LaunchCurtain: View {
     @ObservedObject private var launch = LaunchPreloader.shared
-    @EnvironmentObject private var profiles: ProfileStore
     /// The gate's avatar flying to the top bar: the background dissolves
     /// off Home with it.
     @State private var dissolving = false
+    /// The background is in: the gate never comes in before it (1 s more
+    /// at most — a first draw, no copy on disk yet).
+    @State private var backgroundIn = BandsPictureStore.shared.image != nil
     /// The gate shown — or, before the root has decided, the one it will
     /// show at launch (the same view, so nothing changes as it's decided).
     private var gate: LaunchPreloader.GateMode? {
         if let gate = launch.gate { return gate }
-        guard !launch.gateDecided, !RootView.demoMode, RootView.gateNeeded(profiles) else { return nil }
+        guard !launch.gateDecided, !RootView.demoMode else { return nil }
         return .launch
     }
 
@@ -2430,38 +2634,33 @@ struct LaunchCurtain: View {
                         .opacity(dissolving ? 0 : 1)
                         .animation(ProfileGate.dissolve, value: dissolving)
                         .allowsHitTesting(false)
-                    if launch.playing {
-                        Image("LaunchPlay")
-                            .resizable()
-                            .frame(width: 640, height: 640)
+                    if let mode = gate {
+                        if backgroundIn {
+                            ProfileGate(mode: mode, onFly: { dissolving = true })
+                                .transition(.opacity)
+                        }
+                    } else {
+                        SweepLine(text: launch.status, sweeping: true)
+                            .frame(width: 1200, height: 44)
                             .allowsHitTesting(false)
-                            .transition(.opacity)
-                    } else if let mode = gate {
-                        ProfileGate(mode: mode, onFly: { dissolving = true })
                             .transition(.opacity)
                     }
                 }
                 .animation(Motion.fade, value: gate == nil)
-                .animation(Motion.fade, value: launch.playing)
+                .animation(Motion.fade, value: backgroundIn)
                 .transition(.opacity)
             }
         }
         .ignoresSafeArea()
         .task {
-            try? await Task.sleep(for: LaunchPreloader.playHold)
-            // The background first: it fades in under the play, never
-            // after the gate (1 s more at most — a first draw, no copy yet).
-            if BandsPictureStore.shared.image == nil {
-                let start = CACurrentMediaTime()
-                while BandsPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1,
-                      !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(30))
-                }
-                // Its fade over, then the gate.
-                try? await Task.sleep(for: .seconds(Motion.fadeDuration))
+            guard !backgroundIn else { return }
+            let start = CACurrentMediaTime()
+            while BandsPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(30))
             }
-            guard !Task.isCancelled else { return }
-            if gate != nil { launch.endPlay() }
+            // Its fade over, then the gate.
+            try? await Task.sleep(for: .seconds(Motion.fadeDuration))
+            backgroundIn = true
         }
         // Back for the next gate as the curtain comes (at once: reset as it
         // went, the background came back during the curtain's own fade).
@@ -2598,7 +2797,6 @@ final class TitlePreloader {
     /// Set by Home (its stores); nothing runs before.
     var context: Context?
 
-    static let parallel = 3
     /// Focus still for this long: the queue starts.
     static let settle: Double = 0.35
     /// Resting on a title this long: it's warmed fully.
@@ -2608,9 +2806,7 @@ final class TitlePreloader {
     /// Rows top to bottom: this many titles of each.
     static let perRow = 6
 
-    private var queue: [(item: MetaItem, depth: Depth)] = []
     private var done: [String: Depth] = [:]
-    private var running = 0
     private var settleTask: Task<Void, Never>?
     private var restTask: Task<Void, Never>?
     private var batchedRows = Set<String>()
@@ -2633,8 +2829,7 @@ final class TitlePreloader {
             restTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(Self.restTime))
                 guard !Task.isCancelled, let self else { return }
-                self.queue.insert((item, .full), at: 0)
-                self.pump()
+                LoadQueue.shared.add([self.job(item, .full, order: -1)])
             }
         }
     }
@@ -2644,7 +2839,8 @@ final class TitlePreloader {
 
     /// The order, from where focus is: the title and its neighbours (decoded),
     /// a little further along the row and the next row (records), then the
-    /// rows top to bottom (records). Replaces what was waiting.
+    /// rows top to bottom (records). Replaces what was waiting — in the
+    /// queue's focus band, behind what the next press reaches (`LoadQueue`).
     private func plan(rows: [HomeRow], row: Int, index: Int) {
         var list: [(MetaItem, Depth)] = []
         let items = rows[row].items
@@ -2660,11 +2856,11 @@ final class TitlePreloader {
             for i in 0..<min(Self.perRow, rows[r].items.count) { add(r, i, .record) }
         }
         for i in items.indices.prefix(Self.perRow) { add(row, i, .record) }
-        queue = list.filter { item, depth in
+        let jobs = list.filter { item, depth in
             Self.wanted(item) && done[item.id].map { $0 < depth } ?? true
-        }
+        }.enumerated().map { index, entry in job(entry.0, entry.1, order: 200 + index) }
         batchRatings(rows)
-        pump()
+        LoadQueue.shared.replace(source: "details", with: jobs)
     }
 
     /// The ratings of every title on the rows: one MDBList batch (200 a
@@ -2677,23 +2873,19 @@ final class TitlePreloader {
         Task.detached(priority: .utility) { await MDBListService.prefetch(items, settings: context.mdb) }
     }
 
-    private func pump() {
-        while running < Self.parallel, !queue.isEmpty {
-            guard !PlayerController.isPlaying else { queue.removeAll(); return }
-            let (item, depth) = queue.removeFirst()
-            if let had = done[item.id], had >= depth { continue }
-            let first = done[item.id] == nil
-            if first, networkTitles >= Self.cap, depth < .pictures { continue }
-            done[item.id] = depth
-            running += 1
-            Task { [weak self] in
-                let t = CACurrentMediaTime()
-                let net = await self?.warm(item, depth: depth, first: first) ?? false
-                guard let self else { return }
-                self.running -= 1
-                self.note(item, depth: depth, net: net, ms: (CACurrentMediaTime() - t) * 1000)
-                self.pump()
-            }
+    /// One title to `depth`, as a queue job (once per launch per depth;
+    /// past `cap` titles from the network, records no more).
+    private func job(_ item: MetaItem, _ depth: Depth, order: Int) -> LoadQueue.Job {
+        LoadQueue.Job(key: "details:\(item.id):\(depth)", kind: "details", lane: .data, band: .focus,
+                      order: order, source: "details") { [weak self] in
+            guard let self else { return }
+            if let had = self.done[item.id], had >= depth { return }
+            let first = self.done[item.id] == nil
+            if first, self.networkTitles >= Self.cap, depth < .pictures { return }
+            self.done[item.id] = depth
+            let t = CACurrentMediaTime()
+            let net = await self.warm(item, depth: depth, first: first)
+            self.note(item, depth: depth, net: net, ms: (CACurrentMediaTime() - t) * 1000)
         }
     }
 

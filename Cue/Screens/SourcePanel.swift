@@ -276,11 +276,11 @@ private struct StageSources: UIViewControllerRepresentable {
     }
 }
 
-/// The stage's line at work: in place of the loading symbol, a soft band of
+/// The stage's line at work (and the launch curtain's): in place of the loading symbol, a soft band of
 /// light passes through the words, left to right, then a brief rest, as the
 /// dots' light goes with them. The words drawn once; only a mask moves, so it
 /// costs nothing. Still, it sits at the body level.
-private struct SweepLine: UIViewRepresentable {
+struct SweepLine: UIViewRepresentable {
     let text: String
     let sweeping: Bool
 
@@ -292,6 +292,10 @@ private struct SweepLine: UIViewRepresentable {
 
     final class Line: UIView {
         private let label = UILabel()
+        /// The label's box, the whole line: the mask sits on it, wider than
+        /// any words, so new words never fall outside it (sized to the
+        /// words, a change of line left part of the new ones masked out).
+        private let holder = UIView()
         private let band = CAGradientLayer()
         private var sweeping = false
         /// What the running sweep was made for: the same, it runs on.
@@ -309,12 +313,12 @@ private struct SweepLine: UIViewRepresentable {
             label.font = .systemFont(ofSize: 28, weight: .medium)
             label.textColor = .white
             label.textAlignment = .center
-            addSubview(label)
+            holder.isUserInteractionEnabled = false
+            addSubview(holder)
+            holder.addSubview(label)
             let dim = UIColor(white: 1, alpha: Self.rest).cgColor
             let lit = UIColor(white: 1, alpha: Self.peak).cgColor
             band.colors = [dim, dim, lit, dim, dim]
-            // A wider, softer band: about half the words lit at its peak.
-            band.locations = [0, 0.4, 0.5, 0.6, 1]
             band.startPoint = CGPoint(x: 0, y: 0.5)
             band.endPoint = CGPoint(x: 1, y: 0.5)
         }
@@ -323,11 +327,16 @@ private struct SweepLine: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError() }
 
         func set(_ text: String, sweeping: Bool) {
+            // New words, a new width: the band laid out and started again
+            // for them at once (the old pass, sized for the old words, left
+            // part of the new ones masked out).
+            if label.text != text { running = nil }
             label.text = text
             self.sweeping = sweeping
             label.alpha = sweeping ? 1 : FixedFocusText.body
-            label.layer.mask = sweeping ? band : nil
+            holder.layer.mask = sweeping ? band : nil
             setNeedsLayout()
+            layoutIfNeeded()
             run()
         }
 
@@ -335,12 +344,17 @@ private struct SweepLine: UIViewRepresentable {
             super.layoutSubviews()
             let size = label.sizeThatFits(bounds.size)
             let width = min(size.width, bounds.width)
+            holder.frame = bounds
             label.frame = CGRect(x: (bounds.width - width) / 2, y: (bounds.height - size.height) / 2,
                                  width: width, height: size.height)
-            // Three times the words, so it covers them wherever the band is.
+            // Three times the line, so it covers it wherever the band is; a
+            // wide, soft band: about half the words lit at its peak.
+            let span = max(bounds.width, 1) * 3
+            let half = Double(0.1 * width * 3 / span)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            band.frame = CGRect(x: -width, y: 0, width: width * 3, height: label.bounds.height)
+            band.frame = CGRect(x: -bounds.width, y: 0, width: span, height: bounds.height)
+            band.locations = [0, NSNumber(value: 0.5 - half), 0.5, NSNumber(value: 0.5 + half), 1]
             CATransaction.commit()
             run()
         }
