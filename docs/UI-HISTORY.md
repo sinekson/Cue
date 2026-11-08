@@ -36,7 +36,7 @@ matching section before changing that part of the UI. Where this differs from
   billboard, flat raised fills — light grey read as light mode, black
   40 % with an edge and shadow — glass is the look over pictures), content in
   the text's colour; focused: a white capsule (the one pure white), dark content,
-  5 % larger, soft shadow; in quick (0.15 s), out 0.35 s; pressed: shrinks to 90 % (0.1 s, at least that long for a quick tap), back on a no-bounce spring (0.3 s) (`DetailActionButton.pressScale`; 97 % went unnoticed) — over a
+  5 % larger, soft shadow; in quick (0.15 s), out 0.35 s; pressed: back to its resting size, level with the buttons beside it (0.1 s, at least that long for a quick tap), back up on a no-bounce spring (0.3 s) (tried: 90 % of the focused size — it went smaller than its neighbours; 97 % went unnoticed); the player's round buttons and tabs, the hold menus' rows and Settings' rows and buttons the same (`SettingsPress`) — over a
   resting pill the capsule fades into it (same size: shrunk, two pills
   showed); with nothing at rest it shrinks into the button (88 %) as it fades, both from the start, the
   fade even (a delayed fade overlapped the next capsule); the content
@@ -548,7 +548,7 @@ matching section before changing that part of the UI. Where this differs from
     until the second phase ends (it stalled the move). Presses are
     dropped from the press until the last move ends (`InputHold`: the
     window drops them, the focus engine refuses moves) — the moves'
-    end means you can go on. The pressed button stays shrunk (90 %, no
+    end means you can go on. The pressed button stays at its resting size (no
     grow back) and its highlight dims to 50 % from the release,
     the press dip shrunk (0.2 s, eased; tried: from 0.1 s after it, 0.25 s
     — a gap; `DetailActionButton.dim`,
@@ -784,7 +784,7 @@ matching section before changing that part of the UI. Where this differs from
   panel beside the card, sized as tvOS's context menu (measured): rows
   66 tall, no gaps, 28 pt medium, the icon in front; focused a white
   capsule (round ends — 30 pt corners read rectangular), 2 % larger;
-  the panel 16 pt around them. Pressed −3 %, open +3 % (`heldGrowth`; 2, 4 and 5 % were tried).
+  the panel 16 pt around them. A pressed row back to its resting size (−3 % was tried: below the rows around it); the card, open +3 % (`heldGrowth`; 2, 4 and 5 % were tried).
   It unfolds out of the card, as the Apple TV app's: from 50 % at its
   corner facing the card, on the present spring (0.45 s, no bounce),
   the glass in 0.12 s, the entries a moment later; closing, back into

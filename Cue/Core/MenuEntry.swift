@@ -524,7 +524,7 @@ private final class MenuPanelRow: UICollectionViewCell {
         chevron.tintColor = color
         detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
         platter.alpha = focused ? 1 : 0
-        let scale: CGFloat = isHighlighted ? 0.97 : focused ? 1.02 : 1
+        let scale: CGFloat = focused && !isHighlighted ? 1.02 : 1
         face.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 

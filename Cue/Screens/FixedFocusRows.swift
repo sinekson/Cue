@@ -2658,7 +2658,7 @@ final class FixedFocusHeaderButton: UIView {
 
     private func render(released: Bool = false) {
         host.rootView = FixedFocusSeasonFace(label: label, lit: lit, selected: selected)
-        let scale = lit ? DetailActionButton.focusScale * (pressed ? DetailActionButton.pressScale : 1) : 1
+        let scale = lit && !pressed ? DetailActionButton.focusScale : 1
         // The action buttons' timing: a press quick in, back on a spring;
         // focus in quick, out slower.
         let duration = pressed ? DetailActionButton.pressInTime : released ? 0.3 : lit ? 0.15 : 0.35

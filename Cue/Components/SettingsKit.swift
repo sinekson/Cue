@@ -704,12 +704,13 @@ struct SettingsEntrySwitch {
 /// capsule 71 pt tall, its text 36 pt in, flat at rest; focused white, dark
 /// text, lifted (~75 tall).
 struct SettingsCapsuleButton: View {
+    static let focusScale: CGFloat = 1.06
     let title: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) { Face(title: title) }
-            .buttonStyle(PlainCardButtonStyle())
+            .buttonStyle(SettingsPress(lift: Self.focusScale))
             .modifier(SettingsRowEntry(id: title))
     }
 
@@ -727,7 +728,7 @@ struct SettingsCapsuleButton: View {
                     Capsule(style: .continuous).fill(focused ? FlatControl.focus : FlatControl.rest)
                         .shadow(color: .black.opacity(focused ? 0.3 : 0), radius: 16, y: 8)
                 }
-                .scaleEffect(focused ? 1.06 : 1)
+                .scaleEffect(focused ? SettingsCapsuleButton.focusScale : 1)
                 .animation(.smooth(duration: 0.18), value: focused)
         }
     }
@@ -775,7 +776,7 @@ struct SettingsReorderRow: View {
                 face
             } else {
                 Button(action: onSelect) { face }
-                    .buttonStyle(PressStyle())
+                    .buttonStyle(SettingsPress(lift: SettingsMetrics.focusScale))
                     .focused($focused, equals: .row)
                     .modifier(SettingsRowEntry(id: id))
             }
@@ -813,14 +814,14 @@ struct SettingsReorderRow: View {
                         Button(action: toggle.toggle) {
                             SettingsRowButtonFace(icon: toggle.isOn ? "eye" : "eye.slash", focused: focused == .toggle, onLitRow: lit)
                         }
-                        .buttonStyle(PressStyle())
+                        .buttonStyle(SettingsPress(lift: SettingsRowButtonFace.focusScale))
                         .focused($focused, equals: .toggle)
                         .disabled(anyMoving)
                     }
                     Button { isMoving ? onDrop() : onLift() } label: {
                         SettingsRowButtonFace(icon: "line.3.horizontal", focused: focused == .handle && !isMoving, onLitRow: lit)
                     }
-                    .buttonStyle(PressStyle())
+                    .buttonStyle(SettingsPress(lift: SettingsRowButtonFace.focusScale))
                     .focused($focused, equals: .handle)
                     .modifier(SettingsRowEntry(id: id))
                     .disabled(anyMoving && !isMoving)
@@ -869,20 +870,25 @@ struct SettingsReorderRow: View {
         .animation(.smooth(duration: 0.18), value: isMoving)
         .animation(.smooth(duration: 0.2), value: editing)
     }
+}
 
-    /// No system focus look: the row draws it.
-    private struct PressStyle: ButtonStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            configuration.label
-                .scaleEffect(configuration.isPressed ? 0.98 : 1)
-                .animation(.smooth(duration: 0.1), value: configuration.isPressed)
-        }
+/// No system focus look: the button draws it. Pressed, back to its resting
+/// size (`lift`: how much larger its face is when focused), level with the
+/// rows and buttons around it, then up again.
+struct SettingsPress: ButtonStyle {
+    let lift: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 1 / lift : 1)
+            .animation(.smooth(duration: 0.1), value: configuration.isPressed)
     }
 }
 
 /// A round button, as the rows' others: focused the light platter, dark
 /// symbol, lifted; on a lit row its symbol alone.
 struct SettingsRowButtonFace: View {
+    static let focusScale: CGFloat = 1.12
     let icon: String
     let focused: Bool
     let onLitRow: Bool
@@ -898,7 +904,7 @@ struct SettingsRowButtonFace: View {
             if focused { GlassHighlight(focused: true, shape: Circle()) }
             else { Circle().fill(SettingsMetrics.rowButtonFill).opacity(onLitRow ? 0 : 1) }
         }
-        .scaleEffect(focused ? 1.12 : 1)
+        .scaleEffect(focused ? Self.focusScale : 1)
         .shadow(color: .black.opacity(focused ? 0.3 : 0), radius: 10, y: 5)
     }
 }

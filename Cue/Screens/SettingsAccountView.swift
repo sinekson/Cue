@@ -918,7 +918,7 @@ private struct WatchedRow: View {
                 face
             } else {
                 Button(action: onSelect) { face }
-                    .buttonStyle(PressStyle())
+                    .buttonStyle(SettingsPress(lift: SettingsMetrics.focusScale))
                     .focused($focused, equals: .row)
                     .modifier(SettingsRowEntry(id: id))
             }
@@ -953,7 +953,7 @@ private struct WatchedRow: View {
                 Button(action: onRemove) {
                     SettingsRowButtonFace(icon: "trash", focused: focused == .remove, onLitRow: false)
                 }
-                .buttonStyle(PressStyle())
+                .buttonStyle(SettingsPress(lift: SettingsRowButtonFace.focusScale))
                 .focused($focused, equals: .remove)
                 .modifier(SettingsRowEntry(id: id))
                 .transition(.opacity)
@@ -982,15 +982,6 @@ private struct WatchedRow: View {
         .animation(.smooth(duration: 0.18), value: lit)
         .animation(.smooth(duration: 0.15), value: focused)
         .animation(.smooth(duration: 0.2), value: editing)
-    }
-
-    /// No system focus look: the row draws it.
-    private struct PressStyle: ButtonStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            configuration.label
-                .scaleEffect(configuration.isPressed ? 0.98 : 1)
-                .animation(.smooth(duration: 0.1), value: configuration.isPressed)
-        }
     }
 }
 

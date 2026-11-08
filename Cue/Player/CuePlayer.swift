@@ -116,7 +116,7 @@ private final class PlayerButton: UIButton {
         platter.alpha = isFocused ? 1 : 0
         tintColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
                               : UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        let scale: CGFloat = isHighlighted ? 0.97 : isFocused ? 1.05 : 1
+        let scale: CGFloat = isFocused && !isHighlighted ? 1.05 : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 }
@@ -273,7 +273,7 @@ private final class PanelTab: UIView {
         title.layer.shadowOpacity = isFocused ? 0 : 0.8
         icon.layer.shadowOpacity = title.layer.shadowOpacity
         platter.alpha = isFocused ? 1 : chosen && marksChosen && glass == nil ? Self.chosenFill : 0
-        let scale: CGFloat = isFocused ? (pressed ? 0.97 : 1.05) : 1
+        let scale: CGFloat = isFocused && !pressed ? 1.05 : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 

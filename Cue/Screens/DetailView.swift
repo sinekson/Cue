@@ -1672,9 +1672,9 @@ struct DetailActionButton: View {
     private var litAnimation: Animation { shownLit ? Self.open : Self.leave }
     /// Focused: this much larger.
     static let focusScale: CGFloat = 1.05
-    /// Pressed: shrunk to this share of its size (quick, `pressIn`), then
-    /// back (`pressOut`, a no-bounce spring). (Was 3 % less: unnoticed.)
-    static let pressScale: CGFloat = 0.9
+    /// Pressed: back to its resting size, level with the other buttons
+    /// (quick, `pressIn`), then up again (`pressOut`, a no-bounce spring).
+    /// (Tried: 90 % of the focused size — smaller than the buttons beside it.)
     static let pressInTime: Double = 0.1
     static let pressIn: Animation = .easeOut(duration: pressInTime)
     static let pressOut: Animation = .spring(duration: 0.3, bounce: 0)
@@ -1853,7 +1853,7 @@ private struct DetailPressStyle: ButtonStyle {
         var body: some View {
             let base = lit ? DetailPressStyle.focusScale : 1
             let scale = held ? base + FixedFocusMetrics.heldGrowth
-                : down || dimmed ? base * DetailActionButton.pressScale : base
+                : down || dimmed ? 1 : base
             return configuration.label
                 .scaleEffect(scale)
                 // (Dimmed, as the highlight; undimmed, on the move.)
