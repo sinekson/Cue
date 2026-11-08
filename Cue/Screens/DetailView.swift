@@ -3,7 +3,29 @@ import SwiftUI
 /// Details' depth below the billboard (see `DetailView.rowsDepth`).
 @Observable @MainActor
 final class DetailRowsDepth {
-    var depth = 0
+    var depth = 0 {
+        didSet {
+            // Back at the billboard from below (Up, or Back's scroll):
+            // the Ups that follow are eaten a moment (`upEaten`).
+            if oldValue > 0, depth == 0 { upGuardUntil = CACurrentMediaTime() + Self.upGuard }
+        }
+    }
+    /// Read by the buttons' Up only: no page redraw.
+    @ObservationIgnored private var upGuardUntil: CFTimeInterval = 0
+    /// One press too many while climbing back (or after Back) opened the
+    /// trailer full screen: Up on the buttons does nothing this long after
+    /// arriving, while the rows still move, and this long after each Up it ate,
+    /// so a burst is eaten whole and a deliberate Up after a pause works.
+    static let upGuard: CFTimeInterval = 0.5
+
+    /// Whether this Up arrived too soon after reaching the billboard from below.
+    func upEaten() -> Bool {
+        let now = CACurrentMediaTime()
+        guard now < upGuardUntil || (upGuardUntil > 0 && now < upGuardUntil + 2 && FixedFocusRowsController.moving)
+        else { return false }
+        upGuardUntil = now + Self.upGuard
+        return true
+    }
 }
 
 /// The focus of a group of controls that may live in another SwiftUI host
@@ -1292,7 +1314,7 @@ struct DetailView: View {
             .padding(.top, CueSpacing.xs)
             // Up from the buttons (nothing above them): the trailer full
             // screen — the hint over the logo says so.
-            .onMoveCommand { if $0 == .up { openFullTrailer() } }
+            .onMoveCommand { if $0 == .up, !rowsDepth.upEaten() { openFullTrailer() } }
             // Full-width focus section: the buttons stay left-aligned, but the
             // section spans the row so pressing Up from a right-scrolled cast
             // card still lands here (a narrow left-only section is missed when

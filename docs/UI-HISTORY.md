@@ -367,7 +367,11 @@ matching section before changing that part of the UI. Where this differs from
   out through Back while it's handed over — `trailerOut`; they came back
   with Home's parts, then moved out again).
   Details: Up from the buttons (nothing else above them) opens that same
-  player full screen (`openFullTrailer`); over the logo, in the reason's
+  player full screen (`openFullTrailer`) — but not for 0.5 s after the
+  billboard is reached from below (Up or Back), while the rows still move,
+  or 0.5 s after an Up it ate (`DetailRowsDepth.upEaten`): one Up too many
+  climbing back opened it (2026-11-08; swapping it for a Trailer button,
+  Up opening About, was tried and reverted the same day); over the logo, in the reason's
   place on Home, a hint says so (tried: at the screen's top, centred) (`DetailTrailerHint`, the `SectionHint`
   look: a chevron up that bobs every 3.5 s, small capitals, 55 %) —
   "Watch full screen" while it plays on the picture, else "Watch the

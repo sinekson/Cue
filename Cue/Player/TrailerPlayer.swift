@@ -741,7 +741,7 @@ final class StageTrailer: ObservableObject {
     /// is there.
     func rest(on item: MetaItem?, season: Int? = nil, aired: Date? = nil, sound: Bool) {
         pending?.cancel()
-        guard let item, !UIAccessibility.isReduceMotionEnabled else { return stop() }
+        guard let item else { return stop() }
         let id = item.id + (season.map { "#\($0)" } ?? "")
         // The page before's trailer goes on, whichever season it is.
         if carriedIn, itemID == item.id { itemID = id }
