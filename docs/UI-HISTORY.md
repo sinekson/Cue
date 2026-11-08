@@ -718,7 +718,7 @@ matching section before changing that part of the UI. Where this differs from
   card's light frame — a 2 pt line, white 30 %, inside its corner
   (`FixedFocusCardEdge.rim`). Focus: no ring — the same edge, bright (2 pt, white 75 %;
   `FixedFocusRing`), a soft shadow outside the card (`attachShadow`, the cards' shadow picture),
-  moving-focus cards grow 6 %, the fixed box 4 % (`boxScale`: it
+  moving-focus cards grow 6 %, the fixed box 4 % (8, 10 and 12 % were tried: kept as is) (`boxScale`: it
   overhangs its spot, its neighbours step aside, its info isn't scaled).
   Settings → Appearance → Card outlines, three levels (`FixedFocusRing.outlines`;
   switching relayouts every view — live): Edges and focus (default) the rim and the
@@ -784,16 +784,16 @@ matching section before changing that part of the UI. Where this differs from
   panel beside the card, sized as tvOS's context menu (measured): rows
   66 tall, no gaps, 28 pt medium, the icon in front; focused a white
   capsule (round ends — 30 pt corners read rectangular), 2 % larger;
-  the panel 16 pt around them. Pressed −3 %, open +2 %.
+  the panel 16 pt around them. Pressed −3 %, open +3 % (`heldGrowth`; 2, 4 and 5 % were tried).
   It unfolds out of the card, as the Apple TV app's: from 50 % at its
   corner facing the card, on the present spring (0.45 s, no bounce),
   the glass in 0.12 s, the entries a moment later; closing, back into
   that corner (to 60 %, 0.22 s) (`HoldMenuController.openScale`; tried:
   90 % from that corner, 0.28 s — it appeared beside the card). Placed
   from the card at its held size (`FixedFocusDestinationCell.holdMenu`):
-  its left edge on the next card's left edge (opening left: its right
-  edge on the card before's right edge — `neighbourEdges`; no cards
-  beside it: `gap`, 28), level with its top — or, when it doesn't
+  16 pt from it (`gap`, as a focused card's to its neighbour; tried: 24,
+  the cards' own spacing — fine too; its left edge on the next card's
+  left edge — the gap changed with the card's growth and the row), opening left when it doesn't fit, level with its top — or, when it doesn't
   fit below that (Search's low row), with its bottom. Behind it the
   screen dims (black 15 %, `HoldMenu.dimming`; 35 % was heavy under the glass), the held card
   cut out (not its shadow) — the cut-out growing with the card from its
@@ -802,8 +802,7 @@ matching section before changing that part of the UI. Where this differs from
   back with it to its focused size (`rest`; kept as it was, a thin
   lighter ring; shrunk to the pressed size, the dim on the card's
   edges); dropdowns
-  don't dim. (Tried: a fixed gap
-  beside the held card.)
+  don't dim.
 - **Sources**: no sorting or filtering — the add-ons' order (AIOStreams ranks).
   Play takes the first link. 5-min cache. No remembered source.
   The panel (`SourcePanel`), on trial as About's: full screen over the page

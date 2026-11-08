@@ -35,31 +35,6 @@ struct HoldMenuRequest {
     var direct = false
     /// A dropdown: the panel opens under the anchor, on its left edge.
     var below = false
-    /// The neighbouring cards' facing edges (window x): the menu starts on
-    /// the next card's left edge, or ends on the one before's right edge.
-    /// Nil: `gap` beside the held card.
-    var beside: (left: CGFloat?, right: CGFloat?)? = nil
-}
-
-extension UICollectionViewCell {
-    /// Where the cards beside it start (right) and end (left) in the window,
-    /// on its own line — a missing one (the row's end) where it would be.
-    func neighbourEdges() -> (left: CGFloat?, right: CGFloat?)? {
-        guard let list = superview as? UICollectionView, let path = list.indexPath(for: self) else { return nil }
-        let me = list.layoutAttributesForItem(at: path)?.frame ?? frame
-        func card(_ step: Int) -> CGRect? {
-            let item = path.item + step
-            guard item >= 0, item < list.numberOfItems(inSection: path.section),
-                  let other = list.layoutAttributesForItem(at: IndexPath(item: item, section: path.section))?.frame,
-                  abs(other.midY - me.midY) < 1 else { return nil }
-            return other
-        }
-        let next = card(1), before = card(-1)
-        let right = next?.minX ?? before.map { me.maxX + (me.minX - $0.maxX) }
-        let left = before?.maxX ?? next.map { me.minX - ($0.minX - me.maxX) }
-        func window(_ x: CGFloat?) -> CGFloat? { x.map { list.convert(CGPoint(x: $0, y: me.midY), to: nil).x } }
-        return (window(left), window(right))
-    }
 }
 
 /// A UIKit screen with hold menus: the menu for the focused card (nil: none
@@ -163,11 +138,7 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
             while let current = responder {
                 if let provider = current as? HoldMenuProviding {
                     // The nearest provider decides (nil: no menu here).
-                    var request = provider.holdMenu(for: focused)
-                    if request?.beside == nil, let cell = focused as? UICollectionViewCell {
-                        request?.beside = cell.neighbourEdges()
-                    }
-                    return request
+                    return provider.holdMenu(for: focused)
                 }
                 responder = current.next
             }
@@ -251,9 +222,9 @@ private final class HoldMenuController: UIViewController {
     private var placed = false
     private var closing = false
 
-    /// The panel's gap to a card with none beside it, and the screen margin
-    /// it keeps.
-    static let gap: CGFloat = 18
+    /// The panel's gap to the held card (as a focused card's to its neighbour), and
+    /// the screen margin it keeps.
+    static let gap: CGFloat = 16
     static let margin: CGFloat = 60
 
     init(request: HoldMenuRequest) {
@@ -290,11 +261,10 @@ private final class HoldMenuController: UIViewController {
         let anchor = view.convert(request.anchor, from: nil)
         hole.frame = view.bounds
         hole.path = holePath(around: request.anchor)
-        // Right of the card (held), level with its top, starting on the
-        // next card's left edge; left of it, ending on the one before's
-        // right edge, if it doesn't fit. (No cards beside it: `gap` away.)
-        let start = request.beside?.right ?? anchor.maxX + Self.gap
-        let end = request.beside?.left ?? anchor.minX - Self.gap
+        // Right of the card (held), `gap` from it, level with its top; left
+        // of it if it doesn't fit.
+        let start = anchor.maxX + Self.gap
+        let end = anchor.minX - Self.gap
         if request.below {
             // Under the button, sharing its left edge — or its right edge, for
             // a button on the screen's right half.

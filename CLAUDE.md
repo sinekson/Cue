@@ -108,7 +108,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring. One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
+  ring, 6 % larger (Home's fixed box 4 %; 8, 10 and 12 were tried). One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
@@ -187,6 +187,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   watched (narrow to wide), red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
+  A held card grows 3 % past focused (2, 4, 5 tried); the menu sits 16 pt
+  beside it (24, and aligned to the next card, were tried).
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
   What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.

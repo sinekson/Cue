@@ -368,7 +368,7 @@ enum FixedFocusMetrics {
     /// (A moving-focus card instead loses its lift: back to its own size.)
     static let pressScale: CGFloat = 0.97
     /// …and while its hold menu is open: a little larger than focused.
-    static let heldGrowth: CGFloat = 0.02
+    static let heldGrowth: CGFloat = 0.03
     /// How long the card takes to grow to that, the dim's hole with it.
     static let heldDuration: Double = 0.28
     /// The fixed box's own size: the portrait posters' height, its left edge
