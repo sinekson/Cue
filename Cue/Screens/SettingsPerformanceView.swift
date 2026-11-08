@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Settings → Developer, second half: the diagnostics (player HUD, stage
-/// tests, the LAN log).
+/// Settings → Developer, second half: the diagnostics (player HUD, the LAN
+/// log).
 struct PerformanceSettings: View {
     @EnvironmentObject private var theme: ThemeManager
     @ObservedObject private var store = PerformanceSettingsStore.shared
@@ -22,34 +22,6 @@ struct PerformanceSettings: View {
                     subtitle: "Live engine, fps, dropped frames, A/V drift, bitrate and buffer depth over the video. For chasing stutter on this box.",
                     isOn: s.showPlayerDiagnostics
                 )
-
-                PerfToggleRow(
-                    icon: "pause.circle",
-                    title: "Hold Play on the stage",
-                    subtitle: "Play opens the loading stage and stays there until Back: no search, no stream.",
-                    isOn: s.holdPlayStage
-                )
-
-                PerfToggleRow(
-                    icon: "xmark.octagon",
-                    title: "Every link fails",
-                    subtitle: "Each link fails 3 s into loading: the next is tried, then the source list. For testing what the stage says.",
-                    isOn: s.failEveryLink
-                )
-
-                Button {
-                    store.settings.shelfCardColour = (store.settings.shelfCardColour + 1) % 3
-                } label: {
-                    PerfRowLabel(icon: "paintpalette",
-                                 title: "Shelf source cards",
-                                 subtitle: "The cards' colour on the player's shelf, see-through. Press to change.") {
-                        Text(["Backdrop", "Black", "White"][store.settings.shelfCardColour % 3])
-                            .font(.system(size: 24))
-                            .foregroundStyle(theme.palette.textSecondary)
-                    }
-                }
-                .buttonStyle(PlainCardButtonStyle())
-
 
                 // The one switch that makes everything else diagnosable on a
                 // Release/sideloaded build. Turn it on, reproduce the problem,

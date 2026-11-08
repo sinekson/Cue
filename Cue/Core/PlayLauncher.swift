@@ -36,7 +36,6 @@ final class PlayLauncher: ObservableObject {
         cancel()
         PlayStage.shared.show(meta, video, art: art)
         searching = Self.key(meta, video)
-        guard !PerformanceSettingsStore.shared.settings.holdPlayStage else { return }
         task = Task { [weak self] in await self?.find(meta, video, fromStart: fromStart) }
     }
 
@@ -45,7 +44,6 @@ final class PlayLauncher: ObservableObject {
         cancel()
         PlayStage.shared.show(item, nil)
         searching = Self.key(item, nil)
-        guard !PerformanceSettingsStore.shared.settings.holdPlayStage else { return }
         task = Task { [weak self] in
             guard let self, let (meta, video) = await self.target(item) else { return }
             self.searching = Self.key(meta, video)

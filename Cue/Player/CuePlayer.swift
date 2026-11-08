@@ -1474,7 +1474,7 @@ final class SourceCard: UICollectionViewCell {
 
     /// Every word in the card's ink, at its level.
     private func applyInk() {
-        let ink = { self.neutral == 0 ? SourceTint.ink(self.tint, $0) : UIColor(white: 1, alpha: $0) }
+        let ink = { SourceTint.ink(self.tint, $0) }
         nameLines.forEach { $0.textColor = ink(0.95) }
         detailLines.forEach { $0.textColor = ink(0.8) }
         title.textColor = ink(0.95)
@@ -1541,18 +1541,9 @@ final class SourceCard: UICollectionViewCell {
     private static let pressLight: CGFloat = 0.18
     private static let pressDark: Float = 0.45
 
-    /// On the shelf, a neutral see-through card where Developer says so:
-    /// black, darker at rest; white, a little more when focused.
-    private var neutral: Int { overFilm ? PerformanceSettingsStore.shared.settings.shelfCardColour % 3 : 0 }
-
     private func cardColour(_ focused: Bool) -> UIColor {
-        switch neutral {
-        case 1: return UIColor(white: 0, alpha: focused ? 0.3 : isPlaying ? 0.45 : 0.55)
-        case 2: return UIColor(white: 1, alpha: focused ? 0.24 : isPlaying ? 0.14 : 0.08)
-        default:
-            return SourceTint.shade(tint, focused ? Self.focusLight : isPlaying ? Self.playingLight : Self.restLight)
-                .withAlphaComponent(overFilm ? Self.overFilmOpacity : 1)
-        }
+        SourceTint.shade(tint, focused ? Self.focusLight : isPlaying ? Self.playingLight : Self.restLight)
+            .withAlphaComponent(overFilm ? Self.overFilmOpacity : 1)
     }
 
     /// As `FixedFocusDestinationCell`: the same lift and shadow.
@@ -3624,15 +3615,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         attempt += 1
         let attempt = attempt
         loadStarted = Date()
-        // Developer: every link fails, a few seconds in, for the stage's lines.
-        if PerformanceSettingsStore.shared.settings.failEveryLink {
-            loadTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(3))
-                guard !Task.isCancelled, self?.attempt == attempt else { return }
-                self?.linkFailed()
-            }
-            return
-        }
         var options = LoadOptions(
             httpHeaders: entry.stream.behaviorHints?.proxyHeaders?.requestHeaders ?? [:],
             matchContentEnabled: view.window?.avDisplayManager.isDisplayCriteriaMatchingEnabled ?? true,

@@ -20,20 +20,11 @@ final class PerformanceSettingsStore: ObservableObject {
         /// bitrate, buffer depth. Answers "why is this stuttering" on the
         /// couch, without a Mac attached.
         var showPlayerDiagnostics = false
-        /// Play stops on the stage: no search, no stream, until Back. To
-        /// look at the stage for as long as it takes.
-        var holdPlayStage = false
-        /// Every link fails 3 s into its load: the stage's failover and its
-        /// lines, without a broken link to hand.
-        var failEveryLink = false
-        /// The source cards on the player's shelf: 0 the backdrop's colour,
-        /// 1 black, 2 white, all see-through. An experiment.
-        var shelfCardColour = 0
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics, holdPlayStage, failEveryLink, shelfCardColour
+            case showFPSOverlay, showPlayerDiagnostics
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -43,9 +34,6 @@ final class PerformanceSettingsStore: ObservableObject {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
-            holdPlayStage = (try? c.decode(Bool.self, forKey: .holdPlayStage)) ?? false
-            failEveryLink = (try? c.decode(Bool.self, forKey: .failEveryLink)) ?? false
-            shelfCardColour = (try? c.decode(Int.self, forKey: .shelfCardColour)) ?? 0
         }
     }
 
