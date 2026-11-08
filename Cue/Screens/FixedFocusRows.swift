@@ -2463,10 +2463,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// A header row peeking with its name (Details' "Episodes"): the name
     /// just above its cards — not at the header's place, the season
-    /// buttons and their map's room between.
+    /// buttons and their map's room between (one season: the map's).
     private func peekNameLift(_ rowIndex: Int) -> CGFloat {
         guard rigidPeek != nil, rigidPeekShowsName, isFeatured(focusedRow), isNext(rowIndex),
-              header(rowIndex) != nil else { return 0 }
+              titleExtra(rowIndex) > 0 else { return 0 }
         return -titleExtra(rowIndex)
     }
 
@@ -2516,7 +2516,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let timing = rowMove?.timingFunction ?? CAMediaTimingFunction(name: .easeInEaseOut)
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
-        guard header(cell.rowIndex) != nil else { return }
+        // One season (no buttons), peeking with its name: the name, just
+        // above its cards in the peek, steps up over the map's room on
+        // Down (Up: back down), on the row's own move.
+        if header(cell.rowIndex) == nil {
+            guard rigidPeek != nil, rigidPeekShowsName, titleExtra(cell.rowIndex) > 0 else { return }
+            let spring = rowMove as? CASpringAnimation
+            let progress = spring.map { Self.springProgress($0) }
+            let samples = progress?.values ?? (0...40).map { CGFloat($0) / 40 }
+            let lift = -titleExtra(cell.rowIndex)
+            cell.moveTitle(lift: samples.map { lift * (down ? 1 - $0 : $0) },
+                           timing: spring == nil ? timing : nil, duration: progress?.duration ?? duration)
+            return
+        }
         // Peeking with its name (Details' "Episodes"): the name stays on its
         // cards and fades out as the season buttons fade in (Up: back).
         if rigidPeek != nil, rigidPeekShowsName {
@@ -3889,6 +3901,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// spring's sampled progress): the header's offset below its place
     /// along `fade`; the name's lift and opacity along `lift` and
     /// `titleOpacity` at `scale` (its ⌄ with it); then the end state.
+    /// The name alone moving (`lift` along the move) — a row without a
+    /// header (Details' one season).
+    func moveTitle(lift: [CGFloat], timing: CAMediaTimingFunction?, duration: Double) {
+        UIView.performWithoutAnimation { titleLift = lift.last ?? 0 }
+        let animation = CAKeyframeAnimation(keyPath: "transform.translation.y")
+        animation.values = lift.map { NSNumber(value: Double(-$0)) }
+        animation.keyTimes = lift.indices.map { NSNumber(value: Double($0) / Double(max(lift.count - 1, 1))) }
+        animation.calculationMode = .linear
+        animation.timingFunction = timing
+        animation.duration = duration
+        titleHolder.layer.add(animation, forKey: "lift")
+    }
+
     func moveHeader(fade: [CGFloat], lift: [CGFloat], titleOpacity: [CGFloat], scale: CGFloat,
                     timing: CAMediaTimingFunction?, duration: Double, entering: Bool) {
         let times = fade.indices.map { NSNumber(value: Double($0) / Double(max(fade.count - 1, 1))) }
