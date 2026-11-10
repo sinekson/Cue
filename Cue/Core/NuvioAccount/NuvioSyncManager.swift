@@ -61,17 +61,16 @@ final class NuvioSyncManager: ObservableObject {
     /// True from the moment an app-open sync is armed until it has started (or
     /// decided not to). Set SYNCHRONOUSLY, because the whole point is that the
     /// other launch-time pulls can see it before it begins: `isSyncing` only
-    /// goes up once the task body reaches `syncNow`, and the foreground
-    /// `refreshContinueWatching` fires in that gap — two full-snapshot pulls of
-    /// progress and library, overlapping in `mergeRemote`.
+    /// goes up once the task body reaches `syncNow`.
     private(set) var openSyncPending = false
 
-    /// When the last full sync finished (success or failure), and when the
-    /// last app-open sync did. An app-open sync inside `openSyncFloor` of it is
-    /// skipped: the picture is already current, and a quick inactive→active
-    /// flip (a system overlay, the top shelf) shouldn't cost a full cycle.
+    /// When the last full sync finished (success or failure). An app-open or
+    /// navigation sync inside `openSyncFloor` of it is skipped: NuvioTV's
+    /// schedule — pulls at launch, on coming back and on navigating, at most
+    /// every 2 min, and every 15 min (`autoSyncInterval`); pushes go on every
+    /// change.
     private var lastFullSyncEnded = Date.distantPast
-    private static let openSyncFloor: TimeInterval = 15
+    private static let openSyncFloor: TimeInterval = 120
 
     /// How long the app-open sync waits before starting.
     ///
@@ -82,14 +81,13 @@ final class NuvioSyncManager: ObservableObject {
     /// library. The wait lets the first screen render and its catalogs get
     /// their requests out; after it the sync is just another background
     /// consumer. It is a settle delay, not a poll — nothing the user does
-    /// shortens or triggers it, and it is orders of magnitude shorter than the
-    /// 30/90s tick this replaces.
+    /// shortens or triggers it, and it is far shorter than the 15 min tick.
     ///
     /// The A8/A10X tier gets the same 3s the launch collection migration uses:
     /// those boxes are still decoding the first screen's posters at that point,
     /// and the pulls merge their snapshots on the main actor.
     private static var openSyncDelay: TimeInterval {
-        (PerformanceProfile.isLowPower || PerformanceProfile.isMidPower) ? 3.0 : 1.5
+        (PerformanceProfile.isLowPower || PerformanceProfile.isMidPower) ? 3.0 : 2.5
     }
     /// Profiles whose library pull succeeded this session, gating empty
     /// (cleared) library pushes so a cold start — or a profile whose pull
@@ -793,14 +791,9 @@ final class NuvioSyncManager: ObservableObject {
 
     // MARK: - Periodic auto-sync
 
-    /// Seconds between automatic full syncs while signed in and foregrounded.
-    /// Tier-scaled: the full sync has no server-side change detection, so
-    /// every idle tick pulls and decodes complete progress/library/watched
-    /// snapshots — recurring work the A8/A10X pays in focus hitches while the
-    /// user browses. 90s there still keeps devices current (the per-change
-    /// SyncCoordinator push path is what carries urgency, not this timer).
-    static let autoSyncInterval: TimeInterval =
-        (PerformanceProfile.isLowPower || PerformanceProfile.isMidPower) ? 90 : 30
+    /// Between automatic full syncs while signed in (NuvioTV's 15 min);
+    /// coming back and navigating pull too (`syncOnAppOpen`).
+    static let autoSyncInterval: TimeInterval = 15 * 60
     private var autoSyncTask: Task<Void, Never>?
     /// Set by the player. While a stream plays the tick runs `syncLight`
     /// instead of the full multi-endpoint sync: a few small JSON requests that
@@ -809,9 +802,6 @@ final class NuvioSyncManager: ObservableObject {
     /// preference/addon/plugin round trips that used to make the whole tick
     /// something worth skipping. Nothing is skipped any more.
     @MainActor static var playbackActive = false
-
-    /// Ticks seen while playback was active (see the loop below).
-    private var playbackTicks = 0
 
     private func startAutoSync() {
         autoSyncTask?.cancel()
@@ -824,17 +814,10 @@ final class NuvioSyncManager: ObservableObject {
                 // behind it.
                 guard !isSyncing else { continue }
                 if Self.playbackActive {
-                    // The light pass still merges three stores ON THE MAIN
-                    // ACTOR — thousands of watched rows on a long-lived
-                    // install — while the A8/A10X is decoding a film beside
-                    // it. Those tiers' tick is already stretched to 90s by
-                    // `autoSyncInterval`, which is the in-playback cadence
-                    // the old every-third-tick skip produced.
-                    playbackTicks += 1
                     await syncLight(reason: "auto, playback active")
+                    lastFullSyncEnded = Date()
                     continue
                 }
-                playbackTicks = 0
                 await syncNow()
             }
         }
@@ -852,7 +835,7 @@ final class NuvioSyncManager: ObservableObject {
         isSyncing = true
         // A full sync requested while THIS light pass was running was neither
         // run nor re-run: `rerunRequested` was consumed only by syncNow's
-        // defer, so the request sat until the next 30s tick. Same rule here.
+        // defer, so the request sat until the next tick. Same rule here.
         defer {
             isSyncing = false
             if rerunRequested {
@@ -872,7 +855,7 @@ final class NuvioSyncManager: ObservableObject {
                     if isDirty("progress", profile: profile) { try await pushWatchProgressAll(profile: profile) }
                     await reconcileProgressDeletesBeforePull(profile: profile)
                     // Still-pending deletes postpone the progress pull so it
-                    // cannot resurrect them (same rule as refreshContinueWatching).
+                    // cannot resurrect them (same rule as the full sync).
                     if loadPendingDeletes(profile: profile).isEmpty {
                         try await pullWatchProgress(profile: profile)
                     }
@@ -1371,60 +1354,6 @@ final class NuvioSyncManager: ObservableObject {
         }
     }
 
-    /// True while a `refreshContinueWatching` task is running. Checked and set
-    /// SYNCHRONOUSLY on the main actor — see the method.
-    private var refreshContinueWatchingInFlight = false
-
-    /// Pull the latest Continue Watching (and library) from the account — call
-    /// on foreground so changes made on other devices show up without a
-    /// relaunch. Local pushes already fire immediately on every change.
-    func refreshContinueWatching() {
-        guard account.accessToken != nil else { return }
-        // Check-and-set BEFORE the Task. The overlap guard used to live inside
-        // it, so two calls in the same runloop turn — the `scenePhase` change
-        // and the 30s Home poll, or two poll ticks — both spawned a task, both
-        // saw `isSyncing == false`, and both ran the push/drain/pull sequence
-        // over the same stores. A second run is redundant, not newer.
-        guard !refreshContinueWatchingInFlight else { return }
-        refreshContinueWatchingInFlight = true
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.refreshContinueWatchingInFlight = false }
-            // The 30s Home poll and the 30s auto-sync tick run on separate
-            // timers, and this method pulls the library as well — so on Home
-            // the account was being pulled roughly twice per window, with the
-            // two runs overlapping in `libraryStore.mergeRemote`. Every other
-            // entry point has this guard; this one didn't.
-            //
-            // `openSyncPending` counts as well. This method is called from the
-            // same `scenePhase` change that arms the app-open sync, and that
-            // sync's settle delay means `isSyncing` is still false when this
-            // runs — so both would pull progress and library at once, which is
-            // exactly the overlap the guard exists to stop. Standing down loses
-            // nothing: the full sync about to run is a superset of this.
-            guard !self.isSyncing, !self.openSyncPending, !self.isRetiringAccountState
-            else { return }
-            // Pinned exactly like syncNow: this is a miniature sync, and the
-            // profile can change between any two of these awaits.
-            let profile = self.pid
-            // A local change whose push is still in flight must go up first —
-            // `replaceWithNuvioSnapshot` would otherwise read a snapshot that
-            // predates it and drop (and tombstone) the title just watched.
-            if self.progressDirty { try? await self.pushWatchProgressAll(profile: profile) }
-            // Reassert not-yet-confirmed removals so the pull can't resurrect
-            // them, push the deletes to the server, THEN pull the snapshot.
-            await self.reconcileProgressDeletesBeforePull(profile: profile)
-            // Still-pending deletes postpone the pull so it can't resurrect
-            // them. This is no longer permanent: a key the server keeps
-            // rejecting is quarantined by drainPendingDeletes (see
-            // maxDeleteAttempts) instead of blocking every future refresh.
-            guard self.loadPendingDeletes(profile: profile).isEmpty else { return }
-            try? await self.pullWatchProgress(profile: profile)
-            await self.reconcileLibraryDeletesBeforePull(profile: profile)
-            try? await self.pullLibrary(profile: profile)
-        }
-    }
-
     // Removals must reach the account durably — a fire-and-forget delete that
     // hit a network blip would silently strand the row on the server, so it
     // reappears on the next full pull ("removed it, it came back"). Instead we
@@ -1446,7 +1375,7 @@ final class NuvioSyncManager: ObservableObject {
 
     /// How many SERVER REJECTIONS a queued delete survives before it is
     /// quarantined. A key the server refuses can never drain, and both
-    /// `refreshContinueWatching` and the pre-pull reconcile stall while the
+    /// the pre-pull reconcile stalls while the
     /// queue is non-empty — so one permanently-rejected key stopped Continue
     /// Watching from ever refreshing again for that profile. Transport failures
     /// (offline, timeout, 5xx) don't count, so a week off the network still
@@ -2717,7 +2646,7 @@ final class NuvioSyncManager: ObservableObject {
             // An auto-sync tick is NOT tracked by `fullSyncTask`, so waiting on
             // `previous` alone can still land inside a running sync — whose
             // `guard !isSyncing` would silently drop this one and leave the
-            // newly-selected profile unsynced until the next 30s tick. Wait for
+            // newly-selected profile unsynced until the next tick. Wait for
             // the in-flight run to clear; it abandons itself as soon as it
             // notices the switch, so this is a short wait in practice.
             for _ in 0..<100 {
@@ -3288,7 +3217,7 @@ final class NuvioSyncManager: ObservableObject {
         // A sync already PAST its "flush dirty first" step when the user picks a
         // theme would fetch the pre-change blob and apply it here — reverting
         // the pick, and then the debounced push would ship the REVERTED value,
-        // making it permanent. Syncs run every 60-90s and take ~30s, so that
+        // making it permanent. Syncs run every few minutes and take ~30s, so that
         // window is wide open. Snapshot the edit generation and bail if a local
         // edit landed while this pull was in flight; the pending push ships it,
         // and the next sync pulls cleanly.
@@ -3319,7 +3248,7 @@ final class NuvioSyncManager: ObservableObject {
         // Decode OFF the main actor. This blob embeds the entire collections
         // library — the same ~700 KB of nested JSON whose synchronous main-thread
         // decode froze the Apple TV at launch (see CollectionsStore.load()) —
-        // and a sync runs every 60-90s, so it was stalling the UI on a timer.
+        // and syncs run regularly, so it was stalling the UI on a timer.
         guard let snapshot = await Self.decodeAppPreferences(json) else { return }
         guard pid == profile else { return }
         guard !appPreferencesDirty, appPrefsGeneration == generationAtStart else {

@@ -361,21 +361,6 @@ struct RootView: View {
     /// everything, including the profile gate.
     @State private var showWelcome = false
     @State private var selectedTab = 0
-    /// Polls the account every 30s while Home is up so Continue Watching stays
-    /// live — removals and additions made on another device (or that failed to
-    /// reconcile on foreground) appear without a relaunch. Fires continuously;
-    /// the receiver gates it to Home + active + not-in-player. A no-change pull
-    /// mutates nothing (mergeRemote only publishes on a real diff), so an idle
-    /// Home doesn't re-render.
-    /// `.default`, NOT `.common`: common-mode timers fire inside the run-loop
-    /// tracking mode focus/scroll animations run in, waking SwiftUI mid-scroll
-    /// for a poll that is never urgent. Tier-scaled: on the A8/A10X the full
-    /// account sync already runs every 90s, and a second independent 30s pull
-    /// over the same data doubled the recurring decode/merge load for nothing.
-    private let continueWatchingPoll = Timer.publish(
-        every: (PerformanceProfile.isLowPower || PerformanceProfile.isMidPower) ? 60 : 30,
-        on: .main, in: .default
-    ).autoconnect()
     /// When Home last popped back from a pushed screen — used to swallow the
     /// stray Menu that otherwise opens the sidebar right after backing out.
     @State private var lastHomePopAt: Date?
@@ -737,19 +722,9 @@ struct RootView: View {
                     launch.cameBack(needed: playback == nil && !showWelcome)
                 }
                 if phase == .active {
-                    // Opening the app syncs the whole account, not just
-                    // Continue Watching — add-ons, collections, the layout and
-                    // the player/theme settings all change on other devices
-                    // too, and waiting for the periodic tick (30s, 90s on the
-                    // A8/A10X) meant the app opened showing yesterday's copy.
-                    // Self-coalescing and self-throttled: a cold launch arms
-                    // this from the auth change as well, a quick
-                    // inactive→active flip is ignored, and a cycle already
-                    // running is reused rather than duplicated.
+                    // Opening the app syncs the whole account (at most
+                    // every 2 min; a cycle already running is reused).
                     sync?.syncOnAppOpen(reason: "app opened")
-                    // Stands down on its own while that sync is armed, so the
-                    // two can't pull progress and library at the same time.
-                    sync?.refreshContinueWatching()
                     // An add-on left as a stub — its manifest fetch answered
                     // during a wake, before the network was really back — has
                     // no catalogs and serves no streams, and NOTHING else
@@ -761,13 +736,6 @@ struct RootView: View {
                         Task { _ = await addonManager.resolvePlaceholders() }
                     }
                 }
-            }
-            // Keep Continue Watching live while browsing Home (tab 0), app
-            // active, no player open. refreshContinueWatching pulls a full
-            // snapshot; mergeRemote reconciles both adds and removes.
-            .onReceive(continueWatchingPoll) { _ in
-                guard scenePhase == .active, selectedTab == 0, playback == nil else { return }
-                sync?.refreshContinueWatching()
             }
     }
 
@@ -1225,6 +1193,8 @@ struct RootView: View {
     /// the page coming in faded in too, a dip), the fade set up with it
     /// (from `onChange` the pages had already changed places).
     private func switchTab(to new: Int) {
+        // Navigating pulls the account, as NuvioTV (at most every 2 min).
+        sync?.syncOnAppOpen(reason: "tab switch")
         var instant = Transaction()
         instant.disablesAnimations = true
         withTransaction(instant) {

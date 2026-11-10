@@ -100,6 +100,10 @@ final class HomeViewModel: ObservableObject {
     /// The billboard's picks (see `BillboardPicks`), made once per catalog
     /// fetch — the same rhythm, so the billboard doesn't reshuffle between.
     @Published private(set) var billboardPicks: [BillboardPick] = []
+    /// The fetch whose picks are being made, and the one they're made for
+    /// (only once they're in: the launch waits on that, so the billboard
+    /// never shows the rows' highlights first).
+    private var picksAskedFor: Date?
     private var picksMadeFor: Date?
     /// A later fetch's picks, waiting for the billboard to be out of view.
     private var nextPicks: [BillboardPick]?
@@ -108,11 +112,12 @@ final class HomeViewModel: ObservableObject {
     /// Movies and Series share this model and all ask). A refresh's new
     /// picks swap in out of view (`BillboardSight`): never under your eyes.
     func refreshPicks(history: BillboardPicks.History, addonManager: AddonManager, tmdb: Bool) async {
-        guard let loadedAt, picksMadeFor != loadedAt else { return }
-        picksMadeFor = loadedAt
+        guard let loadedAt, picksAskedFor != loadedAt else { return }
+        picksAskedFor = loadedAt
         let made = await BillboardPicks.make(history: history, addonManager: addonManager,
                                              tmdb: tmdb, fallback: highlights(max: 20))
-        guard picksMadeFor == loadedAt else { return }
+        guard picksAskedFor == loadedAt else { return }
+        picksMadeFor = loadedAt
         if billboardPicks.isEmpty || LaunchPreloader.shared.curtain || !BillboardSight.shared.inView {
             nextPicks = nil
             billboardPicks = made
@@ -1121,6 +1126,9 @@ struct HomeView: View {
     /// ALREADY in Continue Watching (metadata is needed only to count their
     /// new episodes) and shows the viewer has watched but has no progress row
     /// for (which additionally get a synthesised Next Up card).
+    /// A show gets a Next Up card only if an episode was watched this recently.
+    private static let nextUpWindow: TimeInterval = 30 * 24 * 60 * 60
+
     private struct NextUpTarget {
         let contentID: String
         let contentType: String
@@ -1148,10 +1156,15 @@ struct HomeView: View {
             .map { NextUpTarget(contentID: $0.metaID, contentType: $0.type,
                                 lastWatchedAt: $0.updatedAt, wantsCard: false) }
 
+        // Only shows watched within `nextUpWindow`: old history, bulk marks
+        // and imports aren't what you're watching (a removal here stays on
+        // this device, so fewer cards is the fix, not a synced list).
+        let windowStart = Date().addingTimeInterval(-Self.nextUpWindow)
         let watchedSeries = watched.items.values
             .filter { ($0.contentType == "series" || $0.contentType == "tv") && $0.season != nil && $0.episode != nil }
             .sorted { $0.watchedAt > $1.watchedAt }
             .deduplicatedByContentID()
+            .filter { $0.watchedAt >= windowStart }
             .filter { !activeMetaIDs.contains($0.contentID) }
             // Removed from Continue Watching means removed, including the
             // synthesised suggestion that would otherwise replace the card.

@@ -210,6 +210,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the device every 10 s, to Nuvio on the first save and every 30 s; both on
   pause, leaving the app and exit. Finished at 95 %. Started means past 30 s
   (`WatchProgress.isStarted`); "Up Next" only ever means unstarted.
+  Next Up cards (made from watched history) only for shows with an episode
+  watched in the last 30 days (`nextUpWindow`): removing one is kept on the
+  device only, Nuvio has no field for it (NuvioTV keeps it local too).
+- **Nuvio sync** follows NuvioTV's schedule: a full pull at launch (the
+  curtain waits on it), on coming back and on a tab switch (2.5 s settle, at
+  most every 2 min, `openSyncFloor`), and every 15 min (`autoSyncInterval`;
+  the light pass while playing). Pushes go on every change. No 30 s timers.
 - **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): 2 s rest on the
   buttons, one `AVPlayer` handed between Home, Details and full screen, YouTube
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Full screen
