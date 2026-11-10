@@ -71,6 +71,10 @@ final class TitleMenu {
             })
         }
 
+        entries.append(Entry(title: "Use as Background", icon: "photo") {
+            BackgroundStore.shared.use(item)
+        })
+
         if place == .library { entries.append(libraryEntry) }
         return entries
     }

@@ -166,7 +166,7 @@ struct CueApp: App {
         BackCatch.install()
         InputHold.install()
         // The background, in before the gate (it fades in under the line).
-        BandsPictureStore.shared.load()
+        BackgroundStore.shared.load()
     }
 
     @StateObject private var addonManager = AddonManager()
@@ -279,7 +279,7 @@ enum Route: Hashable {
     /// (`PageFade.push`).
     var pageBackground: AnyView? {
         switch self {
-        case .folder: AnyView(ATVBackground(titles: true))
+        case .folder: AnyView(ATVBackground())
         case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
              .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop):
             AnyView(DetailsBackdropBackground(url: backdrop))
@@ -2234,6 +2234,7 @@ final class LaunchPreloader: ObservableObject {
     func wentAway() { wentAwayAt = Date() }
     func cameBack(needed: Bool) {
         defer { wentAwayAt = nil }
+        BackgroundStore.shared.cameBack()
         if !curtain { deep() }
         guard let away = wentAwayAt else { return }
         let gateDue = needed && gate == nil && !curtain
@@ -2419,6 +2420,10 @@ final class LaunchPreloader: ObservableObject {
                 if let logo = item.logo { jobs.append(.disk(logo, PictureSize.cardLogo, order: order)) }
             }
         }
+        // The background's pool (`BackgroundPicks`): last, one job.
+        let pool = picks + rows.flatMap { $0.items.prefix(15) }
+        jobs.append(.init(key: "backgrounds", kind: "backgrounds", lane: .data, band: .deep,
+                          order: Int.max, source: "deep") { await BackgroundPicks.shared.score(pool) })
         LoadQueue.shared.replace(source: "deep", with: jobs)
     }
 }
@@ -2587,7 +2592,7 @@ struct LaunchCurtain: View {
     @State private var dissolving = false
     /// The background is in: the gate never comes in before it (1 s more
     /// at most — a first draw, no copy on disk yet).
-    @State private var backgroundIn = BandsPictureStore.shared.image != nil
+    @State private var backgroundIn = BackgroundStore.shared.image != nil
     /// The gate shown — or, before the root has decided, the one it will
     /// show at launch (the same view, so nothing changes as it's decided).
     private var gate: LaunchPreloader.GateMode? {
@@ -2626,7 +2631,7 @@ struct LaunchCurtain: View {
         .task {
             guard !backgroundIn else { return }
             let start = CACurrentMediaTime()
-            while BandsPictureStore.shared.image == nil, CACurrentMediaTime() - start < 1, !Task.isCancelled {
+            while BackgroundStore.shared.image == nil, CACurrentMediaTime() - start < 1, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(30))
             }
             // Its fade over, then the gate.

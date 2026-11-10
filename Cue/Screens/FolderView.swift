@@ -132,7 +132,7 @@ struct FolderView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ATVBackground(titles: true)
+            ATVBackground()
             content
         }
         // Back below the first row: up to it (one move, the header back in
@@ -151,9 +151,6 @@ struct FolderView: View {
                 await Self.catalogs(of: folder, type: type, key: Self.loadKey(collection, folder, type: type),
                                     addonManager: addonManager, tmdb: tmdbSettings, show: show)
             }
-        }
-        .onAppear {
-            if let cover = folder.tileCoverImageUrl { TitleBackground.shared.follow(cover) }
         }
     }
 

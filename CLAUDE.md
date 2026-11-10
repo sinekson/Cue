@@ -266,7 +266,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
   menus and the player's Audio and Subtitles; a change there reaches all
   (the SwiftUI hold menu is gone). Entries: playing, the source, Library,
-  watched (narrow to wide), red last; one name per action (Start Over, Go to
+  watched (narrow to wide), Use as Background, red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
   A held card grows 3 % past focused (2, 4, 5 tried); the menu sits 16 pt
@@ -284,11 +284,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   settings or search history. Search History: the profile's recent
   searches and the titles opened from Search. Playback scratch
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
-- **Background**: one still picture, Bands (`BandsPicture`); Dynamic (default) follows
-  the focused title (`TitleBackground`): its two main colours, one even,
-  the second towards the bottom left (the picture's 4 × 3 colour layout was
-  too distracting); its colours change in Core Animation
-  (`TitleTintGroundView`), as the collection panels'.
+- **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
+  one Home title's TMDB backdrop, blurred as Details', app-wide, still.
+  Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
+  picture's mean light ≥ 0.14, its brightest 5 % ≤ 0.40, two hue runs
+  holding ≥ 95 % of the colour (busy rainbows like One Piece out). Passing
+  pictures split into thirds by light: day (7–17) the light third, evening
+  (17–21) the middle, night (21–7) the dark. Changed only at launch, or on
+  coming back when the time of day changed or 4 h passed; never one of the
+  last 7; drawn ahead, one per time of day. Bands (`BandsPicture`) only
+  until the first scoring. Settings → Appearance → Background: what's up
+  and why, Pick Another. A card's hold menu has Use as Background: that
+  title's picture (any title; a bright spot dimmed to the rule) until the
+  next change.
+  (Dynamic, the focused title's colours, and the title's blurred picture
+  behind the rows were too much going on.) Details' dim for bright pictures
+  reaches 0.28 under it (`StageArt.brightestBelow`; 0.50 never took).
 - **App icon and Top Shelf** are generated, never hand-edited:
   `swift Tools/AppIcon/render.swift`.
 
@@ -305,7 +316,8 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
 
 - Removed features: cloud library, Plex/Jellyfin, Live TV/M3U, JS plugins,
   in-app debrid/TorrServer, themes/accent palettes, external players,
-  Trakt/SIMKL accounts (public Trakt lists stay), Stremio account, Nuvio's
+  Trakt/SIMKL accounts (public Trakt lists stay), Stremio account, the
+  Dynamic background (title colours following focus), Nuvio's
   stream badges (Badger/Fusion: not liked; their blob feature is left alone).
 - Removed from the screen: the launch's numbers (the steps still go to the
   probe log, `LaunchPreloader.line`).

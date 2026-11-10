@@ -12,7 +12,7 @@ final class StagePictureView: UIView {
     static let pictureSize = CGSize(width: 1920, height: 1080)
     /// Below the billboard the picture darkens by this much (its shade is
     /// gone there: no text to keep readable).
-    static let dimBelow: CGFloat = 0.55
+    nonisolated static let dimBelow: CGFloat = 0.55
     /// How far past the screen's edges the picture reaches (the room the
     /// old drift on a change needed; the transition's geometry keeps it).
     static let drift: CGFloat = 16
@@ -336,13 +336,18 @@ enum StageArt {
     /// at least `StagePictureView.dimBelow`, more for a bright picture —
     /// enough to bring its mean brightness down to `brightestBelow` (a
     /// light one, blurred, glared through the usual dim). Measured once
-    /// per picture (its mean luma, from the picture in memory).
-    static let brightestBelow: CGFloat = 0.50
+    /// per picture (its mean luma, from the picture in memory). (0.50 never
+    /// took: no picture is that bright under the 55 %.)
+    nonisolated static let brightestBelow: CGFloat = 0.28
     private static var brightness: [String: CGFloat] = [:]
 
     static func dimBelow(for url: String?) -> CGFloat {
         guard let mean = mean(url) else { return StagePictureView.dimBelow }
-        return max(StagePictureView.dimBelow, 1 - brightestBelow / mean)
+        return dimBelow(mean: mean)
+    }
+
+    nonisolated static func dimBelow(mean: CGFloat) -> CGFloat {
+        max(StagePictureView.dimBelow, 1 - brightestBelow / mean)
     }
 
     private static func mean(_ url: String?) -> CGFloat? {

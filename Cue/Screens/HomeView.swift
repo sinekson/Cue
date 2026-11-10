@@ -1590,11 +1590,6 @@ struct HomeUIKitView: View {
     @EnvironmentObject private var watchedStore: WatchedStore
     @EnvironmentObject private var progressStore: ProgressStore
 
-    /// The focused title (drives the background).
-    @State private var focused: MetaItem?
-    /// …and the picture its card shows: the colour comes from that (a
-    /// portrait card's poster, not the backdrop it doesn't show).
-    @State private var focusedArt: String?
     /// Focus is on the billboard: which of its titles (nil: in the rows).
     @State private var billboard: FixedFocusBillboardPosition?
     /// The billboard paging by itself: the next title, as a press would.
@@ -1623,8 +1618,6 @@ struct HomeUIKitView: View {
     /// Bumped when the billboard title's record changes (`TitleRecords`):
     /// its text reads the record.
     @State private var billboardRecord = 0
-    /// The colours shift through the scroll to or from the billboard.
-    @State private var tintScroll = false
     /// Details (opened from the billboard) is taking / has taken over: the
     /// billboard's own cues (hint, dots) are out.
     /// Details is up over Home (the billboard doesn't page behind it).
@@ -1632,10 +1625,6 @@ struct HomeUIKitView: View {
     /// This tab's say in `BillboardSight`.
     @State private var sightKey = UUID()
     /// …and its picture has stepped closer (see `StagePictureView`).
-
-    /// Below the billboard: the focused title's colours, or the app
-    /// background (Settings → Appearance).
-    @AppStorage(AppBackground.followsTitleKey) private var followsTitle = true
 
     /// The dots' last state (so they fade out unchanged).
     @State private var lastBillboard: FixedFocusBillboardPosition?
@@ -1688,9 +1677,7 @@ struct HomeUIKitView: View {
 
     private var homeLayers: some View {
         ZStack(alignment: .topLeading) {
-            // Following the title: the app's one title background, which
-            // this page sets while it's in front (see `TitleBackground`).
-            ATVBackground(titles: true)
+            ATVBackground()
             FixedFocusRows(rows: rows, featuredRowID: featuredRowID, continueRowID: continueRowID,
                            active: active,
                            progress: progress,
@@ -1716,7 +1703,6 @@ struct HomeUIKitView: View {
                                depth = $0
                                if active { HomeBack.shared.depth = $0 }
                            },
-                           onFocusArt: { focusedArt = $0 },
                            // The billboard's focus: its buttons (as Details').
                            externalBillboard: true,
                            // The billboard paging (its buttons, and by itself
@@ -1757,15 +1743,11 @@ struct HomeUIKitView: View {
                            pinnedBillboardPicture: true,
                            billboardTrailer: trailer,
                            rigidBillboardTravel: Self.rigidBillboardTravel) { item, position in
-                // Between the billboard and the rows: the colours shift
-                // gradually THROUGH the scroll (see `tintKey`'s task).
-                if (position == nil) != (billboard == nil) { tintScroll = true }
                 // Every arrival on the billboard (back from the top bar, on
                 // the same title too) starts its paging clock over.
                 if position != nil { autoPageVisit &+= 1 }
                 // At the last title: done for this visit (see `autoPageDone`).
                 if let position, position.index == position.count - 1 { autoPageDone = true }
-                focused = item
                 if let position {
                     // Paging: the text comes in on its picture
                     // (`billboardPageText`; the neighbours' logos are
@@ -1781,187 +1763,6 @@ struct HomeUIKitView: View {
             billboardLayer
         }
         .ignoresSafeArea()
-        // A still background: the panels neutral.
-        .onChange(of: followsTitle) { _, _ in TitleBackground.shared.refreshPanels() }
-        // Follows the focused title — only while this tab is in front (the
-        // billboard pages by itself behind other tabs; coming back puts
-        // this tab's title back).
-        .task(id: tintKey) {
-            guard followsTitle, active, let item = focused,
-                  let url = focusedArt ?? item.background ?? item.poster else { return }
-            // Scrolling to or from the billboard: over the whole scroll.
-            let scrolling = tintScroll
-            tintScroll = false
-            TitleBackground.shared.follow(url,
-                                          over: scrolling ? FixedFocusMotion.billboardScroll : nil)
-        }
-    }
-
-    /// What the tint follows: the focused title.
-    private var tintKey: String { "\(focused?.id ?? "")|\(followsTitle)|\(active)" }
-}
-
-/// THE TITLE BACKGROUND (Background: Dynamic): Home, Movies and
-/// Series (while in front) set it as focus moves, a folder to its cover,
-/// and they show it (`ATVBackground(titles:)`); every other page shows
-/// the Bands picture. Home's collection panels take its colour
-/// (`addPanel`).
-@MainActor
-final class TitleBackground {
-    static let shared = TitleBackground()
-
-    private var tint: UIColor?
-    private var second: UIColor?
-    /// Its pictures as drawn (Home, Movies, Series, a folder).
-    private let grounds = NSHashTable<TitleTintGroundView>.weakObjects()
-
-    /// Presses closer together than this are fast scrolling: the colours
-    /// calm down (change now and then, over a blend).
-    static let burstGap: Double = 0.3
-    /// …then they change at most this often, over this blend.
-    static let burstEvery: Double = 0.45
-    static let burstBlend: Double = 0.7
-
-    private var url: String?
-    private var task: Task<Void, Never>?
-    private var lastPress = Date.distantPast
-    private var lastChange = Date.distantPast
-    private var panelColor: UIColor?
-    private var panelFollows = true
-    private let panels = NSHashTable<FixedFocusPanelView>.weakObjects()
-
-    private init() {}
-
-    /// Follows a picture. `over`: a fixed blend (the billboard's scroll);
-    /// nil: with focus — the focus move's curve and time, calmed
-    /// while scrolling fast. The same picture again: nothing.
-    func follow(_ url: String, over: Double? = nil) {
-        guard AppBackground.followsTitle, url != self.url else { return }
-        self.url = url
-        task?.cancel()
-        task = Task { [weak self] in await self?.run(url, over: over) }
-    }
-
-    private func run(_ url: String, over: Double?) async {
-        var follows = over == nil
-        var fade = over ?? Motion.moveDuration
-        // FAST SCROLLING: a press soon after the last is part of a burst.
-        // Then the colours change at most every `burstEvery` (the cards in
-        // between are skipped — a new press cancels this wait), over a calm
-        // blend; once no press has come for a moment, it has landed: the
-        // spring again.
-        if follows {
-            let now = Date()
-            let gap = now.timeIntervalSince(lastPress)
-            lastPress = now
-            if gap < Self.burstGap {
-                let quiet = 0.15
-                let due = min(lastChange.addingTimeInterval(Self.burstEvery), now.addingTimeInterval(quiet))
-                let wait = due.timeIntervalSinceNow
-                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-                guard !Task.isCancelled else { return }
-                if Date().timeIntervalSince(now) < quiet - 0.01 {
-                    follows = false
-                    fade = Self.burstBlend
-                }
-            }
-        }
-        // The picture's two main colours (`FixedFocusTint.colors`).
-        guard let colors = await FixedFocusTint.colors(for: url), !Task.isCancelled else { return }
-        lastChange = Date()
-        tint = UIColor(colors.first)
-        second = colors.second.map { UIColor($0) }
-        for ground in grounds.allObjects { ground.show(tint, second, fade: fade, follows: follows) }
-        panelColor = UIColor(colors.first)
-        panelFollows = follows
-        refreshPanels(fade: fade)
-    }
-
-    /// A new picture of it: the current colours, at once.
-    func addGround(_ ground: TitleTintGroundView) {
-        grounds.add(ground)
-        ground.show(tint, second, fade: 0, follows: false)
-    }
-
-    // MARK: Collection panels
-
-    /// A new panel: the current colour, at once.
-    func addPanel(_ panel: FixedFocusPanelView) {
-        panels.add(panel)
-        panel.show(shownPanelColor, fade: 0, follows: panelFollows)
-    }
-
-    /// The panels again (the colour changed, or the setting): neutral on a
-    /// still picture.
-    func refreshPanels(fade: Double = Motion.fadeDuration) {
-        for panel in panels.allObjects { panel.show(shownPanelColor, fade: fade, follows: panelFollows) }
-    }
-
-    private var shownPanelColor: UIColor? {
-        AppBackground.followsTitle ? panelColor : nil
-    }
-}
-
-/// The title background as drawn (`TitleBackground`): Home's ground.
-/// Its colours change in Core Animation (`TitleTintGroundView`): in SwiftUI
-/// the blend ran on the main thread with every focus move, beside the rows.
-struct TitleBackgroundView: UIViewRepresentable {
-    func makeUIView(context: Context) -> TitleTintGroundView {
-        let view = TitleTintGroundView()
-        TitleBackground.shared.addGround(view)
-        return view
-    }
-    func updateUIView(_ view: TitleTintGroundView, context: Context) {}
-}
-
-/// `TitleTintBackground` in layers: the dark ground, the title's colour
-/// over it, the second towards the bottom left (the same fixed mask); a
-/// change blends from what's on screen, on the panels' curves.
-final class TitleTintGroundView: UIView {
-    private let first = CALayer()
-    private let second = CALayer()
-    private let secondMask = CAGradientLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        backgroundColor = UIColor(white: 0.06, alpha: 1)
-        secondMask.colors = [UIColor.clear.cgColor, UIColor.black.cgColor]
-        secondMask.locations = [0.15, 0.95]
-        secondMask.startPoint = CGPoint(x: 0.95, y: 0)
-        secondMask.endPoint = CGPoint(x: 0.5, y: 1)
-        second.mask = secondMask
-        for sub in [first, second, secondMask] as [CALayer] { sub.actions = Self.still }
-        layer.addSublayer(first)
-        layer.addSublayer(second)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private static let still: [String: CAAction] = ["bounds": NSNull(), "position": NSNull(),
-                                                    "backgroundColor": NSNull()]
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        for sub in [first, second, secondMask] as [CALayer] { sub.frame = bounds }
-    }
-
-    func show(_ tint: UIColor?, _ other: UIColor?, fade: Double, follows: Bool) {
-        let strength = TitleTintBackground.tintStrength
-        // No second colour: the first under the mask too, so it fades as one.
-        let colors = [tint?.withAlphaComponent(strength),
-                      (tint == nil ? nil : other ?? tint)?.withAlphaComponent(strength)]
-        for (sub, color) in zip([first, second], colors) {
-            let from = sub.presentation()?.backgroundColor ?? sub.backgroundColor
-            sub.backgroundColor = (color ?? .clear).cgColor
-            guard fade > 0, window != nil else { sub.removeAnimation(forKey: "tint"); continue }
-            let change = CABasicAnimation(keyPath: "backgroundColor")
-            change.fromValue = from
-            change.duration = fade
-            change.timingFunction = follows ? FixedFocusTint.focusTiming
-                : CAMediaTimingFunction(name: .easeInEaseOut)
-            sub.add(change, forKey: "tint")
-        }
     }
 }
 
@@ -2026,18 +1827,6 @@ enum FixedFocusTint {
     /// curve, not a spring: the no-bounce spring's shape, fast then a long
     /// settle).
     @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
-
-    /// The tint moves with focus: the colours of the cards you may go to
-    /// next, found beforehand — on the press there is nothing left to work
-    /// out. (Cached per picture.)
-    @MainActor static func prepare(_ urls: [String]) {
-        guard !urls.isEmpty else { return }
-        Task { @MainActor in
-            for url in urls {
-                _ = await colors(for: url)
-            }
-        }
-    }
 
     /// How bright the colour is before it is laid over the dark base.
     static let brightness: Double = 0.45
@@ -2694,7 +2483,6 @@ extension HomeUIKitView {
         let item = row.items[index]
         guard item.id != billboardItem?.id else { return }
         billboard = FixedFocusBillboardPosition(index: index, count: row.items.count)
-        focused = item
         withAnimation(FixedFocusMotion.animation(duration: Motion.moveDuration)) { billboardItem = item }
     }
 
@@ -2717,7 +2505,6 @@ extension HomeUIKitView {
         else { return }
         billboardItem = first
         billboard = FixedFocusBillboardPosition(index: 0, count: row.items.count)
-        focused = first
     }
 
     /// The billboard's text for a title, at its place (standing on its

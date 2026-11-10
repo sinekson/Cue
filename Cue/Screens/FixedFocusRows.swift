@@ -56,8 +56,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// How far below the billboard the focused row is (0: on it or no
     /// billboard; 1: the first row below).
     var onDepth: (Int) -> Void = { _ in }
-    /// The picture the focused card shows (the background colour follows it).
-    var onFocusArt: (String?) -> Void = { _ in }
     /// Details: the billboard's focus is OUTSIDE the rows (its buttons) —
     /// its invisible cards take focus only on the way back up.
     var externalBillboard = false
@@ -197,7 +195,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.billboardEdge = billboardEdge
         controller.onFocusItem = onFocusItem
         controller.onDepth = onDepth
-        controller.onFocusArt = onFocusArt
         controller.externalBillboard = externalBillboard
         controller.cardStates = cardStates
         controller.onSelectInRow = onSelectInRow
@@ -445,8 +442,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// which of its titles.
     var onFocusItem: (MetaItem, FixedFocusBillboardPosition?) -> Void = { _, _ in }
     var onDepth: (Int) -> Void = { _ in }
-    /// The picture the focused card shows (the background colour follows it).
-    var onFocusArt: (String?) -> Void = { _ in }
 
     /// The first row below the billboard stands lower while it is in focus
     /// (see `FixedFocusMetrics.billboardStripDrop`).
@@ -992,13 +987,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard row.items.indices.contains(itemIndex) else { return }
         let item = row.items[itemIndex]
         let featured = isFeatured(rowIndex)
-        onFocusArt(item.background ?? item.poster)
         onFocusItem(item, featured ? FixedFocusBillboardPosition(index: itemIndex, count: row.items.count) : nil)
         TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: itemIndex)
-        // The next cards' colours, ready before you get there.
-        FixedFocusTint.prepare([itemIndex + 1, itemIndex - 1, itemIndex + 2]
-            .filter { row.items.indices.contains($0) }
-            .compactMap { row.items[$0].background ?? row.items[$0].poster })
         preloadReachable(row: rowIndex, index: itemIndex)
         onDepth(depth(of: rowIndex))
         // Back on the SAME card from outside the rows (a menu closing, down
@@ -1376,15 +1366,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let row = rows[rowIndex]
         guard row.items.indices.contains(index) else { return }
         let item = row.items[index]
-        // (As the card shows it: landscape the backdrop, a poster card its poster.)
-        let card = destinationCard(rowIndex)
-        onFocusArt(card.width > card.height ? item.background ?? item.poster : item.poster ?? item.background)
         onFocusItem(item, nil)
         TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
-        FixedFocusTint.prepare([index + 1, index - 1, index + 2]
-            .filter { row.items.indices.contains($0) }
-            .compactMap { card.width > card.height ? row.items[$0].background ?? row.items[$0].poster
-                : row.items[$0].poster ?? row.items[$0].background })
         onDepth(depth(of: rowIndex))
         selected[row.id] = index
         enterRow(rowIndex)
@@ -2174,12 +2157,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             peekHidden = false
             onPeekBack()
         }
-        onFocusArt(item.background ?? item.poster)
         onFocusItem(item, FixedFocusBillboardPosition(index: index, count: row.items.count))
         TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
-        FixedFocusTint.prepare([index + 1, index - 1, index + 2]
-            .filter { row.items.indices.contains($0) }
-            .compactMap { row.items[$0].background ?? row.items[$0].poster })
     }
 
     /// Focus to the billboard's buttons (`preferredFocusEnvironments`).
@@ -4220,7 +4199,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 setNeedsLayout()
             }
             // The page's colour (or neutral), as it is now.
-            if let panel { TitleBackground.shared.addPanel(panel) }
+            panel?.show(nil, fade: 0, follows: false)
         }
         panel?.isHidden = !isPanel
         if isFeatured, let row, row.items.indices.contains(selectedIndex) {
