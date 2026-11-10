@@ -1249,6 +1249,7 @@ struct RootView: View {
             NavigationStack {
                 ATVSettingsView(barFocused: sidebarFocus != nil) { focusSidebar(3) }
                     .probeScreen("Settings")
+                    .environmentObject(searchViewModel)
             }
         case .movies:
             homeLikeStack(.movies, path: $moviesPath, active: active)

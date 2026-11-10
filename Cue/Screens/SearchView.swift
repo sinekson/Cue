@@ -113,6 +113,15 @@ final class SearchViewModel: ObservableObject {
         }
     }
 
+    /// Settings → Storage: this profile's recent searches and titles, gone.
+    func clearHistory() {
+        recentTitles = []
+        recentSearches = []
+        ProfileScopedDefaults.forget([Self.recentTitlesKey, Self.recentSearchesKey], profile: profile)
+    }
+
+    var hasHistory: Bool { !recentTitles.isEmpty || !recentSearches.isEmpty }
+
     /// The query joins the recent searches.
     func remember() {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)

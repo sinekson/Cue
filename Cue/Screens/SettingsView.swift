@@ -333,24 +333,55 @@ struct CueSwitch: View {
     }
 }
 
-/// Storage: what Cue keeps on this Apple TV, by kind, its size and
-/// allowance, and one clear for all of it (`CacheStorage`). No
-/// confirmation: everything here loads again as needed.
+/// Storage: what Cue keeps on this Apple TV — the cache and the search
+/// history, each a page with what it holds and its clear — and the space
+/// left. No confirmations.
 struct StorageSettingsDetail: View {
-    @State private var parts: [CacheStorage.Part] = []
+    @EnvironmentObject private var search: SearchViewModel
+    @State private var total: Int64?
     @State private var free: Int64?
-    @State private var measured = false
-    @State private var clearing = false
 
     var body: some View {
         SettingsPage(title: SettingsCategory.storage.title,
+                     subtitle: "What Cue keeps on this Apple TV.") {
+            SettingsSection {
+                SettingsLinkRow(title: "Cache", value: total.map(CachePage.size)) {
+                    CachePage(measured: { total = $0 })
+                }
+                SettingsLinkRow(title: "Search History",
+                                value: search.hasHistory ? nil : "Empty") { SearchHistoryPage() }
+            }
+            SettingsSection {
+                VStack(spacing: 0) {
+                    SettingsInfoRow(title: "Free on This Apple TV", value: free.map(CachePage.size) ?? "—")
+                }
+            }
+        }
+        .task {
+            total = await CacheStorage.measure().reduce(0) { $0 + $1.bytes }
+            free = CacheStorage.available()
+        }
+    }
+}
+
+/// Every cache by kind with its size and allowance, and one clear for all
+/// of it (`CacheStorage`): everything here loads again as needed.
+private struct CachePage: View {
+    /// The total, back to Storage's row.
+    let measured: (Int64) -> Void
+    @State private var parts: [CacheStorage.Part] = []
+    @State private var done = false
+    @State private var clearing = false
+
+    var body: some View {
+        SettingsPage(title: "Cache",
                      subtitle: "Cue keeps pictures and title details on this Apple TV so pages open at once. "
                         + "Clearing them is safe: they load again as needed.") {
             SettingsSection {
                 SettingsButtonRow(title: "Clear Cache",
                                   description: "Removes everything below. Your account, profiles, progress, "
                                     + "library and settings stay.",
-                                  value: clearing ? "Clearing…" : (measured ? Self.size(total) : nil)) {
+                                  value: clearing ? "Clearing…" : (done ? Self.size(total) : nil)) {
                     clear()
                 }
             }
@@ -361,11 +392,6 @@ struct StorageSettingsDetail: View {
                     }
                 }
             }
-            SettingsSection {
-                VStack(spacing: 0) {
-                    SettingsInfoRow(title: "Free on This Apple TV", value: free.map(Self.size) ?? "—")
-                }
-            }
         }
         .task { await measure() }
     }
@@ -374,8 +400,8 @@ struct StorageSettingsDetail: View {
 
     private func measure() async {
         parts = await CacheStorage.measure()
-        free = CacheStorage.available()
-        measured = true
+        done = true
+        measured(total)
     }
 
     private func clear() {
@@ -388,7 +414,7 @@ struct StorageSettingsDetail: View {
         }
     }
 
-    private static func size(_ bytes: Int64) -> String {
+    static func size(_ bytes: Int64) -> String {
         bytes == 0 ? "Empty" : ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
     }
 
@@ -396,6 +422,42 @@ struct StorageSettingsDetail: View {
         guard let limit = part.limit else { return size(part.bytes) }
         let limitText = ByteCountFormatter.string(fromByteCount: limit, countStyle: .memory)
         return part.bytes == 0 ? "Empty, up to \(limitText)" : "\(size(part.bytes)) of \(limitText)"
+    }
+}
+
+/// This profile's recent searches (under Search's keyboard) and the titles
+/// opened from Search (its row before you type), and one clear for both.
+private struct SearchHistoryPage: View {
+    @EnvironmentObject private var search: SearchViewModel
+
+    var body: some View {
+        SettingsPage(title: "Search History",
+                     subtitle: "What this profile searched for, and the titles it opened from Search.") {
+            SettingsSection {
+                SettingsButtonRow(title: "Clear Search History",
+                                  description: "Removes the searches and titles below.",
+                                  value: search.hasHistory ? nil : "Empty") {
+                    search.clearHistory()
+                }
+            }
+            if !search.recentSearches.isEmpty {
+                SettingsSection(title: "Searches") {
+                    VStack(spacing: 0) {
+                        ForEach(search.recentSearches, id: \.self) { SettingsInfoRow(title: $0, value: "") }
+                    }
+                }
+            }
+            if !search.recentTitles.isEmpty {
+                SettingsSection(title: "Titles") {
+                    VStack(spacing: 0) {
+                        ForEach(search.recentTitles, id: \.id) { item in
+                            SettingsInfoRow(title: item.name,
+                                            value: item.type == "movie" ? "Movie" : "Series")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

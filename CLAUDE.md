@@ -257,12 +257,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
   What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.
-- **Storage** (Settings → Storage, `CacheStorage` at the end of
+- **Storage** (Settings → Storage): Cache and Search History, each a row
+  with a chevron to its page (what it holds, a clear on top, no
+  confirmation), then free space. Cache (`CacheStorage` at the end of
   `RequestCache.swift`): every cache by kind with its size and allowance
   (pictures, add-on data, TMDB, ratings & badges, trailers, the network's
-  responses, playback files in `tmp`), free space, one Clear Cache, no
-  confirmation. Never cleared: account, profiles, progress, library,
-  collections, settings. A new cache gets a row there. Playback scratch
+  responses, playback files in `tmp`); a new cache gets a row there. Clear
+  Cache never touches account, profiles, progress, library, collections,
+  settings or search history. Search History: the profile's recent
+  searches and the titles opened from Search. Playback scratch
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background**: one still picture, Bands (`BandsPicture`); Dynamic (default) follows
   the focused title (`TitleBackground`): its two main colours, one even,
