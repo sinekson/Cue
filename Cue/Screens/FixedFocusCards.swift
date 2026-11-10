@@ -388,12 +388,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         outline.alpha = 0
         contentView.addSubview(outline)
         FixedFocusRing.attachShadow(to: outline)
-        // Like the fixed box's text (see its `InfoPage`), a little smaller: one size
-        // for both lines, the second dimmer.
-        name.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
+        // Like the fixed box's text (see its `InfoPage`), a little smaller
+        // (`FixedFocusText.titleFont`, `infoFont`).
+        name.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
         name.lineBreakMode = .byTruncatingTail
-        detail.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tertiary)
+        detail.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
+        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: false))
         for label in [name, detail] {
             label.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(label)
@@ -621,8 +621,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
         // Out of focus one level down: the name secondary, the line tertiary.
-        name.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.primary : FixedFocusText.secondary)
-        detail.textColor = UIColor.white.withAlphaComponent(focused ? FixedFocusText.secondary : FixedFocusText.tertiary)
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: focused))
+        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: focused))
         guard !Self.lift else { return }
         // Grown and outlined — the captions step down with it.
         let lift = FixedFocusMetrics.movingFocusLift
@@ -800,13 +800,15 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outline.alpha = 0
         addSubview(outline)
         FixedFocusRing.attachShadow(to: outline)
-        name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-        facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        name.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
+        // (Trial: no name above it, so the facts take the title's look.)
+        facts.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
         info.addSubview(name)
         info.addSubview(facts)
-        info.addSubview(chips)
+        FixedFocusMetrics.styleDescription(summary)
+        info.addSubview(summary)
         for bar in [nameBar, factsBar] {
             bar.isHidden = true
             info.addSubview(bar)
@@ -814,10 +816,10 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         info.alpha = 0
         info.isUserInteractionEnabled = false
         addSubview(info)
-        captionName.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        captionYear.font = .systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .regular)
-        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.tertiary)
+        captionName.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
+        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: false))
+        captionYear.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
+        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: false))
         caption.addSubview(captionName)
         caption.addSubview(captionYear)
         caption.isUserInteractionEnabled = false
@@ -844,9 +846,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         backdrop.layer.contentsRect = landscape ? CGRect(x: 0, y: 0, width: 1, height: 1)
             : FixedFocusBoxView.zoomRect
         shade.frame = backdrop.bounds
-        logo.room = CGRect(x: Spotlight.logoInset,
-                           y: cardHeight - Spotlight.logoInset - cardHeight * 0.28,
-                           width: landscapeWidth * 0.55, height: cardHeight * 0.28)
+        logo.room = FixedFocusMetrics.logoRoom(width: landscapeWidth, height: cardHeight)
         outline.frame = bounds
         let lit = FixedFocusCardEdge.focusLight
         outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width
@@ -875,16 +875,16 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         info.bounds = CGRect(origin: .zero, size: infoRect.size)
         info.center = CGPoint(x: infoRect.midX, y: infoRect.midY)
         applyInfoCounterScale()
-        chips.frame = CGRect(x: 0, y: FixedFocusChipsView.y, width: info.bounds.width,
-                             height: FixedFocusMetrics.factsHeight)
-        name.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: 30)
-        facts.frame = CGRect(x: 0, y: 36, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
+        summary.frame = CGRect(x: 0, y: FixedFocusMetrics.descriptionFrameY, width: info.bounds.width,
+                               height: summary.font.lineHeight * 4 + 2)
+        name.isHidden = true
+        facts.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
         let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
         for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
             bar.layer.cornerRadius = barHeight / 2
             bar.frame = CGRect(x: 0, y: label.frame.midY - barHeight / 2,
                                width: (info.bounds.width * share).rounded(), height: barHeight)
-            bar.isHidden = !placeholder
+            bar.isHidden = !placeholder || bar === nameBar
         }
         // Under its poster, wherever that sits in the cell (centred: under
         // the box the cell is box-wide), so it moves with it.
@@ -980,7 +980,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private var cardHeight = FixedFocusMetrics.height
     private var landscapeWidth: CGFloat { FixedFocusMetrics.landscapeWidth(height: cardHeight) }
     /// The third line under the grown cell (as under the box).
-    private let chips = FixedFocusChipsView()
+    private let summary = TopAlignedLabel()
 
     /// Left of the box: dimmed.
     func setPast(_ past: Bool) {
@@ -1054,7 +1054,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             self.grown = grown
             fadeCaption(out: grown, share: Self.grownFadeShare)
         }
-        if grown, let item { chips.show(item) }
+        if grown, let item {
+            summary.text = FixedFocusPlaceholder.isPlaceholder(item) ? nil : FixedFocusMetrics.descriptionText(item)
+        }
         if landscape {
             // Continue Watching: always the landscape card; the outline only
             // while it shows itself (under the fixed box: none).
@@ -1591,100 +1593,6 @@ final class FixedFocusPanelView: UIView {
         }
         backgroundColor = UIColor(hue: h, saturation: min(s, 0.75), brightness: 0.26, alpha: 0.92)
         layer.borderColor = UIColor(hue: h, saturation: min(s, 0.6), brightness: 0.62, alpha: 0.7).cgColor
-    }
-}
-
-/// The third line under the box — where the billboard has its badge and
-/// ratings: the series' status (AIRING / RETURNING / ENDED + year — see
-/// `FixedFocusShowInfo.status`) and ONE rating (IMDb's, from the catalog).
-/// Chips in the badge's shape (`TitleBadge`, `MDBListRatingsRow`'s chips).
-final class FixedFocusChipsView: UIView {
-    /// Below the facts line, one line step down — and the billboard's extra
-    /// room above its chips (`chipsGap`): a plain step left them crowded.
-    static let y: CGFloat = 36 + FixedFocusMetrics.factsOffset + FixedFocusBillboardText.chipsGap
-
-    /// The status badge (`TitleBadge`) and the ratings, drawn from the
-    /// same views as the billboard's, once per text.
-    private let status = UIImageView()
-    /// The ratings: the first ones in Settings' order, as many as On Home's
-    /// rows says (the catalog's IMDb score without MDBList) — the
-    /// billboard's chips, drawn once per set.
-    private let rating = UIImageView()
-    private var ratingTask: Task<Void, Never>?
-    private static var chipImages: [String: UIImage] = [:]
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        addSubview(status)
-        addSubview(rating)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// Drawn ahead (`TitleExtras`): the status and what's known of the
-    /// ratings, so `show` only puts up images.
-    static func prepare(_ item: MetaItem) {
-        _ = statusImage(item)
-        let settings = MDBListSettingsStore.current
-        _ = ratingImage(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
-    }
-
-    private static func statusImage(_ item: MetaItem) -> UIImage? {
-        FixedFocusShowInfo.status(item).flatMap { drawn("status:" + $0, TitleBadge(text: $0).padding(1)) }
-    }
-
-    private static func ratingImage(_ ratings: MDBListRatings?, item: MetaItem, settings: MDBListSettings) -> UIImage? {
-        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating,
-                                                onDetails: false).prefix(settings.rowCount)
-        return entries.isEmpty ? nil : drawn(
-            entries.map { $0.provider.rawValue + ":" + $0.text }.joined(separator: " "),
-            MDBListRatingsRow(entries: Array(entries)).padding(1))
-    }
-
-    func show(_ item: MetaItem) {
-        status.image = Self.statusImage(item)
-        status.isHidden = status.image == nil
-        status.sizeToFit()
-        ratingTask?.cancel()
-        let settings = MDBListSettingsStore.current
-        // What the record holds at once; asked again if missing or a day
-        // old, redrawn only if the answer differs.
-        showRating(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
-        ratingTask = Task { @MainActor [weak self] in
-            guard await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]), !Task.isCancelled,
-                  let self else { return }
-            self.status.image = Self.statusImage(item)
-            self.status.isHidden = self.status.image == nil
-            self.status.sizeToFit()
-            self.showRating(TitleRecords.shared.ratings(item) ?? nil, item: item, settings: settings)
-        }
-    }
-
-    private func showRating(_ ratings: MDBListRatings?, item: MetaItem, settings: MDBListSettings) {
-        rating.image = Self.ratingImage(ratings, item: item, settings: settings)
-        rating.isHidden = rating.image == nil
-        rating.sizeToFit()
-        setNeedsLayout()
-    }
-
-    private static func drawn(_ key: String, _ content: some View) -> UIImage? {
-        if let drawn = chipImages[key] { return drawn }
-        let renderer = ImageRenderer(content: content)
-        renderer.scale = UIScreen.main.scale
-        let image = renderer.uiImage
-        chipImages[key] = image
-        return image
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // (Each image has 1 pt round its chip: the first chip's edge at 0.)
-        var x: CGFloat = -1
-        for chip in [status as UIView, rating] where !chip.isHidden {
-            chip.frame.origin = CGPoint(x: x, y: (bounds.height - chip.bounds.height) / 2)
-            x = chip.frame.maxX + 8
-        }
     }
 }
 

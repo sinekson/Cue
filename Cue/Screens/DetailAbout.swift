@@ -331,8 +331,8 @@ struct DetailSummaryPanel<Facts: View>: View {
                             .lineLimit(1)
                         if !genres.isEmpty {
                             Text(genres)
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                                .font(.system(size: FixedFocusMetrics.textSize))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                                 .lineLimit(1)
                         }
                     }

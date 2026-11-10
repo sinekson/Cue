@@ -88,8 +88,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   glass at rest; focused a white capsule, dark content, 5 % larger).
   In the player the glass sits directly on the picture: no shade or dimming under it (a shade made it read dark; without the glass's dark tint it was at times unreadable, so the tint stays).
 - **Text:** the system font; 24 pt regular is the base, 23–25 pt the floor.
-  Four levels, everywhere (`FixedFocusText`): primary 75 %, body 65 %,
-  secondary 55 %, tertiary 45 %. Never brighter.
+  Four levels, everywhere (`FixedFocusText`): primary 82 %, body 72 %,
+  secondary 62 %, tertiary 50 % (75/65/55/45 was too muted). Never
+  brighter. A title and its info line, everywhere (under the box, card
+  captions, page headers): the name medium at primary, the line under it
+  regular at body; captions out of focus each two levels down (secondary,
+  tertiary) (`FixedFocusText.titleFont`/`infoFont`/`titleLevel`/`infoLevel`;
+  both regular, the line a level dimmer, read as one; semibold was tried).
 - **Motion** (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s (no-bounce
   springs), fade 0.25 s. One press, one movement. A press on a focused button,
   row or menu entry takes it back to its resting size, level with its
@@ -110,11 +115,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (Home's fixed box 4 %; 8, 10 and 12 were tried). One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
+  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). One portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
-  it, the caption's 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
+  it, 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
   the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
 
 ## How things work
@@ -137,6 +142,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   again once an hour old — on coming back, a tab switch, and while Home sits
   open (checked every 5 min). A refresh's billboard picks swap in only while
   no billboard is on screen (`BillboardSight`).
+- **Under Home's box** (the posters' height, not grown): no name, the
+  facts line in the title's style, then the description, up to 4 lines,
+  top-aligned, secondary (badges there, on the line or in the box, were
+  tried: removed). Captions under cards 24 pt. Row names 34 pt semibold,
+  a little low in their line, near their cards.
+- **Billboard** (Details shares it): the description between the tagline
+  and the buttons, 600 pt wide, 3 lines, in Apple TV's vibrancy with a 30 %
+  white over it (`VibrantSummary`; plain at body level was hard to read).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`), dots in UIKit on Left/Right's spring, the timer's

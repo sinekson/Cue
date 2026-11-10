@@ -16,8 +16,9 @@ enum Spotlight {
     /// Height of the focus box AND the posters beside it: THE portrait
     /// poster's (`FixedFocusMetrics.posterCard`, 398 — every poster in the
     /// app one size; was 420).
-    static let rowHeight: CGFloat = FixedFocusMetrics.posterCard.height
-    /// Portrait 2:3 poster at row height (265 pt).
+    /// (Trial: larger than the portrait card elsewhere, 398.)
+    static let rowHeight: CGFloat = 440
+    /// Portrait 2:3 poster at row height (293 pt).
     static var posterWidth: CGFloat { rowHeight * 2 / 3 }
     /// Landscape 16:9 box at row height (~707 pt).
     static var boxWidth: CGFloat { rowHeight * 16 / 9 }
@@ -37,7 +38,7 @@ enum Spotlight {
     static let stateBarHeight: CGFloat = 6
     static let stateInset: CGFloat = 30
     /// The caption's size under the card (24 read larger than it), medium.
-    static let stateTextSize: CGFloat = FixedFocusMetrics.captionSize
+    static let stateTextSize: CGFloat = 22
     /// From the line's baseline to the bar's top.
     static let stateBaselineGap: CGFloat = 12
 
@@ -52,44 +53,14 @@ enum Spotlight {
     /// Left margin of everything. Shared with the Detail page, so both
     /// screens line up.
     static let screenInset: CGFloat = 84
-    /// With the top navigation: everything starts below it instead.
-    static let topPaddingUnderNav: CGFloat = 124
     static let labelHeight: CGFloat = 40
-    /// Row name above the box.
-    static let headerHeight: CGFloat = 54
-    static let headerToRowGap: CGFloat = 24
-    /// The catalog title's top on Home — the one formula for it, shared
-    /// with the Detail page (whose logo lines up with it): the main block
-    /// (title, row, caption) centred between the top label and the preview.
-    static func catalogTitleY(screenHeight: CGFloat, topPadding: CGFloat) -> CGFloat {
-        let previewY = showNextRowPreview
-            ? screenHeight - previewVisibleHeight
-            : screenHeight + incomingPreviewRise
-        let bottomLabelY = showNextRowPreview
-            ? previewY - labelToPreviewGap - labelHeight
-            : screenHeight - 48 - labelHeight
-        let top = topPadding + labelHeight
-        let block = headerHeight + headerToRowGap + rowHeight + rowToInfoGap + infoHeight
-        return top + max((bottomLabelY - top - block) / 2, 8)
-    }
-    static let rowToInfoGap: CGFloat = 28
     /// Focus row's name / the "▴ ▾" labels.
-    static let headerTitleSize: CGFloat = 40
-    /// Fixed height of the caption BELOW the box (name + meta line; three
-    /// short lines for Continue Watching), so nothing jumps between rows.
-    static let infoHeight: CGFloat = 130
-    static let labelToPreviewGap: CGFloat = 14
+    static let headerTitleSize: CGFloat = 34
 
     // Next-row preview
 
-    /// The next row, laid out EXACTLY like the focus row (same box, same
-    /// posters, same size), peeking up from the bottom edge. Because it's
-    /// identical, Down only has to move it up — nothing changes shape.
-    static let showNextRowPreview = true
     /// How much of the preview row shows above the screen edge.
     static let previewVisibleHeight: CGFloat = 170
-    /// Where a new preview row starts when there's no preview spot.
-    static let incomingPreviewRise: CGFloat = 120
 
     // Featured billboard (the first "row": one big box, Netflix-style)
 

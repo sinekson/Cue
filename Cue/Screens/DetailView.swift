@@ -1070,8 +1070,8 @@ struct DetailView: View {
     /// the engine moves (and dims) them with the rows.
     private var rowsBillboardText: some View {
         ZStack(alignment: .topLeading) {
-            // Home's billboard text exactly (no summary: the tagline), on
-            // its bottom line, the buttons below.
+            // Home's billboard text exactly (the description under the
+            // tagline), on its bottom line, the buttons below.
             FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
                                     tagline: billboardTagline ?? TitleRecords.shared.tagline(viewModel.meta),
                                     logo: viewModel.shownLogo,

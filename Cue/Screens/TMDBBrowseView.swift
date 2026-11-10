@@ -431,7 +431,7 @@ private struct BrowseHeader: View {
                         .frame(height: Self.name, alignment: .leading)
                     Text(facts ?? " ")
                         .font(.system(size: FixedFocusMetrics.textSize))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                         .lineLimit(1)
                         .frame(height: Self.facts, alignment: .leading)
                     if case .person = viewModel.source {

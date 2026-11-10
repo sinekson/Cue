@@ -1222,7 +1222,7 @@ final class SourceCard: UICollectionViewCell {
     private let bars = PlayingBars()
     private let mark = UIImageView(image: UIImage(systemName: "play.slash"))
     /// The note's size under the card: the episodes' caption.
-    private static let captionFont = UIFont.systemFont(ofSize: FixedFocusMetrics.captionSize)
+    private static let captionFont = UIFont.systemFont(ofSize: 22)
     private var isPlaying = false
     private var isRaw = false
     private var art: String?
@@ -1854,7 +1854,7 @@ private final class PlayerShelf: PlayerSheet, UICollectionViewDataSource, UIColl
     /// The caption's baseline below its line's top (`FixedFocusDestinationCell`:
     /// a 30 pt line, the text centred in it).
     private static let captionBaseline: CGFloat = {
-        let font = UIFont.systemFont(ofSize: FixedFocusMetrics.captionSize)
+        let font = UIFont.systemFont(ofSize: 22)
         return ((30 - font.lineHeight) / 2 + font.ascender).rounded()
     }()
     static let height = PlayerSheet.tabRow + PlayerSheet.inset * 2 + cardRow + growth * 2

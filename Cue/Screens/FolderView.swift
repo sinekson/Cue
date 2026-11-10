@@ -310,8 +310,8 @@ struct FolderHeader: View {
                     .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
                     .lineLimit(1)
                 Text(subtitle)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .font(.system(size: FixedFocusMetrics.textSize))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
                     .lineLimit(1)
             }
         }

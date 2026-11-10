@@ -2122,6 +2122,15 @@ struct FixedFocusBillboardText: View {
     static let lineInset: CGFloat = 7
     /// How many rating sources show (the first ones, in Settings' order).
     static let ratingsShown = 3
+    /// The description under the tagline (`VibrantSummary`): three lines'
+    /// room, narrower than the block so it stays on the shade's dark side.
+    static let summaryWidth: CGFloat = 600
+    static let summaryLines = 3
+    static let summarySpacing: CGFloat = 4
+    static var summaryHeight: CGFloat {
+        let line = UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).lineHeight
+        return (line * CGFloat(summaryLines) + summarySpacing * CGFloat(summaryLines - 1)).rounded(.up)
+    }
     /// Where the Detail page's buttons start: below the chips line.
     static var buttonsY: CGFloat {
         FixedFocusMetrics.boxFrame.maxY + FixedFocusMetrics.infoHeight + 44
@@ -2150,6 +2159,24 @@ struct FixedFocusBillboardText: View {
     static var bottom: CGFloat { buttonsY - 30 }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            block
+                // ONE shadow for the block (reason, logo, chips, facts,
+                // tagline): small and tight, the shade does the rest.
+                .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+            // The description, as the Apple TV app's: vibrant (blended
+            // with the picture behind it, not painted over it), so it
+            // reads on bright pictures and trailers too; no shadow (it
+            // would flatten the effect). Up to three lines from the top of
+            // a fixed room (every title's block the same height).
+            VibrantSummary(text: FixedFocusMetrics.descriptionText(item) ?? "")
+                .frame(width: Self.summaryWidth, height: Self.summaryHeight, alignment: .topLeading)
+                .padding(.top, Self.gap - Self.lineInset)
+        }
+        .frame(width: Self.width, alignment: .leading)
+    }
+
+    private var block: some View {
         VStack(alignment: .leading, spacing: 0) {
             // One place, the reason or Details' line: swapped, the old one
             // rising out as it fades, the new one coming up into it.
@@ -2189,10 +2216,6 @@ struct FixedFocusBillboardText: View {
                     .padding(.top, Self.gap - 2 * Self.lineInset)
             }
         }
-        // ONE shadow for the whole block (reason, logo, chips, facts,
-        // tagline): small and tight, the shade does the rest.
-        .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-        .frame(width: Self.width, alignment: .leading)
     }
 }
 
@@ -2356,19 +2379,29 @@ enum FixedFocusText {
     /// The app's four text levels, used everywhere (nothing brighter: the
     /// logo, a picture aside, nothing in the UI is pure white). Names and
     /// titles — row and page names, panels' names, a focused card's name.
-    static let primary: CGFloat = 0.75
+    static let primary: CGFloat = 0.82
     /// Text to read: summaries, a bio, About's facts, the billboard's facts.
-    static let body: CGFloat = 0.65
+    static let body: CGFloat = 0.72
     /// Supporting lines: a focused card's second line, facts lines,
     /// subtitles, the tagline, Settings' values and descriptions.
-    static let secondary: CGFloat = 0.55
+    static let secondary: CGFloat = 0.62
     /// Small labels (kind labels, "SUMMARY", section labels), what's off.
-    static let tertiary: CGFloat = 0.45
+    static let tertiary: CGFloat = 0.5
     /// (Out of focus, a card's caption steps down one level: its name
     /// secondary, its second line tertiary. Tried: row and page names at
     /// tvOS's heading grey, 55 %, under captions and About's text at 70 % —
     /// the names dimmer than what they named; nine levels in all; 85 /
-    /// 75 / 60 / 45 — bright.)
+    /// 75 / 60 / 45 — bright; 75 / 65 / 55 / 45 — too muted.)
+
+    /// A title and its info line (under the box, under a card): the name
+    /// medium, the line under it regular, one size — weight and level
+    /// tell them apart. Focused: the name primary, the line body; out of
+    /// focus each two levels down (secondary, tertiary). (Tried: semibold; both
+    /// regular, the line secondary — they read as one.)
+    static func titleFont(_ size: CGFloat) -> UIFont { .systemFont(ofSize: size, weight: .medium) }
+    static func infoFont(_ size: CGFloat) -> UIFont { .systemFont(ofSize: size, weight: .regular) }
+    static func titleLevel(focused: Bool) -> CGFloat { focused ? primary : secondary }
+    static func infoLevel(focused: Bool) -> CGFloat { focused ? body : tertiary }
 }
 
 /// The focused card's look: the unfocused cards' edge, bright (no ring
@@ -2877,6 +2910,49 @@ enum FixedFocusCardEdge {
             }.resizableImage(withCapInsets: UIEdgeInsets(top: pad + radius + 20, left: pad + radius + 20,
                                                          bottom: pad + radius + 20, right: pad + radius + 20),
                              resizingMode: .stretch)
+        }
+    }
+}
+
+/// The billboard's description, as the Apple TV app's: tvOS's vibrancy
+/// (a dark blur's) — the words blended with what's behind them,
+/// so they keep their contrast over bright pictures and trailers, where a
+/// fixed grey washes out. A UIKit effect view: it samples the window
+/// behind it, the picture under SwiftUI's host included.
+struct VibrantSummary: UIViewRepresentable {
+    let text: String
+    /// Plain white over the vibrant words: a little brighter than tvOS's
+    /// vibrancy alone, still blended where it counts.
+    static let lift: CGFloat = 0.3
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        let effect = UIVisualEffectView(effect: UIVibrancyEffect(blurEffect: UIBlurEffect(style: .dark)))
+        effect.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        effect.frame = view.bounds
+        view.addSubview(effect)
+        let lift = TopAlignedLabel()
+        lift.textColor = UIColor.white.withAlphaComponent(Self.lift)
+        for (label, parent) in [(TopAlignedLabel(), effect.contentView), (lift, view)] {
+            label.numberOfLines = FixedFocusBillboardText.summaryLines
+            label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            label.frame = parent.bounds
+            parent.addSubview(label)
+        }
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = FixedFocusBillboardText.summarySpacing
+        style.lineBreakMode = .byTruncatingTail
+        let effect = view.subviews.first as? UIVisualEffectView
+        for case let label as UILabel in (effect?.contentView.subviews ?? []) + view.subviews {
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: FixedFocusMetrics.textSize), .paragraphStyle: style]
+            if label.superview === view { attributes[.foregroundColor] = UIColor.white.withAlphaComponent(Self.lift) }
+            label.attributedText = NSAttributedString(string: text, attributes: attributes)
         }
     }
 }

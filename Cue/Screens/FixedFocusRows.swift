@@ -288,17 +288,18 @@ enum FixedFocusMetrics {
     /// to the row — it belongs to the row.
     static let titleLine: CGFloat = 48
     static let titleHeight: CGFloat = titleLine + 14
+    /// The name sits this much low in its line, near its cards (centred it
+    /// looked to float above the row).
+    static let titleDrop: CGFloat = 6
     /// The row below shows as much as on the original Home at the bottom
     /// edge (a little under half); the row above shows what's left of it.
     /// Rows further up / down than the neighbours: a whole row apart.
     static var rowPitch: CGFloat { titleHeight + height + 70 }
-    /// The row above: its cards' lower part shows at the top, ending as far
-    /// above the focused row's name as the next row's name is below the
-    /// box's info (the same gap above and below; the same for every kind of
-    /// row, the billboard too).
-    static var aboveVisible: CGFloat { rowTop - peekGap }
-    /// Between the focused row and the peeks: the next row's name this far
-    /// below the box's info — and the same above.
+    /// The row above: this much of its cards shows at the top (trial: fixed,
+    /// 44 pt above the focused row's name).
+    static let aboveVisible: CGFloat = 78
+    /// Between the focused row and the row below: its name this far below
+    /// the box's info (what's left once the box is placed).
     static var peekGap: CGFloat {
         1080 - belowVisible - titleHeight - (boxFrame.maxY + infoGap + infoHeight)
     }
@@ -309,10 +310,8 @@ enum FixedFocusMetrics {
     static let dimmedAlpha: CGFloat = 0.45
     /// The posters left of the box in the focused row.
     static let previousAlpha: CGFloat = 0.45
-    /// The focused row's name: exactly where the original Home had it.
-    static var rowTop: CGFloat {
-        Spotlight.catalogTitleY(screenHeight: 1080, topPadding: Spotlight.topPaddingUnderNav)
-    }
+    /// The focused row's name (trial: fixed, just under the top bar).
+    static let rowTop: CGFloat = 122
     /// DESTINATION rows (Saved for Later, collections) — you go there for
     /// something you already know, not to be shown one title at a time:
     /// the system's own scrolling and lift, and a caption under every card.
@@ -363,11 +362,10 @@ enum FixedFocusMetrics {
     @MainActor static func destinationGap(cardWidth: CGFloat) -> CGFloat {
         (gap + cardWidth * movingFocusLift / 2).rounded()
     }
-    /// The captions under moving-focus cards: a little smaller than the
-    /// fixed box's text, so more of them fits; the second line this far
-    /// below the first.
-    static let captionSize: CGFloat = 22
-    static let captionLineOffset: CGFloat = 33
+    /// The text under cards (captions, the box's description): the base
+    /// size (22 looked too small); the second line this far below the first.
+    static let captionSize: CGFloat = 24
+    static let captionLineOffset: CGFloat = 35
     /// The fixed box while Select is pressed or held: a little smaller.
     /// (A moving-focus card instead loses its lift: back to its own size.)
     static let pressScale: CGFloat = 0.97
@@ -376,8 +374,8 @@ enum FixedFocusMetrics {
     /// How long the card takes to grow to that, the dim's hole with it.
     static let heldDuration: Double = 0.28
     /// The fixed box's own size: the portrait posters' height, its left edge
-    /// on the row name's.
-    static let boxScale: CGFloat = 1.04
+    /// on the row name's (not grown: 4 % larger was tried).
+    static let boxScale: CGFloat = 1
     /// Their focus: tvOS's lift (tilt, sheen) — off: Cue's own outline, as
     /// on the other rows.
     static let destinationSystemLift = false
@@ -387,7 +385,7 @@ enum FixedFocusMetrics {
     static let bannerHeight: CGFloat = 380
     static var bannerWidth: CGFloat { 1920 - 2 * inset }
     /// Under each card: its name and a second line, with room for the lift.
-    static let captionRoom: CGFloat = 86
+    static let captionRoom: CGFloat = 90
     /// The panel around a collection row: how far it reaches beyond the
     /// row's name and cards (left of the box, above the name, under the
     /// info), and its corners.
@@ -403,8 +401,27 @@ enum FixedFocusMetrics {
     static let boxInfoGap: CGFloat = infoGap + 3
     static let factsOffset: CGFloat = 36
     static let factsHeight: CGFloat = 30
-    /// Name, facts and the chips line.
-    static let infoHeight: CGFloat = 104 + FixedFocusBillboardText.chipsGap
+    /// The facts and the description's four lines (trial: no name, the
+    /// description in the chips' place).
+    static let infoHeight: CGFloat = 104 + FixedFocusBillboardText.chipsGap + 45
+    /// The description under the facts: up to four lines from the top of
+    /// its room (`TopAlignedLabel`), caption size, regular, secondary.
+    static var descriptionFrameY: CGFloat { factsOffset + FixedFocusBillboardText.chipsGap - 4 }
+    static func styleDescription(_ label: UILabel) {
+        label.font = FixedFocusText.infoFont(captionSize)
+        label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        label.numberOfLines = 4
+        label.lineBreakMode = .byTruncatingTail
+    }
+    /// In the box (and a grown card): the logo's room, at the foot.
+    static func logoRoom(width: CGFloat, height: CGFloat) -> CGRect {
+        CGRect(x: Spotlight.logoInset, y: height - Spotlight.logoInset - height * 0.28,
+               width: width * 0.55, height: height * 0.28)
+    }
+    static func descriptionText(_ item: MetaItem) -> String? {
+        item.description?.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     /// ONE size for the text around the box and on the billboard: the
     /// title's name, its facts line and the summary (they differ only in
     /// brightness). Just above the smallest size that reads well on a TV.
@@ -2881,9 +2898,7 @@ final class FixedFocusBoxView: UIView {
             backdrop.frame = bounds
             loadingCard.frame = bounds
             shade.frame = bounds
-            logo.room = CGRect(x: Spotlight.logoInset,
-                               y: bounds.height - Spotlight.logoInset - bounds.height * 0.28,
-                               width: bounds.width * 0.55, height: bounds.height * 0.28)
+            logo.room = FixedFocusMetrics.logoRoom(width: bounds.width, height: bounds.height)
         }
 
         /// `pictures`: the picture and logo a grown cell shows for it (same
@@ -2958,22 +2973,24 @@ final class FixedFocusBoxView: UIView {
     private final class InfoPage: UIView {
         let name = UILabel()
         let facts = UILabel()
-        let chips = FixedFocusChipsView()
+        let summary = TopAlignedLabel()
         /// A placeholder's name and facts still to come.
         private let nameBar = FixedFocusPlaceholder()
         private let factsBar = FixedFocusPlaceholder()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            addSubview(chips)
+            FixedFocusMetrics.styleDescription(summary)
+            addSubview(summary)
             for bar in [nameBar, factsBar] {
                 bar.isHidden = true
                 addSubview(bar)
             }
-            name.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-            facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .regular)
-            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+            name.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
+            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
+            // (Trial: no name above it, so the facts take the title's look.)
+            facts.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
+            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
             addSubview(name)
             addSubview(facts)
         }
@@ -2982,10 +2999,11 @@ final class FixedFocusBoxView: UIView {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            name.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 30)
-            facts.frame = CGRect(x: 0, y: 36, width: bounds.width, height: FixedFocusMetrics.factsHeight)
-            chips.frame = CGRect(x: 0, y: FixedFocusChipsView.y, width: bounds.width,
-                                 height: FixedFocusMetrics.factsHeight)
+            name.isHidden = true
+            nameBar.isHidden = true
+            facts.frame = CGRect(x: 0, y: 0, width: bounds.width, height: FixedFocusMetrics.factsHeight)
+            summary.frame = CGRect(x: 0, y: FixedFocusMetrics.descriptionFrameY, width: bounds.width,
+                                   height: summary.font.lineHeight * 4 + 2)
             let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
             for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
                 bar.layer.cornerRadius = barHeight / 2
@@ -2996,9 +3014,8 @@ final class FixedFocusBoxView: UIView {
 
         func show(_ item: MetaItem) {
             let placeholder = FixedFocusPlaceholder.isPlaceholder(item)
-            nameBar.isHidden = !placeholder
             factsBar.isHidden = !placeholder
-            chips.show(item)
+            summary.text = placeholder ? nil : FixedFocusMetrics.descriptionText(item)
             name.text = item.name
             facts.text = FixedFocusShowInfo.factsLine(item)
         }
@@ -3400,8 +3417,7 @@ final class PicturePreloader {
 }
 
 /// The records (`TitleRecords`) of what focus can reach
-/// (`preloadReachable`'s titles) brought up to date, and their chips drawn
-/// (`FixedFocusChipsView.prepare`), in the queue's focus band behind the
+/// (`preloadReachable`'s titles) brought up to date, in the queue's focus band behind the
 /// pictures (`LoadQueue`). After a 0.3 s rest, so a held Left/Right
 /// doesn't ask for every title it passes (MDBList counts requests); a
 /// record is asked again once a day at most.
@@ -3416,8 +3432,7 @@ final class TitleExtras {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             LoadQueue.shared.replace(source: "extras", with: titles.enumerated().map { index, item in
-                .record(item, band: .focus, order: 100 + index, source: "extras",
-                        then: { FixedFocusChipsView.prepare(item) })
+                .record(item, band: .focus, order: 100 + index, source: "extras")
             })
         }
     }
@@ -3728,8 +3743,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                         room = card.height * lift / 2
                     }
                 }
-            } else {
-                room = cardHeight * (FixedFocusMetrics.boxScale - 1) / 2
             }
         }
         guard room != nameRoom else { return }
@@ -4063,7 +4076,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // (Bounds and centre: the name may be lifted — a transform.)
         // (Wide: as a control, Up from any card finds it.)
         titleHolder.bounds = CGRect(x: 0, y: 0, width: 1700, height: FixedFocusMetrics.titleLine)
-        titleHolder.center = CGPoint(x: FixedFocusMetrics.titleInset + 850, y: FixedFocusMetrics.titleLine / 2)
+        titleHolder.center = CGPoint(x: FixedFocusMetrics.titleInset + 850,
+                                     y: FixedFocusMetrics.titleLine / 2 + FixedFocusMetrics.titleDrop)
         titleRoomView.bounds = titleHolder.bounds
         titleRoomView.center = CGPoint(x: titleHolder.bounds.midX, y: titleHolder.bounds.midY)
         title.bounds = CGRect(x: 0, y: 0, width: 1200, height: FixedFocusMetrics.titleLine)
@@ -4583,5 +4597,14 @@ extension FixedFocusRowsController: HoldMenuProviding {
                                from: held(boxRect, boxPressed ? base - (1 - FixedFocusMetrics.pressScale) : base),
                                rest: held(boxRect, base),
                                onHeld: { [weak self] in self?.setBoxHeld($0) })
+    }
+}
+
+/// A label whose lines start at its top, however many there are (a plain
+/// `UILabel` centres them in its height).
+final class TopAlignedLabel: UILabel {
+    override func drawText(in rect: CGRect) {
+        let fitted = textRect(forBounds: rect, limitedToNumberOfLines: numberOfLines)
+        super.drawText(in: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: fitted.height))
     }
 }
