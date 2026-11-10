@@ -3624,6 +3624,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         options.sessionCacheByteBudget = Self.windowBytes
         options.softwarePacketCacheStorage = .disk
         options.preserveASSMarkup = true
+        // What Apple TV can't send as it is (TrueHD, DTS-HD, …) goes out as
+        // lossless PCM, up to 7.1, as Infuse's (the default, E-AC-3 5.1 at
+        // 768 kbps, was lossy). Behind a legacy ARC that's stereo; the engine
+        // can't tell ARC from eARC. Objects and heights are lost either way:
+        // E-AC-3 Atmos is preferred over TrueHD (`preferAtmos`).
+        options.audioBridgeMode = .lossless
         let (resume, base) = (resume, options)
         loadTask = Task { [weak self] in
             await self?.learnOriginalLanguage()
@@ -4976,7 +4982,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let objects = track.isAtmos ? "Atmos" : track.isDTSX ? "DTS:X" : nil
         switch engine.audioDelivery {
         case .streamCopy: return [format, objects].compactMap { $0 }.joined(separator: " ")
-        case .bridged, .decoded: return format + (objects.map { ", converted, no \($0)" } ?? ", converted")
+        case .bridged, .decoded: return format + (objects.map { ", as PCM, no \($0)" } ?? ", as PCM")
         default: return format
         }
     }
