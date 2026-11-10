@@ -139,7 +139,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   no billboard is on screen (`BillboardSight`).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
-  (`BillboardControls`). No Play button: Details is the way to play.
+  (`BillboardControls`), dots in UIKit on Left/Right's spring, the timer's
+  fill a linear UIView animation (`BillboardDotsView`: in SwiftUI the main
+  thread's paging work made them stutter and flicker). No Play button:
+  Details is the way to play.
 - **Details** shares the billboard's text and shade. Into Details is
   `DetailTransition`, all Core Animation; from the billboard in place
   (`openInPlace`). From Home, Movies and Series it's a layer over the page
