@@ -67,6 +67,18 @@ struct ATVSettingsView: View {
             }
             .frame(width: SettingsMetrics.columnWidth, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
+            .overlay(alignment: .top) {
+                // A page with nothing to focus (an empty list): focus still
+                // stays on the page, unseen, so Back goes up a level (it fell
+                // to the top bar, and the way back was lost).
+                if pageIsEmpty {
+                    Color.white.opacity(0.001)
+                        .frame(height: 200)
+                        .padding(.top, SettingsMetrics.top)
+                        .focusable()
+                        .focused($row, equals: Self.emptyPageRow)
+                }
+            }
             .mask { columnMask }
             .padding(.leading, SettingsMetrics.columnX)
         }
@@ -167,6 +179,15 @@ struct ATVSettingsView: View {
         .animation(.easeInOut(duration: 0.3).delay(0.15), value: header?.title)
         .allowsHitTesting(false)
     }
+
+    /// A page of the new rows with none (an old card has its own focus);
+    /// kept on Back until the row it goes back to holds focus (gone with
+    /// the page, focus flicked to the top bar meanwhile).
+    private var pageIsEmpty: Bool {
+        if row == Self.emptyPageRow, returning != nil { return true }
+        return header != nil && rows.isEmpty && (!nav.stack.isEmpty || root != nil)
+    }
+    private static let emptyPageRow = "settings.emptyPage"
 
     /// The page in the column: a page opened there, else the categories.
     private var pageKey: String { nav.stack.last?.id.uuidString ?? "" }
