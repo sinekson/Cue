@@ -1618,10 +1618,6 @@ struct HomeUIKitView: View {
     /// How far below the billboard focus is (1: the first row below, whose
     /// strip of the billboard stays at the top).
     @State private var depth = 0
-    /// The depth for the dots, read where they're drawn (the rows' host —
-    /// another SwiftUI host: a move that changed only the depth, Back up to
-    /// the billboard, never handed them the new one; they stayed down).
-    @State var dotsDepth = DetailRowsDepth()
     /// The billboard's title (kept while it fades out on Down).
     @State private var billboardItem: MetaItem?
     /// Bumped when the billboard title's record changes (`TitleRecords`):
@@ -1718,7 +1714,6 @@ struct HomeUIKitView: View {
                            },
                            onDepth: {
                                depth = $0
-                               dotsDepth.depth = $0
                                if active { HomeBack.shared.depth = $0 }
                            },
                            onFocusArt: { focusedArt = $0 },
@@ -1742,6 +1737,7 @@ struct HomeUIKitView: View {
                            onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
+                           billboardOverlayShift: Self.rigidDotsMid - Self.peekDotsMid,
                            billboardControls: billboardControls,
                            billboardControlsHeight: FixedFocusBillboardText.buttonsY + 130,
                            // Its text on its pictures: each title one card.
@@ -1811,11 +1807,13 @@ struct HomeUIKitView: View {
 /// the Bands picture. Home's collection panels take its colour
 /// (`addPanel`).
 @MainActor
-final class TitleBackground: ObservableObject {
+final class TitleBackground {
     static let shared = TitleBackground()
 
-    @Published private(set) var tint: Color?
-    @Published private(set) var second: Color?
+    private var tint: UIColor?
+    private var second: UIColor?
+    /// Its pictures as drawn (Home, Movies, Series, a folder).
+    private let grounds = NSHashTable<TitleTintGroundView>.weakObjects()
 
     /// Presses closer together than this are fast scrolling: the colours
     /// calm down (change now and then, over a blend).
@@ -1871,14 +1869,18 @@ final class TitleBackground: ObservableObject {
         // The picture's two main colours (`FixedFocusTint.colors`).
         guard let colors = await FixedFocusTint.colors(for: url), !Task.isCancelled else { return }
         lastChange = Date()
-        let animation: Animation = follows ? FixedFocusTint.focusAnimation : .easeInOut(duration: fade)
-        withAnimation(animation) {
-            tint = colors.first
-            second = colors.second
-        }
+        tint = UIColor(colors.first)
+        second = colors.second.map { UIColor($0) }
+        for ground in grounds.allObjects { ground.show(tint, second, fade: fade, follows: follows) }
         panelColor = UIColor(colors.first)
         panelFollows = follows
         refreshPanels(fade: fade)
+    }
+
+    /// A new picture of it: the current colours, at once.
+    func addGround(_ ground: TitleTintGroundView) {
+        grounds.add(ground)
+        ground.show(tint, second, fade: 0, follows: false)
     }
 
     // MARK: Collection panels
@@ -1901,17 +1903,65 @@ final class TitleBackground: ObservableObject {
 }
 
 /// The title background as drawn (`TitleBackground`): Home's ground.
-struct TitleBackgroundView: View {
-    @ObservedObject private var background = TitleBackground.shared
+/// Its colours change in Core Animation (`TitleTintGroundView`): in SwiftUI
+/// the blend ran on the main thread with every focus move, beside the rows.
+struct TitleBackgroundView: UIViewRepresentable {
+    func makeUIView(context: Context) -> TitleTintGroundView {
+        let view = TitleTintGroundView()
+        TitleBackground.shared.addGround(view)
+        return view
+    }
+    func updateUIView(_ view: TitleTintGroundView, context: Context) {}
+}
 
-    var body: some View {
-        ZStack {
-            TitleTintBackground.base
-            TitleTintBackground(tint: background.tint, second: background.second)
-                .frame(width: 1920, height: 1080)
+/// `TitleTintBackground` in layers: the dark ground, the title's colour
+/// over it, the second towards the bottom left (the same fixed mask); a
+/// change blends from what's on screen, on the panels' curves.
+final class TitleTintGroundView: UIView {
+    private let first = CALayer()
+    private let second = CALayer()
+    private let secondMask = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = UIColor(white: 0.06, alpha: 1)
+        secondMask.colors = [UIColor.clear.cgColor, UIColor.black.cgColor]
+        secondMask.locations = [0.15, 0.95]
+        secondMask.startPoint = CGPoint(x: 0.95, y: 0)
+        secondMask.endPoint = CGPoint(x: 0.5, y: 1)
+        second.mask = secondMask
+        for sub in [first, second, secondMask] as [CALayer] { sub.actions = Self.still }
+        layer.addSublayer(first)
+        layer.addSublayer(second)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static let still: [String: CAAction] = ["bounds": NSNull(), "position": NSNull(),
+                                                    "backgroundColor": NSNull()]
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        for sub in [first, second, secondMask] as [CALayer] { sub.frame = bounds }
+    }
+
+    func show(_ tint: UIColor?, _ other: UIColor?, fade: Double, follows: Bool) {
+        let strength = TitleTintBackground.tintStrength
+        // No second colour: the first under the mask too, so it fades as one.
+        let colors = [tint?.withAlphaComponent(strength),
+                      (tint == nil ? nil : other ?? tint)?.withAlphaComponent(strength)]
+        for (sub, color) in zip([first, second], colors) {
+            let from = sub.presentation()?.backgroundColor ?? sub.backgroundColor
+            sub.backgroundColor = (color ?? .clear).cgColor
+            guard fade > 0, window != nil else { sub.removeAnimation(forKey: "tint"); continue }
+            let change = CABasicAnimation(keyPath: "backgroundColor")
+            change.fromValue = from
+            change.duration = fade
+            change.timingFunction = follows ? FixedFocusTint.focusTiming
+                : CAMediaTimingFunction(name: .easeInEaseOut)
+            sub.add(change, forKey: "tint")
         }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
     }
 }
 
@@ -1971,12 +2021,8 @@ enum FixedFocusTint {
                 second.map { shown(hue: $0.hue, saturation: $0.saturation) })
     }
 
-    /// "Tint: move with focus": the focus move's own curve and time.
-    @MainActor static var focusAnimation: Animation {
-        FixedFocusMotion.animation(duration: Motion.moveDuration)
-    }
-
-    /// The same for the collection panels' Core Animation fade (a fade takes a
+    /// The colours' Core Animation fade with focus (the background, the
+    /// collection panels; a fade takes a
     /// curve, not a spring: the no-bounce spring's shape, fast then a long
     /// settle).
     @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
@@ -2449,9 +2495,6 @@ extension HomeUIKitView {
         1080 - firstRowPeek - FixedFocusMetrics.titleHeight + FixedFocusMetrics.titleLine / 2 - peekDotsLift
     }
     static let peekDotsLift: CGFloat = 16
-    /// (Peeking, only on the billboard: once it's up, where they always
-    /// end — in the middle of its strip at the top.)
-    private static func dotsMid(depth: Int) -> CGFloat { depth == 0 ? peekDotsMid : rigidDotsMid }
 
     /// The billboard's text and dots for the rows to host (a change of
     /// title: on the pictures — `billboardPageText`).
@@ -2550,24 +2593,16 @@ extension HomeUIKitView {
             // The position, bottom centre (Left/Right): it stays in the strip
             // with the text.
             if let shown = billboard ?? lastBillboard {
-                RowsDepthReader(model: dotsDepth) { depth in
                 BillboardDots(count: shown.count, current: shown.index, focused: true,
                               timer: autoPageRunning ? BillboardAutoPage.interval : nil,
                               cycle: autoPageVisit)
                     .frame(height: SectionHint.size * 1.3)
                     .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .center)
-                    // The glass and its dots as ONE piece: an interrupted move
-                    // (Down, then Up at once) took them on separate paths.
-                    .geometryGroup()
-                    .offset(x: Spotlight.screenInset,
-                            y: Self.dotsMid(depth: depth) - SectionHint.size * 1.3 / 2)
-                    .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll),
-                               value: depth == 0)
-                    // (With a trailer, and into / out of Details in place:
-                    // moved with the peek by the rows — `movePeek`; moved
-                    // here, on its own clock, it left a few frames early or
-                    // late.)
-                }
+                    // In the peek; once the billboard is up, in its strip's
+                    // middle — moved there by the rows with their scroll
+                    // (`billboardOverlayShift`: on SwiftUI's clock it ran
+                    // apart from them), and with the peek (`movePeek`).
+                    .offset(x: Spotlight.screenInset, y: Self.peekDotsMid - SectionHint.size * 1.3 / 2)
             }
         }
         // (Top-left: without the picture the layer is only as large as its

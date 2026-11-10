@@ -176,6 +176,7 @@ struct ATVBackground: View {
             Color("AppBackground")   // also the launch screen's
             if followed {
                 TitleBackgroundView()
+                    .ignoresSafeArea()
                     .transition(.opacity)
             } else if let image = picture.image {
                 Image(uiImage: image)

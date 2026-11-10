@@ -132,6 +132,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// row's peek — over the rows it would hide it from focus; its buttons
     /// go over them, `billboardControls`).
     var billboardOverlayBelowRows = false
+    /// Moved by this much more once the billboard is up (Home's dots: from
+    /// the peek to the strip's middle), in the same animation.
+    var billboardOverlayShift: CGFloat = 0
     /// The billboard's buttons, over the rows when the text is under them
     /// (Home), from the screen's top, `billboardControlsHeight` tall.
     var billboardControls: AnyView? = nil
@@ -251,6 +254,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
         controller.billboardOverlayBelowRows = billboardOverlayBelowRows
+        controller.billboardOverlayShift = billboardOverlayShift
         controller.rigidBillboardTravel = rigidBillboardTravel
         controller.pinnedBillboardPicture = pinnedBillboardPicture
         billboardTrailer?.stage = controller.pinnedStage
@@ -1728,6 +1732,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var billboardControlsHeight: CGFloat = 1080
     var billboardOverlayHeight: CGFloat = 1080
     var billboardOverlayBelowRows = false
+    var billboardOverlayShift: CGFloat = 0
     var rigidBillboardTravel: CGFloat?
     var anchoredRowIDs: Set<String> = []
     var customRows: [String: FixedFocusCustomRow] = [:] {
@@ -1954,7 +1959,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
         for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {
-            moved.transform = CGAffineTransform(translationX: 0, y: -scroll)
+            let shift = moved === overlayHost?.view && depth > 0 ? billboardOverlayShift : 0
+            moved.transform = CGAffineTransform(translationX: 0, y: shift - scroll)
             moved.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
         }
     }

@@ -141,7 +141,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`), dots in UIKit on Left/Right's spring, the timer's
   fill a linear UIView animation (`BillboardDotsView`: in SwiftUI the main
-  thread's paging work made them stutter and flicker). No Play button:
+  thread's paging work made them stutter and flicker); moved up
+  with the billboard by the rows (`billboardOverlayShift`). No Play button:
   Details is the way to play.
 - **Details** shares the billboard's text and shade. Into Details is
   `DetailTransition`, all Core Animation; from the billboard in place
@@ -273,7 +274,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Background**: one still picture, Bands (`BandsPicture`); Dynamic (default) follows
   the focused title (`TitleBackground`): its two main colours, one even,
   the second towards the bottom left (the picture's 4 × 3 colour layout was
-  too distracting).
+  too distracting); its colours change in Core Animation
+  (`TitleTintGroundView`), as the collection panels'.
 - **App icon and Top Shelf** are generated, never hand-edited:
   `swift Tools/AppIcon/render.swift`.
 
