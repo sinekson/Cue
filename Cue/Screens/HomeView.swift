@@ -898,7 +898,6 @@ struct HomeView: View {
             HomeUIKitView(rows: homeRows(featuredRow, cw?.row),
                           featuredRowID: Spotlight.featuredRowID,
                           active: active,
-                          tab: (typeFilter == nil ? AppTab.home : typeFilter == "series" ? .series : .movies).rawValue,
                           continueRowID: Spotlight.continueRowID,
                           progress: cw?.progress ?? [:],
                           billboardReasons: Dictionary(picks.compactMap { pick in
@@ -1578,10 +1577,7 @@ struct HomeUIKitView: View {
     /// The Featured row's id: the billboard (full screen, no posters).
     let featuredRowID: String
     /// Its tab is in front; kept alive but hidden otherwise.
-    @Environment(\.tabPictureShift) private var tabPictureShift
     let active: Bool
-    /// Its tab (`FixedFocusRows.tab`).
-    let tab: Int
     /// The Continue Watching row's id (landscape cards, Select resumes).
     let continueRowID: String
     let progress: [String: WatchProgress]
@@ -1686,10 +1682,9 @@ struct HomeUIKitView: View {
 
     private var homeLayers: some View {
         ZStack(alignment: .topLeading) {
-            ATVBackground(shift: tabPictureShift)
+            ATVBackground()
             FixedFocusRows(rows: rows, featuredRowID: featuredRowID, continueRowID: continueRowID,
                            active: active,
-                           tab: tab,
                            progress: progress,
                            panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
                            // Collections, Continue Watching and Saved for

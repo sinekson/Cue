@@ -125,16 +125,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 ## How things work
 
 - **Tabs** stay alive once built, built ahead after launch; a switch: the
-  old page gone and the new one there in the same frame, no fade (as
-  Netflix); Home, Movies and Series drift in from the side, 36 pt, the
-  picture with the content, held aside from the first frame, its edges
-  carried on past its sides (each edge's last column repeated), 0.6 s
-  spring (`arrive`, Home's rows `holdAside`/`driftIn`). Search and
-  Settings: no drift, handled later. (A dissolve over the old felt heavy;
-  the new page fading in over the old picture (0.3 s) dipped at its end;
-  a plain fade didn't feel good; the billboard's paging slide was too
-  much and confused with the billboard's; a parallax and a grown picture
-  were tried.)
+  old page gone and the new one there in the same frame, no fade, no
+  drift (as Netflix) (`switchTab`). (A dissolve over the old felt heavy;
+  the new page fading in over the old picture dipped at its end; a plain
+  fade didn't feel good; the billboard's paging slide was too much and
+  confused with the billboard's; Home drifting in 18–72 pt with its
+  picture's edges carried on was liked at 36, then not wanted; Search and
+  Settings drifting by a SwiftUI offset stuttered; a parallax and a
+  grown picture were tried.)
 - **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs as
   words from the page's left edge (28 pt medium; the current one primary,
   the others secondary), the avatar at the right edge, nothing behind them;

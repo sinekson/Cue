@@ -938,7 +938,7 @@ struct RootView: View {
         ZStack(alignment: .top) {
             selectedContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Tab changes: the new page drifts or fades in (`arrive`).
+                // Tab changes: the new page there at once (`switchTab`).
                 // (No `.id(selectedTab)`: it rebuilt each tab on every
                 // switch — below 10 fps. Tabs stay alive; `selectedContent`.)
                 .animation(nil, value: selectedTab)
@@ -991,8 +991,7 @@ struct RootView: View {
             // Series it goes up with the billboard (`TopBarPlace`).
             do {
                 let barHidden = !showSidebar
-                // (Focus moving along it switches: the drift set up in the
-                // same update — `arrive`.)
+                // (Focus moving along it switches — `switchTab`.)
                 GlassSidebar(selected: Binding(get: { selectedTab },
                                                set: { switchTab(to: $0) }),
                              focusBinding: $sidebarFocus,
@@ -1104,84 +1103,37 @@ struct RootView: View {
                     .safeAreaPadding(.top, !tab.isHomeLike && tab != .search && (showSidebar || !active)
                                      ? GlassSidebar.topBarClearance : 0)
                     // Search and Library draw no background of their own:
-                    // the tab gives them one, so they cover the old picture.
+                    // the tab gives them one.
                     .background { if tab == .search || tab == .library { ATVBackground() } }
-                    // Home's background picture drifting in (`arrive`).
-                    .environment(\.tabPictureShift, arrivingTab == tab.rawValue ? arrivalPictureShift : 0)
                     .opacity(active ? 1 : 0)
                     .disabled(!active)
                     .accessibilityHidden(!active)
                     .zIndex(active ? 1 : 0)
             }
         }
-        .onChange(of: selectedTab) { old, tab in
+        .onChange(of: selectedTab) { _, tab in
             visitedTabs.insert(tab)
             // Home's pages say for themselves (`HomeUIKitView`).
             if AppTab(rawValue: tab)?.isHomeLike != true { TopBarPlace.shared.pageDown = false }
-            // (Switched elsewhere than the top bar.)
-            if arrivingTab != tab { arrive(from: old, to: tab) }
-            // The switch drawn (a frame on screen — in the same update the
-            // drift was a cut): now the new page drifts in.
-            Task { @MainActor in
-                let watch = FrameWatch()
-                await watch.quiet(frames: 1, within: 0.1)
-                watch.end()
-                comeIn(tab)
-            }
         }
         .task { await buildTabsAhead() }
     }
 
     /// Tabs opened so far (kept alive — see above).
     @State private var visitedTabs: Set<Int> = [AppTab.home.rawValue]
-    /// The page coming in (`arrive`).
-    @State private var arrivingTab: Int?
-    /// Home's background picture, while it drifts into place.
-    @State private var arrivalPictureShift: CGFloat = 0
-
-    /// The old page gone and the new one there in the same frame, no fade
-    /// (as Netflix); Home, Movies and Series drifting in from the side,
-    /// 36 pt, gently, the picture with the content, its edges carried on
-    /// past its sides. Search and Settings: no drift for now. (A crossfade
-    /// felt heavy; fading the new page in over the old picture dipped at
-    /// its end; the billboard's paging slide was too much, and confused
-    /// with the billboard's.)
-    static let arrivalDistance: CGFloat = 36
-    static let arrivalDriftDuration = 0.6
-
-    /// A switch: Home's page held a little to the side it comes from (the
-    /// top bar's order) from its first frame.
-    private func arrive(from old: Int, to new: Int) {
-        arrivingTab = new
-        arrivalPictureShift = 0
-        guard perf.motionOn, old != new, AppTab(rawValue: new)?.isHomeLike == true else { return }
-        let order = AppTab.topBarOrder.map(\.rawValue)
-        let from = order.firstIndex(of: old) ?? 0, to = order.firstIndex(of: new) ?? 0
-        arrivalPictureShift = (to < from ? -1 : 1) * Self.arrivalDistance
-        FixedFocusRowsController.forTab(new)?.holdAside(arrivalPictureShift)
-    }
-
-    /// Once the switch is drawn: Home's content and picture into place.
-    private func comeIn(_ tab: Int) {
-        let shift = arrivalPictureShift
-        guard arrivingTab == tab, shift != 0 else { return }
-        withAnimation(.spring(duration: Self.arrivalDriftDuration, bounce: 0)) { arrivalPictureShift = 0 }
-        FixedFocusRowsController.forTab(tab)?.driftIn(
-            from: shift, on: CASpringAnimation(perceptualDuration: Self.arrivalDriftDuration, bounce: 0))
-    }
-
-    /// The switch: not animated (the focus move carries an animation —
-    /// the page coming in faded in, a dip), the drift set up with it
-    /// (from `onChange` the pages had already changed places).
+    /// The switch: the old page gone and the new one there in the same
+    /// frame, no fade, no drift (as Netflix). Not animated: the focus move
+    /// carries an animation. (Tried: a crossfade — heavy; the new page
+    /// fading in over the old picture — dipped at its end; the billboard's
+    /// paging slide — too much; Home drifting in 18 to 72 pt with its
+    /// picture's edges carried on, and Search and Settings by a SwiftUI
+    /// offset — stuttered.)
     private func switchTab(to new: Int) {
         // Navigating pulls the account, as NuvioTV (at most every 2 min).
         sync?.syncOnAppOpen(reason: "tab switch")
         var instant = Transaction()
         instant.disablesAnimations = true
-        withTransaction(instant) {
-            arrive(from: selectedTab, to: new)
-            selectedTab = new
-        }
+        withTransaction(instant) { selectedTab = new }
     }
 
     /// Every tab built, hidden, once the launch is over — one at a time, so

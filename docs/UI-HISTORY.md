@@ -100,17 +100,8 @@ matching section before changing that part of the UI. Where this differs from
 - **Tabs**: every tab stays alive once built; the top bar's are built
   ahead, hidden, one every 1.5 s after the launch lifts
   (`buildTabsAhead`), so a first visit is no build. A switch: the old
-  page gone and the new one there in the same frame, no fade (as
-  Netflix's); Home, Movies and Series drift in from the side they come
-  from (the top bar's order), 36 pt on a 0.6 s no-bounce spring, held
-  aside from the first frame (`holdAside`, an additive translation the
-  drift replaces), the picture with the content: the billboard's pages move inside the stage's clip
-  (moving the stage moved its clip, so a black edge opened), each
-  picture and shade carried on past its sides by its last column,
-  repeated (`Page.extendEdges`; the same in `ATVBackground(shift:)`);
-  Home's rows: additive translations, `driftIn`. Search and Settings:
-  no drift (to be handled later). From the first frame drawn switched
-  (`switchTab`, `arrive`, `comeIn`). The switch's own update is never
+  page gone and the new one there in the same frame, no fade, no drift
+  (as Netflix's) (`switchTab`). The switch's own update is never
   animated (the bar's focus move carries one). (Tried: a cut — abrupt;
   a dip through the background, out 0.1 s then in 0.2 s — the empty
   in-between looked weird; both pages fading at once — a dip, flickery;
@@ -126,7 +117,24 @@ matching section before changing that part of the UI. Where this differs from
   half as far — too much, and confused with the billboard's own; the
   old content gone at once, its picture left under the new page fading
   in over it (0.3 s, easing out), with the drift — dimmed at its end,
-  even with the old picture kept until the fade's completion.) An inactive
+  even with the old picture kept until the fade's completion; 36 pt on
+  0.6 s — fine, a further drift wanted; 72 pt with no edges, the whole
+  page (stage, clip, background) going over the old one, left under it
+  until the drift ended, 1 s then 0.7 s — the edge wanted back; with
+  the edge, 72 pt on 0.7 s — a little far, 50 pt — the first, 36 on
+  0.6 s, was best; no drift, a plain swap — the drift back, a little
+  quicker, 0.5 s; 36 pt on 0.5 s — halved for a gentler drift; 18 pt —
+  the drift dropped. How it was built, in case it comes back: Home's
+  page held aside from its first frame by an additive translation the
+  drift's spring replaced (`holdAside`, `driftIn`), the billboard's
+  pages moving inside the stage's clip (moving the stage moved its clip,
+  a black edge), each picture and shade carried on past its sides by its
+  last column, repeated (`Page.extendEdges`, `ATVBackground(shift:)`).
+  Search and Settings by a SwiftUI offset on the whole page: fine slowed
+  down on the sim, at speed on the TV it stuttered, only Search's
+  keyboard moved, and Settings' picture, inside its navigation stack,
+  was cut at the screen's edge; a UIKit container so Core Animation
+  moves them was talked over.) An inactive
   Home-like tab's rows stay on screen, only out of the focus engine
   (`FixedFocusRowsController.setActive`; hidden, they vanished from the
   page going out and came on a few frames late on the one coming in).

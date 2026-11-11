@@ -1762,9 +1762,6 @@ extension EnvironmentValues {
     /// Drawn into an image (the billboard's buttons going out with their
     /// card): the glass pill as a flat stand-in — glass can't be drawn.
     @Entry var actionFaceStill = false
-    /// A tab switch: how far Home's background picture still has to drift
-    /// (`CueApp.arrive`).
-    @Entry var tabPictureShift: CGFloat = 0
 }
 
 struct ActionFace: ViewModifier {

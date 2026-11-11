@@ -34,52 +34,6 @@ final class StagePictureView: UIView {
         var carried: [UIView] = []
         private var textHost: UIHostingController<AnyView>?
         var textAlpha: CGFloat = 1 { didSet { textHost?.view.alpha = textAlpha } }
-        private var edges: [CALayer] = []
-
-        /// A tab switch drifting it in (`CueApp.arrive`): its picture and
-        /// shade carried on past its sides by `width`, each edge's last
-        /// column repeated, so no edge shows while it moves.
-        func extendEdges(_ width: CGFloat) {
-            removeEdges()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            defer { CATransaction.commit() }
-            for left in [true, false] {
-                let frame = CGRect(x: left ? -width : bounds.width, y: 0, width: width, height: bounds.height)
-                if let image = picture.image, let cg = image.cgImage, image.size.width > 0, image.size.height > 0 {
-                    // The part aspect fill shows.
-                    let fill = max(bounds.width / image.size.width, bounds.height / image.size.height)
-                    let shownW = bounds.width / fill / image.size.width
-                    let shownH = bounds.height / fill / image.size.height
-                    let column = 1 / CGFloat(cg.width)
-                    let start = (1 - shownW) / 2
-                    edges.append(edge(cg, frame: frame, above: picture.layer,
-                                      rect: CGRect(x: left ? start : start + shownW - column,
-                                                   y: (1 - shownH) / 2, width: column, height: shownH)))
-                }
-                if let cg = shade.image?.cgImage {
-                    let column = 1 / CGFloat(cg.width)
-                    let strip = edge(cg, frame: frame, above: shade.layer,
-                                     rect: CGRect(x: left ? 0 : 1 - column, y: 0, width: column, height: 1))
-                    strip.opacity = Float(shade.alpha)
-                    edges.append(strip)
-                }
-            }
-        }
-
-        func removeEdges() {
-            edges.forEach { $0.removeFromSuperlayer() }
-            edges = []
-        }
-
-        private func edge(_ image: CGImage, frame: CGRect, above: CALayer, rect: CGRect) -> CALayer {
-            let strip = CALayer()
-            strip.contents = image
-            strip.contentsRect = rect
-            strip.frame = frame
-            layer.insertSublayer(strip, above: above)
-            return strip
-        }
 
         func setText(_ content: AnyView?) {
             guard let content else {
@@ -139,15 +93,6 @@ final class StagePictureView: UIView {
     private var shadeAlpha: CGFloat = 1
     /// Home's billboard: each picture's text, for its title (nil: none).
     var text: ((MetaItem) -> AnyView)?
-    /// Its pictures, each with its text and shade (a tab switch moves them
-    /// inside the screen's frame, their edges carried on past their sides).
-    var pageViews: [UIView] { zoom.subviews.filter { $0 is Page } }
-    func extendEdges(_ width: CGFloat) {
-        for case let page as Page in zoom.subviews { page.extendEdges(width) }
-    }
-    func removeEdges() {
-        for case let page as Page in zoom.subviews { page.removeEdges() }
-    }
     private var shownItem: MetaItem?
     /// The card a slide is taking out, while it's moving (a change back to
     /// it reverses the slide).
