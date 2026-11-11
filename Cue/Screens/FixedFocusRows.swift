@@ -14,6 +14,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     let featuredRowID: String
     let continueRowID: String
     let active: Bool
+    /// The tab this is the page of (`AppTab.rawValue`; a tab switch reaches
+    /// it — `FixedFocusRowsController.forTab`).
+    var tab: Int? = nil
     let progress: [String: WatchProgress]
     /// Placeholders while the page's content loads (`placeholderRows`):
     /// drawn, but out of focus's way; focus goes in once the content's in.
@@ -254,6 +257,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.billboardOverlayShift = billboardOverlayShift
         controller.rigidBillboardTravel = rigidBillboardTravel
         controller.pinnedBillboardPicture = pinnedBillboardPicture
+        controller.pageTab = tab
         billboardTrailer?.stage = controller.pinnedStage
         controller.setBillboardOverlay(billboardOverlay)
         controller.billboardControlsHeight = billboardControlsHeight
@@ -769,6 +773,54 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// front): coming back, focus returns there — not to the first card
     /// on screen.
     var returnRow: Int?
+
+    /// The tab this is the page of (see `FixedFocusRows.tab`).
+    var pageTab: Int?
+    static func forTab(_ tab: Int) -> FixedFocusRowsController? {
+        all.allObjects.first { $0.pageTab == tab && $0.isViewLoaded }
+    }
+
+    /// A tab switch, coming in: held to the side by `shift` from its first
+    /// frame, the picture's edges carried on past its sides
+    /// (`extendEdges`), so no edge shows. Additive: no view's own state is
+    /// touched.
+    func holdAside(_ shift: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layer in driftLayers {
+            let hold = CABasicAnimation(keyPath: "transform.translation.x")
+            hold.isAdditive = true
+            hold.fromValue = shift
+            hold.toValue = shift
+            hold.duration = .infinity
+            layer.add(hold, forKey: "tabSwitchIn")
+        }
+        pinnedStage?.extendEdges(abs(shift))
+        CATransaction.commit()
+    }
+
+    /// Then into place, gently (replacing the hold).
+    func driftIn(from shift: CGFloat, on drift: CASpringAnimation) {
+        CATransaction.begin()
+        for layer in driftLayers {
+            let move = drift.copy() as! CASpringAnimation
+            move.keyPath = "transform.translation.x"
+            move.isAdditive = true
+            move.fromValue = shift
+            move.toValue = 0
+            move.duration = move.settlingDuration
+            layer.add(move, forKey: "tabSwitchIn")
+        }
+        CATransaction.commit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + drift.settlingDuration) { [weak stage = pinnedStage] in
+            stage?.removeEdges()
+        }
+    }
+
+    /// What drifts: the rows, and the stage's pages inside its clip.
+    private var driftLayers: [CALayer] {
+        view.subviews.filter { $0 !== pinnedStage }.map(\.layer) + (pinnedStage?.pageViews.map(\.layer) ?? [])
+    }
 
     /// Another tab or Details in front: out of the focus engine (no
     /// interaction), still on screen — the page's own opacity hides it.

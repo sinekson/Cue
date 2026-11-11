@@ -99,15 +99,34 @@ matching section before changing that part of the UI. Where this differs from
 
 - **Tabs**: every tab stays alive once built; the top bar's are built
   ahead, hidden, one every 1.5 s after the launch lifts
-  (`buildTabsAhead`), so a first visit is no build. A switch is a
-  dissolve, 0.25 s: the page coming in is there at once, whole, under
-  the one going out, which fades off it from the first frame drawn
-  switched (`switchTab`, `crossfade`, `fadeOut`; Search and Library get
-  the background so they cover too). The switch's own update is never
-  animated (the bar's focus move carries one: the page coming in faded
-  in as well — a dip). (Tried: a cut — abrupt; a dip through the
-  background, out 0.1 s then in 0.2 s — the empty in-between looked
-  weird; both pages fading at once — a dip, flickery.) An inactive
+  (`buildTabsAhead`), so a first visit is no build. A switch: the old
+  page gone and the new one there in the same frame, no fade (as
+  Netflix's); Home, Movies and Series drift in from the side they come
+  from (the top bar's order), 36 pt on a 0.6 s no-bounce spring, held
+  aside from the first frame (`holdAside`, an additive translation the
+  drift replaces), the picture with the content: the billboard's pages move inside the stage's clip
+  (moving the stage moved its clip, so a black edge opened), each
+  picture and shade carried on past its sides by its last column,
+  repeated (`Page.extendEdges`; the same in `ATVBackground(shift:)`);
+  Home's rows: additive translations, `driftIn`. Search and Settings:
+  no drift (to be handled later). From the first frame drawn switched
+  (`switchTab`, `arrive`, `comeIn`). The switch's own update is never
+  animated (the bar's focus move carries one). (Tried: a cut — abrupt;
+  a dip through the background, out 0.1 s then in 0.2 s — the empty
+  in-between looked weird; both pages fading at once — a dip, flickery;
+  a 0.25 s dissolve, the new page whole under the old fading off it —
+  heavy; Netflix's, the old page gone at once and the whole new page
+  drifting in from 36 pt — its picture's edge showed (Netflix's
+  billboard is a card on black), and the background flashed between
+  them; a plain fade over the old picture, 0.3 and 0.15 s — didn't feel
+  good; the content alone drifting, the picture still; a parallax, the
+  picture 12 pt to the content's 36 — both should go the same distance;
+  the picture starting grown to hide its edge — weird; the billboard's
+  paging slide, the new page from all the way off over the old going
+  half as far — too much, and confused with the billboard's own; the
+  old content gone at once, its picture left under the new page fading
+  in over it (0.3 s, easing out), with the drift — dimmed at its end,
+  even with the old picture kept until the fade's completion.) An inactive
   Home-like tab's rows stay on screen, only out of the focus engine
   (`FixedFocusRowsController.setActive`; hidden, they vanished from the
   page going out and came on a few frames late on the one coming in).

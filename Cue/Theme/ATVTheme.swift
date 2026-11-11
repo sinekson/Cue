@@ -523,19 +523,44 @@ final class BackgroundPicks {
 
 /// The app's background, behind every screen (`BackgroundStore`).
 struct ATVBackground: View {
+    /// Drifting with a tab switch (`CueApp.arrive`): moved this far, its
+    /// edges carried on past its sides (each edge's last column repeated),
+    /// so they stay off screen. Nil: never drifts.
+    var shift: CGFloat? = nil
+    static let edgeReach: CGFloat = 64
     @ObservedObject private var picture = BackgroundStore.shared
 
     var body: some View {
         ZStack {
             Color("AppBackground")   // also the launch screen's
             if let image = picture.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .transition(.opacity)
+                if let shift {
+                    Image(uiImage: image)
+                        .resizable()
+                        .overlay(alignment: .leading) { edge(of: image, left: true) }
+                        .overlay(alignment: .trailing) { edge(of: image, left: false) }
+                        .offset(x: shift)
+                        .transition(.opacity)
+                } else {
+                    Image(uiImage: image)
+                        .resizable()
+                        .transition(.opacity)
+                }
             }
         }
         .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
         .onAppear { picture.load() }
+    }
+
+    /// One edge's last column, stretched past it.
+    @ViewBuilder private func edge(of image: UIImage, left: Bool) -> some View {
+        if let cg = image.cgImage,
+           let column = cg.cropping(to: CGRect(x: left ? 0 : cg.width - 1, y: 0, width: 1, height: cg.height)) {
+            Image(uiImage: UIImage(cgImage: column))
+                .resizable()
+                .frame(width: Self.edgeReach)
+                .offset(x: left ? -Self.edgeReach : Self.edgeReach)
+        }
     }
 }

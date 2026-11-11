@@ -938,7 +938,7 @@ struct RootView: View {
         ZStack(alignment: .top) {
             selectedContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Tab changes crossfade (`crossfade`).
+                // Tab changes: the new page drifts or fades in (`arrive`).
                 // (No `.id(selectedTab)`: it rebuilt each tab on every
                 // switch — below 10 fps. Tabs stay alive; `selectedContent`.)
                 .animation(nil, value: selectedTab)
@@ -991,8 +991,8 @@ struct RootView: View {
             // Series it goes up with the billboard (`TopBarPlace`).
             do {
                 let barHidden = !showSidebar
-                // (Focus moving along it switches: the fade set up in the
-                // same update — `crossfade`.)
+                // (Focus moving along it switches: the drift set up in the
+                // same update — `arrive`.)
                 GlassSidebar(selected: Binding(get: { selectedTab },
                                                set: { switchTab(to: $0) }),
                              focusBinding: $sidebarFocus,
@@ -1104,12 +1104,14 @@ struct RootView: View {
                     .safeAreaPadding(.top, !tab.isHomeLike && tab != .search && (showSidebar || !active)
                                      ? GlassSidebar.topBarClearance : 0)
                     // Search and Library draw no background of their own:
-                    // the one going out covers the one coming in.
+                    // the tab gives them one, so they cover the old picture.
                     .background { if tab == .search || tab == .library { ATVBackground() } }
-                    .opacity(active ? 1 : tabLeaving[tab.rawValue]?.opacity ?? 0)
+                    // Home's background picture drifting in (`arrive`).
+                    .environment(\.tabPictureShift, arrivingTab == tab.rawValue ? arrivalPictureShift : 0)
+                    .opacity(active ? 1 : 0)
                     .disabled(!active)
                     .accessibilityHidden(!active)
-                    .zIndex(active ? 1 : tabLeaving[tab.rawValue].map { 2 + $0.order } ?? 0)
+                    .zIndex(active ? 1 : 0)
             }
         }
         .onChange(of: selectedTab) { old, tab in
@@ -1117,14 +1119,14 @@ struct RootView: View {
             // Home's pages say for themselves (`HomeUIKitView`).
             if AppTab(rawValue: tab)?.isHomeLike != true { TopBarPlace.shared.pageDown = false }
             // (Switched elsewhere than the top bar.)
-            if tabLeaving[old] == nil { crossfade(from: old, to: tab) }
+            if arrivingTab != tab { arrive(from: old, to: tab) }
             // The switch drawn (a frame on screen — in the same update the
-            // fade was a cut): now the one going out fades.
+            // drift was a cut): now the new page drifts in.
             Task { @MainActor in
                 let watch = FrameWatch()
                 await watch.quiet(frames: 1, within: 0.1)
                 watch.end()
-                fadeOut(old)
+                comeIn(tab)
             }
         }
         .task { await buildTabsAhead() }
@@ -1132,25 +1134,44 @@ struct RootView: View {
 
     /// Tabs opened so far (kept alive — see above).
     @State private var visitedTabs: Set<Int> = [AppTab.home.rawValue]
-    /// Tabs going out, fading over the one coming in (`crossfade`); the
-    /// last to go on top.
-    @State private var tabLeaving: [Int: (opacity: Double, order: Double)] = [:]
-    @State private var tabLeavingCount = 0.0
+    /// The page coming in (`arrive`).
+    @State private var arrivingTab: Int?
+    /// Home's background picture, while it drifts into place.
+    @State private var arrivalPictureShift: CGFloat = 0
 
-    /// A switch crossfades: the page coming in is there at once, whole,
-    /// under the one going out, which fades off it once the switch is
-    /// drawn (`fadeOut`; the switch's own update isn't animated). (Both
-    /// fading, the background showed between them — a dip; and the one
-    /// coming in showed its UIKit parts a frame before its SwiftUI ones.)
-    private func crossfade(from old: Int, to new: Int) {
-        tabLeaving[new] = nil
-        guard perf.motionOn, old != new else { return }
-        tabLeavingCount += 1
-        tabLeaving[old] = (1, tabLeavingCount)
+    /// The old page gone and the new one there in the same frame, no fade
+    /// (as Netflix); Home, Movies and Series drifting in from the side,
+    /// 36 pt, gently, the picture with the content, its edges carried on
+    /// past its sides. Search and Settings: no drift for now. (A crossfade
+    /// felt heavy; fading the new page in over the old picture dipped at
+    /// its end; the billboard's paging slide was too much, and confused
+    /// with the billboard's.)
+    static let arrivalDistance: CGFloat = 36
+    static let arrivalDriftDuration = 0.6
+
+    /// A switch: Home's page held a little to the side it comes from (the
+    /// top bar's order) from its first frame.
+    private func arrive(from old: Int, to new: Int) {
+        arrivingTab = new
+        arrivalPictureShift = 0
+        guard perf.motionOn, old != new, AppTab(rawValue: new)?.isHomeLike == true else { return }
+        let order = AppTab.topBarOrder.map(\.rawValue)
+        let from = order.firstIndex(of: old) ?? 0, to = order.firstIndex(of: new) ?? 0
+        arrivalPictureShift = (to < from ? -1 : 1) * Self.arrivalDistance
+        FixedFocusRowsController.forTab(new)?.holdAside(arrivalPictureShift)
+    }
+
+    /// Once the switch is drawn: Home's content and picture into place.
+    private func comeIn(_ tab: Int) {
+        let shift = arrivalPictureShift
+        guard arrivingTab == tab, shift != 0 else { return }
+        withAnimation(.spring(duration: Self.arrivalDriftDuration, bounce: 0)) { arrivalPictureShift = 0 }
+        FixedFocusRowsController.forTab(tab)?.driftIn(
+            from: shift, on: CASpringAnimation(perceptualDuration: Self.arrivalDriftDuration, bounce: 0))
     }
 
     /// The switch: not animated (the focus move carries an animation —
-    /// the page coming in faded in too, a dip), the fade set up with it
+    /// the page coming in faded in, a dip), the drift set up with it
     /// (from `onChange` the pages had already changed places).
     private func switchTab(to new: Int) {
         // Navigating pulls the account, as NuvioTV (at most every 2 min).
@@ -1158,16 +1179,8 @@ struct RootView: View {
         var instant = Transaction()
         instant.disablesAnimations = true
         withTransaction(instant) {
-            crossfade(from: selectedTab, to: new)
+            arrive(from: selectedTab, to: new)
             selectedTab = new
-        }
-    }
-
-    private func fadeOut(_ tab: Int) {
-        guard let order = tabLeaving[tab]?.order, tabLeaving[tab]?.opacity == 1 else { return }
-        withAnimation(.easeInOut(duration: Motion.fadeDuration)) { tabLeaving[tab]?.opacity = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.fadeDuration) {
-            if tabLeaving[tab]?.order == order { tabLeaving[tab] = nil }
         }
     }
 
