@@ -114,6 +114,10 @@ struct GlassSidebar: View {
                 }
                 .buttonStyle(PlainCardButtonStyle())
                 .focused(focusBinding, equals: tab.rawValue)
+                // Coming in from the page only the current tab takes focus,
+                // so the engine lands on it (it landed on the nearest tab
+                // first, Home lit faintly before the snap).
+                .disabled(!navFocused && tab.rawValue != selected)
             }
             Spacer(minLength: 0)
             // The profile, at the right edge — a square slot, so the
@@ -129,6 +133,7 @@ struct GlassSidebar: View {
             }
             .buttonStyle(PlainCardButtonStyle())
             .focused(focusBinding, equals: -1)
+            .disabled(!navFocused)
         }
         .defaultFocus(focusBinding, selected)
         // The words start on the page's left edge (the first item's padding
@@ -177,16 +182,18 @@ struct GlassSidebar: View {
     static let itemSpacing: CGFloat = 6
 }
 
-/// The top bar's focus: the season buttons' (`ActionFace`, nothing at rest):
-/// the white capsule growing in on the focused item, shrinking and fading
-/// out of the one left, the item 5 % larger — nothing travels along the bar.
+/// The top bar's focus: the season buttons' (`ActionFace`): the white
+/// capsule growing in on the focused item, shrinking and fading out of the
+/// one left, the item 5 % larger — nothing travels along the bar. At rest
+/// the current tab keeps the season's flat grey pill (`FlatControl.selected`).
 private struct TopNavFocus: ViewModifier {
     let lit: Bool
     let rest: Color
+    var pill = false
 
     func body(content: Content) -> some View {
         content
-            .modifier(ActionFace(lit: lit, rest: rest, pill: false, current: true, restShadow: false,
+            .modifier(ActionFace(lit: lit, rest: rest, pill: pill, current: true, restShadow: false,
                                  open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade))
             .scaleEffect(lit ? DetailActionButton.focusScale : 1)
             .animation(lit ? Self.open : Self.leave, value: lit)
@@ -222,7 +229,8 @@ private struct TopNavLabel: View {
         }
         .frame(height: GlassSidebar.topBarItemHeight)
         .modifier(TopNavFocus(lit: focused,
-                              rest: .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary)))
+                              rest: .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary),
+                              pill: current))
         .animation(.easeOut(duration: 0.18), value: current)
     }
 }

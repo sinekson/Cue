@@ -135,8 +135,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   grown picture were tried.)
 - **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs as
   words from the page's left edge (28 pt medium; the current one primary,
-  the others secondary), the avatar at the right edge, nothing behind them;
-  focused, the season buttons' focus (`ActionFace`: the white capsule
+  the others secondary), the avatar at the right edge; the current tab
+  keeps the season's flat grey pill at rest (`FlatControl.selected`), the
+  rest nothing behind them; coming in from the page only the current tab
+  takes focus, so it lands there (it landed on the nearest, Home lit
+  faintly, then snapped); focused, the season buttons' focus (`ActionFace`: the white capsule
   growing in on the item, 5 % larger, dark text; quicker than the
   buttons': 0.12 s in, 0.28 s out, the fade linear (0.35 slow, 0.2 abrupt here; easing out was tried), 6 pt
   apart; a plain fade with no growth was tried; nothing travels: a capsule

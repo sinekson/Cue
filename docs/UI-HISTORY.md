@@ -19,6 +19,12 @@ matching section before changing that part of the UI. Where this differs from
   place, a trailer) it keeps the move's.
   (Tried: tvOS's own sidebar, `TabView` `.sidebarAdaptable` — closed a
   small pill top left, Back opening it; ours kept.)
+- The top bar's tabs: flat words on the page, focused the season buttons'
+  white capsule; the current tab keeps the season's flat grey pill at
+  rest (`FlatControl.selected`; at first it had none, only the brighter
+  word). Coming in from the page only the current tab (not the avatar)
+  takes focus: the engine landed on the nearest tab first, Home lighting
+  faintly before the snap to the current one.
 - **Glass only for what floats above the page** (top bar, hold menus, source
   picker, dropdowns, toasts); `liquidGlass(in:)`, always as a background.
   One glass everywhere: Apple's `.regular`, tinted black 30 %
