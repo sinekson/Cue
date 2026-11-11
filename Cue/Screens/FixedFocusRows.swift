@@ -604,7 +604,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// The fixed box shows over this row's grown card.
     func boxCovers(_ rowIndex: Int) -> Bool { box.alpha == 1 && rowIndex == focusedRow }
-    var billboardFocusOutside: Bool { externalBillboard && isFeatured(focusedRow) }
+    var billboardFocusOutside: Bool { externalBillboard && isFeatured(focusedRow) && passingUp == nil }
+    /// Back's way up (`passUp`): the rows go up to the billboard, focus
+    /// held on its hidden cards (never its buttons), then handed on.
+    private var passingUp: (() -> Void)?
     var cardStates: [String: FixedFocusCardState] = [:]
     var onSelectInRow: ((MetaItem, String) -> Bool)?
 
@@ -953,6 +956,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (see `HoldMenu`) — nothing changes.
         if HoldMenu.shared.isOpen { return }
         if let next = context.nextFocusedView, !next.isDescendant(of: outer) {
+            passingUp = nil
+            // Onto the billboard's buttons: the page is at its top, whatever
+            // was said before (a stale depth left Home's top bar lifted).
+            if billboardFocusOutside, let host = controlsHost, next.isDescendant(of: host.view) {
+                onDepth(0)
+            }
             // (Into a hold menu: the card keeps its look.)
             if ringOnlyWithFocus, !HoldMenu.shared.isOpen { box.ringHidden = true }
             return
@@ -1038,7 +1047,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             UIView.performWithoutAnimation { place(box, boxFrame); box.layoutIfNeeded() }
         }
 
-        if featured, externalBillboard, rowChanged {
+        if featured, let handOn = passingUp {
+            // Back's way up: the top bar takes it from here.
+            DispatchQueue.main.async(execute: handOn)
+        } else if featured, externalBillboard, rowChanged {
             // Up into a billboard whose focus is outside (Details' buttons):
             // its cards stop taking focus now (`billboardCardsOff`), so focus
             // settles again — on the outside's own default (Play; see
@@ -2001,9 +2013,20 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         case let .focusRow(rowID):
             guard let rowIndex = rows.firstIndex(where: { $0.id == rowID }) else { return }
             requestFocusFar(row: rowIndex)
-        case .focusBillboard:
+        case .focusBillboard, .passUp:
             // (No billboard — a folder's rows: the first row.)
             let target = featuredIndex ?? 0
+            if case .passUp = command.action {
+                guard hasFocus, focusedRow != target else { command.then?(); return }
+                let handOn = command.then ?? {}
+                passingUp = handOn
+                // (Focus never got there: handed on anyway.)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    guard let self, self.passingUp != nil else { return }
+                    self.passingUp = nil
+                    handOn()
+                }
+            }
             if hasFocus, focusedRow != target {
                 backToken += 1
                 let token = backToken
@@ -2819,6 +2842,9 @@ struct FixedFocusRowsCommand: Equatable {
         case focusRow(rowID: String)
         /// Back to the billboard (Details: on to its buttons).
         case focusBillboard
+        /// Up to the billboard without focus landing on its buttons; `then`
+        /// takes focus on (Home's Back: to the top bar).
+        case passUp
         /// The billboard to its title `index` with focus where it is — its
         /// buttons (Home's): the picture drifts, the text crossfades, as a
         /// press on its cards did.
@@ -2827,7 +2853,10 @@ struct FixedFocusRowsCommand: Equatable {
         case step(rowID: String, by: Int)
     }
     let action: Action
+    var then: (() -> Void)? = nil
     let id = UUID()
+
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id }
 }
 
 final class FixedFocusRedirectGuide: UIFocusGuide {

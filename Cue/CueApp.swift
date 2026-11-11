@@ -370,6 +370,8 @@ struct RootView: View {
     @State private var sidebarEnabled = false
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
+    /// Home's page below its billboard: the top bar has gone up with it.
+    @ObservedObject private var topBarPlace = TopBarPlace.shared
     /// Into / out of Details in place: the top bar moves out with Home's parts.
     private var billboardOpening = BillboardOpening.shared
 
@@ -905,17 +907,6 @@ struct RootView: View {
         }
     }
 
-    /// Appearance → Auto-hide top bar: the bar is off screen until Up from
-    /// the page's top (or Back) calls it back — on every tab, Settings too
-    /// (its Up from the first row and Back on the categories go to the bar).
-    private var sidebarAutoHides: Bool {
-        homeCatalogSettings.autoHideSidebar
-    }
-
-    /// Set when the auto-hiding rail has been summoned; cleared when it
-    /// collapses again.
-    @State private var sidebarRevealed = false
-
     /// When the rail was last ASKED for — a summon, or focus actually landing
     /// in it. Read only by the rail's exit-move handler; see the note there.
     @State private var sidebarEngagedAt = Date.distantPast
@@ -935,43 +926,12 @@ struct RootView: View {
     /// focus needs to settle — every Up in it is lost.
     private static let railSettle: Double = 0.25
 
-    private var showSidebar: Bool { !sidebarMovedOut && !sidebarAutoHidden }
+    private var showSidebar: Bool { !sidebarMovedOut }
     /// Out with the page's parts: off a tab's root, into Details in place,
     /// for the billboard's trailer (with the peek).
     private var sidebarMovedOut: Bool {
         !atTabRoot || billboardOpening.opened || billboardOpening.trailerShown
     }
-    /// Out by Hide the top bar, until called.
-    private var sidebarAutoHidden: Bool { sidebarAutoHides && !sidebarRevealed }
-
-    /// Bring a hidden rail back and put focus on it. The reveal has to happen
-    /// BEFORE the focus write — the rail isn't in the view tree until
-    /// `showSidebar` turns true, and `@FocusState` on a view that doesn't
-    /// exist yet is dropped on the floor.
-    private func revealSidebar() {
-        guard sidebarAutoHides, !sidebarRevealed else {
-            AppProbe.focus("reveal rail refused — autoHides=\(sidebarAutoHides.probe)"
-                           + " alreadyRevealed=\(sidebarRevealed.probe)")
-            return
-        }
-        // The failed-move notification is app-wide: a left press with no
-        // target inside the player, a pushed Detail page, or either fullscreen
-        // gate reaches here too, and revealing there would flip state for a
-        // rail that isn't even on screen — it then greets the viewer already
-        // open when they come back to the root.
-        guard atTabRoot, playback == nil, launch.gate == nil, !showWelcome else {
-            AppProbe.focus("reveal rail refused — atRoot=\(atTabRoot.probe)"
-                           + " player=\((playback != nil).probe) gate=\((launch.gate != nil).probe)"
-                           + " welcome=\(showWelcome.probe)")
-            return
-        }
-        AppProbe.focus("reveal rail")
-        sidebarRevealed = true
-        sidebarEngagedAt = Date()
-        setSidebarEnabled(true)
-        DispatchQueue.main.async { sidebarFocus = selectedTab }
-    }
-
     /// The app's single root: the top navigation floating over full-bleed
     /// content. OVERLAY layout, so the bar just draws over the content.
     private var tabLayout: some View {
@@ -1023,14 +983,12 @@ struct RootView: View {
                         // screen. Same remedy the Search case above uses, which
                         // is the same problem on the other axis.
                         focusSidebar(selectedTab)
-                    } else {
-                        revealSidebar()
                     }
                 }
 
             // Always there: hidden, it moves out the top (and back in) — one
-            // motion app-wide (`GlassSidebar.hidden`; Hide the top bar's on
-            // its own spring, `autoHidden`).
+            // motion app-wide (`GlassSidebar.hidden`); on Home, Movies and
+            // Series it goes up with the billboard (`TopBarPlace`).
             do {
                 let barHidden = !showSidebar
                 // (Focus moving along it switches: the fade set up in the
@@ -1041,7 +999,8 @@ struct RootView: View {
                              onProfileTap: { launch.showGate(.topBar) },
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: sidebarMovedOut,
-                             autoHidden: sidebarAutoHidden)
+                             lifted: topBarPlace.pageDown && sidebarFocus == nil
+                                && AppTab(rawValue: selectedTab)?.isHomeLike == true)
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
@@ -1084,7 +1043,6 @@ struct RootView: View {
                             if sidebarFocus != nil {
                                 collapseSidebarFromExit()
                             } else {
-                                if sidebarAutoHides { sidebarRevealed = false }
                                 setSidebarEnabled(false, reenableAfter: Self.railSettle)
                             }
                         }
@@ -1112,7 +1070,7 @@ struct RootView: View {
         .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: sidebarFocus != nil)
         // Focus ARRIVING in the rail counts as engaging it, however it got
-        // there. `focusSidebar` and `revealSidebar` stamp their own way in, but
+        // there. `focusSidebar` stamps its own way in, but
         // the common case — an always-visible rail that the focus engine simply
         // moves into from the first card of a row — goes through neither, and
         // that is exactly the case a swipe hits.
@@ -1156,6 +1114,8 @@ struct RootView: View {
         }
         .onChange(of: selectedTab) { old, tab in
             visitedTabs.insert(tab)
+            // Home's pages say for themselves (`HomeUIKitView`).
+            if AppTab(rawValue: tab)?.isHomeLike != true { TopBarPlace.shared.pageDown = false }
             // (Switched elsewhere than the top bar.)
             if tabLeaving[old] == nil { crossfade(from: old, to: tab) }
             // The switch drawn (a frame on screen — in the same update the
@@ -1406,9 +1366,9 @@ struct RootView: View {
                     // a pushed screen — tvOS sometimes delivers a lingering
                     // second Menu, which would spuriously open the rail.
                     if let popped = lastHomePopAt, Date().timeIntervalSince(popped) < Self.popEchoWindow { return }
-                    // Below the billboard: up to it first.
-                    if HomeBack.shared.handle() { return }
-                    focusSidebar(tab.rawValue)
+                    // Focus to the top bar; below the billboard the page goes
+                    // up to it on the way (focus never on its buttons).
+                    HomeBack.shared.handle { focusSidebar(tab.rawValue) }
                 }
                 .onChange(of: path.wrappedValue.count) { oldCount, newCount in
                     // Only a pop that lands ON the page matters here.
@@ -1478,7 +1438,6 @@ struct RootView: View {
                      + (enteringHomeFresh ? "  (Home rebuilds; rail waits on content)" : ""))
         AppProbe.tab = Self.tabName(newTab)
         switchTab(to: newTab)
-        if homeCatalogSettings.autoHideSidebar { sidebarRevealed = false }
         sidebarFocus = nil
         // Through the owner, so a pending re-enable (a rail exit moments ago)
         // is CANCELLED — it used to flip the rail focusable before the fresh
@@ -1500,10 +1459,7 @@ struct RootView: View {
     /// dropped — a Menu press in one of those windows did nothing. A deliberate
     /// Back always wins: enable now, focus on the next tick.
     private func focusSidebar(_ tab: Int) {
-        AppProbe.focus("focusSidebar(\(Self.tabName(tab)))"
-                       + "  revealed=\(sidebarRevealed.probe) enabled=\(sidebarEnabled.probe)")
-        // Menu at a tab root is the other way back to a hidden rail.
-        if sidebarAutoHides { sidebarRevealed = true }
+        AppProbe.focus("focusSidebar(\(Self.tabName(tab)))  enabled=\(sidebarEnabled.probe)")
         if billboardOpening.trailerShown { billboardOpening.trailerShown = false }
         sidebarEngagedAt = Date()
         setSidebarEnabled(true)
@@ -1513,8 +1469,6 @@ struct RootView: View {
     /// Back pressed while the rail itself is focused: close the panel. Always
     /// the fast fixed-delay re-enable — nothing is being freshly mounted.
     private func collapseSidebarFromExit() {
-        // An auto-hiding rail goes all the way away again, not just narrow.
-        if sidebarAutoHides { sidebarRevealed = false }
         // Hand focus to the FIRST tile of the row the viewer left, when that
         // row is mounted to take it. Dropping the rail's focus with no
         // destination let the engine pick whatever card sat nearest the

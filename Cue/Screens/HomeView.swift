@@ -1559,11 +1559,14 @@ final class HomeBack {
     var depth = 0
     var toBillboard: (() -> Void)?
 
-    /// True: handled (focus goes up to the billboard).
-    func handle() -> Bool {
-        guard depth > 0, let toBillboard else { return false }
-        toBillboard()
-        return true
+    /// The page in front: up to its billboard, focus not stopping there.
+    var passUp: ((@escaping () -> Void) -> Void)?
+
+    /// Back: below the billboard the page goes up to it first; `then`
+    /// once it's on the way (focus to the top bar).
+    func handle(then: @escaping () -> Void) {
+        guard depth > 0, let passUp else { return then() }
+        passUp(then)
     }
 }
 
@@ -1639,6 +1642,7 @@ struct HomeUIKitView: View {
         .onAppear { if active { takeBack() } }
         .onChange(of: active) { _, now in
             if now { takeBack() }
+            if now { TopBarPlace.shared.pageDown = depth > 0 }
             opening.trailerShown = now && trailerOut
         }
         // The top bar moves out with the peek while it plays.
@@ -1656,6 +1660,7 @@ struct HomeUIKitView: View {
     private func takeBack() {
         HomeBack.shared.depth = depth
         HomeBack.shared.toBillboard = { billboardCommand = FixedFocusRowsCommand(action: .focusBillboard) }
+        HomeBack.shared.passUp = { then in billboardCommand = FixedFocusRowsCommand(action: .passUp, then: then) }
     }
 
     /// A choice in Continue Watching's hold menu.
@@ -1701,7 +1706,10 @@ struct HomeUIKitView: View {
                            },
                            onDepth: {
                                depth = $0
-                               if active { HomeBack.shared.depth = $0 }
+                               if active {
+                                   HomeBack.shared.depth = $0
+                                   TopBarPlace.shared.pageDown = $0 > 0
+                               }
                            },
                            // The billboard's focus: its buttons (as Details').
                            externalBillboard: true,

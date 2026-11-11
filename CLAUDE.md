@@ -81,7 +81,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Direction:** flat artwork, glass controls, one outline for focus. Calm,
   quick motion; a stable 60 fps beats fancy. No accent colours: colour only
   for information (rating sources).
-- **Glass only for what floats above the page** (top bar, hold menus, source
+- **Glass only for what floats above the page** (hold menus, source
   picker, dropdowns, toasts): `liquidGlass(in:)`, always as a background, one
   glass everywhere (`AppGlass`). Everything in the page is flat
   (`FlatControl`). Exception: the action buttons' pill at rest (`ActionFace`:
@@ -126,8 +126,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 - **Tabs** stay alive once built, built ahead after launch; a switch is a
   0.25 s dissolve, the new page whole under the old (`switchTab`).
-- **Top bar** hides by moving out the top, always in the view tree, disabled
-  while hidden (`GlassSidebar.hidden`).
+- **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs as
+  words from the page's left edge (28 pt medium; the current one primary,
+  the others secondary), the avatar at the right edge, nothing behind them;
+  focused, the white capsule gliding (dark text). Focus moving along it
+  switches tab. Pages are laid out below it. On Home, Movies and Series it
+  sits on the billboard and goes up with it into the rows (same distance,
+  same move: `TopBarPlace`, `lifted`); off a tab's root, into Details or a
+  trailer it moves out the top (`hidden`), always in the view tree,
+  disabled while hidden. (The floating glass pill, and auto-hiding it,
+  were dropped; the setting's field stays in the synced snapshot.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
   Animation in `didUpdateFocus`. A fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus.
@@ -162,8 +170,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`openInPlace`). From Home, Movies and Series it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages
   use `PageFade`. `trail`: Back is never more than two pages deep.
-- **Back**: below the billboard or first row, up to it first; there, the top
-  bar (Details: out). The app is never left by Back (`BackCatch`).
+- **Back**: on a tab's page, focus to the top bar in one press; below the
+  billboard or first row the page goes back up to it on the way, focus
+  never on its buttons (`passUp`; landing on Details first was not wanted)
+  (Details: out). The app is never left by Back (`BackCatch`).
 - **Loading**: nothing pops in. Pages wait under their background until data
   and first-screen pictures are ready (`PagePreparer`, `PageLoad`, 4 s cap,
   then placeholders in the final layout: `FixedFocusPlaceholder`). Launch runs
@@ -325,7 +335,7 @@ isn't drawn until revealed, so covers are 99.5 % opaque.
 - Rejected mechanisms: tvOS's own sidebar, the system's context menus, SwiftUI
   scrolling for the rows, the add-ons' catalogs for Search, sorting or
   filtering links by content (the add-on pills and refresh are fine), a remembered source.
-- Rejected looks: glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
+- Rejected looks: a floating glass top bar, glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
   Left/Right: a full page scroll (too much movement), the text's parts
   staggered (cascade).

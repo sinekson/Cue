@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Settings → Appearance: one list, no sections — Background's page, switches and choices.
+/// Settings → Appearance: one list, no sections — Background's page and choices.
 struct AppearanceSettingsDetail: View {
-    @EnvironmentObject private var settings: HomeCatalogSettingsStore
     @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
     @AppStorage(SourceCardStyle.key) private var sourceCards = SourceCardStyle.current.rawValue
     @ObservedObject private var background = BackgroundStore.shared
@@ -28,10 +27,6 @@ struct AppearanceSettingsDetail: View {
                     options: SourceCardStyle.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                     selection: sourceCards
                 ) { sourceCards = $0 }
-                SettingsToggleRow(
-                    title: "Auto-Hide Top Bar",
-                    isOn: $settings.autoHideSidebar
-                )
             }
         }
     }

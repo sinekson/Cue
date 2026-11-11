@@ -53,8 +53,21 @@ enum TopBarAvatar {
     static var frame: CGRect?
 }
 
-/// The top navigation: `🔍 Home Library Settings (avatar)`, centred as one
-/// group (see docs/UI-DESIGN.md §3).
+/// Where the page in front has put the top bar: Home's (and Movies',
+/// Series') below the billboard — the bar has gone up with it. Set by the
+/// page (`HomeUIKitView`); other tabs are always at their top.
+@MainActor
+final class TopBarPlace: ObservableObject {
+    static let shared = TopBarPlace()
+    @Published var pageDown = false
+}
+
+/// The top navigation: part of the page, not floating over it — the tabs
+/// as words at the page's left edge, the profile at its right, on the
+/// background with nothing behind them. The current tab's name brighter;
+/// focused, the one white capsule (dark text) gliding from tab to tab.
+/// Pages are laid out below it (`topBarClearance`); on Home it is on the
+/// billboard's picture and goes up with it (`lifted`).
 struct GlassSidebar: View {
     @EnvironmentObject private var profiles: ProfileStore
     @Binding var selected: Int
@@ -64,36 +77,23 @@ struct GlassSidebar: View {
     /// can tell whether this is actually a change of tab (vs. re-tapping the
     /// tab you're already on) and react accordingly.
     var onTabSelected: (Int) -> Void = { _ in }
-    /// Hidden: the bar moves out the top (shown: back in) — the one way it
-    /// hides, app-wide. On the items themselves — an offset on the whole
-    /// full-screen bar view never showed.
+    /// Hidden: the bar moves out the top (shown: back in) — with the page's
+    /// parts (off a tab's root, into Details in place, a trailer). On the
+    /// items themselves — an offset on the whole full-screen bar view never
+    /// showed.
     var hidden = false
-    /// Hidden by Hide the top bar (out of sight until called): the same
-    /// move, calmer — `autoHideMotion` (alone on the screen, the move's
-    /// 0.35 s read as a snap). `hidden` moves with the page's parts.
-    var autoHidden = false
+    /// Home's page below its billboard: up with the billboard, as far and
+    /// on the same move, so it reads as the page's own top.
+    var lifted = false
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
     /// Clearance a tab gives the TOP bar, applied as SAFE-AREA padding rather
-    /// than plain padding.
-    ///
-    /// That distinction is the whole behaviour: plain padding shrinks the
-    /// page's frame, so a scroll view's viewport starts below the bar and its
-    /// content is CLIPPED at that line — a black band under the bar with rows
-    /// disappearing into it. As safe-area padding the page still fills the
-    /// screen and draws under the glass; only its content's resting inset
-    /// moves, so rows slide up under the bar the way they should.
-    ///
-    /// Sized to sit just under the bar (28pt offset + ~100pt of bar) minus the
-    /// top title-safe inset the system already gives, then trimmed so headings
-    /// sit CLOSE to the bar rather than marooned below it.
+    /// than plain padding (plain padding clipped a scrolled page at a line
+    /// under the bar). Sized to sit just under the bar minus the top
+    /// title-safe inset the system already gives.
     static let topBarClearance: CGFloat = 52
 
-    /// The top navigation: one floating Liquid Glass pill with the tabs and
-    /// the profile, centred; a white capsule glides to the focused tab (dark
-    /// text), a faint one marks the current tab otherwise.
-    ///
     /// Moving focus along it SWITCHES tab right away (no Select needed), so
     /// the page underneath follows as you browse the tabs. Select on a tab
     /// (or Down) goes into its content.
@@ -103,52 +103,52 @@ struct GlassSidebar: View {
         // The highlighted item: the focused one (a tab or the profile, -1)
         // while the navigation has focus, else the current tab.
         let lit = focusBinding.wrappedValue ?? selected
-        return HStack(alignment: .center, spacing: 20) {
-            // Tabs and profile in ONE floating Liquid Glass pill (tvOS 26).
-            HStack(alignment: .center, spacing: 0) {
-                ForEach(tabs) { tab in
-                    Button {
-                        onTabSelected(tab.rawValue)
-                        selected = tab.rawValue
-                    } label: {
-                        TopNavLabel(tab: tab, lit: lit == tab.rawValue,
-                                    focusPlatter: navFocused && lit == tab.rawValue)
-                            .glassPillItem(tab.rawValue, in: navHighlight)
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    .focused(focusBinding, equals: tab.rawValue)
-                }
-                // The profile, last in the pill — a square slot, so the
-                // highlight is a circle on it (as on the search icon).
-                Button(action: onProfileTap) {
-                    // As large as on the tvOS home screen: nearly the pill's height.
-                    ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
-                        // Where the gate's picked avatar flies (`ProfileGate`).
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                            TopBarAvatar.frame = $0
-                        }
-                        .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
-                        .glassPillItem(-1, in: navHighlight)
+        return HStack(alignment: .center, spacing: 0) {
+            ForEach(tabs) { tab in
+                Button {
+                    onTabSelected(tab.rawValue)
+                    selected = tab.rawValue
+                } label: {
+                    TopNavLabel(tab: tab, current: selected == tab.rawValue,
+                                focusPlatter: navFocused && lit == tab.rawValue)
+                        .glassPillItem(tab.rawValue, in: navHighlight)
                 }
                 .buttonStyle(PlainCardButtonStyle())
-                .focused(focusBinding, equals: -1)
+                .focused(focusBinding, equals: tab.rawValue)
             }
-            // The highlight inside the pill, gliding from tab to tab: a
-            // bright white capsule on the FOCUSED tab (dark text — the tvOS
-            // focus look), a subtle light one on the current tab otherwise.
-            // (A capsule: on the square slots — search, profile — a circle;
-            // it morphs between the two as it glides.)
-            // (The app's control style — see `GlassPill`.)
-            .glassPill(highlight: lit, in: navHighlight, focused: navFocused)
-            .defaultFocus(focusBinding, selected)
-            // Focused, the pill grows a little (like the system tab bar).
-            .scaleEffect(navFocused ? Self.focusedScale : 1, anchor: .top)
-            .animation(.smooth(duration: 0.3), value: navFocused)
+            Spacer(minLength: 0)
+            // The profile, at the right edge — a square slot, so the
+            // highlight is a circle on it (as on the search icon).
+            Button(action: onProfileTap) {
+                ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
+                    // Where the gate's picked avatar flies (`ProfileGate`).
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        TopBarAvatar.frame = $0
+                    }
+                    .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
+                    .glassPillItem(-1, in: navHighlight)
+            }
+            .buttonStyle(PlainCardButtonStyle())
+            .focused(focusBinding, equals: -1)
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .offset(y: hidden || autoHidden ? -Self.hideTravel : 0)
+        // Focused: the white capsule on the focused item, gliding; at rest
+        // nothing behind the words (the current one is brighter).
+        .background {
+            Capsule()
+                .fill(AppGlass.focusTint)
+                .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
+                .opacity(navFocused ? 1 : 0)
+                .animation(GlassPill.glide, value: lit)
+                .animation(GlassPill.focusChange, value: navFocused)
+        }
+        .defaultFocus(focusBinding, selected)
+        // The words start on the page's left edge (the first item's padding
+        // is the capsule's room, so the edge is the slot's).
+        .padding(.horizontal, Spotlight.screenInset - Self.slotPadding)
+        .frame(maxWidth: .infinity)
+        .offset(y: hidden ? -Self.hideTravel : lifted ? -HomeUIKitView.rigidBillboardTravel : 0)
         .animation(Motion.move, value: hidden)
-        .animation(Self.autoHideMotion, value: autoHidden)
+        .animation(Motion.move, value: lifted)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
@@ -175,46 +175,44 @@ struct GlassSidebar: View {
 
     /// Hiding: up past the screen's top edge.
     static var hideTravel: CGFloat { topBarTop + topBarItemHeight + 30 }
-    /// Hide the top bar's way in and out (tried: the present spring, 0.45 s
-    /// — a little slow).
-    static let autoHideMotion: Animation = .spring(duration: 0.4, bounce: 0)
 
-    /// The tab pill: how much it grows while the navigation has focus.
-    static let focusedScale: CGFloat = 1.06
     /// The highlight gliding between the tabs.
     @Namespace private var navHighlight
 
-    static let topBarTop: CGFloat = 40
-    /// Height of the top navigation's items (the standard glass control).
-    static let topBarItemHeight: CGFloat = GlassPill.itemHeight
+    static let topBarTop: CGFloat = 44
+    /// The items' height: the focus capsule's.
+    static let topBarItemHeight: CGFloat = 52
+    static let textSize: CGFloat = 28
+    /// A name's room each side inside its capsule.
+    static let slotPadding: CGFloat = 22
 }
 
-/// One tab in the top navigation: its name, grey — white when it's the
-/// current or focused tab. Nothing else.
+/// One tab in the top navigation: its name (Search: its icon), the current
+/// one at the primary level, the others two levels down; on the focus
+/// capsule, dark.
 private struct TopNavLabel: View {
     let tab: AppTab
-    /// Highlighted (the current tab, or the focused one): white text.
-    let lit: Bool
+    let current: Bool
     /// On the white focus capsule: dark text.
     var focusPlatter = false
 
     var body: some View {
         Group {
-            // Search is an icon; the others are their names.
             if tab == .search {
                 // A square slot, so the highlight is a circle here.
                 Image(systemName: tab.icon)
-                    .font(.system(size: GlassPill.iconSize, weight: .semibold))
+                    .font(.system(size: GlassSidebar.textSize - 2, weight: .semibold))
                     .frame(width: GlassSidebar.topBarItemHeight)
             } else {
                 Text(tab.label)
-                    .font(.system(size: GlassPill.textSize, weight: .semibold))
-                    .padding(.horizontal, GlassPill.textPadding)
+                    .font(.system(size: GlassSidebar.textSize, weight: .medium))
+                    .padding(.horizontal, GlassSidebar.slotPadding)
             }
         }
-        .foregroundStyle(GlassPill.contentColor(current: lit, onFocusHighlight: focusPlatter))
+        .foregroundStyle(focusPlatter ? AppGlass.textOnFocus
+                         : .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary))
         .frame(height: GlassSidebar.topBarItemHeight)
-        .animation(.easeOut(duration: 0.18), value: lit)
+        .animation(.easeOut(duration: 0.18), value: current)
         .animation(.easeOut(duration: 0.18), value: focusPlatter)
     }
 }
