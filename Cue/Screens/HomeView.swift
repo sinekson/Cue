@@ -15,6 +15,14 @@ struct HomeRow: Identifiable {
     /// Source catalog, so the row can navigate to a paginated "See All".
     var addon: InstalledAddon?
     var catalog: ManifestCatalog?
+    /// Cue's own rows (`CueRows`): the tabs it shows on ("home", "movie",
+    /// "series"); nil: every tab.
+    var tabs: [String]? = nil
+
+    /// Shown on this tab (Home: no type).
+    func shows(on typeFilter: String?) -> Bool {
+        tabs.map { $0.contains(typeFilter ?? "home") } ?? true
+    }
 
     /// This row's key in `HomeCatalogSettingsStore` terms, so a setting that
     /// NAMES a catalog can be matched back to the row it produced.
@@ -178,6 +186,51 @@ final class HomeViewModel: ObservableObject {
     /// cannot be served from `itemIndex.values`, which is unordered.
     private(set) var orderedItems: [MetaItem] = []
 
+    /// What "Because you watched" is made from (Home's stores; set by
+    /// `HomeView`).
+    var cueHistory: (@MainActor () -> BillboardPicks.History)?
+
+    static func isCueEntry(_ entry: HomeEntry) -> Bool {
+        if case .catalog(let row) = entry { return row.id.hasPrefix("cue.") }
+        return false
+    }
+
+    private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
+        rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs)) }
+    }
+
+    /// Cue's own rows (`CueRows`): the saved ones at once, new ones when
+    /// they're due. No catalogs, no collections.
+    private func loadCueRows() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        loadError = nil
+        let history = cueHistory?()
+        let seeds = CueRows.seeds(history)
+        let saved = await CueRows.saved()
+        guard loadGeneration == generation else { return }
+        if let saved, entries.isEmpty || !entries.allSatisfy(Self.isCueEntry) {
+            entries = Self.entries(saved.rows)
+        }
+        if CueRows.due(saved, seeds: seeds) {
+            isLoading = entries.isEmpty
+            let done = AppProbe.begin("data", "cue rows")
+            let built = await CueRows.build(watches: history?.watches ?? [], seen: history?.seen ?? [],
+                                            seeds: seeds, last: saved)
+            done("\(built.rows.count) rows, taste from \(built.titles) titles")
+            guard loadGeneration == generation else { return }
+            if !built.rows.isEmpty {
+                entries = Self.entries(built.rows)
+                CueRows.save(built)
+            }
+        }
+        if entries.isEmpty { loadError = "Nothing came from TMDB. Check the network." }
+        loadedAt = Date()
+        isLoading = false
+        loadingStep = nil
+        warmSpotlightArt()
+    }
+
     private func rebuildItemIndex() {
         var index: [String: MetaItem] = [:]
         var ordered: [MetaItem] = []
@@ -217,6 +270,7 @@ final class HomeViewModel: ObservableObject {
         // the connections in the fingerprint anyway — cheap, and any future
         // provider-dependent rendering rebuilds without a relaunch.
         fingerprint.append("providers=\(providers.tmdb)/\(providers.trakt)")
+        fingerprint.append("cueRows=\(CueRows.isOn)")
         guard entries.isEmpty || fingerprint != loadedFingerprint else { return }
         loadedFingerprint = fingerprint
         await load(addonManager: addonManager, collections: collections,
@@ -233,12 +287,15 @@ final class HomeViewModel: ObservableObject {
         /// them here just made the feature look broken with no pointer to why.
         providers: CollectionProviders
     ) async {
+        if CueRows.isOn { await loadCueRows(); return }
         loadGeneration &+= 1
         let generation = loadGeneration
         /// False once a newer load has started; a superseded run stops
         /// publishing instead of overwriting the newer one's rows.
         func isCurrent() -> Bool { loadGeneration == generation }
 
+        // Back from Cue's own rows: none of them stands in for a catalog.
+        if entries.contains(where: Self.isCueEntry) { entries = [] }
         isLoading = entries.isEmpty
         loadError = nil
 
@@ -737,7 +794,7 @@ struct HomeView: View {
         for entry in viewModel.entries {
             switch entry {
             case .catalog(let row):
-                if !row.items.isEmpty { rows.append(row) }
+                if !row.items.isEmpty, row.shows(on: typeFilter) { rows.append(row) }
             case .collection(let collection):
                 // On Movies / Series: the folders with that type.
                 let items = collection.folders.filter { folder in typeFilter.map(folder.lists) ?? true }
@@ -919,6 +976,9 @@ struct HomeView: View {
         }
         .onAppear {
             isVisible = true
+            viewModel.cueHistory = { [progressStore, watched, library] in
+                BillboardPicks.History(progress: progressStore, watched: watched, library: library)
+            }
             // The background queue (TitlePreloader): Home's stores.
             TitlePreloader.shared.context = .init(
                 addonManager: addonManager, mdb: mdblist.settings, tmdb: tmdbSettings.settings,
@@ -955,6 +1015,9 @@ struct HomeView: View {
         // a cold start ran the whole catalog sweep two to four times over.
         .onChange(of: addonManager.addons) { _, _ in scheduleReload() }
         .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
+        .onReceive(PerformanceSettingsStore.shared.$settings.map(\.cueRows).removeDuplicates().dropFirst()) { _ in
+            scheduleReload()
+        }
         .onChange(of: collections.collections) { _, _ in scheduleReload() }
         // Collection rows render regardless, but a provider change still
         // reloads Home so anything downstream of the connections is fresh.

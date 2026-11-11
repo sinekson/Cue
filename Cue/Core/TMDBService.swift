@@ -2249,3 +2249,201 @@ extension TMDBService {
     }
 
 }
+
+// MARK: - Cue's own rows (see `CueRows`)
+
+extension TMDBService {
+    /// A title's traits beyond a list's: its IMDb id (the add-ons, Nuvio and
+    /// the ratings key on it), its logo, and what a taste reads (genres,
+    /// keywords, studios and networks, language, countries, year). One
+    /// request (`append_to_response`), kept a month.
+    struct TitleTraits: Codable, Sendable {
+        let imdbID: String?
+        let name: String?
+        let year: Int?
+        let logo: String?
+        let genres: [Int]
+        let keywords: [Int]
+        let companies: [Int]
+        let networks: [Int]
+        let language: String?
+        let countries: [String]
+        let votes: Int
+        let rating: Double
+        let popularity: Double
+        let runtime: Int?
+        /// The keywords', studios' and networks' names by feature
+        /// ("k:4379": "time travel"), for the Why page.
+        let labels: [String: String]
+    }
+
+    private static let traitsCache = DiskCache<TitleTraits>(name: "tmdb-traits")
+    private static let traitsTTL: TimeInterval = 30 * 24 * 60 * 60
+
+    /// The language's two letters (logos are tagged by those alone).
+    private static var languageCode: String { String(preferredLanguage.prefix(2)) }
+
+    static func traits(tmdbID: Int, isMovie: Bool) async -> TitleTraits? {
+        let language = languageCode
+        let key = "\(isMovie ? "m" : "t"):\(tmdbID):\(language)"
+        if let hit = await traitsCache.value(for: key, ttl: traitsTTL) { return hit }
+        struct Body: Decodable {
+            struct Named: Decodable { let id: Int; let name: String? }
+            struct Keywords: Decodable { let keywords: [Named]?; let results: [Named]? }
+            struct External: Decodable { let imdb_id: String? }
+            struct Logo: Decodable { let file_path: String; let iso_639_1: String?; let vote_average: Double? }
+            struct Images: Decodable { let logos: [Logo]? }
+            struct Country: Decodable { let iso_3166_1: String }
+            let imdb_id: String?
+            let title: String?
+            let name: String?
+            let release_date: String?
+            let first_air_date: String?
+            let external_ids: External?
+            let genres: [Named]?
+            let keywords: Keywords?
+            let production_companies: [Named]?
+            let networks: [Named]?
+            let original_language: String?
+            let origin_country: [String]?
+            let production_countries: [Country]?
+            let vote_count: Int?
+            let vote_average: Double?
+            let popularity: Double?
+            let runtime: Int?
+            let episode_run_time: [Int]?
+            let images: Images?
+        }
+        let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
+        guard let body: Body = try? await get(path, query: [
+            "language": preferredLanguage,
+            "append_to_response": "external_ids,images,keywords",
+            "include_image_language": "\(language),en,null",
+        ]) else { return nil }
+        // The best-voted logo in the language, else English, else one with
+        // no text; PNGs only (an SVG doesn't decode).
+        let logos = (body.images?.logos ?? []).filter { !$0.file_path.hasSuffix(".svg") }
+        func best(_ code: String?) -> Body.Logo? {
+            logos.filter { $0.iso_639_1 == code }.max { ($0.vote_average ?? 0) < ($1.vote_average ?? 0) }
+        }
+        let logo = best(language) ?? best("en") ?? best(nil)
+        let imdb = body.imdb_id ?? body.external_ids?.imdb_id
+        let keywords = (body.keywords?.keywords ?? body.keywords?.results) ?? []
+        let companies = body.production_companies ?? []
+        let networks = body.networks ?? []
+        var labels: [String: String] = [:]
+        for (prefix, named) in [("k", keywords), ("c", companies), ("n", networks)] {
+            for entry in named { if let name = entry.name { labels["\(prefix):\(entry.id)"] = name } }
+        }
+        let date = isMovie ? body.release_date : body.first_air_date
+        let facts = TitleTraits(
+            imdbID: (imdb?.hasPrefix("tt") == true) ? imdb : nil,
+            name: isMovie ? body.title : body.name,
+            year: date.flatMap { Int($0.prefix(4)) },
+            logo: imageURL(logo?.file_path, size: "original"),
+            genres: (body.genres ?? []).map(\.id),
+            keywords: keywords.map(\.id),
+            companies: companies.map(\.id),
+            networks: networks.map(\.id),
+            language: body.original_language,
+            countries: body.origin_country ?? (body.production_countries ?? []).map(\.iso_3166_1),
+            votes: body.vote_count ?? 0,
+            rating: body.vote_average ?? 0,
+            popularity: body.popularity ?? 0,
+            runtime: body.runtime ?? body.episode_run_time?.first,
+            labels: labels)
+        await traitsCache.store(facts, for: key)
+        if let imdb = facts.imdbID {
+            let idKey = "\(isMovie ? "m" : "t"):\(tmdbID)"
+            storeIMDB(imdb, for: idKey)
+            await imdbDiskCache.store(imdb, for: idKey)
+        }
+        return facts
+    }
+
+    /// A title as Cue's rows weigh it: what the row shows, and its traits.
+    struct CueTitle: Sendable {
+        let item: MetaItem
+        let tmdbID: Int
+        let isMovie: Bool
+        let traits: TitleTraits
+    }
+
+    private struct TraitsBox: Sendable { let facts: TitleTraits? }
+
+    /// A list's titles as rows show them: TMDB's poster (in the language),
+    /// backdrop and logo; only those with an IMDb id and both pictures.
+    private static func cueTitles(_ raw: [TMDBRawItem], limit: Int) async -> [CueTitle] {
+        let pictured = raw.filter { $0.poster != nil && $0.background != nil }
+        let all = await boundedConcurrentMap(pictured, limit: imdbResolveWindow) { item in
+            TraitsBox(facts: await traits(tmdbID: item.tmdbID, isMovie: item.isMovie))
+        }
+        var seen = Set<String>()
+        var titles: [CueTitle] = []
+        for (index, item) in pictured.enumerated() where titles.count < limit {
+            guard index < all.count, let facts = all[index].facts, let imdb = facts.imdbID,
+                  seen.insert(imdb).inserted else { continue }
+            let meta = MetaItem(
+                id: imdb, type: item.isMovie ? "movie" : "series", name: item.name,
+                poster: item.poster, background: item.background,
+                logo: facts.logo ?? "https://images.metahub.space/logo/medium/\(imdb)/img",
+                description: item.description, releaseInfo: item.releaseInfo,
+                imdbRating: item.rating.flatMap { $0 > 0 ? String(format: "%.1f", $0) : nil },
+                genres: item.genres)
+            titles.append(CueTitle(item: meta, tmdbID: item.tmdbID, isMovie: item.isMovie, traits: facts))
+        }
+        return titles
+    }
+
+    /// One of TMDB's lists (trending, popular, top rated, now playing,
+    /// upcoming, on the air, discover, recommendations) as a row's titles.
+    /// `isMovie`: what a list without media types holds.
+    static func cueList(_ path: String, query: [String: String] = [:], isMovie: Bool,
+                        limit: Int = 20) async -> [CueTitle] {
+        var query = query
+        query["language"] = preferredLanguage
+        guard let body: PickList = try? await get(path, query: query) else { return [] }
+        return await cueTitles(body.raw(defaultMovie: isMovie, limit: limit * 2), limit: limit)
+    }
+
+    /// A title you watched, by its IMDb id: its TMDB id and traits.
+    static func cueTraits(imdbID: String, type: String) async -> (tmdbID: Int, isMovie: Bool, traits: TitleTraits)? {
+        guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type),
+              let traits = await traits(tmdbID: tmdbID, isMovie: isMovie) else { return nil }
+        return (tmdbID, isMovie, traits)
+    }
+
+    /// A title's TMDB logo by its IMDb id (Cue's own rows: the billboard's
+    /// picks as the rows').
+    static func cueLogo(imdbID: String, type: String) async -> String? {
+        await cueTraits(imdbID: imdbID, type: type)?.traits.logo
+    }
+
+    /// A streaming service in a country (JustWatch's data, through TMDB).
+    struct WatchProvider: Sendable, Codable, Hashable {
+        let id: Int
+        let name: String
+        let logo: String?
+    }
+
+    /// The country's services for films or shows, most important first
+    /// (TMDB's own order for the country).
+    static func watchProviders(isMovie: Bool, region: String) async -> [WatchProvider] {
+        struct Body: Decodable {
+            struct Result: Decodable {
+                let provider_id: Int
+                let provider_name: String
+                let logo_path: String?
+                let display_priorities: [String: Int]?
+            }
+            let results: [Result]?
+        }
+        guard let body: Body = try? await get("/watch/providers/\(isMovie ? "movie" : "tv")",
+                                              query: ["watch_region": region, "language": preferredLanguage])
+        else { return [] }
+        return (body.results ?? [])
+            .sorted { ($0.display_priorities?[region] ?? .max) < ($1.display_priorities?[region] ?? .max) }
+            .map { WatchProvider(id: $0.provider_id, name: $0.provider_name,
+                                 logo: imageURL($0.logo_path, size: "original")) }
+    }
+}

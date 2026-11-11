@@ -468,7 +468,7 @@ enum CacheStorage {
         caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "app.cue.tv", isDirectory: true)
     }
     private static let addonFiles = ["meta"]
-    private static let tmdbFiles = ["tmdb-raw", "tmdb-imdb-ids", "tmdb-facts"]
+    private static let tmdbFiles = ["tmdb-raw", "tmdb-imdb-ids", "tmdb-facts", "tmdb-traits", "cue-rows"]
     private static let ratingFiles = ["title-records.json", "mdblist-ratings-v2"]
     private static let trailerFiles = ["trailers.json"]
     /// In CueCache but not a cache: kept.

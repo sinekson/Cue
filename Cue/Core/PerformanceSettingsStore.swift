@@ -20,11 +20,14 @@ final class PerformanceSettingsStore: ObservableObject {
         /// bitrate, buffer depth. Answers "why is this stuttering" on the
         /// couch, without a Mac attached.
         var showPlayerDiagnostics = false
+        /// Home's, Movies' and Series' rows Cue's own (TMDB, `CueRows`), not
+        /// the add-ons' catalogs. An experiment while it's tuned.
+        var cueRows = false
 
         init() {}
 
         private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics
+            case showFPSOverlay, showPlayerDiagnostics, cueRows
         }
 
         /// Lenient decode: a key missing from an older save keeps its default
@@ -34,6 +37,7 @@ final class PerformanceSettingsStore: ObservableObject {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
             showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
+            cueRows = (try? c.decode(Bool.self, forKey: .cueRows)) ?? false
         }
     }
 

@@ -198,7 +198,7 @@ final class ProfileStore: ObservableObject {
     ]
 
     private static let listKey = "cue.profiles.v1"
-    private static let activeKey = "cue.profiles.active"
+    nonisolated static let activeKey = "cue.profiles.active"
     private static let catalogKey = "cue.profiles.avatarCatalog"
 
     private static func savedCatalog() -> [AvatarCatalogItem] {

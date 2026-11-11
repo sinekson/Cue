@@ -164,6 +164,28 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   again once an hour old — on coming back, a tab switch, and while Home sits
   open (checked every 5 min). A refresh's billboard picks swap in only while
   no billboard is on screen (`BillboardSight`).
+- **Cue's own rows** (experiment, branch `tmdb-catalogs`; Settings →
+  Developer): Home's, Movies' and Series' rows made by Cue from TMDB, no
+  add-on catalogs (`CueRows` at the end of `BillboardPicks.swift`): titles
+  only with a poster, a backdrop and an IMDb id (they play by it), TMDB's
+  posters and logos (`TMDBService.traits`, 30 days on disk). A taste from
+  the last 60 titles watched, started or saved (shows weigh more per
+  episode, halving every 120 days): genres, language, keywords, networks,
+  studios, countries, decade, each lifted where it's rarer than in what's
+  popular. A catalogue of ~190 named rows (genres, anime, themes by TMDB
+  keyword, languages, eras, studios, networks, "for anyone" rows) scored
+  65 % fit, 35 % the day's seeded chance, less if up yesterday; at most two
+  of a kind per tab, never side by side; a row that leaves something out
+  counts only the watching it keeps (Japanese dramas for an anime watcher:
+  little). Fixed rows set among them: Top Picks, Because You Watched (the
+  latest title, two more of the last five by the day), trending, new
+  episodes, cinemas, the country's three biggest services. Titles in a row
+  ordered for you, seen ones out, a title in two rows at most per tab.
+  Rebuilt on a new day, after 6 h or when the recent watches change, shown
+  on the next load, never mid-browse. Developer → Why These Rows: the taste
+  and each row's reason. Each row says which tabs show it (`HomeRow.tabs`).
+  Next: passed-over titles and seasonal rows, thumbs ratings on the device,
+  service badges. On the device only, per profile; never the Nuvio sync.
 - **Under Home's box** (the posters' height, not grown): no name, the
   facts line in the title's style, then the description, up to 4 lines,
   top-aligned, secondary (badges there, on the line or in the box, were
