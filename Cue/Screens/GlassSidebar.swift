@@ -103,15 +103,14 @@ struct GlassSidebar: View {
         // The highlighted item: the focused one (a tab or the profile, -1)
         // while the navigation has focus, else the current tab.
         let lit = focusBinding.wrappedValue ?? selected
-        return HStack(alignment: .center, spacing: 0) {
+        return HStack(alignment: .center, spacing: Self.itemSpacing) {
             ForEach(tabs) { tab in
                 Button {
                     onTabSelected(tab.rawValue)
                     selected = tab.rawValue
                 } label: {
                     TopNavLabel(tab: tab, current: selected == tab.rawValue,
-                                focusPlatter: navFocused && lit == tab.rawValue)
-                        .glassPillItem(tab.rawValue, in: navHighlight)
+                                focused: navFocused && lit == tab.rawValue)
                 }
                 .buttonStyle(PlainCardButtonStyle())
                 .focused(focusBinding, equals: tab.rawValue)
@@ -126,20 +125,10 @@ struct GlassSidebar: View {
                         TopBarAvatar.frame = $0
                     }
                     .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
-                    .glassPillItem(-1, in: navHighlight)
+                    .modifier(TopNavFocus(lit: navFocused && lit == -1, rest: .white))
             }
             .buttonStyle(PlainCardButtonStyle())
             .focused(focusBinding, equals: -1)
-        }
-        // Focused: the white capsule on the focused item, gliding; at rest
-        // nothing behind the words (the current one is brighter).
-        .background {
-            Capsule()
-                .fill(AppGlass.focusTint)
-                .matchedGeometryEffect(id: lit, in: navHighlight, isSource: false)
-                .opacity(navFocused ? 1 : 0)
-                .animation(GlassPill.glide, value: lit)
-                .animation(GlassPill.focusChange, value: navFocused)
         }
         .defaultFocus(focusBinding, selected)
         // The words start on the page's left edge (the first item's padding
@@ -176,8 +165,6 @@ struct GlassSidebar: View {
     /// Hiding: up past the screen's top edge.
     static var hideTravel: CGFloat { topBarTop + topBarItemHeight + 30 }
 
-    /// The highlight gliding between the tabs.
-    @Namespace private var navHighlight
 
     static let topBarTop: CGFloat = 44
     /// The items' height: the focus capsule's.
@@ -185,16 +172,40 @@ struct GlassSidebar: View {
     static let textSize: CGFloat = 28
     /// A name's room each side inside its capsule.
     static let slotPadding: CGFloat = 22
+    /// Between the items' capsules: room for one growing in beside one
+    /// going (with none, they touched; 12 pt was too far apart).
+    static let itemSpacing: CGFloat = 6
+}
+
+/// The top bar's focus: the season buttons' (`ActionFace`, nothing at rest):
+/// the white capsule growing in on the focused item, shrinking and fading
+/// out of the one left, the item 5 % larger — nothing travels along the bar.
+private struct TopNavFocus: ViewModifier {
+    let lit: Bool
+    let rest: Color
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(ActionFace(lit: lit, rest: rest, pill: false, current: true, restShadow: false,
+                                 open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade))
+            .scaleEffect(lit ? DetailActionButton.focusScale : 1)
+            .animation(lit ? Self.open : Self.leave, value: lit)
+    }
+
+    /// Quicker than the buttons' (0.15 s in, 0.35 s out): focus runs along
+    /// the bar, switching tabs as it goes.
+    static let open: Animation = .spring(duration: 0.12, bounce: 0)
+    static let leave: Animation = .spring(duration: 0.28, bounce: 0)
+    static let leaveFade: Animation = .linear(duration: 0.28)
 }
 
 /// One tab in the top navigation: its name (Search: its icon), the current
-/// one at the primary level, the others two levels down; on the focus
-/// capsule, dark.
+/// one at the primary level, the others two levels down; focused, dark on
+/// the white capsule (`TopNavFocus`).
 private struct TopNavLabel: View {
     let tab: AppTab
     let current: Bool
-    /// On the white focus capsule: dark text.
-    var focusPlatter = false
+    var focused = false
 
     var body: some View {
         Group {
@@ -209,10 +220,9 @@ private struct TopNavLabel: View {
                     .padding(.horizontal, GlassSidebar.slotPadding)
             }
         }
-        .foregroundStyle(focusPlatter ? AppGlass.textOnFocus
-                         : .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary))
         .frame(height: GlassSidebar.topBarItemHeight)
+        .modifier(TopNavFocus(lit: focused,
+                              rest: .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary)))
         .animation(.easeOut(duration: 0.18), value: current)
-        .animation(.easeOut(duration: 0.18), value: focusPlatter)
     }
 }

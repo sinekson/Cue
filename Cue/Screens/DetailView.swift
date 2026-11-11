@@ -1777,6 +1777,14 @@ struct ActionFace: ViewModifier {
     /// Its highlight dimmed (into / out of Details in place) — at
     /// `DetailActionButton.dimmedHighlight`.
     var dimmed = false
+    /// With nothing behind it at rest: a soft shadow under the content (over
+    /// pictures); false: none (the top bar's words).
+    var restShadow = true
+    /// Coming in, and going (its shrink and its fade): the buttons' unless
+    /// given (the top bar's are quicker).
+    var open = DetailActionButton.open
+    var leave = DetailActionButton.leave
+    var leaveFade = DetailActionButton.leaveFade
 
     /// A flat pill's edge (the still's, Search's): a faint light edge
     /// brighter along the top.
@@ -1786,7 +1794,7 @@ struct ActionFace: ViewModifier {
     func body(content: Content) -> some View {
         content
             .foregroundStyle(lit ? FlatControl.contentOnFocus : rest)
-            .shadow(color: .black.opacity(lit || pill ? 0 : 0.35), radius: 4, y: 2)
+            .shadow(color: .black.opacity(lit || pill || !restShadow ? 0 : 0.35), radius: 4, y: 2)
             // The pill under, the focus capsule over it (shrinking into it).
             .background {
                 ZStack {
@@ -1816,12 +1824,12 @@ struct ActionFace: ViewModifier {
                         // two pills showed, one inside the other).
                         .scaleEffect(lit || pill ? 1 : DetailActionButton.leaveScale)
                         .opacity(lit ? 1 : 0)
-                        .animation(lit ? DetailActionButton.open : DetailActionButton.leaveFade, value: lit)
+                        .animation(lit ? open : leaveFade, value: lit)
                         .opacity(dimmed ? DetailActionButton.dimmedHighlight : 1)
                         .animation(dimmed ? DetailActionButton.dim : Motion.move, value: dimmed)
                 }
             }
-            .animation(lit ? DetailActionButton.open : DetailActionButton.leave, value: lit)
+            .animation(lit ? open : leave, value: lit)
     }
 }
 

@@ -129,7 +129,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs as
   words from the page's left edge (28 pt medium; the current one primary,
   the others secondary), the avatar at the right edge, nothing behind them;
-  focused, the white capsule gliding (dark text). Focus moving along it
+  focused, the season buttons' focus (`ActionFace`: the white capsule
+  growing in on the item, 5 % larger, dark text; quicker than the
+  buttons': 0.12 s in, 0.28 s out, the fade linear (0.35 slow, 0.2 abrupt here; easing out was tried), 6 pt
+  apart; a plain fade with no growth was tried; nothing travels: a capsule
+  gliding along the bar was slow and odd to the avatar). Focus moving along it
   switches tab. Pages are laid out below it. On Home, Movies and Series it
   sits on the billboard and goes up with it into the rows (same distance,
   same move: `TopBarPlace`, `lifted`); off a tab's root, into Details or a
