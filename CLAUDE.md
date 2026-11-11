@@ -135,7 +135,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   same move: `TopBarPlace`, `lifted`); off a tab's root, into Details or a
   trailer it moves out the top (`hidden`), always in the view tree,
   disabled while hidden. (The floating glass pill, and auto-hiding it,
-  were dropped; the setting's field stays in the synced snapshot.)
+  were dropped, the setting with them.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
   Animation in `didUpdateFocus`. A fixed box at the focus spot for most rows;
   collections, Continue Watching and Saved for Later have moving focus.

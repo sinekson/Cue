@@ -25,7 +25,6 @@ enum ContinueWatchingSortMode: String, CaseIterable, Identifiable, Codable {
 /// tvOS-only sync blob (see NuvioSyncManager.AppPreferencesSnapshot).
 struct HomePresentationSnapshot: Codable, Equatable {
     var continueWatchingSortMode: ContinueWatchingSortMode = .recentlyWatched
-    var autoHideSidebar = false
     var fullStreamTitles = false
     var heroTrailersEnabled = true
     var heroTrailerSound = false
@@ -39,7 +38,6 @@ extension HomePresentationSnapshot {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = HomePresentationSnapshot()
         continueWatchingSortMode = (try? c.decode(ContinueWatchingSortMode.self, forKey: .continueWatchingSortMode)) ?? d.continueWatchingSortMode
-        autoHideSidebar = (try? c.decode(Bool.self, forKey: .autoHideSidebar)) ?? d.autoHideSidebar
         fullStreamTitles = (try? c.decode(Bool.self, forKey: .fullStreamTitles)) ?? d.fullStreamTitles
         heroTrailersEnabled = (try? c.decode(Bool.self, forKey: .heroTrailersEnabled)) ?? d.heroTrailersEnabled
         heroTrailerSound = (try? c.decode(Bool.self, forKey: .heroTrailerSound)) ?? d.heroTrailerSound
@@ -110,12 +108,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             save()
             notifyLocalChange()
         }
-    }
-    /// Keep the glass rail off screen until it's wanted. It reappears on a
-    /// sideways press from the leftmost content (and on Menu), so the rows run
-    /// the full width of the screen the rest of the time.
-    @Published var autoHideSidebar: Bool = false {
-        didSet { guard autoHideSidebar != oldValue else { return }; save(); notifyPresentationChange() }
     }
     /// Sources page: let every link's release name wrap in full instead of
     /// truncating — the whole point of a remux hunt is reading the whole name.
@@ -342,7 +334,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         var customTitles: [String: String]
         var hideUnreleasedContent: Bool
         var continueWatchingSortMode: ContinueWatchingSortMode?
-        var autoHideSidebar: Bool?
         var fullStreamTitles: Bool?
         var heroTrailersEnabled: Bool?
         var heroTrailerSound: Bool?
@@ -362,7 +353,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
     var presentationSnapshot: HomePresentationSnapshot {
         HomePresentationSnapshot(
             continueWatchingSortMode: continueWatchingSortMode,
-            autoHideSidebar: autoHideSidebar,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
@@ -375,7 +365,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
     private func applyPresentationDefaults() {
         let d = HomePresentationSnapshot()
         continueWatchingSortMode = d.continueWatchingSortMode
-        autoHideSidebar = d.autoHideSidebar
         fullStreamTitles = d.fullStreamTitles
         heroTrailersEnabled = d.heroTrailersEnabled
         heroTrailerSound = d.heroTrailerSound
@@ -386,7 +375,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         guard s != presentationSnapshot else { return }
         suppressChange = true
         continueWatchingSortMode = s.continueWatchingSortMode
-        autoHideSidebar = s.autoHideSidebar
         fullStreamTitles = s.fullStreamTitles
         heroTrailersEnabled = s.heroTrailersEnabled
         heroTrailerSound = s.heroTrailerSound
@@ -425,7 +413,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
         suppressChange = true
         hideUnreleasedContent = decoded.hideUnreleasedContent
         continueWatchingSortMode = decoded.continueWatchingSortMode ?? .recentlyWatched
-        autoHideSidebar = decoded.autoHideSidebar ?? false
         fullStreamTitles = decoded.fullStreamTitles ?? false
         heroTrailersEnabled = decoded.heroTrailersEnabled ?? true
         heroTrailerSound = decoded.heroTrailerSound ?? false
@@ -446,7 +433,6 @@ final class HomeCatalogSettingsStore: ObservableObject {
             customTitles: customTitles,
             hideUnreleasedContent: hideUnreleasedContent,
             continueWatchingSortMode: continueWatchingSortMode,
-            autoHideSidebar: autoHideSidebar,
             fullStreamTitles: fullStreamTitles,
             heroTrailersEnabled: heroTrailersEnabled,
             heroTrailerSound: heroTrailerSound,
