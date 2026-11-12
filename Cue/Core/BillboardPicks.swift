@@ -331,6 +331,9 @@ enum CueRows {
         /// "home", "movie", "series"; nil: every tab.
         let tabs: [String]?
         let items: [MetaItem]
+        /// A card's badge made with the row, by title id: For You's reason;
+        /// elsewhere someone in your taste, or today's top 10.
+        var badges: [String: CardBadge]? = nil
     }
 
     /// Why a row is there (Developer → Why These Rows).
@@ -443,6 +446,7 @@ enum CueRows {
         case "c": return 0.5
         case "o": return 0.4
         case "d": return 0.3
+        case "p": return 0.5
         default: return 0
         }
     }
@@ -475,7 +479,14 @@ enum CueRows {
         if let language = traits.language { out.insert("l:\(language)") }
         for country in traits.countries.prefix(2) { out.insert("o:\(country)") }
         if let year = traits.year { out.insert("d:\(year / 10 * 10)") }
+        for id in people(traits) { out.insert("p:\(id)") }
         return out
+    }
+
+    /// Its top cast (three) and its directors or creators; animation only
+    /// the latter (voice actors say little about it).
+    static func people(_ traits: Traits) -> [Int] {
+        (traits.genres.contains(16) ? [] : Array((traits.cast ?? []).prefix(3))) + (traits.crew ?? [])
     }
 
     static func label(_ feature: String, _ taste: Taste) -> String {
@@ -653,11 +664,24 @@ enum CueRows {
         }
     }
 
-    /// TMDB's rating, steadied by its votes (few votes lean to 6.5), as 0…1.
+    /// IMDb's rating (`IMDbRatings`), steadied by its votes (few lean to
+    /// 6.5), as 0…1; TMDB's only for a title IMDb doesn't have yet.
     static func quality(_ traits: Traits) -> Double {
-        let votes = Double(traits.votes)
-        let steady = (votes / (votes + 400)) * traits.rating + (400 / (votes + 400)) * 6.5
+        let (rating, votes, steadying): (Double, Double, Double) = IMDbRatings.rating(traits.imdbID)
+            .map { ($0.value, Double($0.votes), 1000) } ?? (traits.rating, Double(traits.votes), 400)
+        let steady = (votes / (votes + steadying)) * rating + (steadying / (votes + steadying)) * 6.5
         return min(max((steady - 5.5) / 3, 0), 1)
+    }
+
+    /// Hidden gem and Acclaimed, on IMDb's rating alone.
+    static func isGem(_ imdbID: String?) -> Bool {
+        guard let rating = IMDbRatings.rating(imdbID) else { return false }
+        return rating.value >= 7.5 && (1_000...20_000).contains(rating.votes)
+    }
+
+    static func isAcclaimed(_ imdbID: String?) -> Bool {
+        guard let rating = IMDbRatings.rating(imdbID) else { return false }
+        return rating.value >= 8 && rating.votes >= 50_000
     }
 
     // MARK: The catalogue
@@ -1181,6 +1205,12 @@ enum CueRows {
         let out: Set<String>
         let passes: Passes
         let day: String
+        /// What you watched (For You's "Like …"), and today's top 10.
+        let known: [Known]
+        let top10: Set<String>
+        /// The keywords the catalogue's rows are about (TMDB's others can
+        /// be noise: "duringcreditsstinger").
+        let curated: Set<String>
         var rows: [Row] = []
         var why: [Why] = []
         var used: [String: Int] = [:]
@@ -1192,7 +1222,7 @@ enum CueRows {
         @discardableResult
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
-                          own: Bool = false, reason: String) -> Bool {
+                          own: Bool = false, reasons: Bool = false, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1220,10 +1250,60 @@ enum CueRows {
             let shown = ordered.filter { own || (used[$0.item.id] ?? 0) < 2 }.prefix(CueRows.rowLength)
             guard shown.count >= minimum else { return false }
             for title in shown { used[title.item.id, default: 0] += 1 }
-            rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item)))
+            var badges: [String: CardBadge] = [:]
+            for title in shown {
+                if reasons {
+                    badges[title.item.id] = CueRows.reason(title, model: model, known: known, curated: curated)
+                } else if let person = CueRows.person(title, taste: model.taste) {
+                    badges[title.item.id] = person
+                } else if id != "trending", top10.contains(title.item.id) {
+                    badges[title.item.id] = CardBadge(kind: .top10, text: "Top 10")
+                }
+            }
+            rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item),
+                            badges: badges.isEmpty ? nil : badges))
             why.append(Why(tab: tab, title: title, reason: reason))
             return true
         }
+    }
+
+    /// Someone in your taste in it: "With …" (cast), "From …" (director,
+    /// creator); the one most of your watching has.
+    static func person(_ title: Title, taste: Taste) -> CardBadge? {
+        let cast = Set((title.traits.cast ?? []).prefix(3))
+        let best = people(title.traits)
+            .filter { (taste.shares["p:\($0)"] ?? 0) > 0 }
+            .max { (taste.shares["p:\($0)"] ?? 0) < (taste.shares["p:\($1)"] ?? 0) }
+        guard let best, let name = title.traits.labels["p:\(best)"] ?? taste.labels["p:\(best)"] else { return nil }
+        return CardBadge(kind: .person, text: (cast.contains(best) ? "With " : "From ") + name)
+    }
+
+    /// Why a title is in For You, always: someone in your taste, else the
+    /// trait of yours it carries most (Anime, Heist, Korean), else a hidden
+    /// gem, else the title you watched it's most like.
+    static func reason(_ title: Title, model: Model, known: [Known], curated: Set<String>) -> CardBadge? {
+        if let person = person(title, taste: model.taste) { return person }
+        let mine = features(title.traits).filter { feature in
+            guard let family = feature.first, "gkln".contains(family), feature != "l:en",
+                  family != "k" || curated.contains(feature),
+                  (model.taste.shares[feature] ?? 0) >= 0.1 else { return false }
+            return true
+        }
+        if let trait = mine.max(by: { model.pull($0) * weight($0) * model.idf($0) < model.pull($1) * weight($1) * model.idf($1) }) {
+            let anime = title.traits.language == "ja" && title.traits.genres.contains(16)
+            let text = anime && (trait == "g:16" || trait == "l:ja") ? "Anime" : label(trait, model.taste)
+            return CardBadge(kind: .taste, text: text)
+        }
+        let traits = title.traits
+        if isGem(title.item.id) { return CardBadge(kind: .gem, text: "Hidden gem") }
+        let own = features(traits)
+        let like = known.filter { $0.weight > 0 && $0.traits.name != nil }.max { a, b in
+            func overlap(_ k: Known) -> Double {
+                features(k.traits).intersection(own).reduce(0) { $0 + weight($1) * model.idf($1) }
+            }
+            return overlap(a) < overlap(b)
+        }
+        return like?.traits.name.map { CardBadge(kind: .taste, text: "Like " + $0) }
     }
 
     /// The best matches for your taste across everything fetched today.
@@ -1296,6 +1376,7 @@ enum CueRows {
         async let knownTask = known(watches, ratings: ratings, now: now)
         async let fixedTask = fixed(region: region)
         async let servicesTask = services(count: 3, region: region)
+        await IMDbRatings.ready()
         let known = await knownTask
         let fixed = await fixedTask
         let taste = taste(known)
@@ -1462,9 +1543,12 @@ enum CueRows {
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
         func seed(_ index: Int) -> Seed? { index < homeSeeds.count ? homeSeeds[index] : nil }
 
-        var home = Layout(tab: "home", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        let top10 = Set(fixed.trendingAll.prefix(10).map(\.item.id))
+        let curated = Set(recipes.flatMap { $0.about.joined() }.filter { $0.hasPrefix("k:") })
+        var home = Layout(tab: "home", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
+                              known: known, top10: top10, curated: curated)
         home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: nil),
-                 keepOrder: true, reason: picksReason)
+                 keepOrder: true, reasons: true, reason: picksReason)
         becauseRow(&home, seed(0))
         home.add("trending", "Trending Today", fixed.trendingAll, fresh: false, keepOrder: true,
                  reason: "Always here")
@@ -1480,9 +1564,10 @@ enum CueRows {
             (10, { serviceRow(&$0, 2) }),
         ])
 
-        var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
+                              known: known, top10: top10, curated: curated)
         movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: true),
-                   keepOrder: true, reason: picksReason)
+                   keepOrder: true, reasons: true, reason: picksReason)
         becauseRow(&movies, seedRows.first { $0.known.isMovie })
         movies.add("trending", "Trending Movies", fixed.trendingMovies, fresh: false, keepOrder: true,
                    reason: "Always here")
@@ -1498,9 +1583,10 @@ enum CueRows {
             (11, { serviceRow(&$0, 2) }),
         ])
 
-        var shows = Layout(tab: "series", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        var shows = Layout(tab: "series", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
+                              known: known, top10: top10, curated: curated)
         shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: false),
-                  keepOrder: true, reason: picksReason)
+                  keepOrder: true, reasons: true, reason: picksReason)
         becauseRow(&shows, seedRows.first { !$0.known.isMovie })
         shows.add("trending", "Trending Shows", fixed.trendingShows, fresh: false, keepOrder: true,
                   reason: "Always here")

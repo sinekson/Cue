@@ -1123,6 +1123,12 @@ enum TMDBService {
         var isAnimation: Bool?
         /// The one-line tagline ("Fear can hold you prisoner…"), if any.
         var tagline: String?
+        /// For the cards' badges (`TitleRecords.fact`): a show's finale
+        /// (the last aired or the next episode, TMDB's episode type), and
+        /// whether it ends the show; a miniseries.
+        var finale: Date?
+        var finaleEndsShow: Bool?
+        var limited: Bool?
 
         /// Series: "Creator: …" (TMDB's creators, else writers, else
         /// directors). Movies: "Director: …" (else "Writer: …"). Two names
@@ -1167,8 +1173,8 @@ enum TMDBService {
     /// has no Detail page load behind it. One light request per title
     /// (credits + certification only), remembered for the session.
     static func facts(for meta: MetaItem) async -> TitleFacts? {
-        // (v3: with the animation flag — older stored facts lack it.)
-        let key = "v3:\(meta.type):\(meta.id):\(preferredLanguage)"
+        // (v4: with the badges' facts — older stored facts lack them.)
+        let key = "v4:\(meta.type):\(meta.id):\(preferredLanguage)"
         if let hit = cachedFacts(key) { return hit }
         // On disk for a day: a relaunch doesn't ask again.
         if let stored = await factsDisk.value(for: key, ttl: 24 * 60 * 60) {
@@ -1199,6 +1205,10 @@ enum TMDBService {
             let release_dates: ReleaseDates?
             let content_ratings: ContentRatings?
             let tagline: String?
+            struct Episode: Decodable { let air_date: String?; let episode_type: String? }
+            let last_episode_to_air: Episode?
+            let next_episode_to_air: Episode?
+            let type: String?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         guard let body: Response = try? await get(path, query: [
@@ -1218,6 +1228,11 @@ enum TMDBService {
         facts.isAnimation = body.genres.map { $0.contains { $0.id == 16 } }
         let tagline = body.tagline?.trimmingCharacters(in: .whitespacesAndNewlines)
         facts.tagline = tagline?.isEmpty == false ? tagline : nil
+        let finale = [body.next_episode_to_air, body.last_episode_to_air]
+            .compactMap { $0 }.first { $0.episode_type == "finale" }
+        facts.finale = finale?.air_date.flatMap { isoDateOnly.date(from: $0) }
+        facts.finaleEndsShow = ["Ended", "Canceled"].contains(body.status ?? "")
+        facts.limited = body.type == "Miniseries"
         if isMovie {
             let countries = body.release_dates?.results ?? []
             let us = countries.first { $0.iso_3166_1 == "US" } ?? countries.first
@@ -2280,6 +2295,11 @@ extension TMDBService {
         var poster: String? = nil
         var backdrop: String? = nil
         var overview: String? = nil
+        /// Its top cast and its directors (a show: its creators), TMDB's
+        /// person ids, their names in `labels` ("p:17419"). nil: kept
+        /// before people were read (asked again).
+        var cast: [Int]? = nil
+        var crew: [Int]? = nil
     }
 
     private static let traitsCache = DiskCache<TitleTraits>(name: "tmdb-traits")
@@ -2292,7 +2312,8 @@ extension TMDBService {
     static func traits(tmdbID: Int, isMovie: Bool, pictures: Bool = false) async -> TitleTraits? {
         let language = languageCode
         let key = "\(isMovie ? "m" : "t"):\(tmdbID):\(language)"
-        if let hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil {
+        if let hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil,
+           hit.cast != nil {
             return hit
         }
         struct Body: Decodable {
@@ -2302,7 +2323,11 @@ extension TMDBService {
             struct Logo: Decodable { let file_path: String; let iso_639_1: String?; let vote_average: Double? }
             struct Images: Decodable { let logos: [Logo]? }
             struct Country: Decodable { let iso_3166_1: String }
+            struct Person: Decodable { let id: Int; let name: String?; let job: String? }
+            struct Credits: Decodable { let cast: [Person]?; let crew: [Person]? }
             let imdb_id: String?
+            let credits: Credits?
+            let created_by: [Person]?
             let title: String?
             let name: String?
             let release_date: String?
@@ -2328,7 +2353,7 @@ extension TMDBService {
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         guard let body: Body = try? await get(path, query: [
             "language": preferredLanguage,
-            "append_to_response": "external_ids,images,keywords",
+            "append_to_response": "external_ids,images,keywords,credits",
             "include_image_language": "\(language),en,null",
         ]) else { return nil }
         // The best-voted logo in the language, else English, else one with
@@ -2346,6 +2371,10 @@ extension TMDBService {
         for (prefix, named) in [("k", keywords), ("c", companies), ("n", networks)] {
             for entry in named { if let name = entry.name { labels["\(prefix):\(entry.id)"] = name } }
         }
+        let cast = Array((body.credits?.cast ?? []).prefix(5))
+        let crew = Array((isMovie ? (body.credits?.crew ?? []).filter { $0.job == "Director" }
+                                  : (body.created_by ?? [])).prefix(2))
+        for person in cast + crew { if let name = person.name { labels["p:\(person.id)"] = name } }
         let date = isMovie ? body.release_date : body.first_air_date
         let facts = TitleTraits(
             imdbID: (imdb?.hasPrefix("tt") == true) ? imdb : nil,
@@ -2365,7 +2394,9 @@ extension TMDBService {
             labels: labels,
             poster: imageURL(body.poster_path, size: "w500"),
             backdrop: imageURL(body.backdrop_path, size: "original"),
-            overview: body.overview)
+            overview: body.overview,
+            cast: cast.map(\.id),
+            crew: crew.map(\.id))
         await traitsCache.store(facts, for: key)
         if let imdb = facts.imdbID {
             let idKey = "\(isMovie ? "m" : "t"):\(tmdbID)"

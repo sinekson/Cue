@@ -1,4 +1,6 @@
 import Foundation
+import Compression
+import os
 
 // MARK: - Settings
 
@@ -543,5 +545,171 @@ enum MDBListService {
             }
             return out
         }
+    }
+}
+
+// MARK: - IMDb's ratings
+
+/// IMDb's rating and votes for every title with 100 votes or more, from
+/// IMDb's own daily file (`title.ratings.tsv.gz`, free for personal,
+/// non-commercial use): what Cue's rows rank by and the badges read
+/// (Hidden gem, Acclaimed). Many more voters than TMDB's, so a niche
+/// show's fans can't lift it. Fetched again once a day, kept small on disk
+/// (sorted ids, ratings, votes), read at once from memory.
+enum IMDbRatings {
+    struct Rating: Sendable { let value: Double; let votes: Int }
+
+    private struct Table: Sendable {
+        var ids: [UInt32] = []
+        var ratings: [UInt8] = []
+        var votes: [UInt32] = []
+        var isEmpty: Bool { ids.isEmpty }
+    }
+
+    private static let table = OSAllocatedUnfairLock<Table>(initialState: Table())
+    private static let loading = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+    private static let source = URL(string: "https://datasets.imdbws.com/title.ratings.tsv.gz")!
+    static let minimumVotes: UInt32 = 100
+    static let maxAge: TimeInterval = 24 * 60 * 60
+    static var file: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CueCache/imdb-ratings.bin")
+    }
+
+    /// "tt0903747" → 9.5 from 2.4 M votes; nil: not on IMDb (or under 100
+    /// votes), or the file isn't in yet.
+    static func rating(_ imdbID: String?) -> Rating? {
+        guard let imdbID, imdbID.hasPrefix("tt"), let number = UInt32(imdbID.dropFirst(2)) else { return nil }
+        return table.withLock { table in
+            var low = 0, high = table.ids.count
+            while low < high {
+                let mid = (low + high) / 2
+                if table.ids[mid] < number { low = mid + 1 } else { high = mid }
+            }
+            guard low < table.ids.count, table.ids[low] == number else { return nil }
+            return Rating(value: Double(table.ratings[low]) / 10, votes: Int(table.votes[low]))
+        }
+    }
+
+    /// In memory: from disk, else fetched (the first time only, awaited);
+    /// a day old, fetched again behind.
+    static func ready() async {
+        let task = loading.withLock { running -> Task<Void, Never> in
+            if let running { return running }
+            let task = Task.detached(priority: .utility) { await load() }
+            running = task
+            return task
+        }
+        await task.value
+        loading.withLock { $0 = nil }
+    }
+
+    private static func load() async {
+        let fm = FileManager.default
+        let age = (try? fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+            .map { Date().timeIntervalSince($0) }
+        if table.withLock({ $0.isEmpty }), let stored = read() { table.withLock { $0 = stored } }
+        if age == nil || table.withLock({ $0.isEmpty }) {
+            await fetch()
+        } else if let age, age > maxAge {
+            Task.detached(priority: .background) { await fetch() }
+        }
+    }
+
+    private static func fetch() async {
+        let done = AppProbe.begin("data", "imdb ratings")
+        guard let (download, response) = try? await URLSession.shared.download(from: source),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let packed = try? Data(contentsOf: download) else { done("failed"); return }
+        try? FileManager.default.removeItem(at: download)
+        guard let fresh = parse(packed), !fresh.isEmpty else { done("unreadable"); return }
+        table.withLock { $0 = fresh }
+        write(fresh)
+        done("\(fresh.ids.count) titles")
+    }
+
+    /// The gzip's lines, unpacked as they come: "tt0903747\t9.5\t2400000".
+    private static func parse(_ gzip: Data) -> Table? {
+        guard let deflate = deflateBody(gzip) else { return nil }
+        var rows: [(UInt32, UInt8, UInt32)] = []
+        rows.reserveCapacity(600_000)
+        var line: [UInt8] = []
+        func take(_ bytes: [UInt8]) {
+            // tt<digits> TAB <d>.<d> TAB <digits>
+            guard bytes.count > 4, bytes[0] == 0x74, bytes[1] == 0x74 else { return }
+            var i = 2, id: UInt32 = 0
+            while i < bytes.count, bytes[i] != 9 { id = id &* 10 &+ UInt32(bytes[i] &- 48); i += 1 }
+            i += 1
+            var rating: UInt32 = 0
+            while i < bytes.count, bytes[i] != 9 {
+                if bytes[i] != 0x2E { rating = rating * 10 + UInt32(bytes[i] &- 48) }
+                i += 1
+            }
+            i += 1
+            var votes: UInt32 = 0
+            while i < bytes.count { votes = votes &* 10 &+ UInt32(bytes[i] &- 48); i += 1 }
+            guard votes >= minimumVotes else { return }
+            rows.append((id, UInt8(min(rating, 100)), votes))
+        }
+        do {
+            let filter = try OutputFilter(.decompress, using: .zlib) { chunk in
+                guard let chunk else { return }
+                for byte in chunk {
+                    if byte == 10 { take(line); line.removeAll(keepingCapacity: true) } else { line.append(byte) }
+                }
+            }
+            var offset = 0
+            while offset < deflate.count {
+                let end = min(offset + 1 << 16, deflate.count)
+                try filter.write(deflate[offset..<end])
+                offset = end
+            }
+            try filter.finalize()
+        } catch {
+            return nil
+        }
+        take(line)
+        rows.sort { $0.0 < $1.0 }
+        return Table(ids: rows.map(\.0), ratings: rows.map(\.1), votes: rows.map(\.2))
+    }
+
+    /// The raw deflate inside a gzip: its header (and any name, comment,
+    /// extra field) and 8-byte trailer cut off.
+    private static func deflateBody(_ data: Data) -> Data? {
+        let bytes = [UInt8](data.prefix(4096))
+        guard bytes.count > 18, bytes[0] == 0x1f, bytes[1] == 0x8b, bytes[2] == 8 else { return nil }
+        let flags = bytes[3]
+        var i = 10
+        if flags & 4 != 0 { i += 2 + Int(bytes[i]) + Int(bytes[i + 1]) << 8 }
+        if flags & 8 != 0 { while i < bytes.count, bytes[i] != 0 { i += 1 }; i += 1 }
+        if flags & 16 != 0 { while i < bytes.count, bytes[i] != 0 { i += 1 }; i += 1 }
+        if flags & 2 != 0 { i += 2 }
+        guard i < data.count - 8 else { return nil }
+        return data.subdata(in: data.startIndex + i ..< data.endIndex - 8)
+    }
+
+    /// On disk: the count, then the ids, ratings and votes as they lie.
+    private static func write(_ table: Table) {
+        var data = Data()
+        var count = UInt32(table.ids.count)
+        data.append(Data(bytes: &count, count: 4))
+        table.ids.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        table.ratings.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        table.votes.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: file, options: .atomic)
+    }
+
+    private static func read() -> Table? {
+        guard let data = try? Data(contentsOf: file), data.count >= 4 else { return nil }
+        let count = Int(data.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+        guard data.count == 4 + count * 9 else { return nil }
+        func slice<T>(_ offset: Int, _ type: T.Type) -> [T] {
+            data.subdata(in: offset ..< offset + count * MemoryLayout<T>.size).withUnsafeBytes {
+                Array($0.bindMemory(to: T.self))
+            }
+        }
+        return Table(ids: slice(4, UInt32.self), ratings: slice(4 + count * 4, UInt8.self),
+                     votes: slice(4 + count * 5, UInt32.self))
     }
 }

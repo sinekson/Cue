@@ -425,6 +425,7 @@ struct RootView: View {
                     }))
                 TitleMenu.shared.configure(library: library, watched: watched, progress: progressStore,
                                            addonManager: addonManager)
+                TitleRecords.shared.watched = watched
             }
             .task {
                 if sync == nil {
@@ -2231,6 +2232,9 @@ final class LaunchPreloader: ObservableObject {
         guard current == generation else { return }
         line(String(format: "Minimum   %d jobs · %.0f ms (at %.2f s)", jobs.count,
                     (CACurrentMediaTime() - t) * 1000, elapsed))
+        // The first screen was drawn before its records: its badges now,
+        // still under the curtain.
+        NotificationCenter.default.post(name: TitleRecords.badgesSettled, object: nil)
 
         // ④ The rest of Home, nearest first: on the curtain until `minimum`
         // (the floor), then on behind Home.
@@ -2254,6 +2258,10 @@ final class LaunchPreloader: ObservableObject {
     /// Watching's episode stills.
     private func minimumJobs(picks: [MetaItem], rows: [HomeRow], addonManager: AddonManager) -> [LoadQueue.Job] {
         var jobs: [LoadQueue.Job] = []
+        // The badges' Acclaimed and Hidden gem (from disk; the first time
+        // ever, fetched).
+        jobs.append(.init(key: "imdb-ratings", kind: "imdb ratings", lane: .data, band: .launch,
+                          order: 0, source: "launch") { await IMDbRatings.ready() })
         func record(_ item: MetaItem) {
             jobs.append(.record(item, band: .launch, order: jobs.count, source: "launch"))
         }
@@ -2307,7 +2315,9 @@ final class LaunchPreloader: ObservableObject {
     /// The rest of Home behind the minimum, nearest first (`LoadQueue`'s
     /// deep band): Details for the billboard's first title and the rows'
     /// (`TitlePreloader`, as if focus rested on the billboard), every title's
-    /// record (the billboard's, each row's first 15), and their pictures on
+    /// record (the billboard's and every row's: the badges are drawn from
+    /// them at once, never late; ratings only for each row's first 15), and
+    /// their pictures (each row's first 15) on
     /// disk at the size they show at — not decoded into memory (that would
     /// evict the first screen's). At launch, and coming back once an hour
     /// has passed; only what's a day old asks the network.
@@ -2329,6 +2339,10 @@ final class LaunchPreloader: ObservableObject {
             if let logo = item.logo { jobs.append(.disk(logo, PictureSize.logo, order: i)) }
         }
         for (r, row) in rows.enumerated() {
+            for (i, item) in row.items.enumerated().dropFirst(15) {
+                jobs.append(.record(item, band: .deep, order: 10_000 + r * 100 + i, source: "deep",
+                                    parts: [.show, .facts]))
+            }
             for (i, item) in row.items.prefix(15).enumerated() {
                 let order = (r + 1) * 100 + i
                 jobs.append(.record(item, band: .deep, order: order, source: "deep"))
@@ -2379,10 +2393,13 @@ final class LoadQueue {
         }
 
         /// A title's record (`TitleRecords`): its size, facts, ratings.
+        /// (`parts`: without ratings past a row's first 15 — MDBList
+        /// counts requests; the badges need only the show and its facts.)
         static func record(_ item: MetaItem, band: Band, order: Int, source: String,
+                           parts: Set<TitleRecords.Part> = [.show, .facts, .ratings],
                            then: (@MainActor () -> Void)? = nil) -> Job {
             Job(key: "record:\(item.id)", kind: "record", lane: .data, band: band, order: order, source: source) {
-                await TitleRecords.shared.refresh(item, [.show, .facts, .ratings])
+                await TitleRecords.shared.refresh(item, parts)
                 then?()
             }
         }

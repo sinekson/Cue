@@ -121,6 +121,43 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
   it, 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
   the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
+  Badges (`FixedFocusBadges`, chosen by `HomeRow.badges(for:)`, set at
+  configure, never late), dark plates (black 65 %, 10 pt corners,
+  a 1 pt white edge at 12 %), the words sentence case 26 pt medium at
+  primary, the symbol a level down (body) (black 80 % with no edge looked
+  pasted on; the status badge's off-white plate with the words cut out
+  clashed; 22 and 20 pt were small), at the picture's top left,
+  16 pt in (the foot right, beside the logo, was tried), not moving: on a move the old ones go at
+  the press, the new appear 0.1 s later, no fade (at once was too fast;
+  fades, 30 % and 75 % of the drift, drifting with the picture: on a pane
+  over it); side by side, else stacked. Only on the fixed box (and the grown card handing over to
+  it): posters and moving-focus cards have none. Two at most: a show's news first
+  (`TitleRecords.news`: New episode, out in 14 days, unwatched, one of the
+  three before it watched; Season N, begun in 14 days; Returns Mar 4,
+  within 90), then one more. Top Picks: always a reason, made with the rows
+  (`CueRows.reason`): someone in your taste ("With …" cast, "From …"
+  director or creator; animation only the latter: voice actors said
+  nothing), else your strongest trait it carries (genre, language, a
+  catalogue row's keyword: TMDB's others are noise), else Hidden gem, else
+  "Like <a title you watched>". Other rows, the first that holds: Season /
+  Series finale (TMDB's episode type, aired in 7 days; "Finale Mar 4"
+  next), With someone in your taste, Hidden gem (IMDb 7.5+, 1,000–20,000
+  votes), Acclaimed (IMDb 8+, 50,000 votes), Limited series, Top 10
+  (today's trending). What the row says isn't repeated: no news in New
+  Episodes or Airing Today, no Acclaimed in Top Rated, no Top 10 in
+  Trending. Symbols: sparkles, calendar, flag.checkered, person.fill,
+  diamond, laurel.leading, square.stack, chart.bar.fill, heart. Not on
+  Continue Watching. (A notch cut into
+  the top-left corner in spaced capitals was tried; service and quality
+  badges, and awards, were talked over: rows already say them; TMDB's
+  score made a run-of-the-mill isekai a gem: niche fans vote alone there.)
+  Ratings for ranking and badges are IMDb's own daily file
+  (`IMDbRatings`, end of `MDBListService.swift`: `title.ratings.tsv.gz`,
+  titles with 100+ votes, ~4 MB on disk, fetched again once a day, the
+  first time awaited by the rows' build; read in the launch's minimum, or
+  saved rows had no Acclaimed or Hidden gem; personal, non-commercial use
+  only: look again before any paid or App Store release). TMDB's score
+  only for a title IMDb doesn't have yet (`CueRows.quality`).
 
 ## How things work
 
@@ -218,8 +255,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   both first in Watch Again; Not for Me is out of every row Cue makes
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
-  pages still show it. A change makes new rows on the next load.
-  Next: service badges. On the device only, per profile; never the Nuvio sync.
+  pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
 - **Under Home's box** (the posters' height, not grown): no name, the
   facts line in the title's style, then the description, up to 4 lines,
   top-aligned, secondary (badges there, on the line or in the box, were
@@ -299,8 +335,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   seen before draws badge, ratings and season count with its text (separate
   async caches per kind came late). Shown as stored, asked again once a day,
   redrawn only if the answer differs. Launch refreshes what's reachable first
-  under the curtain, then every Home row's (first 15 each) in the queue's
-  deep band, again on coming back if an hour has passed. Not pictures, not the
+  under the curtain (then the first screen's badges are redrawn,
+  `TitleRecords.badgesSettled`), then every Home row's titles in the queue's
+  deep band (ratings only for the first 15 each: the badges need the rest
+  there before a press, as they're never drawn late), again on coming back if an hour has passed. Not pictures, not the
   facts line or logo (in time already).
 - **Progress**: under 30 s played in a session, nothing is saved (a Start Over
   keeps its old position). After that the real position, seeks included: to
@@ -390,7 +428,9 @@ layers crossfading dip (flicker); a SwiftUI hosting view's own opacity darkens
 the screen mid-fade, so fade a plain view holding it; never draw text twice;
 `CATransaction.flush()` or CA starts a runloop late; a view going out is frozen,
 environment changes only reach it through its transition; a wholly covered page
-isn't drawn until revealed, so covers are 99.5 % opaque.
+isn't drawn until revealed, so covers are 99.5 % opaque; text changed under an opacity
+animation hiding it may never be drawn (an empty badge plate): hide by the
+view's own alpha and a timer.
 
 ## Removed / rejected (don't bring back)
 

@@ -245,6 +245,16 @@ actor SourceListCache {
 
 // MARK: - Title records
 
+/// A card's badge (`FixedFocusBadges`): what it says and what kind it is
+/// (its symbol, and which rows leave it out).
+struct CardBadge: Codable, Equatable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case news, returns, finale, person, gem, acclaimed, limited, top10, taste
+    }
+    let kind: Kind
+    let text: String
+}
+
 /// One small record per title: what its text draws besides the catalog's —
 /// a series' size, the dates its status is read from, TMDB's status and
 /// tagline, MDBList's ratings. A few hundred bytes each, all of them in
@@ -266,10 +276,20 @@ final class TitleRecords {
         /// go stale between lookups.
         var lastAired: Date?
         var upcoming: [Date]?
+        /// For the cards' news (`news`): each season's first episode's
+        /// date, the latest aired episode (season, episode), and the next
+        /// season's first date once it's listed.
+        var seasonStarts: [Int: Date]?
+        var latestEpisode: [Int]?
+        var returns: Date?
         var showAt: Date?
         /// TMDB's: "ENDED", "ONGOING"…, and the tagline.
         var tmdbStatus: String?
         var tagline: String?
+        /// The badges' facts (`fact`), TMDB's, with the rest of its facts.
+        var finale: Date?
+        var finaleEndsShow: Bool?
+        var limited: Bool?
         var factsAt: Date?
         /// MDBList's (nil with a date: it has none).
         var ratings: MDBListRatings?
@@ -352,6 +372,77 @@ final class TitleRecords {
         }
     }
 
+    /// A card's first badge (`FixedFocusBadges`): a show's news, the first
+    /// that holds — nil for films and quiet shows.
+    /// - New episode: the latest aired in the last `newsWindow`, unwatched,
+    ///   one of the three before it watched.
+    /// - Season 3: a season (not the first) began within it.
+    /// - Returns Mar 4: the next season's first date, within `returnsWithin`.
+    func news(_ item: MetaItem) -> CardBadge? {
+        guard item.isSeries, let record = records[item.id] else { return nil }
+        let now = Date()
+        if let latest = record.latestEpisode, latest.count == 2, let watched,
+           let date = record.lastAired,
+           now.timeIntervalSince(date) <= Self.newsWindow {
+            let (season, episode) = (latest[0], latest[1])
+            if !watched.isWatched(contentID: item.id, season: season, episode: episode),
+               (max(1, episode - 3)..<episode).contains(where: {
+                   watched.isWatched(contentID: item.id, season: season, episode: $0)
+               }) {
+                return CardBadge(kind: .news, text: "New episode")
+            }
+        }
+        if let season = record.latestEpisode?.first, season > 1,
+           let start = record.seasonStarts?[season], start <= now,
+           now.timeIntervalSince(start) <= Self.newsWindow {
+            return CardBadge(kind: .news, text: "Season \(season)")
+        }
+        if let returns = record.returns, returns.timeIntervalSince(now) <= Self.returnsWithin {
+            return CardBadge(kind: .returns, text: "Returns " + Self.newsDate.string(from: returns))
+        }
+        return nil
+    }
+
+    /// The title's facts worth a badge, in their order (the card shows the
+    /// first its row doesn't already say):
+    /// - Season / Series finale: aired in the last `finaleWindow`; Finale
+    ///   Mar 4: the next episode, within `newsWindow`.
+    /// - Hidden gem: IMDb 7.5 or more from 1,000–20,000 votes.
+    /// - Acclaimed: IMDb 8 or more from 50,000 votes.
+    /// - Limited series: TMDB's Miniseries.
+    func facts(_ item: MetaItem) -> [CardBadge] {
+        guard let record = records[item.id] else { return [] }
+        var out: [CardBadge] = []
+        let now = Date()
+        if let finale = record.finale {
+            let since = now.timeIntervalSince(finale)
+            if since >= 0, since <= Self.finaleWindow {
+                out.append(CardBadge(kind: .finale,
+                                     text: record.finaleEndsShow == true ? "Series finale" : "Season finale"))
+            } else if since < 0, -since <= Self.newsWindow {
+                out.append(CardBadge(kind: .finale, text: "Finale " + Self.newsDate.string(from: finale)))
+            }
+        }
+        if CueRows.isGem(item.id) { out.append(CardBadge(kind: .gem, text: "Hidden gem")) }
+        if CueRows.isAcclaimed(item.id) { out.append(CardBadge(kind: .acclaimed, text: "Acclaimed")) }
+        if record.limited == true { out.append(CardBadge(kind: .limited, text: "Limited series")) }
+        return out
+    }
+
+    static let finaleWindow: TimeInterval = 7 * 24 * 60 * 60
+    /// Posted once the launch's minimum is in: the first screen's badges.
+    static let badgesSettled = Notification.Name("cue.badgesSettled")
+
+    /// Set at launch (`TitleMenu`'s): whether you've seen an episode.
+    weak var watched: WatchedStore?
+    static let newsWindow: TimeInterval = 14 * 24 * 60 * 60
+    static let returnsWithin: TimeInterval = 90 * 24 * 60 * 60
+    private static let newsDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter
+    }()
+
     // MARK: Asking
 
     /// The parts missing or a day old asked again (each once at a time);
@@ -365,10 +456,10 @@ final class TitleRecords {
         let stale = { (at: Date?) in at.map { Date().timeIntervalSince($0) > Self.maxAge } ?? true }
         let settings = MDBListSettingsStore.current
         await withTaskGroup(of: Void.self) { group in
-            if parts.contains(.show), item.isSeries, stale(record.showAt) {
+            if parts.contains(.show), item.isSeries, stale(record.showAt) || record.seasonStarts == nil {
                 group.addTask { await self.once(item.id + ":show") { await self.askShow(item) } }
             }
-            if parts.contains(.facts), TMDBService.hasAPIKey, stale(record.factsAt) {
+            if parts.contains(.facts), TMDBService.hasAPIKey, stale(record.factsAt) || record.limited == nil {
                 group.addTask { await self.once(item.id + ":facts") { await self.askFacts(item) } }
             }
             if parts.contains(.ratings), settings.isConfigured, settings.showsRatings(onDetails: false),
@@ -379,7 +470,8 @@ final class TitleRecords {
         let after = records[item.id]
         if before == nil || after?.size != before?.size || after?.ratings != before?.ratings
             || after?.tagline != before?.tagline || after?.tmdbStatus != before?.tmdbStatus
-            || after?.lastAired != before?.lastAired || after?.upcoming != before?.upcoming {
+            || after?.lastAired != before?.lastAired || after?.upcoming != before?.upcoming
+            || after?.finale != before?.finale || after?.limited != before?.limited {
             scheduleSave()
             return true
         }
@@ -406,6 +498,18 @@ final class TitleRecords {
         record.size = size
         record.lastAired = dates.filter { $0 <= now }.max()
         record.upcoming = dates.filter { $0 > now }.sorted()
+        let episodes = (meta.videos ?? []).filter { ($0.season ?? 0) > 0 && $0.episode != nil }
+        var starts: [Int: Date] = [:]
+        for video in episodes {
+            guard let season = video.season, let date = video.airedDate else { continue }
+            if starts[season].map({ date < $0 }) ?? true { starts[season] = date }
+        }
+        record.seasonStarts = starts
+        let aired = episodes.filter { ($0.airedDate ?? .distantFuture) <= now }
+        let latest = aired.max { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }
+        record.latestEpisode = latest.map { [$0.season ?? 0, $0.episode ?? 0] }
+        let latestSeason = latest?.season ?? 0
+        record.returns = starts.filter { $0.key > latestSeason && $0.value > now }.map(\.value).min()
         record.showAt = now
         records[item.id] = record
     }
@@ -415,6 +519,9 @@ final class TitleRecords {
         var record = records[item.id] ?? Record()
         record.tmdbStatus = facts.status
         record.tagline = facts.tagline
+        record.finale = facts.finale
+        record.finaleEndsShow = facts.finaleEndsShow
+        record.limited = facts.limited
         record.factsAt = Date()
         records[item.id] = record
     }
@@ -469,7 +576,7 @@ enum CacheStorage {
     }
     private static let addonFiles = ["meta"]
     private static let tmdbFiles = ["tmdb-raw", "tmdb-imdb-ids", "tmdb-facts", "tmdb-traits", "cue-rows"]
-    private static let ratingFiles = ["title-records.json", "mdblist-ratings-v2"]
+    private static let ratingFiles = ["title-records.json", "mdblist-ratings-v2", "imdb-ratings.bin"]
     private static let trailerFiles = ["trailers.json"]
     /// In CueCache but not a cache: kept.
     private static func kept(_ name: String) -> Bool {

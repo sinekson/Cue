@@ -18,6 +18,30 @@ struct HomeRow: Identifiable {
     /// Cue's own rows (`CueRows`): the tabs it shows on ("home", "movie",
     /// "series"); nil: every tab.
     var tabs: [String]? = nil
+    /// Badges made with the row (`CueRows.Row.badges`), by title id.
+    var badges: [String: CardBadge] = [:]
+
+    /// The badges a card shows (`FixedFocusBadges`), at most two: the
+    /// show's news, then the row's badge (For You's reason first), else the
+    /// first fact that holds — each left out where the row already says it.
+    @MainActor
+    func badges(for item: MetaItem) -> [CardBadge] {
+        guard !FixedFocusPlaceholder.isPlaceholder(item) else { return [] }
+        let kind = id.hasPrefix("cue.") ? id.split(separator: ".").dropFirst(2).joined(separator: ".") : ""
+        let records = TitleRecords.shared
+        var out: [CardBadge] = []
+        if !["ontheair", "airingtoday"].contains(kind), let news = records.news(item) { out.append(news) }
+        let own = badges[item.id]
+        let facts = records.facts(item).filter { !(kind == "toprated" && $0.kind == .acclaimed) }
+        let second: CardBadge?
+        switch own?.kind {
+        case .person: second = facts.first { $0.kind == .finale } ?? own
+        case .top10: second = facts.first ?? own
+        default: second = own ?? facts.first
+        }
+        if let second { out.append(second) }
+        return out
+    }
 
     /// Shown on this tab (Home: no type).
     func shows(on typeFilter: String?) -> Bool {
@@ -196,7 +220,8 @@ final class HomeViewModel: ObservableObject {
     }
 
     private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
-        rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs)) }
+        rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs,
+                                    badges: $0.badges ?? [:])) }
     }
 
     /// Cue's own rows (`CueRows`): the saved ones at once, new ones when

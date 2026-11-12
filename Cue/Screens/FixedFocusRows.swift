@@ -695,7 +695,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 }
                 if cell.rowIndex == focusedRow, box.alpha > 0 {
                     let index = selected[new.id] ?? 0
-                    if new.items.indices.contains(index) { box.show(new.items[index], animated: false) }
+                    if new.items.indices.contains(index) {
+                        box.show(new.items[index], badges: new.badges(for: new.items[index]), animated: false)
+                    }
                 }
             }
         }
@@ -733,7 +735,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let index = selected[row.id] ?? 0
             if row.items.indices.contains(index) {
                 let item = row.items[index]
-                box.show(item, animated: false)
+                box.show(item, badges: row.badges(for: item), animated: false)
             }
         }
     }
@@ -860,6 +862,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Along the bottom edge, below the billboard's (invisible) cells.
         root.addLayoutGuide(belowGuide)
         observeHeldSteps()
+        observeBadges()
         NSLayoutConstraint.activate([
             belowGuide.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             belowGuide.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -1091,7 +1094,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 rowCell.cutOut(box.convert(box.bounds, to: rowCell),
                                radius: Spotlight.cornerRadius * FixedFocusMetrics.boxScale)
             }
-            box.show(item, animated: true, direction: direction, vertical: rowChanged)
+            box.show(item, badges: row.badges(for: item), animated: true, direction: direction, vertical: rowChanged)
         }
         // Up/Down moves much more than a step: its own, longer spring.
         let duration = billboardScroll ? FixedFocusMotion.billboardScroll
@@ -1209,6 +1212,28 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     /// A held press (its move failed: `shouldUpdateFocus` said no) counts
     /// once — as a step to run after the opening.
+    /// The launch's records are in (`TitleRecords.badgesSettled`, under
+    /// the curtain): the cards and box drawn before them take their badges.
+    private var badgesToken: NSObjectProtocol?
+    private func observeBadges() {
+        guard badgesToken == nil else { return }
+        badgesToken = NotificationCenter.default.addObserver(
+            forName: TitleRecords.badgesSettled, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshBadges() }
+        }
+    }
+    private func refreshBadges() {
+        guard isViewLoaded else { return }
+        for case let cell as FixedFocusRowCell in outer.visibleCells { cell.refreshArt() }
+        guard box.alpha > 0, rows.indices.contains(focusedRow) else { return }
+        let row = rows[focusedRow]
+        let index = selected[row.id] ?? 0
+        guard row.items.indices.contains(index) else { return }
+        let item = row.items[index]
+        box.show(item, badges: row.badges(for: item), animated: false)
+    }
+
     private var heldStepToken: NSObjectProtocol?
     private func observeHeldSteps() {
         guard heldStepToken == nil else { return }
@@ -1359,7 +1384,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // — back from disk a few frames late, its see-through
             // placeholder flashed the cell's poster, the logo popped in.
             let cell = rowCell.posterCell(at: current) as? FixedFocusPosterCell
-            box.show(now, animated: false, pictures: cell?.pictures(for: now))
+            box.show(now, badges: row.badges(for: now), animated: false, pictures: cell?.pictures(for: now))
             box.alpha = 1
             rowCell.contentHidden = true
         }
@@ -3033,6 +3058,12 @@ final class FixedFocusBoxView: UIView {
     /// clip: its info sits below it).
     private let clip = UIView()
     private var page = Page()
+    /// The title's badges: the box's, not a page's — they don't drift or
+    /// fade, they change at the press.
+    private let badges = FixedFocusBadges()
+    /// The new badges wait this long after a move's press.
+    private static let badgesDelay: TimeInterval = 0.1
+    private var badgesHeld = false
     private var infoPage = InfoPage()
     /// Holds the info pages.
     private let infoHost = UIView()
@@ -3061,6 +3092,7 @@ final class FixedFocusBoxView: UIView {
         addSubview(clip)
         clip.addSubview(page)
         follow(page)
+        addSubview(badges)
         infoHost.isUserInteractionEnabled = false
         addSubview(infoHost)
         infoHost.addSubview(infoPage)
@@ -3107,6 +3139,7 @@ final class FixedFocusBoxView: UIView {
         super.layoutSubviews()
         applyOutlineStyle()
         clip.frame = bounds
+        badges.frame = bounds
         // The cards' rim.
         edge.image = FixedFocusCardEdge.rim
         edge.frame = bounds
@@ -3141,6 +3174,7 @@ final class FixedFocusBoxView: UIView {
     /// current one (a quick second move) left the edge off for good.
     private func syncEdge() {
         edge.isHidden = page.waiting && covered == nil
+        badges.alpha = edge.isHidden || badgesHeld ? 0 : 1
     }
     /// The old page under the one coming in, until its move ends.
     private var covered: Page?
@@ -3159,13 +3193,15 @@ final class FixedFocusBoxView: UIView {
     /// `direction`: +1 moving right (new content comes from the right),
     /// −1 moving left; `vertical`: an Up/Down move (its longer spring).
     /// `pictures` (not animated): a grown cell's, for the hand-over.
-    func show(_ item: MetaItem, animated: Bool,
+    func show(_ item: MetaItem, badges: [CardBadge], animated: Bool,
               direction: CGFloat = 1, vertical: Bool = false,
               pictures: FixedFocusPosterCell.Pictures? = nil) {
+        self.badges.show(badges)
         guard item.id != shownID else { syncEdge(); return }
         shownID = item.id
         applyOutlineStyle()
         guard animated else {
+            badgesHeld = false
             page.show(item, pictures: pictures)
             infoPage.show(item)
             syncEdge()
@@ -3224,7 +3260,20 @@ final class FixedFocusBoxView: UIView {
         let still = CGPoint.zero
         slide(incoming, from: CGPoint(x: -shift.x, y: -shift.y), to: still)
         if !reused { slide(outgoing, from: still, to: shift) }
+        // The logo rides the picture's drift. The badges, the box's, go at
+        // the press and the new ones appear 0.1 s later, no fade (riding
+        // the drift, they read as on a pane over the picture; at once was
+        // too fast, 30 % and 75 % of the drift, and fades, were tried).
         incoming.logo.transform = CGAffineTransform(translationX: drift.x, y: drift.y)
+        // (Held by the view's own alpha: under an opacity animation, the
+        // new words weren't always drawn — a plate with nothing on it.)
+        badgesHeld = true
+        syncEdge()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.badgesDelay) { [weak self] in
+            guard let self, id == self.moveID else { return }
+            self.badgesHeld = false
+            self.syncEdge()
+        }
         // The info drifts as the picture does, crossfading over the whole
         // move. (Tried: 30 pt, the last commit's; on the captions' timing,
         // moving a poster's step, `pitch`, ~750 pt on the path of the
@@ -4398,7 +4447,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             cell.configure(item, index: indexPath.item, rowCell: self,
                            progress: isContinue ? controller?.progress[item.id] : nil,
                            landscape: isLandscape, invisible: isFeatured,
-                           cardHeight: cardHeight)
+                           cardHeight: cardHeight, badges: row.badges(for: item))
             cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
             cell.setPast(isPast(indexPath.item))
             cell.setConcealed(concealed)

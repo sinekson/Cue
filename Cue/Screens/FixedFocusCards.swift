@@ -745,6 +745,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         didSet { if dim != oldValue { dimCover.alpha = dim } }
     }
     private let dimCover = UIView()
+    private let badges = FixedFocusBadges()
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
     /// The picture it shows on its way: the placeholder's look over it.
@@ -782,6 +783,9 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         backdrop.addSubview(logo)
         state.alpha = 0
         backdrop.addSubview(state)
+        // The badges on the grown picture only, as the box's (posters
+        // have none).
+        backdrop.addSubview(badges)
         // The card's edge (on top of its pictures) and its shadow (under
         // the card, outside it).
         edge.isUserInteractionEnabled = false
@@ -905,7 +909,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell,
                    progress: WatchProgress?, landscape: Bool, invisible: Bool = false,
-                   cardHeight: CGFloat = FixedFocusMetrics.height) {
+                   cardHeight: CGFloat = FixedFocusMetrics.height, badges: [CardBadge] = []) {
         itemIndex = index
         self.cardHeight = cardHeight
         self.rowCell = rowCell
@@ -914,6 +918,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         self.invisible = invisible
         contentView.isHidden = invisible
         backdropFor = nil
+        self.badges.show(invisible || progress != nil ? [] : badges)
         if invisible {
             // The billboard's focus target: nothing to show or load.
             for view in [poster, backdrop, logo] { FixedFocusImages.load(nil, into: view, maxDimension: 0) }
@@ -1745,5 +1750,131 @@ enum FixedFocusMotion {
     /// Left/Right, for things moving with the row (the box's drift).
     static func horizontal(_ animations: @escaping () -> Void, completion: @escaping () -> Void) {
         run(duration: Motion.moveDuration, animations: animations, completion: { _ in completion() })
+    }
+}
+
+/// A card's badges (`HomeRow.badges(for:)`): dark plates at the picture's
+/// top left, a symbol and the words in sentence case. Only on the fixed box (and the grown
+/// card handing over to it). Side by side where they fit, else stacked.
+/// Part of the art: it fills its picture and grows with it.
+final class FixedFocusBadges: UIView {
+    static let inset: CGFloat = 16
+    static let gap: CGFloat = 8
+    private var plates: [Plate] = []
+    private var shown: [CardBadge] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        if let superview { frame = superview.bounds }
+    }
+
+    func show(_ badges: [CardBadge]) {
+        isHidden = badges.isEmpty
+        guard badges != shown else { return }
+        shown = badges
+        while plates.count < badges.count {
+            let plate = Plate()
+            addSubview(plate)
+            plates.append(plate)
+        }
+        for (index, plate) in plates.enumerated() {
+            plate.isHidden = index >= badges.count
+            if index < badges.count { plate.show(badges[index]) }
+        }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let inset = Self.inset, gap = Self.gap
+        let room = max(0, bounds.width - 2 * inset)
+        let showing = plates.prefix(shown.count)
+        let sizes = showing.map { $0.fitting(room) }
+        let row = sizes.reduce(0) { $0 + $1.width } + gap * CGFloat(max(0, sizes.count - 1))
+        let sideBySide = row <= room
+        var x = inset
+        var y = inset
+        for (plate, size) in zip(showing, sizes) {
+            plate.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+            if sideBySide { x += size.width + gap } else { y += size.height + gap }
+        }
+    }
+
+    static func symbol(_ kind: CardBadge.Kind) -> String {
+        switch kind {
+        case .news: return "sparkles"
+        case .returns: return "calendar"
+        case .finale: return "flag.checkered"
+        case .person: return "person.fill"
+        case .gem: return "diamond"
+        case .acclaimed: return "laurel.leading"
+        case .limited: return "square.stack"
+        case .top10: return "chart.bar.fill"
+        case .taste: return "heart"
+        }
+    }
+
+    /// One badge: a dark plate, a hairline edge, the symbol a level under
+    /// the words.
+    private final class Plate: UIView {
+        static let padding = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 16)
+        static let symbolGap: CGFloat = 10
+        static let font = UIFont.systemFont(ofSize: 26, weight: .medium)
+        private let symbol = UIImageView()
+        private let label = UILabel()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = UIColor.black.withAlphaComponent(0.65)
+            layer.cornerRadius = 10
+            layer.cornerCurve = .continuous
+            layer.borderWidth = 1
+            layer.borderColor = UIColor.white.withAlphaComponent(0.12).cgColor
+            symbol.contentMode = .center
+            symbol.tintColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+            symbol.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
+            label.font = Self.font
+            label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            label.lineBreakMode = .byTruncatingTail
+            addSubview(symbol)
+            addSubview(label)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        func show(_ badge: CardBadge) {
+            symbol.image = UIImage(systemName: FixedFocusBadges.symbol(badge.kind))
+            label.text = badge.text
+            setNeedsLayout()
+        }
+
+        private var symbolWidth: CGFloat { max(26, symbol.image?.size.width ?? 0) }
+
+        /// Its size, at most `room` wide (the words cut short past it).
+        func fitting(_ room: CGFloat) -> CGSize {
+            let pad = Self.padding
+            let text = label.intrinsicContentSize
+            let width = pad.left + symbolWidth + Self.symbolGap + text.width + pad.right
+            return CGSize(width: min(room, width.rounded(.up)),
+                          height: (Self.font.lineHeight + pad.top + pad.bottom).rounded(.up))
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let pad = Self.padding
+            let height = bounds.height - pad.top - pad.bottom
+            symbol.frame = CGRect(x: pad.left, y: pad.top, width: symbolWidth, height: height)
+            let textX = symbol.frame.maxX + Self.symbolGap
+            label.frame = CGRect(x: textX, y: pad.top, width: max(0, bounds.width - textX - pad.right), height: height)
+        }
     }
 }
