@@ -127,6 +127,7 @@ final class DetailTransition {
     /// never zooming, into Details' (which takes it, `StageTrailer.adopt`).
     func open(_ item: MetaItem, keepsPicture: Bool = false, trailer: AVPlayer? = nil, push: @escaping () -> Void) {
         guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
+        CueRows.Memory.shared.opened(item.id)
         let opening = Self.opening(startScale: 1)
         busy = true
         ModeSwap.shared.handingOver = true
@@ -264,6 +265,7 @@ final class DetailTransition {
     /// (`StageTrailer.adopt`).
     func openInPlace(_ item: MetaItem, trailer: AVPlayer?, push: @escaping () -> Void) {
         guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
+        CueRows.Memory.shared.opened(item.id)
         busy = true
         InputHold.begin()
         // (Kept off under Details: back with Home's parts on Back.)

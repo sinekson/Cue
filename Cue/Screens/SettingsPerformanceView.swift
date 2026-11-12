@@ -159,6 +159,10 @@ private struct CueRowsWhyView: View {
             out.append(("Your taste", saved.taste.map { "\($0.label) \(Int(($0.share * 100).rounded())) %" }
                 .joined(separator: " · ")))
         }
+        if !saved.passedOver.isEmpty {
+            out.append(("Passed over", "Left out for 30 days after you looked and moved on three times: "
+                        + saved.passedOver.joined(separator: ", ")))
+        }
         for tab in ["home", "movie", "series"] {
             let name = tab == "home" ? "Home" : tab == "movie" ? "Movies" : "Series"
             for why in saved.why where why.tab == tab { out.append(("\(name) · \(why.title)", why.reason)) }

@@ -2275,6 +2275,11 @@ extension TMDBService {
         /// The keywords', studios' and networks' names by feature
         /// ("k:4379": "time travel"), for the Why page.
         let labels: [String: String]
+        /// For a title that comes from no list (one you watched): its own
+        /// pictures and text. (Absent in what was kept before them.)
+        var poster: String? = nil
+        var backdrop: String? = nil
+        var overview: String? = nil
     }
 
     private static let traitsCache = DiskCache<TitleTraits>(name: "tmdb-traits")
@@ -2283,10 +2288,13 @@ extension TMDBService {
     /// The language's two letters (logos are tagged by those alone).
     private static var languageCode: String { String(preferredLanguage.prefix(2)) }
 
-    static func traits(tmdbID: Int, isMovie: Bool) async -> TitleTraits? {
+    /// `pictures`: asked again where what's kept has none (`cueTitle`).
+    static func traits(tmdbID: Int, isMovie: Bool, pictures: Bool = false) async -> TitleTraits? {
         let language = languageCode
         let key = "\(isMovie ? "m" : "t"):\(tmdbID):\(language)"
-        if let hit = await traitsCache.value(for: key, ttl: traitsTTL) { return hit }
+        if let hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil {
+            return hit
+        }
         struct Body: Decodable {
             struct Named: Decodable { let id: Int; let name: String? }
             struct Keywords: Decodable { let keywords: [Named]?; let results: [Named]? }
@@ -2313,6 +2321,9 @@ extension TMDBService {
             let runtime: Int?
             let episode_run_time: [Int]?
             let images: Images?
+            let poster_path: String?
+            let backdrop_path: String?
+            let overview: String?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
         guard let body: Body = try? await get(path, query: [
@@ -2351,7 +2362,10 @@ extension TMDBService {
             rating: body.vote_average ?? 0,
             popularity: body.popularity ?? 0,
             runtime: body.runtime ?? body.episode_run_time?.first,
-            labels: labels)
+            labels: labels,
+            poster: imageURL(body.poster_path, size: "w500"),
+            backdrop: imageURL(body.backdrop_path, size: "original"),
+            overview: body.overview)
         await traitsCache.store(facts, for: key)
         if let imdb = facts.imdbID {
             let idKey = "\(isMovie ? "m" : "t"):\(tmdbID)"
@@ -2381,7 +2395,9 @@ extension TMDBService {
         var seen = Set<String>()
         var titles: [CueTitle] = []
         for (index, item) in pictured.enumerated() where titles.count < limit {
+            // (Talk and news shows: never in a row, trending or not.)
             guard index < all.count, let facts = all[index].facts, let imdb = facts.imdbID,
+                  !facts.genres.contains(where: { $0 == 10763 || $0 == 10767 }),
                   seen.insert(imdb).inserted else { continue }
             let meta = MetaItem(
                 id: imdb, type: item.isMovie ? "movie" : "series", name: item.name,
@@ -2404,6 +2420,22 @@ extension TMDBService {
         query["language"] = preferredLanguage
         guard let body: PickList = try? await get(path, query: query) else { return [] }
         return await cueTitles(body.raw(defaultMovie: isMovie, limit: limit * 2), limit: limit)
+    }
+
+    /// A title you watched as a row shows it (Pick Back Up, Watch Again):
+    /// TMDB's pictures, as a list's; nil without both.
+    static func cueTitle(imdbID: String, type: String) async -> CueTitle? {
+        guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type),
+              let facts = await traits(tmdbID: tmdbID, isMovie: isMovie, pictures: true),
+              let poster = facts.poster, let backdrop = facts.backdrop else { return nil }
+        let meta = MetaItem(
+            id: imdbID, type: isMovie ? "movie" : "series", name: facts.name ?? imdbID,
+            poster: poster, background: backdrop,
+            logo: facts.logo ?? "https://images.metahub.space/logo/medium/\(imdbID)/img",
+            description: facts.overview, releaseInfo: facts.year.map(String.init),
+            imdbRating: facts.rating > 0 ? String(format: "%.1f", facts.rating) : nil,
+            genres: facts.genres.compactMap { CueRows.genreNames[$0] })
+        return CueTitle(item: meta, tmdbID: tmdbID, isMovie: isMovie, traits: facts)
     }
 
     /// A title you watched, by its IMDb id: its TMDB id and traits.

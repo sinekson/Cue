@@ -2710,7 +2710,9 @@ final class TitlePreloader {
 
     /// Focus moved to `index` in row `row` of `rows` (Home's rows engine).
     func focused(rows: [HomeRow], row: Int, index: Int) {
-        guard context != nil, rows.indices.contains(row), rows[row].items.indices.contains(index) else { return }
+        guard rows.indices.contains(row), rows[row].items.indices.contains(index) else { return }
+        CueRows.Memory.shared.focused(row: rows[row].id, item: rows[row].items[index], index: index)
+        guard context != nil else { return }
         settleTask?.cancel()
         restTask?.cancel()
         let item = rows[row].items[index]

@@ -356,12 +356,20 @@ enum CueRows {
         let titles: Int
         let taste: [TasteLine]
         let why: [Why]
+        /// Titles left out for being passed over, by name.
+        let passedOver: [String]
     }
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
-    /// A row needs this many titles to show.
-    static let minimumTitles = 6
+    /// A row needs this many titles to show; your own (Pick Back Up, Watch
+    /// Again) fewer: they're about you, not a catalogue running out.
+    static let minimumTitles = 10
+    static let minimumOwn = 5
     static let rowLength = 25
+    /// What a list is fetched until (unseen titles), at most `maxPages` pages:
+    /// room for a title being in two rows already.
+    static let fetchUntil = 30
+    static let maxPages = 3
 
     private static var fileURL: URL {
         let profile = UserDefaults.standard.object(forKey: ProfileStore.activeKey) as? Int ?? 1
@@ -520,16 +528,15 @@ enum CueRows {
     /// more with every episode (full at 10), started or saved a little;
     /// halved every 120 days, never under a fifth (old favourites still count).
     static func engagement(_ watch: Watch, now: Date) -> Double {
-        let amount: Double
-        if watch.type == "movie" {
-            amount = watch.watched > 0 ? 1 : watch.started ? 0.45 : 0.3
-        } else if watch.watched > 0 {
-            amount = 0.35 + 0.65 * Double(min(watch.watched, 10)) / 10
-        } else {
-            amount = watch.started ? 0.4 : 0.3
-        }
         let days = max(0, now.timeIntervalSince(watch.last)) / 86_400
-        return amount * max(0.2, pow(0.5, days / 120))
+        return amount(watch) * max(0.2, pow(0.5, days / 120))
+    }
+
+    /// How much of a title you watched, however long ago.
+    static func amount(_ watch: Watch) -> Double {
+        if watch.type == "movie" { return watch.watched > 0 ? 1 : watch.started ? 0.45 : 0.3 }
+        if watch.watched > 0 { return 0.35 + 0.65 * Double(min(watch.watched, 10)) / 10 }
+        return watch.started ? 0.4 : 0.3
     }
 
     static func known(_ watches: [Watch], now: Date) async -> [Known] {
@@ -640,6 +647,8 @@ enum CueRows {
         /// For a row about no trait (acclaimed, new, short): how well it
         /// suits anyone, 0…1.
         let broad: Double
+        /// In season (Christmas, Halloween…): lifted while it lasts, and why.
+        var season: String? = nil
 
         /// What the row leaves out, as traits.
         var excluded: [String] {
@@ -961,7 +970,57 @@ enum CueRows {
             show("apple", "Apple Originals", "network", ["with_networks": "2552"]),
             show("netflix", "Netflix Originals", "network", ["with_networks": "213"]),
             show("showtime", "Showtime", "network", ["with_networks": "67"]),
-        ]
+
+            // This anime season: anime with an episode out since the season
+            // began (January, April, July, October), new or returning.
+            show("anime.season", "This Anime Season", "season.anime",
+                 genres("16") + japanese + ["air_date.gte": date(animeSeasonStart(now)),
+                                            "air_date.lte": date(now.addingTimeInterval(7 * days)),
+                                            "vote_count.gte": "5"]),
+        ] + seasonal(now: now)
+    }
+
+    /// The first day of the anime season `now` is in.
+    static func animeSeasonStart(_ now: Date) -> Date {
+        let calendar = Calendar.current
+        let parts = calendar.dateComponents([.year, .month], from: now)
+        let month = ((parts.month ?? 1) - 1) / 3 * 3 + 1
+        return calendar.date(from: DateComponents(year: parts.year, month: month, day: 1)) ?? now
+    }
+
+    /// Rows for the time of year, only while it lasts (from, to: month and
+    /// day, inclusive; across the new year where `from` is later).
+    static func seasonal(now: Date) -> [Recipe] {
+        let parts = Calendar.current.dateComponents([.month, .day], from: now)
+        let today = (parts.month ?? 1) * 100 + (parts.day ?? 1)
+        func during(_ from: Int, _ to: Int) -> Bool {
+            from <= to ? (from...to).contains(today) : today >= from || today <= to
+        }
+        var out: [Recipe] = []
+        func add(_ from: Int, _ to: Int, _ season: String, _ recipe: Recipe) {
+            guard during(from, to) else { return }
+            var recipe = recipe
+            recipe.season = season
+            out.append(recipe)
+        }
+        add(1001, 1031, "Halloween", keyword("halloween", "Halloween", "season", "3335|9694"))
+        add(1001, 1031, "Halloween", film("halloween.family", "Spooky, Not Scary", "season",
+                                          ["with_keywords": "3335|162846|616", "with_genres": "10751|16"]))
+        add(1125, 1226, "Christmas", keyword("christmas", "Christmas Movies", "season", "207317|1991|272288", media: .movie))
+        add(1125, 1226, "Christmas", film("christmas.family", "Christmas for the Family", "season",
+                                          ["with_keywords": "207317|1991", "with_genres": "10751"]))
+        add(1215, 1226, "Christmas", show("christmas.shows", "Christmas Episodes & Specials", "season",
+                                          ["with_keywords": "207317|1991", "vote_count.gte": "5"]))
+        add(1227, 101, "New Year", film("newyear", "New Year's Eve", "season", ["with_keywords": "613", "vote_count.gte": "30"]))
+        add(1115, 1130, "Thanksgiving", film("thanksgiving", "Thanksgiving", "season", ["with_keywords": "4543", "vote_count.gte": "30"]))
+        add(201, 214, "Valentine's Day", film("valentines", "Date Night", "season",
+                                              ["with_genres": "10749", "vote_average.gte": "7", "vote_count.gte": "500"]))
+        add(102, 228, "winter", keyword("winter", "Snowed In", "season", "10794|1442", media: .movie))
+        add(601, 630, "Pride Month", keyword("pride", "Pride", "season", "158718"))
+        add(615, 831, "summer", keyword("summer", "Summer Movies", "season", "13088|14714|966", media: .movie))
+        add(615, 831, "summer", film("summer.blockbusters", "Summer Blockbusters", "season",
+                                     ["sort_by": "revenue.desc", "vote_count.gte": "3000", "with_genres": "28|12"]))
+        return out
     }
 
     // MARK: Lists
@@ -996,16 +1055,22 @@ enum CueRows {
         return await list(isMovie ? "/discover/movie" : "/discover/tv", full, isMovie: isMovie)
     }
 
-    /// A recipe's titles: TMDB's first page, the second too when you've
-    /// seen most of the first.
+    /// A recipe's titles: TMDB's pages until `fetchUntil` you haven't seen
+    /// (or a page comes back short: the list's end).
     private static func titles(of recipe: Recipe, seen: Set<String>) async -> [Title] {
-        func page(_ number: Int) async -> [Title] {
+        func page(_ number: Int) async -> (titles: [Title], full: Bool) {
             async let films: [Title] = recipe.movie == nil ? [] : discover(recipe.movie!, isMovie: true, page: number)
             async let shows: [Title] = recipe.tv == nil ? [] : discover(recipe.tv!, isMovie: false, page: number)
-            return interleave(await films, await shows)
+            let (a, b) = (await films, await shows)
+            // (A page loses a few to missing pictures or ids: "full" is near 20.)
+            return (interleave(a, b), max(a.count, b.count) >= 15)
         }
-        var all = await page(1)
-        if all.filter({ !seen.contains($0.item.id) }).count < 12 { all += await page(2) }
+        var all: [Title] = []
+        for number in 1...maxPages {
+            let next = await page(number)
+            all += next.titles
+            if !next.full || all.filter({ !seen.contains($0.item.id) }).count >= fetchUntil { break }
+        }
         return all
     }
 
@@ -1082,6 +1147,9 @@ enum CueRows {
         let tab: String
         let model: Model
         let seen: Set<String>
+        /// Shows you started and left: allowed, further back.
+        let left: Set<String>
+        let passes: Passes
         let day: String
         var rows: [Row] = []
         var why: [Why] = []
@@ -1093,10 +1161,12 @@ enum CueRows {
         /// else the best for you first, then the better and more popular.
         @discardableResult
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
-                          keepOrder: Bool = false, reason: String) -> Bool {
+                          keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
+                          own: Bool = false, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
-                unique.insert($0.item.id).inserted && !(fresh && seen.contains($0.item.id))
+                unique.insert($0.item.id).inserted
+                    && !(fresh && (seen.contains($0.item.id) || passes.isOut($0.item.id, day: day)))
             }
             var ordered = candidates
             if !keepOrder {
@@ -1109,12 +1179,16 @@ enum CueRows {
                         + 0.25 * (1 - Double(index) / count)
                         + 0.15 * CueRows.jitter(day, id, title.item.id)
                         - 0.35 * Double(used[title.item.id] ?? 0)
+                        - 0.12 * Double(passes.count(title.item.id))
+                        - (left.contains(title.item.id) ? 0.3 : 0)
                     return (title, score)
                 }
                 ordered = scored.sorted { $0.1 > $1.1 }.map(\.0)
             }
-            let shown = ordered.filter { (used[$0.item.id] ?? 0) < 2 }.prefix(CueRows.rowLength)
-            guard shown.count >= CueRows.minimumTitles else { return false }
+            // (Your own rows show all of theirs: a title elsewhere twice is
+            // still one you left or finished.)
+            let shown = ordered.filter { own || (used[$0.item.id] ?? 0) < 2 }.prefix(CueRows.rowLength)
+            guard shown.count >= minimum else { return false }
             for title in shown { used[title.item.id, default: 0] += 1 }
             rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item)))
             why.append(Why(tab: tab, title: title, reason: reason))
@@ -1123,16 +1197,18 @@ enum CueRows {
     }
 
     /// The best matches for your taste across everything fetched today.
-    private static func topPicks(_ pool: [Title], model: Model, seen: Set<String>, day: String,
+    private static func topPicks(_ pool: [Title], model: Model, seen: Set<String>, passes: Passes, day: String,
                                  isMovie: Bool?) -> [Title] {
         guard !model.taste.isEmpty else { return [] }
         var unique = Set<String>()
         let candidates = pool.filter {
-            (isMovie == nil || $0.isMovie == isMovie) && !seen.contains($0.item.id) && unique.insert($0.item.id).inserted
+            (isMovie == nil || $0.isMovie == isMovie) && !seen.contains($0.item.id)
+                && !passes.isOut($0.item.id, day: day) && unique.insert($0.item.id).inserted
         }
         let top = max(candidates.map(model.affinity).max() ?? 0, 0.0001)
         return candidates
-            .map { ($0, 0.75 * model.affinity($0) / top + 0.25 * quality($0.traits) + 0.1 * jitter(day, "picks", $0.item.id)) }
+            .map { ($0, 0.75 * model.affinity($0) / top + 0.25 * quality($0.traits)
+                        + 0.1 * jitter(day, "picks", $0.item.id) - 0.12 * Double(passes.count($0.item.id))) }
             .sorted { $0.1 > $1.1 }
             .prefix(rowLength)
             .map(\.0)
@@ -1167,10 +1243,18 @@ enum CueRows {
         let titles: [Title]
     }
 
-    static func build(watches: [Watch], seen: Set<String>, seeds: [String], last: Saved?) async -> Saved {
+    static func build(watches: [Watch], standings full: Standings, seeds: [String], last: Saved?,
+                      passes: Passes) async -> Saved {
         let now = Date()
         let day = dayKey(now)
         let region = region
+        // Finished or being watched: out of the rows. Left: allowed, further
+        // back, and in Pick Back Up.
+        let standings = full.states
+        let seen = Set(standings.filter { $0.value != .left }.keys)
+        let left = Set(standings.filter { $0.value == .left }.keys)
+        let byID = Dictionary(watches.map { ($0.id, $0) }) { a, _ in a }
+        async let ownTask = own(watches: watches, standings: full, now: now, day: day)
         async let knownTask = known(watches, now: now)
         async let fixedTask = fixed(region: region)
         async let servicesTask = services(count: 3, region: region)
@@ -1192,20 +1276,30 @@ enum CueRows {
         for (recipe, rel) in zip(recipes, relevance) {
             let chance = jitter(day, recipe.id)
             let fit = recipe.about.isEmpty ? recipe.broad : rel.value / topRelevance
-            let value = taste.isEmpty
+            // Rows you go through without looking along sink; rows you
+            // explore rise a little.
+            let (passed, explored) = passes.row(recipe.id, day: day)
+            let habit = 0.06 * Double(min(explored, 2)) - 0.08 * Double(min(passed, 3))
+            let inSeason = recipe.season == nil ? 0 : 0.3
+            let value = (taste.isEmpty
                 ? chance + 0.3 * recipe.broad
-                : 0.65 * fit + 0.35 * chance - (previous.contains(recipe.id) ? 0.12 : 0)
+                : 0.65 * fit + 0.35 * chance - (previous.contains(recipe.id) ? 0.12 : 0)) + habit + inSeason
             score[recipe.id] = value
             let figure = String(format: "%.2f", value)
-            if taste.isEmpty {
-                reason[recipe.id] = "Today's rotation: no taste yet (\(figure))"
+            func days(_ n: Int) -> String { n == 1 ? "1 day" : "\(n) days" }
+            let habitNote = passed > explored ? ", passed over \(days(passed))"
+                : explored > 0 ? ", explored \(days(explored))" : ""
+            if let season = recipe.season {
+                reason[recipe.id] = "For \(season)\(habitNote) (\(figure))"
+            } else if taste.isEmpty {
+                reason[recipe.id] = "Today's rotation: no taste yet\(habitNote) (\(figure))"
             } else if let feature = rel.because, (taste.shares[feature] ?? 0) > 0 {
                 let share = Int(((taste.shares[feature] ?? 0) * 100).rounded())
-                reason[recipe.id] = "\(label(feature, taste)): \(share) % of your watching (\(figure))"
+                reason[recipe.id] = "\(label(feature, taste)): \(share) % of your watching\(habitNote) (\(figure))"
             } else if recipe.about.isEmpty {
-                reason[recipe.id] = "For anyone, in today's rotation (\(figure))"
+                reason[recipe.id] = "For anyone, in today's rotation\(habitNote) (\(figure))"
             } else {
-                reason[recipe.id] = "Something different, in today's rotation (\(figure))"
+                reason[recipe.id] = "Something different, in today's rotation\(habitNote) (\(figure))"
             }
         }
         let ranked = recipes.sorted { (score[$0.id] ?? 0) > (score[$1.id] ?? 0) }
@@ -1235,10 +1329,12 @@ enum CueRows {
                         titles: await list(path, isMovie: known.isMovie))
         }.filter { !$0.name.isEmpty }
         let services = await servicesTask
+        let own = await ownTask
 
         let pool = fixed.all + fetched.values.flatMap { $0 } + seedRows.flatMap(\.titles)
         let picksReason = "Your best matches among today's \(Set(pool.map(\.item.id)).count) titles"
         let seedReason = "From your recent watching"
+        let newReason = "Always here, your shows first"
         let serviceReason = "One of the biggest services in \(Locale.current.localizedString(forRegionCode: region) ?? region)"
 
         func becauseRow(_ layout: inout Layout, _ seed: Seed?) {
@@ -1256,7 +1352,7 @@ enum CueRows {
             default: titles = interleave(service.films, service.shows)
             }
             layout.add("service.\(service.provider.id)", "Popular on \(service.provider.name)", titles,
-                       reason: serviceReason)
+                       fresh: false, reason: serviceReason)
         }
         /// The tab's catalogue rows, `count` of them, with the fixed rows
         /// set in among them (`inserts`, by how many catalogue rows come
@@ -1280,27 +1376,72 @@ enum CueRows {
             insert(upTo: .max)
         }
 
+        /// Shows you started and left, the most watched and latest first.
+        func pickBackUp(_ layout: inout Layout) {
+            layout.add("pickbackup", "Pick Back Up", own.pickBackUp, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
+                       reason: "Shows you started, untouched for over a month")
+        }
+        /// Some days (`rewatchChance`): what you finished long ago, for the
+        /// season where it fits, else from a year ago, else any.
+        func rewatch(_ layout: inout Layout) {
+            guard jitter(day, "rewatch") < rewatchChance else { return }
+            let tab = layout.tab
+            let media: (Title) -> Bool = { title in
+                switch tab {
+                case "movie": return title.isMovie
+                case "series": return !title.isMovie
+                default: return true
+                }
+            }
+            func ranked(_ titles: [Title]) -> [Title] {
+                titles.filter(media).sorted {
+                    func score(_ t: Title) -> Double {
+                        amount(byID[t.item.id] ?? Watch(id: "", type: "", last: now)) + 0.3 * quality(t.traits)
+                            + 0.3 * jitter(day, "rewatch", t.item.id)
+                    }
+                    return score($0) > score($1)
+                }
+            }
+            for (season, keywords) in seasonalKeywords(now: now) {
+                let titles = ranked(own.rewatch.filter { !Set($0.traits.keywords).isDisjoint(with: keywords) })
+                if layout.add("rewatch.season", "\(season.prefix(1).uppercased() + season.dropFirst()) Favourites",
+                              titles, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
+                              reason: "For \(season): titles you finished before") { return }
+            }
+            let yearAgo = ranked(own.rewatch.filter { title in
+                let ago = now.timeIntervalSince(byID[title.item.id]?.last ?? now) / 86_400
+                return (335...395).contains(ago)
+            })
+            if jitter(day, "rewatch.year") < 0.5,
+               layout.add("rewatch.year", "A Year Ago This Month", yearAgo, fresh: false, keepOrder: true,
+                          minimum: minimumOwn, own: true, reason: "What you were watching a year ago") { return }
+            layout.add("rewatch", "Watch Again", ranked(own.rewatch), fresh: false, keepOrder: true,
+                       minimum: minimumOwn, own: true, reason: "Finished at least \(rewatchAfterDays) days ago, some days")
+        }
+
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
         func seed(_ index: Int) -> Seed? { index < homeSeeds.count ? homeSeeds[index] : nil }
 
-        var home = Layout(tab: "home", model: model, seen: seen, day: day)
-        home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen, day: day, isMovie: nil),
+        var home = Layout(tab: "home", model: model, seen: seen, left: left, passes: passes, day: day)
+        home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: nil),
                  keepOrder: true, reason: picksReason)
         becauseRow(&home, seed(0))
         home.add("trending", "Trending Today", fixed.trendingAll, fresh: false, keepOrder: true,
                  reason: "Always here")
         themed(&home, homeRecipes, count: 15, inserts: [
-            (1, { $0.add("ontheair", "New Episodes This Week", fixed.onTheAir, fresh: false, keepOrder: true,
-                         reason: "Always here") }),
+            (1, { $0.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
+                         keepOrder: true, reason: newReason) }),
             (2, { serviceRow(&$0, 0) }),
+            (3, { pickBackUp(&$0) }),
             (4, { becauseRow(&$0, seed(1)) }),
+            (5, { rewatch(&$0) }),
             (6, { serviceRow(&$0, 1) }),
             (8, { becauseRow(&$0, seed(2)) }),
             (10, { serviceRow(&$0, 2) }),
         ])
 
-        var movies = Layout(tab: "movie", model: model, seen: seen, day: day)
-        movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen, day: day, isMovie: true),
+        var movies = Layout(tab: "movie", model: model, seen: seen, left: left, passes: passes, day: day)
+        movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: true),
                    keepOrder: true, reason: picksReason)
         becauseRow(&movies, seedRows.first { $0.known.isMovie })
         movies.add("trending", "Trending Movies", fixed.trendingMovies, fresh: false, keepOrder: true,
@@ -1310,27 +1451,30 @@ enum CueRows {
             (1, { serviceRow(&$0, 0) }),
             (3, { $0.add("upcoming", "Coming Soon", fixed.comingSoon, fresh: false, keepOrder: true,
                          reason: "Always here") }),
-            (5, { $0.add("popular", "Popular Movies", fixed.popularMovies, reason: "Always here") }),
+            (5, { $0.add("popular", "Popular Movies", fixed.popularMovies, fresh: false, reason: "Always here") }),
+            (6, { rewatch(&$0) }),
             (7, { serviceRow(&$0, 1) }),
-            (9, { $0.add("toprated", "Top Rated Movies", fixed.topMovies, reason: "Always here") }),
+            (9, { $0.add("toprated", "Top Rated Movies", fixed.topMovies, fresh: false, reason: "Always here") }),
             (11, { serviceRow(&$0, 2) }),
         ])
 
-        var shows = Layout(tab: "series", model: model, seen: seen, day: day)
-        shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen, day: day, isMovie: false),
+        var shows = Layout(tab: "series", model: model, seen: seen, left: left, passes: passes, day: day)
+        shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: false),
                   keepOrder: true, reason: picksReason)
         becauseRow(&shows, seedRows.first { !$0.known.isMovie })
         shows.add("trending", "Trending Shows", fixed.trendingShows, fresh: false, keepOrder: true,
                   reason: "Always here")
-        shows.add("ontheair", "New Episodes This Week", fixed.onTheAir, fresh: false, keepOrder: true,
-                  reason: "Always here")
+        shows.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
+                  keepOrder: true, reason: newReason)
         themed(&shows, seriesRecipes, count: 12, inserts: [
             (1, { serviceRow(&$0, 0) }),
-            (3, { $0.add("airingtoday", "Airing Today", fixed.airingToday, fresh: false, keepOrder: true,
-                         reason: "Always here") }),
-            (5, { $0.add("popular", "Popular Shows", fixed.popularShows, reason: "Always here") }),
+            (2, { pickBackUp(&$0) }),
+            (3, { $0.add("airingtoday", "Airing Today", own.airingToday + fixed.airingToday, fresh: false,
+                         keepOrder: true, reason: newReason) }),
+            (5, { $0.add("popular", "Popular Shows", fixed.popularShows, fresh: false, reason: "Always here") }),
+            (6, { rewatch(&$0) }),
             (7, { serviceRow(&$0, 1) }),
-            (9, { $0.add("toprated", "Top Rated Shows", fixed.topShows, reason: "Always here") }),
+            (9, { $0.add("toprated", "Top Rated Shows", fixed.topShows, fresh: false, reason: "Always here") }),
             (11, { serviceRow(&$0, 2) }),
         ])
 
@@ -1341,7 +1485,8 @@ enum CueRows {
         let layouts = [home, movies, shows]
         return Saved(builtAt: now, seeds: seeds, rows: layouts.flatMap(\.rows), day: day,
                      picked: Array(Set(layouts.flatMap(\.themed))), previous: previous,
-                     titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why))
+                     titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why),
+                     passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name })
     }
 
     /// How much a row is about you: its traits' pull (each condition its
@@ -1384,4 +1529,298 @@ enum CueRows {
 
 private func + (lhs: [String: String], rhs: [String: String]) -> [String: String] {
     lhs.merging(rhs) { $1 }
+}
+
+// MARK: - Where you are in what you watched
+
+extension CueRows {
+    /// A title you watched or started, for the rows: finished (a film
+    /// watched, a show caught up) and being watched (Continue Watching, or
+    /// an episode in the last 30 days) stay out; left (a show started, then
+    /// untouched) is allowed and gets Pick Back Up.
+    enum Standing: Sendable { case finished, watching, left }
+
+    struct Standings: Sendable {
+        var states: [String: Standing] = [:]
+        /// Your shows' latest aired episode (New Episodes, Airing Today).
+        var aired: [String: Date] = [:]
+    }
+
+    /// Untouched this long, a show you started counts as left (Next Up's
+    /// window: it's gone from Continue Watching by then).
+    static let leftAfter: TimeInterval = 30 * 24 * 60 * 60
+    /// Shows looked up for where you are (their episode lists, the add-ons').
+    static let standingShows = 80
+
+    /// A show is measured by the furthest episode watched: a season skipped
+    /// behind it doesn't count; only an aired episode after it leaves the
+    /// show unfinished.
+    @MainActor static func standings(_ history: BillboardPicks.History?) async -> Standings {
+        guard let history else { return Standings() }
+        let now = Date()
+        var out = Standings()
+        var shows: [Watch] = []
+        for watch in history.watches where watch.watched > 0 || watch.started {
+            if watch.type == "movie" {
+                out.states[watch.id] = watch.watched > 0 ? .finished : .watching
+            } else {
+                shows.append(watch)
+            }
+        }
+        let checked = Array(shows.prefix(standingShows))
+        let found: [String: (caughtUp: Bool?, aired: Date?)] = await withTaskGroup(
+            of: (String, Bool?, Date?).self) { group in
+            guard let addonManager = AddonManager.shared else { return [:] }
+            for watch in checked {
+                group.addTask { @MainActor in
+                    let meta = await SeriesEpisodes.fullMeta(
+                        for: MetaItem(id: watch.id, type: watch.type, name: watch.id), addonManager: addonManager)
+                    let aired = SeriesEpisodes.latestAired(in: meta)?.aired
+                    let all = SeriesEpisodes.inPlayOrder(meta).filter { ($0.season ?? 0) > 0 }
+                    guard !all.isEmpty else { return (watch.id, nil, aired) }
+                    let watched = { (ep: MetaVideo) in history.watchedEpisode(watch.id, ep.season ?? 0, ep.episode ?? 0) }
+                    guard let furthest = all.lastIndex(where: watched) else { return (watch.id, false, aired) }
+                    return (watch.id, !all[(furthest + 1)...].contains(where: \.hasAired), aired)
+                }
+            }
+            var found: [String: (caughtUp: Bool?, aired: Date?)] = [:]
+            for await (id, caughtUp, aired) in group { found[id] = (caughtUp, aired) }
+            return found
+        }
+        for watch in shows {
+            out.aired[watch.id] = found[watch.id]?.aired
+            if watch.watched == 0 {
+                out.states[watch.id] = .watching
+            } else if found[watch.id]?.caughtUp == true {
+                out.states[watch.id] = .finished
+            } else {
+                out.states[watch.id] = watch.started || now.timeIntervalSince(watch.last) < leftAfter ? .watching : .left
+            }
+        }
+        return out
+    }
+
+    /// Your own rows' titles: shows left, and what you finished long ago.
+    struct Own: Sendable {
+        var pickBackUp: [Title] = []
+        var rewatch: [Title] = []
+        /// Your shows with an episode out this week, the latest first.
+        var newEpisodes: [Title] = []
+        var airingToday: [Title] = []
+    }
+
+    /// Watch Again and its kind: finished at least this long ago.
+    static let rewatchAfterDays = 180
+    /// The days a rewatch row is up (of the day's chance).
+    static let rewatchChance = 0.45
+    /// Finished titles looked up for it (a request each, kept a month).
+    static let rewatchLookups = 60
+
+    static func own(watches: [Watch], standings full: Standings, now: Date, day: String) async -> Own {
+        let standings = full.states
+        let weekAgo = now.addingTimeInterval(-7 * 86_400)
+        let airing = watches.filter { watch in full.aired[watch.id].map { $0 > weekAgo } ?? false }
+            .sorted { (full.aired[$0.id] ?? now) > (full.aired[$1.id] ?? now) }
+        let left = watches.filter { standings[$0.id] == .left }
+            .sorted { engagement($0, now: now) > engagement($1, now: now) }
+            .prefix(rowLength)
+        let longAgo = now.addingTimeInterval(-Double(rewatchAfterDays) * 86_400)
+        // A year ago first (its row needs them), then the most watched, a
+        // little of the day's chance among them.
+        let finished = watches.filter { standings[$0.id] == .finished && $0.last < longAgo }
+            .sorted { a, b in
+                func score(_ w: Watch) -> Double {
+                    let ago = now.timeIntervalSince(w.last) / 86_400
+                    return ((335...395).contains(ago) ? 1 : 0) + amount(w) + 0.5 * jitter(day, "rewatch", w.id)
+                }
+                return score(a) > score(b)
+            }
+            .prefix(rewatchLookups)
+        struct Box: Sendable { let title: Title? }
+        async let leftTitles = boundedConcurrentMap(Array(left), limit: 8) {
+            Box(title: await TMDBService.cueTitle(imdbID: $0.id, type: $0.type))
+        }
+        async let airingTitles = boundedConcurrentMap(airing, limit: 8) {
+            Box(title: await TMDBService.cueTitle(imdbID: $0.id, type: $0.type))
+        }
+        async let finishedTitles = boundedConcurrentMap(Array(finished), limit: 8) {
+            Box(title: await TMDBService.cueTitle(imdbID: $0.id, type: $0.type))
+        }
+        let yours = await airingTitles.compactMap(\.title)
+        let today = yours.filter { full.aired[$0.item.id].map(Calendar.current.isDateInToday) ?? false }
+        return Own(pickBackUp: await leftTitles.compactMap(\.title), rewatch: await finishedTitles.compactMap(\.title),
+                   newEpisodes: yours, airingToday: today)
+    }
+
+    /// The seasonal rows' keywords in season now, by season.
+    static func seasonalKeywords(now: Date) -> [(String, Set<Int>)] {
+        var out: [(String, Set<Int>)] = []
+        for recipe in seasonal(now: now) {
+            guard let season = recipe.season else { continue }
+            let text = [recipe.movie?["with_keywords"], recipe.tv?["with_keywords"]].compactMap { $0 }.joined(separator: "|")
+            let ids = Set(text.split(whereSeparator: { $0 == "|" || $0 == "," }).compactMap { Int($0) })
+            guard !ids.isEmpty else { continue }
+            if let index = out.firstIndex(where: { $0.0 == season }) { out[index].1.formUnion(ids) }
+            else { out.append((season, ids)) }
+        }
+        return out
+    }
+}
+
+// MARK: - What you pass over
+
+extension CueRows {
+    /// What you looked at on Cue's rows and left: a title the focus rested
+    /// on (`dwell`) and didn't open, a row gone through without moving
+    /// along it. Days, not times: one count a day. On the device, per
+    /// profile, the last `keep` days.
+    struct Passes: Codable, Sendable {
+        /// Title id: the days it was looked at and not opened.
+        var titles: [String: [String]] = [:]
+        /// Catalogue row (recipe id): the days gone through, and explored.
+        var passedRows: [String: [String]] = [:]
+        var exploredRows: [String: [String]] = [:]
+
+        static let keep = 30
+        /// Looked at and left this many days: out of the rows until its
+        /// last pass is `keep` days old.
+        static let outAfter = 3
+        /// A row's habit: the last two weeks.
+        static let rowWindow = 14
+
+        func count(_ id: String) -> Int { titles[id]?.count ?? 0 }
+
+        func isOut(_ id: String, day: String) -> Bool { count(id) >= Self.outAfter }
+
+        func out(day: String) -> [String] { titles.filter { $0.value.count >= Self.outAfter }.map(\.key) }
+
+        func row(_ recipe: String, day: String) -> (passed: Int, explored: Int) {
+            let since = CueRows.dayKey(Date().addingTimeInterval(-Double(Self.rowWindow) * 86_400))
+            let explored = (exploredRows[recipe] ?? []).filter { $0 >= since }
+            let passed = (passedRows[recipe] ?? []).filter { $0 >= since && !explored.contains($0) }
+            return (passed.count, explored.count)
+        }
+
+        mutating func prune(today: String) {
+            let since = CueRows.dayKey(Date().addingTimeInterval(-Double(Self.keep) * 86_400))
+            func trim(_ map: inout [String: [String]]) {
+                map = map.compactMapValues { days in
+                    let kept = days.filter { $0 >= since }
+                    return kept.isEmpty ? nil : kept
+                }
+            }
+            trim(&titles)
+            trim(&passedRows)
+            trim(&exploredRows)
+        }
+    }
+
+    /// Records `Passes` from Home's, Movies' and Series' focus.
+    @MainActor final class Memory {
+        static let shared = Memory()
+
+        /// Focus resting this long on a title is looking at it.
+        static let dwell: Double = 1.5
+        /// Moving this far along a row is exploring it.
+        static let explore = 2
+
+        private var passes = Passes()
+        private var profile: Int?
+        private var dwellTask: Task<Void, Never>?
+        private var saveTask: Task<Void, Never>?
+        private var current: (row: String, furthest: Int)?
+
+        private static var activeProfile: Int {
+            UserDefaults.standard.object(forKey: ProfileStore.activeKey) as? Int ?? 1
+        }
+
+        private static func url(_ profile: Int) -> URL {
+            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("CueCache/cue-rows/passes-p\(profile).json")
+        }
+
+        /// This profile's passes (read again after a profile change).
+        func snapshot() -> Passes {
+            load()
+            return passes
+        }
+
+        private func load() {
+            let active = Self.activeProfile
+            guard profile != active else { return }
+            profile = active
+            current = nil
+            passes = (try? Data(contentsOf: Self.url(active)))
+                .flatMap { try? JSONDecoder().decode(Passes.self, from: $0) } ?? Passes()
+        }
+
+        /// The catalogue row behind a row id ("cue.home.r.horror"), if any.
+        private static func recipe(_ row: String) -> String? {
+            guard row.hasPrefix("cue."), let range = row.range(of: ".r.") else { return nil }
+            return String(row[range.upperBound...])
+        }
+
+        func focused(row: String, item: MetaItem, index: Int) {
+            guard row.hasPrefix("cue.") else { finishRow(); dwellTask?.cancel(); return }
+            load()
+            if current?.row != row {
+                finishRow()
+                current = (row, index)
+            } else if let furthest = current?.furthest, index > furthest {
+                current?.furthest = index
+            }
+            dwellTask?.cancel()
+            let id = item.id
+            dwellTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.dwell))
+                guard !Task.isCancelled, let self else { return }
+                self.mark(id)
+            }
+        }
+
+        func opened(_ id: String) {
+            load()
+            dwellTask?.cancel()
+            if passes.titles.removeValue(forKey: id) != nil { save() }
+            if let row = current?.row, let recipe = Self.recipe(row) {
+                note(&passes.exploredRows, recipe)
+                current = nil
+            }
+        }
+
+        private func mark(_ id: String) {
+            note(&passes.titles, id)
+        }
+
+        private func finishRow() {
+            guard let (row, furthest) = current else { return }
+            current = nil
+            guard let recipe = Self.recipe(row) else { return }
+            if furthest >= Self.explore { note(&passes.exploredRows, recipe) }
+            else { note(&passes.passedRows, recipe) }
+        }
+
+        private func note(_ map: inout [String: [String]], _ key: String) {
+            let today = CueRows.dayKey(Date())
+            guard map[key]?.last != today else { return }
+            map[key, default: []].append(today)
+            save()
+        }
+
+        private func save() {
+            saveTask?.cancel()
+            guard let profile else { return }
+            saveTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, var passes = self?.passes else { return }
+                passes.prune(today: CueRows.dayKey(Date()))
+                let url = Self.url(profile)
+                await Task.detached(priority: .utility) {
+                    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                             withIntermediateDirectories: true)
+                    if let data = try? JSONEncoder().encode(passes) { try? data.write(to: url, options: .atomic) }
+                }.value
+            }
+        }
+    }
 }

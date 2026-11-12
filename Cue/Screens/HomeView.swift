@@ -215,8 +215,10 @@ final class HomeViewModel: ObservableObject {
         if CueRows.due(saved, seeds: seeds) {
             isLoading = entries.isEmpty
             let done = AppProbe.begin("data", "cue rows")
-            let built = await CueRows.build(watches: history?.watches ?? [], seen: history?.seen ?? [],
-                                            seeds: seeds, last: saved)
+            let standings = await CueRows.standings(history)
+            let built = await CueRows.build(watches: history?.watches ?? [], standings: standings,
+                                            seeds: seeds, last: saved,
+                                            passes: CueRows.Memory.shared.snapshot())
             done("\(built.rows.count) rows, taste from \(built.titles) titles")
             guard loadGeneration == generation else { return }
             if !built.rows.isEmpty {

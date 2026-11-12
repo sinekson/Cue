@@ -180,12 +180,31 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   little). Fixed rows set among them: Top Picks, Because You Watched (the
   latest title, two more of the last five by the day), trending, new
   episodes, cinemas, the country's three biggest services. Titles in a row
-  ordered for you, seen ones out, a title in two rows at most per tab.
+  ordered for you, a title in two rows at most per tab; rows up to 25
+  (TMDB's pages until 30 unseen, at most 3), under 10 not shown. Watched titles stay
+  in the world's rows (trending, new episodes, airing today, cinemas,
+  coming soon, popular, top rated, the services: the list is the point),
+  New Episodes and Airing Today with your shows first; in the rows that
+  recommend (picks, Because You Watched, the catalogue): finished (a film, a show caught up to its furthest episode watched: a
+  season skipped behind it doesn't count) and being watched (Continue
+  Watching, or watched in 30 days) are out; a show left 30 days is allowed
+  further back and in Pick Back Up (Home, Series). Some days (45 %) a
+  rewatch row of what you finished 180 days ago or more: the season's
+  ("Christmas Favourites", by its keywords), else A Year Ago This Month,
+  else Watch Again (Comfort Shows needs rewatch data we don't have). Your
+  own rows show at 5 and ignore the two-rows cap.
   Rebuilt on a new day, after 6 h or when the recent watches change, shown
   on the next load, never mid-browse. Developer → Why These Rows: the taste
   and each row's reason. Each row says which tabs show it (`HomeRow.tabs`).
-  Next: passed-over titles and seasonal rows, thumbs ratings on the device,
-  service badges. On the device only, per profile; never the Nuvio sync.
+  Passed over (`CueRows.Memory`, `Passes`): focus resting 1.5 s on a title
+  of Cue's rows without opening it counts once a day; three days and it's
+  out of the rows (a pass ages out after 30 days), fewer push it back; a
+  catalogue row gone through without moving 2 along it sinks, one explored
+  or opened from rises (last 14 days). Seasonal rows only in their dates
+  (Halloween, Christmas, New Year, Thanksgiving, Valentine's, winter, Pride,
+  summer), lifted while they last; This Anime Season always (an episode out
+  since the season began). Talk and news shows never in a row.
+  Next: thumbs ratings on the device, service badges. On the device only, per profile; never the Nuvio sync.
 - **Under Home's box** (the posters' height, not grown): no name, the
   facts line in the title's style, then the description, up to 4 lines,
   top-aligned, secondary (badges there, on the line or in the box, were
