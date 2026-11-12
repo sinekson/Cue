@@ -225,7 +225,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   recommend (picks, Because You Watched, the catalogue): finished (a film, a show caught up to its furthest episode watched: a
   season skipped behind it doesn't count) and being watched (Continue
   Watching, or watched in 30 days) are out; a show left 30 days is allowed
-  further back and in Pick Back Up (Home, Series). Some days (45 %) a
+  further back and in Pick Back Up (Home, Series). Dropped (a film stopped
+  before 20 % and left 14 days; a show left 30 days after one or two
+  episodes, three or more is Pick Back Up) is out of those rows, not a
+  Because You Watched seed, and counts against its traits at half Not for
+  Me's; a rating overrides it (Developer → Why These Rows lists them).
+  Opening Details, trailers and Search opens as signals, and runtime as a
+  trait, were talked over: noise or said already. Some days (45 %) a
   rewatch row of what you finished 180 days ago or more: the season's
   ("Christmas Favourites", by its keywords), else A Year Ago This Month,
   else Watch Again (Comfort Shows needs rewatch data we don't have). Your

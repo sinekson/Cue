@@ -88,11 +88,14 @@ enum BillboardPicks {
         struct Watch: Sendable {
             let id: String
             let type: String
-            let last: Date
+            var last: Date
             /// Episodes watched; a film, 1 once watched.
             var watched = 0
             var started = false
             var saved = false
+            /// How far into the latest started film or episode (0…1).
+            var progress = 0.0
+            var name = ""
         }
 
         init(progress: ProgressStore, watched: WatchedStore, library: LibraryStore) {
@@ -130,16 +133,18 @@ enum BillboardPicks {
             self.watchedEpisode = { watched.isWatched(contentID: $0, season: $1, episode: $2) }
 
             var watches: [String: Watch] = [:]
-            func note(_ id: String, _ type: String, _ date: Date, _ change: (inout Watch) -> Void) {
+            func note(_ id: String, _ type: String, _ name: String, _ date: Date, _ change: (inout Watch) -> Void) {
                 var watch = watches[id] ?? Watch(id: id, type: type, last: date)
-                if date > watch.last { watch = Watch(id: id, type: type, last: date, watched: watch.watched,
-                                                     started: watch.started, saved: watch.saved) }
+                if date > watch.last { watch.last = date }
+                if watch.name.isEmpty { watch.name = name }
                 change(&watch)
                 watches[id] = watch
             }
-            for entry in started { note(entry.metaID, entry.type, entry.updatedAt) { $0.started = true } }
-            for item in watched.items.values { note(item.contentID, item.contentType, item.watchedAt) { $0.watched += 1 } }
-            for saved in library.sorted { note(saved.id, saved.type, saved.addedAt) { $0.saved = true } }
+            for entry in started {
+                note(entry.metaID, entry.type, entry.name, entry.updatedAt) { $0.started = true; $0.progress = entry.fraction }
+            }
+            for item in watched.items.values { note(item.contentID, item.contentType, item.title, item.watchedAt) { $0.watched += 1 } }
+            for saved in library.sorted { note(saved.id, saved.type, saved.name, saved.addedAt) { $0.saved = true } }
             self.watches = watches.values.sorted { $0.last > $1.last }
         }
     }
@@ -364,6 +369,8 @@ enum CueRows {
         let why: [Why]
         /// Titles left out for being passed over, by name.
         let passedOver: [String]
+        /// Titles you dropped, by name (nil: saved before they were read).
+        var dropped: [String]?
     }
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
@@ -554,24 +561,27 @@ enum CueRows {
     }
 
     /// A rating's say: liked and loved count more, Not for Me against
-    /// (`taste` takes its traits off).
-    static func rated(_ weight: Double, _ rating: TitleRatings.Rating?) -> Double {
+    /// (`taste` takes its traits off), dropped against at half of that.
+    static func rated(_ weight: Double, _ rating: TitleRatings.Rating?, dropped: Bool = false) -> Double {
         switch rating {
         case .love: return weight * 2
         case .like: return weight * 1.5
         case .notForMe: return -0.5 * max(weight, 0.5)
-        case nil: return weight
+        case nil: return dropped ? -0.25 * max(weight, 0.5) : weight
         }
     }
 
     /// Rated titles not in your watching count too, as a saved one.
-    static func known(_ watches: [Watch], ratings: [String: TitleRatings.Entry], now: Date) async -> [Known] {
+    static func known(_ watches: [Watch], ratings: [String: TitleRatings.Entry], dropped: Set<String>,
+                      now: Date) async -> [Known] {
         var all = watches
         let watched = Set(watches.map(\.id))
         for (id, entry) in ratings where !watched.contains(id) {
             all.append(Watch(id: id, type: entry.type, last: entry.at, saved: true))
         }
-        let weighed = all.map { ($0, rated(engagement($0, now: now), ratings[$0.id]?.rating)) }
+        let weighed = all.map {
+            ($0, rated(engagement($0, now: now), ratings[$0.id]?.rating, dropped: dropped.contains($0.id)))
+        }
             .sorted { abs($0.1) > abs($1.1) }
             .prefix(tasteTitles)
         let boxes = await boundedConcurrentMap(Array(weighed), limit: 8) { pair -> KnownBox in
@@ -1364,6 +1374,9 @@ enum CueRows {
         let seen = Set(standings.filter { $0.value != .left }.keys)
         let out = Set(ratings.filter { $0.value.rating == .notForMe }.keys)
         let left = Set(standings.filter { $0.value == .left }.keys).subtracting(out)
+        // Dropped: out of the rows as seen, a little against its traits;
+        // a rating says more (Like or Love and it's not dropped).
+        let dropped = Set(standings.filter { $0.value == .dropped }.keys).filter { ratings[$0] == nil }
         func liking(_ id: String) -> Double {
             switch ratings[id]?.rating {
             case .love: return 0.5
@@ -1373,7 +1386,7 @@ enum CueRows {
         }
         let byID = Dictionary(watches.map { ($0.id, $0) }) { a, _ in a }
         async let ownTask = own(watches: watches, standings: full, now: now, day: day)
-        async let knownTask = known(watches, ratings: ratings, now: now)
+        async let knownTask = known(watches, ratings: ratings, dropped: dropped, now: now)
         async let fixedTask = fixed(region: region)
         async let servicesTask = services(count: 3, region: region)
         await IMDbRatings.ready()
@@ -1433,7 +1446,7 @@ enum CueRows {
 
         // "Because you watched": your latest title always, two more of your
         // recent five by the day; the first film and show for their tabs.
-        let recent = known.filter { ($0.watch.watched > 0 || $0.watch.started) && !out.contains($0.watch.id) }
+        let recent = known.filter { ($0.watch.watched > 0 || $0.watch.started) && $0.weight > 0 }
             .sorted { $0.watch.last > $1.watch.last }
             .prefix(6)
         var chosen = Array(recent.prefix(1))
@@ -1612,7 +1625,8 @@ enum CueRows {
         return Saved(builtAt: now, seeds: seeds, rows: layouts.flatMap(\.rows), day: day,
                      picked: Array(Set(layouts.flatMap(\.themed))), previous: previous,
                      titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why),
-                     passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name })
+                     passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name },
+                     dropped: watches.filter { dropped.contains($0.id) }.map { $0.name.isEmpty ? $0.id : $0.name })
     }
 
     /// How much a row is about you: its traits' pull (each condition its
@@ -1663,8 +1677,10 @@ extension CueRows {
     /// A title you watched or started, for the rows: finished (a film
     /// watched, a show caught up) and being watched (Continue Watching, or
     /// an episode in the last 30 days) stay out; left (a show started, then
-    /// untouched) is allowed and gets Pick Back Up.
-    enum Standing: Sendable { case finished, watching, left }
+    /// untouched) is allowed and gets Pick Back Up; dropped (a film
+    /// stopped early, a show given a try) stays out and counts a little
+    /// against its traits.
+    enum Standing: Sendable { case finished, watching, left, dropped }
 
     struct Standings: Sendable {
         var states: [String: Standing] = [:]
@@ -1675,6 +1691,12 @@ extension CueRows {
     /// Untouched this long, a show you started counts as left (Next Up's
     /// window: it's gone from Continue Watching by then).
     static let leftAfter: TimeInterval = 30 * 24 * 60 * 60
+    /// A film stopped before this share, untouched `droppedFilmAfter`:
+    /// dropped. A show with at most `droppedEpisodes` watched, untouched
+    /// `leftAfter`: dropped (more, and it's left: Pick Back Up).
+    static let droppedShare = 0.2
+    static let droppedFilmAfter: TimeInterval = 14 * 24 * 60 * 60
+    static let droppedEpisodes = 2
     /// Shows looked up for where you are (their episode lists, the add-ons').
     static let standingShows = 80
 
@@ -1688,7 +1710,9 @@ extension CueRows {
         var shows: [Watch] = []
         for watch in history.watches where watch.watched > 0 || watch.started {
             if watch.type == "movie" {
-                out.states[watch.id] = watch.watched > 0 ? .finished : .watching
+                out.states[watch.id] = watch.watched > 0 ? .finished
+                    : watch.progress < droppedShare && now.timeIntervalSince(watch.last) > droppedFilmAfter ? .dropped
+                    : .watching
             } else {
                 shows.append(watch)
             }
@@ -1715,10 +1739,13 @@ extension CueRows {
         }
         for watch in shows {
             out.aired[watch.id] = found[watch.id]?.aired
-            if watch.watched == 0 {
-                out.states[watch.id] = .watching
-            } else if found[watch.id]?.caughtUp == true {
+            let untouched = now.timeIntervalSince(watch.last) > leftAfter
+            if found[watch.id]?.caughtUp == true, watch.watched > 0 {
                 out.states[watch.id] = .finished
+            } else if untouched, watch.watched <= droppedEpisodes {
+                out.states[watch.id] = .dropped
+            } else if watch.watched == 0 {
+                out.states[watch.id] = .watching
             } else {
                 out.states[watch.id] = watch.started || now.timeIntervalSince(watch.last) < leftAfter ? .watching : .left
             }

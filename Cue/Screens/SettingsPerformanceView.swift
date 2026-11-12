@@ -172,6 +172,11 @@ private struct CueRowsWhyView: View {
             out.append(("Passed over", "Left out for 30 days after you looked and moved on three times: "
                         + saved.passedOver.joined(separator: ", ")))
         }
+        if let dropped = saved.dropped, !dropped.isEmpty {
+            out.append(("Dropped", "A film stopped before 20 % and left 14 days, a show left 30 days after one or two "
+                        + "episodes: out of the rows, half as much against its traits as Not for Me. "
+                        + dropped.joined(separator: ", ")))
+        }
         for tab in ["home", "movie", "series"] {
             let name = tab == "home" ? "Home" : tab == "movie" ? "Movies" : "Series"
             for why in saved.why where why.tab == tab { out.append(("\(name) · \(why.title)", why.reason)) }
