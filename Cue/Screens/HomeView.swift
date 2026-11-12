@@ -218,7 +218,8 @@ final class HomeViewModel: ObservableObject {
             let standings = await CueRows.standings(history)
             let built = await CueRows.build(watches: history?.watches ?? [], standings: standings,
                                             seeds: seeds, last: saved,
-                                            passes: CueRows.Memory.shared.snapshot())
+                                            passes: CueRows.Memory.shared.snapshot(),
+                                            ratings: TitleRatings.shared.snapshot())
             done("\(built.rows.count) rows, taste from \(built.titles) titles")
             guard loadGeneration == generation else { return }
             if !built.rows.isEmpty {

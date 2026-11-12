@@ -159,6 +159,15 @@ private struct CueRowsWhyView: View {
             out.append(("Your taste", saved.taste.map { "\($0.label) \(Int(($0.share * 100).rounded())) %" }
                 .joined(separator: " · ")))
         }
+        let ratings = TitleRatings.shared.snapshot()
+        if !ratings.isEmpty {
+            let groups = TitleRatings.Rating.allCases.reversed().compactMap { rating -> String? in
+                let names = ratings.values.filter { $0.rating == rating }.sorted { $0.at > $1.at }.map(\.name)
+                return names.isEmpty ? nil : "\(rating.name): " + names.joined(separator: ", ")
+            }
+            out.append(("Your ratings", "Love counts twice, Like one and a half; Not for Me is out of every row "
+                        + "and takes its traits off a little. " + groups.joined(separator: " · ")))
+        }
         if !saved.passedOver.isEmpty {
             out.append(("Passed over", "Left out for 30 days after you looked and moved on three times: "
                         + saved.passedOver.joined(separator: ", ")))

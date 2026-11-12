@@ -418,3 +418,198 @@ enum SummaryPanelMetrics {
 private struct SummaryPanelStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
+
+// MARK: - Rate
+
+/// Rating a title (`TitleRatings`): full screen over the page, blurred as
+/// About, in the profile wizard's look — the title's poster, the question,
+/// three round tiles with their names, what the focused one does under
+/// them. Select rates and closes (the current one again clears it); Back
+/// closes. From a card's hold menu and Details' Rate button: presented over
+/// whatever is in front, so focus goes back where it was.
+@MainActor enum RatingPanel {
+    static func present(_ item: MetaItem, watched: Bool) {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        guard let top, !(top is RatingController) else { return }
+        top.present(RatingController(item: item, watched: watched), animated: false)
+    }
+}
+
+private final class RatingController: UIViewController {
+    private let host: UIHostingController<RatingScreen>
+    private let fade = RatingFade()
+
+    init(item: MetaItem, watched: Bool) {
+        let fade = self.fade
+        var close: () -> Void = {}
+        host = UIHostingController(rootView: RatingScreen(item: item, watched: watched, fade: fade,
+                                                          onClose: { close() }))
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        close = { [weak self] in self?.close() }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        addChild(host)
+        host.view.frame = view.bounds
+        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(host.view)
+        host.didMove(toParent: self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        withAnimation(Motion.fade) { fade.shown = true }
+    }
+
+    private var closing = false
+
+    private func close() {
+        guard !closing else { return }
+        closing = true
+        withAnimation(Motion.fade) { fade.shown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.fadeDuration) { [weak self] in
+            self?.dismiss(animated: false)
+        }
+    }
+}
+
+@Observable private final class RatingFade {
+    var shown = false
+}
+
+private struct RatingScreen: View {
+    let item: MetaItem
+    let watched: Bool
+    let fade: RatingFade
+    let onClose: () -> Void
+
+    @ObservedObject private var ratings = TitleRatings.shared
+    @FocusState private var focus: TitleRatings.Rating?
+
+    static let tile: CGFloat = 132
+    static let posterSize = CGSize(width: 265, height: 398)
+
+    var body: some View {
+        let current = ratings.rating(item.id)
+        let _ = ratings.version
+        ZStack {
+            FullScreenBlur()
+            VStack(spacing: 0) {
+                RemoteImage(url: item.poster, maxDimension: Self.posterSize.height)
+                    .frame(width: Self.posterSize.width, height: Self.posterSize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.30), lineWidth: 2)
+                            .opacity(FixedFocusRing.outlines == .off ? 0 : 1)
+                    }
+                Text(watched ? "How was \(item.name)?" : "What do you think of \(item.name)?")
+                    .font(.system(size: 57, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: 1400)
+                    .padding(.top, 48)
+                HStack(spacing: 64) {
+                    ForEach(TitleRatings.Rating.allCases, id: \.self) { rating in
+                        Button {
+                            TitleRatings.shared.rate(item, rating)
+                            onClose()
+                        } label: {
+                            RatingTile(rating: rating, current: current == rating, size: Self.tile)
+                        }
+                        .buttonStyle(RatingTileStyle())
+                        .focused($focus, equals: rating)
+                    }
+                }
+                .padding(.top, 64)
+                Text(focus?.effect ?? " ")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .padding(.top, 44)
+                    .animation(nil, value: focus)
+            }
+        }
+        .frame(width: 1920, height: 1080)
+        .ignoresSafeArea()
+        .opacity(fade.shown ? 1 : 0.02)
+        .defaultFocus($focus, current ?? .like)
+        // (Set once the host is in the window: earlier, focus took the first tile.)
+        .task {
+            try? await Task.sleep(for: .milliseconds(50))
+            focus = current ?? .like
+        }
+        .onExitCommand(perform: onClose)
+    }
+}
+
+/// A rating as the wizard's round tile: the symbol on a flat round plate
+/// with the cards' rim, its name under it; the current one on the selected
+/// grey, its symbol filled; focused white, 5 % larger, the name stepping down.
+private struct RatingTile: View {
+    @Environment(\.isFocused) private var isFocused
+    let rating: TitleRatings.Rating
+    let current: Bool
+    let size: CGFloat
+
+    private var symbol: some View {
+        let fill = current ? ".fill" : ""
+        let font = Font.system(size: size * 0.3, weight: .semibold)
+        return Group {
+            switch rating {
+            case .notForMe:
+                Image(systemName: "hand.thumbsdown" + fill).font(font)
+            case .like:
+                Image(systemName: "hand.thumbsup" + fill).font(font)
+            case .love:
+                HStack(spacing: -size * 0.1) {
+                    Image(systemName: "hand.thumbsup" + fill).font(font)
+                    Image(systemName: "hand.thumbsup" + fill).font(font).offset(y: -size * 0.06)
+                }
+            }
+        }
+        .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
+    }
+
+    var body: some View {
+        let step = size * (ProfileGate.focusScale - 1) / 2
+        VStack(spacing: 22) {
+            Circle()
+                .fill(isFocused ? FlatControl.focus : current ? FlatControl.selected : FlatControl.rest)
+                .overlay { symbol }
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.30), lineWidth: 2)
+                        .opacity(FixedFocusRing.outlines == .off || isFocused ? 0 : 1)
+                }
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 18, y: 10)
+                .scaleEffect(isFocused ? ProfileGate.focusScale : 1)
+                .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
+            Text(rating.name)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(Color.white.opacity(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
+                .lineLimit(1)
+                .fixedSize()
+                .offset(y: isFocused ? step : 0)
+                .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
+        }
+        .frame(width: size + 60)
+    }
+}
+
+private struct RatingTileStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.cardPressDip(configuration.isPressed)
+    }
+}

@@ -482,6 +482,7 @@ struct DetailView: View {
 
     /// Play: the stage, the first source found on it (`PlayLauncher`), the player.
     @ObservedObject private var launcher = PlayLauncher.shared
+    @ObservedObject private var ratings = TitleRatings.shared
 
     private func play(_ video: MetaVideo?, fromStart: Bool = false) {
         launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video))
@@ -521,7 +522,7 @@ struct DetailView: View {
     @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, library, info
+        case play, library, info, rate
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -546,8 +547,9 @@ struct DetailView: View {
     @State private var aboutContentHeight: CGFloat = 0
     /// Info's glass panel (the summary) is open.
     @State private var summaryShown = false
-    /// Focus going back onto Info as its panel closes: not redirected to Play.
-    @State private var returningToInfo = false
+    /// Focus going back onto Info or Rate as its panel closes: not
+    /// redirected to Play.
+    @State private var returningTo: ActionControl?
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
@@ -647,7 +649,7 @@ struct DetailView: View {
                                    facts: about.factsBox(across: 2, width: SummaryPanelMetrics.columnWidth)
                                        .environmentObject(mdblist)) {
                     summaryShown = false
-                    returningToInfo = true
+                    returningTo = .info
                     actionFocus = .info
                 }
                 .transition(.opacity)
@@ -1324,6 +1326,26 @@ struct DetailView: View {
                         other: .init(title: "Next", icon: "chevron.right", plain: true)
                     )
                     .focused(focus, equals: .info)
+                    // Your rating, over the page (`RatingPanel`); focus
+                    // comes back here.
+                    let rating = ratings.rating(viewModel.meta.id)
+                    let icon = rating == .notForMe ? "hand.thumbsdown" : "hand.thumbsup"
+                    DetailActionButton(
+                        icon: rating == nil ? icon : icon + ".fill",
+                        title: rating?.name ?? "Rate",
+                        isPrimary: false, lit: litAction == .rate, bare: true,
+                        action: {
+                            let meta = viewModel.meta
+                            let seen = meta.isSeries ? watched.items.values.contains { $0.contentID == meta.id }
+                                : watched.isWatched(meta)
+                            returningTo = .rate
+                            RatingPanel.present(meta, watched: seen)
+                        }
+                    )
+                    .focused(focus, equals: .rate)
+                    // (No billboard button in its place: in only once
+                    // Details' own buttons are.)
+                    .opacity(BillboardOpening.shared.detailsArriving ? 0 : 1)
                 }
                 .focusSection()
                 Spacer(minLength: 0)
@@ -1361,7 +1383,7 @@ struct DetailView: View {
         // The trailer plays on between the buttons; leaving them, it fades out.
         restTrailer()
         // (Back from Info's panel: on Info, as asked — once.)
-        if new == .info, returningToInfo { returningToInfo = false; return }
+        if let new, new == returningTo { returningTo = nil; return }
         if old == nil, let new, new != .play {
             // DEFERRED, not immediate: setting @FocusState while the
             // engine's own move is still in flight made it revert —

@@ -204,7 +204,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Halloween, Christmas, New Year, Thanksgiving, Valentine's, winter, Pride,
   summer), lifted while they last; This Anime Season always (an episode out
   since the season began). Talk and news shows never in a row.
-  Next: thumbs ratings on the device, service badges. On the device only, per profile; never the Nuvio sync.
+  Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Application
+  Support, not a cache): Not for Me, I Like This, Love This, from a card's
+  hold menu (Rate / "Rated: …", after the watched entry) and Details' fourth
+  button (after About, filled once rated); unwatched titles too. The screen
+  (`RatingPanel`, end of `DetailAbout.swift`): presented over whatever is in
+  front, About's blur, the poster, "How was …?" / "What do you think of …?"
+  in the wizard's heading, three round tiles as the gate's Add Profile,
+  the current one on the selected grey with its symbol filled, what the
+  focused one does under them; opens on the current, else I Like This;
+  Select rates and closes (the same again clears it), Back closes. Like
+  counts 1.5×, Love 2× in the taste and seeds Because You Watched more;
+  both first in Watch Again; Not for Me is out of every row Cue makes
+  (the world's and Pick Back Up too) and the billboard, its traits taken
+  off the taste a little; Search, More Like This, collections and cast
+  pages still show it. A change makes new rows on the next load.
+  Next: service badges. On the device only, per profile; never the Nuvio sync.
 - **Under Home's box** (the posters' height, not grown): no name, the
   facts line in the title's style, then the description, up to 4 lines,
   top-aligned, secondary (badges there, on the line or in the box, were
@@ -331,7 +346,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
   menus and the player's Audio and Subtitles; a change there reaches all
   (the SwiftUI hold menu is gone). Entries: playing, the source, Library,
-  watched (narrow to wide), Use as Background, red last; one name per action (Start Over, Go to
+  watched (narrow to wide), Rate, Use as Background, red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
   A held card grows 3 % past focused (2, 4, 5 tried); the menu sits 16 pt

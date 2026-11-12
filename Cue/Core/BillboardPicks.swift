@@ -158,7 +158,10 @@ enum BillboardPicks {
     static func make(history: History, addonManager: AddonManager, tmdb: Bool,
                      fallback: [BillboardPick]) async -> [BillboardPick] {
         var picks: [BillboardPick] = []
-        var used = Set<String>()
+        // Not for Me: never on the billboard.
+        var used = await MainActor.run {
+            Set(TitleRatings.shared.snapshot().filter { $0.value.rating == .notForMe }.keys)
+        }
         func add(_ pick: BillboardPick) {
             guard pick.item.background != nil, used.insert(pick.id).inserted else { return }
             picks.append(BillboardPick(item: withLogo(pick.item), reason: pick.reason))
@@ -395,7 +398,7 @@ enum CueRows {
     }
 
     @MainActor static func seeds(_ history: BillboardPicks.History?) -> [String] {
-        (history?.recent ?? []).map(\.id)
+        (history?.recent ?? []).map(\.id) + TitleRatings.shared.signature
     }
 
     /// Time for new rows: none saved, older than `rebuildAge` or from another
@@ -539,9 +542,26 @@ enum CueRows {
         return watch.started ? 0.4 : 0.3
     }
 
-    static func known(_ watches: [Watch], now: Date) async -> [Known] {
-        let weighed = watches.map { ($0, engagement($0, now: now)) }
-            .sorted { $0.1 > $1.1 }
+    /// A rating's say: liked and loved count more, Not for Me against
+    /// (`taste` takes its traits off).
+    static func rated(_ weight: Double, _ rating: TitleRatings.Rating?) -> Double {
+        switch rating {
+        case .love: return weight * 2
+        case .like: return weight * 1.5
+        case .notForMe: return -0.5 * max(weight, 0.5)
+        case nil: return weight
+        }
+    }
+
+    /// Rated titles not in your watching count too, as a saved one.
+    static func known(_ watches: [Watch], ratings: [String: TitleRatings.Entry], now: Date) async -> [Known] {
+        var all = watches
+        let watched = Set(watches.map(\.id))
+        for (id, entry) in ratings where !watched.contains(id) {
+            all.append(Watch(id: id, type: entry.type, last: entry.at, saved: true))
+        }
+        let weighed = all.map { ($0, rated(engagement($0, now: now), ratings[$0.id]?.rating)) }
+            .sorted { abs($0.1) > abs($1.1) }
             .prefix(tasteTitles)
         let boxes = await boundedConcurrentMap(Array(weighed), limit: 8) { pair -> KnownBox in
             guard let found = await TMDBService.cueTraits(imdbID: pair.0.id, type: pair.0.type) else {
@@ -553,20 +573,28 @@ enum CueRows {
         return boxes.compactMap(\.known)
     }
 
+    /// Not for Me (a negative weight) takes its traits off, never below none.
     static func taste(_ known: [Known]) -> Taste {
         var taste = Taste()
-        let total = known.reduce(0) { $0 + $1.weight }
+        let liked = known.filter { $0.weight > 0 }
+        let total = liked.reduce(0) { $0 + $1.weight }
         guard total > 0 else { return taste }
         var movies = 0.0
-        for title in known {
+        for title in liked {
             let features = features(title.traits)
             for feature in features { taste.shares[feature, default: 0] += title.weight / total }
             taste.watched.append((features, title.weight / total))
             if title.isMovie { movies += title.weight }
             taste.labels.merge(title.traits.labels) { old, _ in old }
         }
+        for title in known where title.weight < 0 {
+            for feature in features(title.traits) where taste.shares[feature] != nil {
+                taste.shares[feature] = max(0, (taste.shares[feature] ?? 0) + title.weight / total)
+            }
+        }
+        taste.shares = taste.shares.filter { $0.value > 0 }
         taste.movieShare = movies / total
-        taste.titles = known.count
+        taste.titles = liked.count
         return taste
     }
 
@@ -1149,6 +1177,8 @@ enum CueRows {
         let seen: Set<String>
         /// Shows you started and left: allowed, further back.
         let left: Set<String>
+        /// Not for Me: out of every row.
+        let out: Set<String>
         let passes: Passes
         let day: String
         var rows: [Row] = []
@@ -1165,7 +1195,7 @@ enum CueRows {
                           own: Bool = false, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
-                unique.insert($0.item.id).inserted
+                unique.insert($0.item.id).inserted && !out.contains($0.item.id)
                     && !(fresh && (seen.contains($0.item.id) || passes.isOut($0.item.id, day: day)))
             }
             var ordered = candidates
@@ -1244,7 +1274,7 @@ enum CueRows {
     }
 
     static func build(watches: [Watch], standings full: Standings, seeds: [String], last: Saved?,
-                      passes: Passes) async -> Saved {
+                      passes: Passes, ratings: [String: TitleRatings.Entry]) async -> Saved {
         let now = Date()
         let day = dayKey(now)
         let region = region
@@ -1252,10 +1282,18 @@ enum CueRows {
         // back, and in Pick Back Up.
         let standings = full.states
         let seen = Set(standings.filter { $0.value != .left }.keys)
-        let left = Set(standings.filter { $0.value == .left }.keys)
+        let out = Set(ratings.filter { $0.value.rating == .notForMe }.keys)
+        let left = Set(standings.filter { $0.value == .left }.keys).subtracting(out)
+        func liking(_ id: String) -> Double {
+            switch ratings[id]?.rating {
+            case .love: return 0.5
+            case .like: return 0.25
+            default: return 0
+            }
+        }
         let byID = Dictionary(watches.map { ($0.id, $0) }) { a, _ in a }
         async let ownTask = own(watches: watches, standings: full, now: now, day: day)
-        async let knownTask = known(watches, now: now)
+        async let knownTask = known(watches, ratings: ratings, now: now)
         async let fixedTask = fixed(region: region)
         async let servicesTask = services(count: 3, region: region)
         let known = await knownTask
@@ -1314,11 +1352,13 @@ enum CueRows {
 
         // "Because you watched": your latest title always, two more of your
         // recent five by the day; the first film and show for their tabs.
-        let recent = known.filter { $0.watch.watched > 0 || $0.watch.started }
+        let recent = known.filter { ($0.watch.watched > 0 || $0.watch.started) && !out.contains($0.watch.id) }
             .sorted { $0.watch.last > $1.watch.last }
             .prefix(6)
         var chosen = Array(recent.prefix(1))
-        chosen += recent.dropFirst().sorted { jitter(day, "seed", $0.watch.id) > jitter(day, "seed", $1.watch.id) }.prefix(2)
+        chosen += recent.dropFirst().sorted {
+            jitter(day, "seed", $0.watch.id) + liking($0.watch.id) > jitter(day, "seed", $1.watch.id) + liking($1.watch.id)
+        }.prefix(2)
         var seedKnown = chosen
         for isMovie in [true, false] where !seedKnown.contains(where: { $0.isMovie == isMovie }) {
             if let first = recent.first(where: { $0.isMovie == isMovie }) { seedKnown.append(first) }
@@ -1397,7 +1437,7 @@ enum CueRows {
                 titles.filter(media).sorted {
                     func score(_ t: Title) -> Double {
                         amount(byID[t.item.id] ?? Watch(id: "", type: "", last: now)) + 0.3 * quality(t.traits)
-                            + 0.3 * jitter(day, "rewatch", t.item.id)
+                            + 0.3 * jitter(day, "rewatch", t.item.id) + 2 * liking(t.item.id)
                     }
                     return score($0) > score($1)
                 }
@@ -1422,8 +1462,8 @@ enum CueRows {
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
         func seed(_ index: Int) -> Seed? { index < homeSeeds.count ? homeSeeds[index] : nil }
 
-        var home = Layout(tab: "home", model: model, seen: seen, left: left, passes: passes, day: day)
-        home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: nil),
+        var home = Layout(tab: "home", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: nil),
                  keepOrder: true, reason: picksReason)
         becauseRow(&home, seed(0))
         home.add("trending", "Trending Today", fixed.trendingAll, fresh: false, keepOrder: true,
@@ -1440,8 +1480,8 @@ enum CueRows {
             (10, { serviceRow(&$0, 2) }),
         ])
 
-        var movies = Layout(tab: "movie", model: model, seen: seen, left: left, passes: passes, day: day)
-        movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: true),
+        var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: true),
                    keepOrder: true, reason: picksReason)
         becauseRow(&movies, seedRows.first { $0.known.isMovie })
         movies.add("trending", "Trending Movies", fixed.trendingMovies, fresh: false, keepOrder: true,
@@ -1458,8 +1498,8 @@ enum CueRows {
             (11, { serviceRow(&$0, 2) }),
         ])
 
-        var shows = Layout(tab: "series", model: model, seen: seen, left: left, passes: passes, day: day)
-        shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left), passes: passes, day: day, isMovie: false),
+        var shows = Layout(tab: "series", model: model, seen: seen, left: left, out: out, passes: passes, day: day)
+        shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: false),
                   keepOrder: true, reason: picksReason)
         becauseRow(&shows, seedRows.first { !$0.known.isMovie })
         shows.add("trending", "Trending Shows", fixed.trendingShows, fresh: false, keepOrder: true,
@@ -1822,5 +1862,103 @@ extension CueRows {
                 }.value
             }
         }
+    }
+}
+
+// MARK: - Your ratings
+
+/// Thumbs on a title: Not for Me, I Like This, Love This. On the device,
+/// per profile, never sent to Nuvio. Cue's rows read them: liked and loved
+/// count more in the taste and seed Because You Watched more often; Not for
+/// Me is out of every row Cue makes and the billboard, its traits pulling
+/// the taste down a little. Search, More Like This, collections and cast
+/// pages still show it.
+@MainActor final class TitleRatings: ObservableObject {
+    static let shared = TitleRatings()
+
+    enum Rating: String, Codable, Sendable, CaseIterable {
+        case notForMe, like, love
+
+        var name: String {
+            switch self {
+            case .notForMe: return "Not for Me"
+            case .like: return "I Like This"
+            case .love: return "Love This"
+            }
+        }
+
+        /// What it does, under the tiles.
+        var effect: String {
+            switch self {
+            case .notForMe: return "Left out of your rows, and less like it"
+            case .like: return "More like this"
+            case .love: return "Much more like this"
+            }
+        }
+    }
+
+    struct Entry: Codable, Sendable {
+        let rating: Rating
+        let at: Date
+        let type: String
+        let name: String
+    }
+
+    /// Bumped on every change (views redraw from it).
+    @Published private(set) var version = 0
+    private var entries: [String: Entry] = [:]
+    private var profile: Int?
+
+    private static var activeProfile: Int {
+        UserDefaults.standard.object(forKey: ProfileStore.activeKey) as? Int ?? 1
+    }
+
+    /// Not a cache: Clear Cache leaves it.
+    private static func url(_ profile: Int) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Cue/ratings-p\(profile).json")
+    }
+
+    private func load() {
+        let active = Self.activeProfile
+        guard profile != active else { return }
+        profile = active
+        entries = (try? Data(contentsOf: Self.url(active)))
+            .flatMap { try? JSONDecoder().decode([String: Entry].self, from: $0) } ?? [:]
+    }
+
+    func rating(_ id: String) -> Rating? {
+        load()
+        return entries[id]?.rating
+    }
+
+    /// This profile's ratings (read again after a profile change).
+    func snapshot() -> [String: Entry] {
+        load()
+        return entries
+    }
+
+    /// Sets it; the same rating again clears it.
+    func rate(_ item: MetaItem, _ rating: Rating) {
+        load()
+        if entries[item.id]?.rating == rating {
+            entries[item.id] = nil
+        } else {
+            entries[item.id] = Entry(rating: rating, at: Date(), type: item.type, name: item.name)
+        }
+        version &+= 1
+        guard let profile else { return }
+        let url = Self.url(profile)
+        let all = entries
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+        }
+    }
+
+    /// For the rows' rebuild check: a change makes new rows on the next load.
+    var signature: [String] {
+        snapshot().map { "rated:\($0.key):\($0.value.rating.rawValue)" }.sorted()
     }
 }

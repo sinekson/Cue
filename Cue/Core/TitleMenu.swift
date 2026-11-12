@@ -71,6 +71,14 @@ final class TitleMenu {
             })
         }
 
+        // Your rating (on the device only): its screen, over the page.
+        let rating = TitleRatings.shared.rating(item.id)
+        let seen = item.isSeries ? watched.items.values.contains { $0.contentID == item.id } : watched.isWatched(item)
+        entries.append(Entry(title: rating.map { "Rated: \($0.name)" } ?? "Rate",
+                             icon: rating == .notForMe ? "hand.thumbsdown" : "hand.thumbsup") {
+            RatingPanel.present(item, watched: seen)
+        })
+
         entries.append(Entry(title: "Use as Background", icon: "photo") {
             BackgroundStore.shared.use(item)
         })
