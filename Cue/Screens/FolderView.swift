@@ -394,7 +394,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     var headerFirst = false
 
     /// A poster: THE portrait poster (`columns` of them fill the width).
-    static var card: CGSize { FixedFocusMetrics.posterCard }
+    static var card: CGSize { FixedFocusMetrics.gridCard }
 
     /// The header: a view of its own in the scroll view's top inset, there
     /// while it scrolls (a cell goes once scrolled off, and its controls with

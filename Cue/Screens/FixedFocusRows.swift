@@ -315,10 +315,14 @@ enum FixedFocusMetrics {
     /// DESTINATION rows (Saved for Later, collections) — you go there for
     /// something you already know, not to be shown one title at a time:
     /// the system's own scrolling and lift, and a caption under every card.
-    /// THE PORTRAIT POSTER of moving focus — Search, Saved for Later,
-    /// Details' rows, the grids: six across the content's width, the
-    /// rows' gaps (`destinationGap(cardWidth:)`) between them.
-    static let posterCard = posters(across: 6)
+    /// THE PORTRAIT POSTER of every row — Home's fixed rows and moving
+    /// focus alike (Search, Saved for Later, Top 10, Details' rows): the
+    /// fixed rows' height (`Spotlight.rowHeight`), about 5½ across.
+    static let posterCard = CGSize(width: Spotlight.posterWidth.rounded(), height: Spotlight.rowHeight)
+    /// The grids' poster (a folder, a person's or studio's titles): six
+    /// across the content's width, the rows' gaps between them — whole
+    /// columns, so not the rows' poster.
+    static let gridCard = posters(across: 6)
     /// Smaller portraits for long rows of people (Details' Cast & Crew):
     /// seven across.
     static let portraitCard = posters(across: 7)
@@ -348,9 +352,9 @@ enum FixedFocusMetrics {
     }()
     /// …collections: landscape tiles (doors).
     static let destinationTileHeight: CGFloat = 300
-    /// Continue Watching's cards: the landscape tiles' size (more of them
-    /// on screen), whichever its focus style.
-    static let continueHeight: CGFloat = destinationTileHeight
+    /// Continue Watching's cards: 16:9, three across the content's width
+    /// (300 tall, 3.2 across, looked small).
+    static let continueHeight: CGFloat = (cardWidth(across: 3) * 9 / 16).rounded()
     /// The gap between moving-focus cards: wider than the fixed rows'
     /// (`gap`) — a lifted card grows into it.
     static let destinationGap: CGFloat = 40

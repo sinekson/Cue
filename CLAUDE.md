@@ -115,7 +115,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). Home's fixed rows 490 pt tall, the box's right edge near mid-screen, the next row peeking 144 pt (420 and 440 were tried). Elsewhere one portrait size (`FixedFocusMetrics.posterCard`, 265 × 398).
+  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). One poster in every row (`FixedFocusMetrics.posterCard`, 293 × 440: Home's fixed rows, Saved for Later, Top 10, Search, Details' rows; about 5½ across), the next row peeking 194 pt, the gap above its name as at 490 (fixed rows at 490 with the others at 398 was too large beside too small; 420 was tried); grids keep their whole columns, six across (`gridCard`, 265 × 398). Continue Watching 16:9, three across (`continueHeight`, about 559 × 315; 300 looked small).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above

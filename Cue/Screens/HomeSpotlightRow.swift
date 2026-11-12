@@ -13,11 +13,10 @@ enum Spotlight {
     static let continueRowID = "spotlight.continueWatching"
     static let featuredRowID = "spotlight.featured"
 
-    /// Height of the focus box AND the posters beside it: the box's right
-    /// edge near the screen's middle (84 + 871 = 955). Larger than the
-    /// portrait card elsewhere (`FixedFocusMetrics.posterCard`, 398; 420 and
-    /// 440 were tried).
-    static let rowHeight: CGFloat = 490
+    /// Height of the focus box AND the posters beside it: THE poster's
+    /// height, every row's (`FixedFocusMetrics.posterCard`). (490, the box
+    /// reaching mid-screen, was too large beside the other rows' 398.)
+    static let rowHeight: CGFloat = 440
     /// Portrait 2:3 poster at row height (293 pt).
     static var posterWidth: CGFloat { rowHeight * 2 / 3 }
     /// Landscape 16:9 box at row height (~707 pt).
@@ -60,7 +59,7 @@ enum Spotlight {
     // Next-row preview
 
     /// How much of the preview row shows above the screen edge.
-    static let previewVisibleHeight: CGFloat = 144
+    static let previewVisibleHeight: CGFloat = 194
 
     // Featured billboard (the first "row": one big box, Netflix-style)
 

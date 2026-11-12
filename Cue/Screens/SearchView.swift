@@ -743,9 +743,8 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         view.addSubview(collectionView)
     }
 
-    /// The row's room for six cards as wide as the line above them (THE
-    /// portrait poster, `FixedFocusMetrics.posterCard`): the cards, their
-    /// growth, their captions.
+    /// The row's room for THE portrait poster (`FixedFocusMetrics.posterCard`):
+    /// the cards, their growth, their captions.
     static let rowHeight: CGFloat =
         (FixedFocusMetrics.posterCard.height * (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.up)
         + FixedFocusMetrics.captionRoom

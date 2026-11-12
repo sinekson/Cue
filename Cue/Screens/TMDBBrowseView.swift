@@ -352,7 +352,7 @@ private struct BrowseHeader: View {
     private static let controlsGap: CGFloat = 36
     private static let portrait = CGSize(width: 200, height: 300)
     /// A studio's or network's logo plate: a poster's width, as the grid under it.
-    private static let logoPlate = CGSize(width: FixedFocusMetrics.posterCard.width, height: 140)
+    private static let logoPlate = CGSize(width: FixedFocusMetrics.gridCard.width, height: 140)
 
     /// The controls' room is kept while the page loads (a person's or a
     /// studio's sides are known only then — still under the page's cover);
