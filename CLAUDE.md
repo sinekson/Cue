@@ -144,8 +144,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   next), With someone in your taste, Hidden gem (IMDb 7.5+, 1,000–20,000
   votes), Acclaimed (IMDb 8+, 50,000 votes), Limited series, Top 10
   (today's trending). What the row says isn't repeated: no news in New
-  Episodes or Airing Today, no Acclaimed in Top Rated, no Top 10 in
-  Trending. Symbols: sparkles, calendar, flag.checkered, person.fill,
+  Episodes or Airing Today, no Acclaimed in Top Rated, no Top 10 in the
+  Top 10 row. Symbols: sparkles, calendar, flag.checkered, person.fill,
   diamond, laurel.leading, square.stack, chart.bar.fill, heart. Not on
   Continue Watching. (A notch cut into
   the top-left corner in spaced capitals was tried; service and quality
@@ -214,8 +214,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   65 % fit, 35 % the day's seeded chance, less if up yesterday; at most two
   of a kind per tab, never side by side; a row that leaves something out
   counts only the watching it keeps (Japanese dramas for an anime watcher:
-  little). Fixed rows set among them: Top Picks, Because You Watched (the
-  latest title, two more of the last five by the day), trending, new
+  little). Top 10 (Home "Top 10 Today", Movies, Shows: TMDB's
+  trending today, 10 titles, the badge "Top 10" left out there): moving
+  focus, each poster with a short card behind it in the tertiary white,
+  the cards' corners, 56 pt of it showing at the left (60 more under
+  the poster), the gap before it the other rows' (as the poster's alone),
+  lifted with the poster (the outline the poster's only), 48 pt under its
+  top, 90 pt tall (120 and 104 too tall, 76 too short), the caption under the poster, the digit cut out (SF bold 40 pt) (tried: the digit stretched tall; the word written downwards ("SEVEN", a
+  letter under the other) alone, with the digit on one card, or on a
+  second card near the foot; the digit alone, 80 pt, 24 pt under the top) (a full-height outlined numeral over the poster; Netflix's
+  numeral behind it, filled or outlined, half or most of the height; a strip
+  joined to the poster, its word turned; the card full height, were
+  tried) (`rankedRowIDs`,
+  `FixedFocusDestinationCell.rankLead`). Fixed rows set among them: Top Picks, Top 10 (second on every
+  tab), Because You Watched (the latest title, two more of the last five
+  by the day), new
   episodes, cinemas, the country's three biggest services. Titles in a row
   ordered for you, a title in two rows at most per tab; rows up to 25
   (TMDB's pages until 30 unseen, at most 3), under 10 not shown. Watched titles stay

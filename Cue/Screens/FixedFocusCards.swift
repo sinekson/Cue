@@ -316,9 +316,51 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     /// Darkened (0…1 black over the picture — not see-through).
     var dim: CGFloat = 0 {
-        didSet { if dim != oldValue { dimCover.alpha = dim } }
+        didSet { if dim != oldValue { dimCover.alpha = dim; spine.alpha = 1 - dim } }
     }
     private let dimCover = UIView()
+    /// A ranked row's place (Top 10): a short card behind the poster,
+    /// `rankInset` under its top, showing `rankLead` of it at its left, in
+    /// the tertiary white, lifted with the poster, the digit cut out of it.
+    /// (Stretched tall was tried.) (A numeral over the poster, Netflix's numeral behind
+    /// it, a strip joined to the poster with the word turned, the word
+    /// written downwards, alone or with the digit, were tried.)
+    private let spine = UIImageView()
+    private var lead: CGFloat = 0
+    /// The caption starts under the poster, not the card behind it.
+    private var captionLeading: NSLayoutConstraint!
+    static let rankLead: CGFloat = 56
+    /// How far the card behind runs under the poster.
+    static let rankUnder: CGFloat = 60
+    /// Its distance from the poster's top, and its height.
+    static let rankInset: CGFloat = 48
+    static let rankHeight: CGFloat = 90
+    private static var spines: [Int: UIImage] = [:]
+    static func spineImage(_ place: Int) -> UIImage {
+        if let image = spines[place] { return image }
+        let size = CGSize(width: rankLead + rankUnder, height: rankHeight)
+        let font = UIFont.systemFont(ofSize: 40, weight: .bold)
+        let digit = NSAttributedString(string: "\(place)", attributes: [.font: font])
+        let image = UIGraphicsImageRenderer(size: size).image { context in
+            let cg = context.cgContext
+            UIColor.white.withAlphaComponent(FixedFocusText.tertiary).setFill()
+            cg.fill(CGRect(origin: .zero, size: size))
+            cg.setBlendMode(.clear)
+            // Centred on its capitals.
+            digit.draw(at: CGPoint(x: (rankLead - digit.size().width) / 2,
+                                   y: size.height / 2 - font.ascender + font.capHeight / 2))
+        }
+        spines[place] = image
+        return image
+    }
+    private var place = 0
+    /// Grown about the poster's centre, not its own.
+    private func grow(_ view: UIView, _ scale: CGFloat) {
+        let unit = cardFrame
+        let dx = (view.center.x - unit.midX) * (scale - 1)
+        let dy = (view.center.y - unit.midY) * (scale - 1)
+        view.transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale)
+    }
 
     /// The name and second line under the card (its row focused).
     func setCaptionShown(_ shown: Bool) {
@@ -357,6 +399,11 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             picture.layer.cornerRadius = Spotlight.cornerRadius
             picture.layer.cornerCurve = .continuous
         }
+        spine.isHidden = true
+        spine.layer.cornerRadius = Spotlight.cornerRadius
+        spine.layer.cornerCurve = .continuous
+        spine.clipsToBounds = true
+        contentView.addSubview(spine)
         contentView.addSubview(picture)
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
@@ -401,9 +448,11 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         // Below the picture's FOCUSED frame: a lift pushes them down.
         captionGap = name.topAnchor.constraint(equalTo: picture.focusedFrameGuide.bottomAnchor,
                                                constant: FixedFocusMetrics.infoGap)
+        captionLeading = name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor,
+                                                       constant: FixedFocusMetrics.textIndent)
         NSLayoutConstraint.activate([
             captionGap,
-            name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: FixedFocusMetrics.textIndent),
+            captionLeading,
             name.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -FixedFocusMetrics.textIndent),
             name.heightAnchor.constraint(equalToConstant: 30),
             detail.topAnchor.constraint(equalTo: name.topAnchor, constant: FixedFocusMetrics.captionLineOffset),
@@ -432,13 +481,20 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     override func layoutSubviews() {
         super.layoutSubviews()
         // Bounds and centre, not frames: they may be grown (transformed).
-        let card = CGRect(x: 0, y: 0, width: bounds.width, height: cardHeight)
-        for view in [picture, outline] {
-            view.bounds = CGRect(origin: .zero, size: card.size)
-            view.center = CGPoint(x: card.midX, y: card.midY)
-        }
+        let card = cardFrame
+        picture.bounds = CGRect(origin: .zero, size: card.size)
+        picture.center = CGPoint(x: card.midX, y: card.midY)
+        outline.center = picture.center
         outline.bounds = CGRect(origin: .zero, size: CGSize(width: card.width * outlineScale,
                                                             height: card.height * outlineScale))
+        if !spine.isHidden {
+            let top = Self.spineImage(place)
+            spine.image = top
+            spine.bounds = CGRect(origin: .zero, size: top.size)
+            let x = top.size.width / 2
+            spine.center = CGPoint(x: x, y: Self.rankInset + top.size.height / 2)
+            grow(spine, outlineScale)
+        }
         edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
         loadingCard.frame = picture.bounds
@@ -463,7 +519,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
 
     /// The card itself, without its caption (in the cell).
-    var cardFrame: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: cardHeight) }
+    var cardFrame: CGRect { CGRect(x: lead, y: 0, width: bounds.width - lead, height: cardHeight) }
 
     /// Its hold menu (`HoldMenu`): beside the card at its held size —
     /// lifted and a little grown — without its caption.
@@ -487,10 +543,15 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
-                   progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false) {
+                   progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false,
+                   rank place: Int? = nil, lead: CGFloat = 0) {
         itemIndex = index
         self.rowCell = rowCell
         cardHeight = card.height
+        self.lead = lead
+        spine.isHidden = place == nil
+        captionLeading.constant = FixedFocusMetrics.textIndent + lead
+        if let place { self.place = place }
         isPlaceholder = FixedFocusPlaceholder.isPlaceholder(item)
         setNeedsLayout()
         // (A reused cell: its last focus look gone.)
@@ -633,10 +694,11 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             : 1
         let grown = CGAffineTransform(scaleX: scale, y: scale)
         picture.transform = grown
+        if !spine.isHidden { grow(spine, scale) }
         // The outline SIZED with the card, not scaled: its line stays the
         // fixed box's width (scaled, it grew thicker with the lift).
         outlineScale = scale
-        outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: cardHeight * scale))
+        outline.bounds = CGRect(origin: .zero, size: CGSize(width: cardFrame.width * scale, height: cardHeight * scale))
         outline.layer.cornerRadius = Spotlight.cornerRadius * scale
         outline.alpha = focused ? 1 : 0
         // The caption keeps its distance to the card at its FOCUSED size:

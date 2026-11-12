@@ -841,6 +841,8 @@ struct HomeView: View {
 
     /// The collection rows (their panels).
     static func isCollectionRow(_ id: String) -> Bool { id.hasPrefix(collectionItemPrefix) }
+    /// Cue's Top 10 rows ("cue.home.top10"): ranked, moving focus.
+    static func isRankedRow(_ id: String) -> Bool { id.hasPrefix("cue.") && id.hasSuffix(".top10") }
 
     /// The rows in order: the billboard, Continue Watching, the Watchlist,
     /// the catalogs — filtered on Movies / Series.
@@ -1782,7 +1784,10 @@ struct HomeUIKitView: View {
                            // Later: moving focus.
                            destinationRowIDs: Set(rows.map(\.id).filter {
                                HomeView.isCollectionRow($0) || $0 == HomeView.libraryRowID || $0 == continueRowID
+                                   || HomeView.isRankedRow($0)
                            }),
+                           // Top 10: each card's place beside it.
+                           rankedRowIDs: Set(rows.map(\.id).filter(HomeView.isRankedRow)),
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,

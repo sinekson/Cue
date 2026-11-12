@@ -24,6 +24,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var panelRowIDs: Set<String> = []
     /// Destination rows (see `FixedFocusMetrics.posterCard`).
     var destinationRowIDs: Set<String> = []
+    /// Of them, ranked (Top 10: each card's place beside it).
+    var rankedRowIDs: Set<String> = []
     /// Rows of ONE wide banner (Search's Top Result: see
     /// `FixedFocusBannerCell`), and its height.
     var bannerRowIDs: Set<String> = []
@@ -219,6 +221,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.continueRowID = continueRowID
         controller.landscapeRowIDs = landscapeRowIDs
         controller.panelRowIDs = panelRowIDs
+        controller.rankedRowIDs = rankedRowIDs
         controller.destinationRowIDs = destinationRowIDs
         controller.bannerRowIDs = bannerRowIDs
         controller.bannerHeight = bannerHeight
@@ -504,6 +507,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
+    /// Ranked rows (Top 10): moving focus, each card's place beside it.
+    var rankedRowIDs: Set<String> = []
+
+    func isRanked(_ rowIndex: Int) -> Bool {
+        rows.indices.contains(rowIndex) && rankedRowIDs.contains(rows[rowIndex].id)
+    }
+
     func isDestination(_ rowIndex: Int) -> Bool {
         isBanner(rowIndex) || (rows.indices.contains(rowIndex) && destinationRowIDs.contains(rows[rowIndex].id))
     }
@@ -527,6 +537,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if isContinue(rowIndex) {
             return CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.continueHeight),
                           height: FixedFocusMetrics.continueHeight)
+        }
+        // Ranked: the poster with its numeral's room before it.
+        if isRanked(rowIndex) {
+            return CGSize(width: FixedFocusMetrics.posterCard.width + FixedFocusDestinationCell.rankLead,
+                          height: FixedFocusMetrics.posterCard.height)
         }
         return isLandscape(rowIndex)
             ? CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight),
@@ -4431,11 +4446,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 as! FixedFocusDestinationCell
             if let row, let controller, row.items.indices.contains(indexPath.item) {
                 let item = row.items[indexPath.item]
+                let ranked = controller.isRanked(rowIndex)
+                let lead = ranked ? FixedFocusDestinationCell.rankLead : 0
+                let card = controller.destinationCard(rowIndex)
                 cell.configure(item, subtitle: row.subtitles[item.id], index: indexPath.item, rowCell: self,
-                               card: controller.destinationCard(rowIndex),
+                               card: CGSize(width: card.width - lead, height: card.height),
                                progress: controller.isContinue(rowIndex) ? controller.progress[item.id] : nil,
                                cardState: controller.cardStates[item.id],
-                               isLogo: controller.isLogo(rowIndex))
+                               isLogo: controller.isLogo(rowIndex),
+                               rank: ranked ? indexPath.item + 1 : nil, lead: lead)
                 cell.setCaptionShown(isFocusRow)
                 UIView.performWithoutAnimation { cell.dim = cardDim }
             }
@@ -4501,7 +4520,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     func collectionView(_ cv: UICollectionView, layout: UICollectionViewLayout,
                         minimumLineSpacingForSectionAt section: Int) -> CGFloat {
         guard let controller else { return FixedFocusMetrics.destinationGap }
-        return FixedFocusMetrics.destinationGap(cardWidth: controller.destinationCard(rowIndex).width)
+        return gap(card: controller.destinationCard(rowIndex).width)
     }
 
     func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -4583,8 +4602,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// the row has moved, a sliver of the one before and the one after split
     /// evenly — always a hint when there's more. At the start: the cards from
     /// the usual inset, the next one's sliver at the right.
+    /// The gap after a card: a ranked row's as its poster's alone, so the
+    /// room before each poster reads as the other rows' gaps.
+    private func gap(card: CGFloat) -> CGFloat {
+        let ranked = controller?.isRanked(rowIndex) == true
+        return FixedFocusMetrics.destinationGap(cardWidth: ranked ? card - FixedFocusDestinationCell.rankLead : card)
+    }
+
     private func windowOffset(focusing index: Int, card: CGFloat, count: Int) -> CGFloat {
-        let gap = FixedFocusMetrics.destinationGap(cardWidth: card)
+        let gap = gap(card: card)
         let pitch = card + gap
         // Focus stays in place (`FixedFocusRows.anchoredRowIDs`): the
         // focused card always at the first card's spot — to the last one,

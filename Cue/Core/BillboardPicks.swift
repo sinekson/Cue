@@ -371,9 +371,15 @@ enum CueRows {
         let passedOver: [String]
         /// Titles you dropped, by name (nil: saved before they were read).
         var dropped: [String]?
+        /// The rows' make (`CueRows.version`): another, and they're made again.
+        var version: Int?
     }
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
+    /// Raised when a change to how rows are made should show at once.
+    static let version = 3
+    /// A ranked row's places (Top 10).
+    static let rankedLength = 10
     /// A row needs this many titles to show; your own (Pick Back Up, Watch
     /// Again) fewer: they're about you, not a catalogue running out.
     static let minimumTitles = 10
@@ -416,6 +422,7 @@ enum CueRows {
     static func due(_ saved: Saved?, seeds: [String], now: Date = Date()) -> Bool {
         guard let saved else { return true }
         return now.timeIntervalSince(saved.builtAt) > rebuildAge
+            || saved.version != version
             || saved.day != dayKey(now)
             || saved.seeds != seeds
     }
@@ -1232,7 +1239,7 @@ enum CueRows {
         @discardableResult
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
-                          own: Bool = false, reasons: Bool = false, reason: String) -> Bool {
+                          own: Bool = false, ranked: Bool = false, reasons: Bool = false, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1257,7 +1264,9 @@ enum CueRows {
             }
             // (Your own rows show all of theirs: a title elsewhere twice is
             // still one you left or finished.)
-            let shown = ordered.filter { own || (used[$0.item.id] ?? 0) < 2 }.prefix(CueRows.rowLength)
+            // (A ranking keeps its places: none skipped for being elsewhere.)
+            let shown = ordered.filter { own || ranked || (used[$0.item.id] ?? 0) < 2 }
+                .prefix(ranked ? CueRows.rankedLength : CueRows.rowLength)
             guard shown.count >= minimum else { return false }
             for title in shown { used[title.item.id, default: 0] += 1 }
             var badges: [String: CardBadge] = [:]
@@ -1266,7 +1275,7 @@ enum CueRows {
                     badges[title.item.id] = CueRows.reason(title, model: model, known: known, curated: curated)
                 } else if let person = CueRows.person(title, taste: model.taste) {
                     badges[title.item.id] = person
-                } else if id != "trending", top10.contains(title.item.id) {
+                } else if id != "top10", top10.contains(title.item.id) {
                     badges[title.item.id] = CardBadge(kind: .top10, text: "Top 10")
                 }
             }
@@ -1562,9 +1571,9 @@ enum CueRows {
                               known: known, top10: top10, curated: curated)
         home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: nil),
                  keepOrder: true, reasons: true, reason: picksReason)
+        home.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
+                 reason: "Always here: today's trending, ranked")
         becauseRow(&home, seed(0))
-        home.add("trending", "Trending Today", fixed.trendingAll, fresh: false, keepOrder: true,
-                 reason: "Always here")
         themed(&home, homeRecipes, count: 15, inserts: [
             (1, { $0.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
                          keepOrder: true, reason: newReason) }),
@@ -1581,9 +1590,9 @@ enum CueRows {
                               known: known, top10: top10, curated: curated)
         movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: true),
                    keepOrder: true, reasons: true, reason: picksReason)
+        movies.add("top10", "Top 10 Movies Today", fixed.trendingMovies, fresh: false, keepOrder: true, ranked: true,
+                   reason: "Always here: today's trending, ranked")
         becauseRow(&movies, seedRows.first { $0.known.isMovie })
-        movies.add("trending", "Trending Movies", fixed.trendingMovies, fresh: false, keepOrder: true,
-                   reason: "Always here")
         movies.add("cinemas", "Now in Cinemas", fixed.cinemas, fresh: false, keepOrder: true, reason: "Always here")
         themed(&movies, movieRecipes, count: 12, inserts: [
             (1, { serviceRow(&$0, 0) }),
@@ -1600,9 +1609,9 @@ enum CueRows {
                               known: known, top10: top10, curated: curated)
         shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: false),
                   keepOrder: true, reasons: true, reason: picksReason)
+        shows.add("top10", "Top 10 Shows Today", fixed.trendingShows, fresh: false, keepOrder: true, ranked: true,
+                  reason: "Always here: today's trending, ranked")
         becauseRow(&shows, seedRows.first { !$0.known.isMovie })
-        shows.add("trending", "Trending Shows", fixed.trendingShows, fresh: false, keepOrder: true,
-                  reason: "Always here")
         shows.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
                   keepOrder: true, reason: newReason)
         themed(&shows, seriesRecipes, count: 12, inserts: [
@@ -1626,7 +1635,8 @@ enum CueRows {
                      picked: Array(Set(layouts.flatMap(\.themed))), previous: previous,
                      titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why),
                      passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name },
-                     dropped: watches.filter { dropped.contains($0.id) }.map { $0.name.isEmpty ? $0.id : $0.name })
+                     dropped: watches.filter { dropped.contains($0.id) }.map { $0.name.isEmpty ? $0.id : $0.name },
+                     version: version)
     }
 
     /// How much a row is about you: its traits' pull (each condition its
