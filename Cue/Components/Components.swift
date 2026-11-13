@@ -662,6 +662,11 @@ enum PictureSize {
     static var landscape: CGFloat {
         FixedFocusMetrics.boxWidth * FixedFocusMetrics.boxScale * FixedFocusBoxView.driftZoom
     }
+    /// A showcase card (New & Notable), focused: the height a backdrop
+    /// is cut at, so its width at 16:9.
+    static var showcase: CGFloat {
+        FixedFocusMetrics.showcaseCard.height * (1 + FixedFocusMetrics.movingFocusLift) * 16 / 9
+    }
     /// A landscape card's logo.
     static var cardLogo: CGFloat { landscape * 0.55 }
     /// Full screen: the billboard, Details, the stage.

@@ -115,19 +115,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Home's fixed rows, Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small).
+  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). Home's fixed rows 12 % larger than the poster, box and posters alike (`Spotlight.rowHeight` 434: posters 289 × 434, the box 16:9; at the poster's size the box was too small for what it carries; growing the box alone was talked over: a ragged row, read as focus). One poster everywhere else (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
-  it, 22 pt, medium (on the art): "S1:E5" left, the time left or "Up Next" at its end (above and below
+  it, 22 pt, medium (on the art): "S1:E5 · Episode title" left (cut short where it meets the time), the time left or "Up Next" at its end (above and below
   the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
   Badges (`FixedFocusBadges`, chosen by `HomeRow.badges(for:)`, set at
-  configure, never late), dark plates (black 65 %, 10 pt corners,
-  a 1 pt white edge at 12 %), the words sentence case 26 pt medium at
-  primary, the symbol a level down (body) (black 80 % with no edge looked
-  pasted on; the status badge's off-white plate with the words cut out
-  clashed; 22 and 20 pt were small), at the picture's top left,
-  16 pt in (the foot right, beside the logo, was tried), not moving: on a move the old ones go at
+  configure, never late), Apple TV's plates, measured: the words alone,
+  sentence case, 25 pt medium at primary, 15 pt either side, a 2 pt edge
+  at 40 % white, 14 pt corners, black 70 % (Apple's nearly clear, and
+  55 %, were hard to read at times; a symbol before the words, black 65 % with a 1 pt edge at
+  12 %, was the look before; black 80 % with no edge looked pasted on; the status badge's off-white plate with the words cut out
+  clashed; 22 and 20 pt were small), at the foot over the logo, left
+  (the picture's top left, and the foot right beside the logo, were tried), not moving: on a move the old ones go at
   the press, the new appear 0.1 s later, no fade (at once was too fast;
   fades, 30 % and 75 % of the drift, drifting with the picture: on a pane
   over it); side by side, else stacked. Only on the fixed box (and the grown card handing over to
@@ -145,8 +146,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   votes), Acclaimed (IMDb 8+, 50,000 votes), Limited series, Top 10
   (today's trending). What the row says isn't repeated: no news in New
   Episodes or Airing Today, no Acclaimed in Top Rated, no Top 10 in the
-  Top 10 row. Symbols: sparkles, calendar, flag.checkered, person.fill,
-  diamond, laurel.leading, square.stack, chart.bar.fill, heart. Not on
+  Top 10 row. Not on
   Continue Watching. (A notch cut into
   the top-left corner in spaced capitals was tried; service and quality
   badges, and awards, were talked over: rows already say them; TMDB's
@@ -217,19 +217,43 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   65 % fit, 35 % the day's seeded chance, less if up yesterday; at most two
   of a kind per tab, never side by side; a row that leaves something out
   counts only the watching it keeps (Japanese dramas for an anime watcher:
+  little). New & Notable (`CueRows.showcase`, one mid-page row per tab
+  (Movies films only, Series shows only): new seasons of
+  your shows and premieres of the last 30 days, scored by yours, taste and
+  popularity, one of up to 3 upcoming in your taste after every three; 8–12.
+  Showcase cards (`FixedFocusShowcaseCell`), moving focus: the picture
+  chosen as Top 10's (`TMDBService.cardScene`, below), cut around its
+  faces (Vision); at the foot over
+  a shade, left-aligned, a badge of what's new (New, Premiere, New season,
+  Out Fri, Mar 4), the logo, the facts line (TMDB's paired genres cut to their first
+  half, then whole parts dropped from the end until it fits, never "…":
+  a smaller font is below the floor, running text was rejected for cards);
+  no reason line (a reason is
+  a badge if anything); after the trailers' 2 s rest the
+  trailer plays in the card, the words and shade fading out, the sound
+  rising (the billboard's trailer settings). Later: Select opens the
+  billboard with the trailer playing.
   little). Top 10 (Home "Top 10 Today", Movies, Shows: TMDB's
-  trending today, 10 titles, the badge "Top 10" left out there): moving
-  focus, each poster with a short card behind it in the tertiary white,
-  the cards' corners, 56 pt of it showing at the left (60 more under
-  the poster), the gap before it the other rows' (as the poster's alone),
-  lifted with the poster (the outline the poster's only), 48 pt under its
-  top, 90 pt tall (120 and 104 too tall, 76 too short), the caption under the poster, the digit cut out (SF bold 40 pt) (tried: the digit stretched tall; the word written downwards ("SEVEN", a
-  letter under the other) alone, with the digit on one card, or on a
-  second card near the foot; the digit alone, 80 pt, 24 pt under the top) (a full-height outlined numeral over the poster; Netflix's
-  numeral behind it, filled or outlined, half or most of the height; a strip
-  joined to the poster, its word turned; the card full height, were
-  tried) (`rankedRowIDs`,
-  `FixedFocusDestinationCell.rankLead`). Fixed rows set among them: Top Picks, Top 10 (second on every
+  trending today, 10 titles, the badge "Top 10" left out there): a grid
+  of two lines of five, all ten in view, no scrolling
+  (`FixedFocusGridLayout`); Right on the fifth does nothing (no wrap,
+  Apple's grids); Down goes to the second line, then the next row;
+  on Home centred with its name. The cards are small showcase cards
+  (`FixedFocusShowcaseCell` with a rank, `rankedCard`: five across, square; 8:9 left the row below only its name):
+  TMDB's text-free poster, else the best of three backdrops, cut to the
+  square around its faces (`TMDBService.cardScene`: scored small for a
+  face, middling light, little black; 30 days on disk; the rows' build
+  waits 3 s at most, the rest are the next build's; Vision never on
+  Swift's pool: a dozen blocked it and stalled the launch), dark logos
+  drawn white at primary (`FixedFocusLogo.isDark`, brightest under 0.7:
+  a red one goes white too; by light alone left The Odyssey's blue),
+  the place top left (44 pt bold, a
+  soft dark corner behind it), at the foot the logo and a slim line
+  (genre, "Action & Adventure" cut to "Action", and year); no badge, no
+  trailer, no caption (posters with a short card behind them, the digit
+  cut out, was the look before; tried: the digit stretched tall, the
+  word written downwards, a numeral over or behind the poster, a strip
+  joined to the poster). Fixed rows set among them: Top Picks, Top 10 (second on every
   tab), Because You Watched (the latest title, two more of the last five
   by the day), new
   episodes, cinemas, the country's three biggest services. Titles in a row
@@ -278,11 +302,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
   pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
-- **Under Home's box** (the posters' height, not grown): no name, the
-  facts line in the title's style, then the description, up to 4 lines,
-  top-aligned, secondary (badges there, on the line or in the box, were
-  tried: removed). Captions under cards 24 pt. Row names 34 pt semibold,
-  a little low in their line, near their cards.
+- **Home: no captions** (the art says it all): the box carries at its
+  foot, left, the badges over the logo over the facts line (24 pt,
+  regular, body), drifting and crossfading with the picture, over a
+  bottom fade (`FixedFocusShade`, the showcase cards' too); Continue
+  Watching "S1:E5 · Episode title" over its bar. (Tried: one caption line
+  under the box and tall cards, the episode's title under Continue
+  Watching, the date under Saved for Later: inside was better; before that
+  the facts and a 4-line description under the box.) Details' rows,
+  Search and grids keep name and second line, 24 pt. The focused row's
+  cards centred on the screen, Apple TV's (`FixedFocusRows.centred`, Home
+  only; centring name and cards together sat the cards 31 pt low), the
+  rows above and below the same 64 pt gap from it (`centredGap`; 56, the
+  other pages' `peekGap`, was tight, 72 a little much), so both peek alike (~200 pt by a fixed row); the row under the billboard too, the billboard
+  peeking above it the same gap away (~265 pt). Row names 34 pt
+  semibold, a little low in their line, near their cards.
 - **Billboard** (Details shares it): the description between the tagline
   and the buttons, 600 pt wide, 3 lines, in Apple TV's vibrancy with a 30 %
   white over it (`VibrantSummary`; plain at body level was hard to read).

@@ -26,6 +26,15 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var destinationRowIDs: Set<String> = []
     /// Of them, ranked (Top 10: each card's place beside it).
     var rankedRowIDs: Set<String> = []
+    /// Of them, showcases (New & Notable: tall cards, the trailer in the
+    /// focused one), and whether its trailers play, with sound.
+    var showcaseRowIDs: Set<String> = []
+    var showcaseTrailers: (on: Bool, sound: Bool) = (false, false)
+    /// Names under moving-focus cards (Home has none: the art says it).
+    var captions = true
+    /// The focused row centred on the screen (Home, as Apple TV's), the
+    /// rows above and below peeking alike.
+    var centred = false
     /// Rows of ONE wide banner (Search's Top Result: see
     /// `FixedFocusBannerCell`), and its height.
     var bannerRowIDs: Set<String> = []
@@ -222,6 +231,10 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.landscapeRowIDs = landscapeRowIDs
         controller.panelRowIDs = panelRowIDs
         controller.rankedRowIDs = rankedRowIDs
+        controller.showcaseRowIDs = showcaseRowIDs
+        controller.showcaseTrailers = showcaseTrailers
+        controller.captions = captions
+        controller.centred = centred
         controller.destinationRowIDs = destinationRowIDs
         controller.bannerRowIDs = bannerRowIDs
         controller.bannerHeight = bannerHeight
@@ -300,11 +313,11 @@ enum FixedFocusMetrics {
     /// The row above: this much of its cards shows at the top (trial: fixed,
     /// 44 pt above the focused row's name).
     static let aboveVisible: CGFloat = 78
-    /// Between the focused row and the row below: its name this far below
-    /// the box's info (what's left once the box is placed).
-    static var peekGap: CGFloat {
-        1080 - belowVisible - titleHeight - (boxFrame.maxY + infoGap + infoHeight)
-    }
+    /// Between the focused row's cards and the row below's name.
+    static let peekGap: CGFloat = 56
+    /// Home's centred rows (`FixedFocusRows.centred`): a little more room
+    /// between the focused row and its peeks.
+    static let centredGap: CGFloat = 64
     /// The row below: this much of its posters shows at the bottom (as on
     /// the original Home — a little under half).
     static var belowVisible: CGFloat { Spotlight.previewVisibleHeight }
@@ -325,6 +338,19 @@ enum FixedFocusMetrics {
     /// 10, Details' rows) and the grids: six across the content's width,
     /// the rows' gaps between them, the next one peeking (Apple TV's size).
     static let posterCard = posters(across: 6)
+    /// THE SHOWCASE CARD (New & Notable): 4:5, three across (Apple TV's).
+    static let showcaseCard: CGSize = {
+        let width = cardWidth(across: 3)
+        return CGSize(width: width, height: (width * 5 / 4).rounded())
+    }()
+    /// A TOP 10'S CARD: a small showcase card, five across (two lines of
+    /// five fill the screen), square (8:9 left the row below only its
+    /// name to peek): the
+    /// picture, its place and logo on it, a slim genre line.
+    static let rankedCard: CGSize = {
+        let width = cardWidth(across: 5)
+        return CGSize(width: width, height: width)
+    }()
     /// Smaller portraits for long rows of people (Details' Cast & Crew):
     /// seven across.
     static let portraitCard = posters(across: 7)
@@ -392,27 +418,40 @@ enum FixedFocusMetrics {
     static var panelReach: (above: CGFloat, below: CGFloat) { (panelPad, panelPad) }
     /// Under the box: the title's name, then its facts (meta) line.
     static let infoGap: CGFloat = 18
-    /// …under the fixed box (and a cell standing in for it): a little more —
-    /// it reads as far below as a focused moving-focus card's caption.
-    static let boxInfoGap: CGFloat = infoGap + 3
     static let factsOffset: CGFloat = 36
     static let factsHeight: CGFloat = 30
-    /// The facts and the description's four lines (trial: no name, the
-    /// description in the chips' place).
-    static let infoHeight: CGFloat = 104 + FixedFocusBillboardText.chipsGap + 45
-    /// The description under the facts: up to four lines from the top of
-    /// its room (`TopAlignedLabel`), caption size, regular, secondary.
-    static var descriptionFrameY: CGFloat { factsOffset + FixedFocusBillboardText.chipsGap - 4 }
-    static func styleDescription(_ label: UILabel) {
-        label.font = FixedFocusText.infoFont(captionSize)
-        label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-        label.numberOfLines = 4
+    /// The box (and a grown card) carries its text on the picture, left,
+    /// from the foot up: the facts line, the logo over it, the badges over
+    /// that (as a showcase card). Nothing under the box.
+    static let footPad: CGFloat = 24
+    static let factsGap: CGFloat = 10
+    static let badgesGap: CGFloat = 14
+    static func factsFrame(width: CGFloat, height: CGFloat) -> CGRect {
+        CGRect(x: Spotlight.logoInset, y: height - footPad - factsHeight,
+               width: width - 2 * Spotlight.logoInset, height: factsHeight)
+    }
+    static func styleFacts(_ label: UILabel) {
+        label.font = FixedFocusText.infoFont(textSize)
+        label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
         label.lineBreakMode = .byTruncatingTail
     }
-    /// In the box (and a grown card): the logo's room, at the foot.
+    /// The logo's room, over the facts.
     static func logoRoom(width: CGFloat, height: CGFloat) -> CGRect {
-        CGRect(x: Spotlight.logoInset, y: height - Spotlight.logoInset - height * 0.28,
-               width: width * 0.55, height: height * 0.28)
+        let room = height * 0.26
+        return CGRect(x: Spotlight.logoInset, y: factsFrame(width: width, height: height).minY - factsGap - room,
+                      width: width * 0.5, height: room)
+    }
+    /// The badges' frame (`FixedFocusBadges` lays out from its bottom left):
+    /// their foot just over the logo as drawn, else over its room.
+    static func badgesFrame(width: CGFloat, over logo: FixedFocusLogo) -> CGRect {
+        let top = logo.drawnTop ?? logo.room.minY
+        let inset = FixedFocusBadges.inset
+        let plate = FixedFocusBadges.plateHeight
+        let bottom = top - badgesGap
+        // Room for two stacked, should they not fit side by side.
+        let height = 2 * plate + FixedFocusBadges.gap
+        return CGRect(x: Spotlight.logoInset - inset, y: bottom - height - inset,
+                      width: width - 2 * Spotlight.logoInset + 2 * inset, height: height + 2 * inset)
     }
     static func descriptionText(_ item: MetaItem) -> String? {
         item.description?.replacingOccurrences(of: "\n", with: " ")
@@ -445,8 +484,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// The first row below the billboard stands lower while it is in focus
     /// (see `FixedFocusMetrics.billboardStripDrop`).
     var rowDrop: CGFloat {
+        if let drop = centredDrop(focusedRow) { return drop }
         guard let featured = rows.firstIndex(where: { $0.id == featuredRowID }),
-              focusedRow == featured + 1 else { return 0 }
+              focusedRow == featured + 1 else { return centredDrop(focusedRow) ?? 0 }
         if rigidRest != nil { return 0 }
         return FixedFocusMetrics.billboardStripDrop
     }
@@ -510,6 +550,67 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         rows.indices.contains(rowIndex) && rankedRowIDs.contains(rows[rowIndex].id)
     }
 
+    /// Showcase rows (New & Notable): tall cards with everything on them,
+    /// no caption; the focused card's trailer after a rest (`showcaseTrailer`).
+    var showcaseRowIDs: Set<String> = []
+    /// Names under moving-focus cards (`FixedFocusRows.captions`).
+    var captions = true
+    /// The focused row centred (`FixedFocusRows.centred`).
+    var centred = false {
+        didSet { if centred != oldValue, isViewLoaded { view.setNeedsLayout() } }
+    }
+    /// Centred: how much lower than `rowTop` row `r` stands in focus, its
+    /// cards in the screen's middle (Apple TV's; a collection: its panel)
+    /// (nil: not centred, or the billboard).
+    func centredDrop(_ r: Int) -> CGFloat? {
+        guard centred, rows.indices.contains(r), !isFeatured(r) else { return nil }
+        // (A Top 10's grid: with its name, so the rows above and below
+        // both keep a peek.)
+        let whole = isPanel(r) || isRanked(r)
+        let above = whole ? 0 : FixedFocusMetrics.titleHeight + titleExtra(r)
+        let content = whole ? drawnHeight(r) : cardHeight(r)
+        return ((1080 - content) / 2).rounded() - above - rowTop
+    }
+    /// Centred, how far the billboard goes up for the row under it: its
+    /// edge `peekGap` over that row's name.
+    private var centredBillboardTravel: CGFloat? {
+        guard let featured = featuredIndex, let drop = centredDrop(featured + 1) else { return nil }
+        return 1080 - (rowTop + drop - FixedFocusMetrics.centredGap)
+    }
+    /// How far a focused row draws, from its anchor (its name; a panel's
+    /// top) to the end of its cards (a panel's edge).
+    func drawnHeight(_ r: Int) -> CGFloat {
+        let named = FixedFocusMetrics.titleHeight + titleExtra(r) + cardHeight(r)
+        // A collection: its panel is its edge.
+        if isPanel(r) {
+            let reach = FixedFocusMetrics.panelReach
+            return reach.above + named + reach.below
+        }
+        return named
+    }
+    var showcaseTrailers: (on: Bool, sound: Bool) = (false, false) {
+        didSet { if !showcaseTrailers.on { showcaseTrailer.rest(on: nil, sound: false) } }
+    }
+    let showcaseTrailer = StageTrailer()
+
+    func isShowcase(_ rowIndex: Int) -> Bool {
+        rows.indices.contains(rowIndex) && showcaseRowIDs.contains(rows[rowIndex].id)
+    }
+
+    /// The trailer on the focused showcase card (nil: none) — another card,
+    /// or focus anywhere else, lets it go.
+    func restShowcase(on cell: FixedFocusShowcaseCell?) {
+        guard let cell, showcaseTrailers.on, let item = cell.item else {
+            showcaseTrailer.rest(on: nil, sound: false)
+            return
+        }
+        if showcaseTrailer.stage !== cell {
+            showcaseTrailer.rest(on: nil, sound: false)
+            showcaseTrailer.stage = cell
+        }
+        showcaseTrailer.rest(on: item, sound: showcaseTrailers.sound, rise: true)
+    }
+
     func isDestination(_ rowIndex: Int) -> Bool {
         isBanner(rowIndex) || (rows.indices.contains(rowIndex) && destinationRowIDs.contains(rows[rowIndex].id))
     }
@@ -527,6 +628,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// A destination row's card (picture only — the caption is below it).
     func destinationCard(_ rowIndex: Int) -> CGSize {
         if isBanner(rowIndex) { return CGSize(width: FixedFocusMetrics.bannerWidth, height: bannerHeight) }
+        if isShowcase(rowIndex) { return FixedFocusMetrics.showcaseCard }
         if isLogo(rowIndex) { return FixedFocusMetrics.logoCard }
         // Continue Watching (moving focus): its cards at their own size —
         // the fixed box's.
@@ -534,11 +636,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight),
                           height: FixedFocusMetrics.landscapeHeight)
         }
-        // Ranked: the poster with its numeral's room before it.
-        if isRanked(rowIndex) {
-            return CGSize(width: FixedFocusMetrics.posterCard.width + FixedFocusDestinationCell.rankLead,
-                          height: FixedFocusMetrics.posterCard.height)
-        }
+        if isRanked(rowIndex) { return FixedFocusMetrics.rankedCard }
         return isLandscape(rowIndex)
             ? CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight),
                      height: FixedFocusMetrics.landscapeHeight)
@@ -555,11 +653,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// The focus outline only while focus is in the rows (Search; Home
     /// keeps it while you're up in the top bar).
     var ringOnlyWithFocus = false
-    /// The row's cards' height.
+    /// The row's cards' height (a Top 10: its grid's).
     func cardHeight(_ rowIndex: Int) -> CGFloat {
+        let caption = captions ? FixedFocusMetrics.captionRoom : 0
         if let custom = custom(rowIndex) { return custom.height }
         return isBanner(rowIndex) ? bannerHeight
-            : isDestination(rowIndex) ? destinationCard(rowIndex).height + FixedFocusMetrics.captionRoom
+            : isShowcase(rowIndex) ? FixedFocusMetrics.showcaseCard.height
+            : isRanked(rowIndex) ? FixedFocusGridLayout.height(card: FixedFocusMetrics.rankedCard.height,
+                                                               count: rows[rowIndex].items.count)
+            : isDestination(rowIndex) ? destinationCard(rowIndex).height + caption
             : FixedFocusMetrics.height
     }
 
@@ -789,7 +891,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// going out, and came on a few frames late on the one coming in.)
     func setActive(_ active: Bool) {
         guard view.isUserInteractionEnabled != active else { return }
-        if !active { returnRow = focusedRow }
+        if !active { returnRow = focusedRow; restShowcase(on: nil) }
         view.isUserInteractionEnabled = active
     }
 
@@ -827,6 +929,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         layout.belowCards = { [weak self] in
             // (Not a collection's: its panel is its edge — placed by that.)
             self?.isDestination($0) == true && self?.isBanner($0) == false && self?.isPanel($0) == false
+                && self?.isShowcase($0) == false && self?.isRanked($0) == false && self?.captions == true
                 ? FixedFocusMetrics.captionRoom : 0
         }
         layout.reach = { [weak self] in
@@ -837,20 +940,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return FixedFocusMetrics.titleHeight + self.titleExtra($0) + content
         }
         layout.drawnHeight = { [weak self] in
-            let usual = FixedFocusMetrics.titleHeight + FixedFocusMetrics.height
-                + FixedFocusMetrics.infoGap + FixedFocusMetrics.infoHeight
-            guard let self else { return usual }
-            let named = FixedFocusMetrics.titleHeight + self.titleExtra($0) + self.cardHeight($0)
-            // A collection: its panel is its edge.
-            if self.isPanel($0) {
-                let reach = FixedFocusMetrics.panelReach
-                return reach.above + named + reach.below
-            }
-            // A custom row or a moving-focus row: its height (captions in).
-            if self.custom($0) != nil || self.isDestination($0) { return named }
-            // A fixed-box row: the box's info under its cards.
-            return named + FixedFocusMetrics.infoGap + FixedFocusMetrics.infoHeight
+            self?.drawnHeight($0) ?? FixedFocusMetrics.titleHeight + FixedFocusMetrics.height
         }
+        layout.centredDrop = { [weak self] in self?.centredDrop($0) }
         layout.featuredRow = { [weak self] in
             guard let self else { return nil }
             return self.rows.firstIndex { $0.id == self.featuredRowID }
@@ -902,7 +994,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
         place(box, boxFrame)
         if !boxPressed, !boxHeld {
-            UIView.performWithoutAnimation { box.applyScale(FixedFocusMetrics.boxScale, base: FixedFocusMetrics.boxScale) }
+            UIView.performWithoutAnimation { box.applyScale(FixedFocusMetrics.boxScale) }
         }
     }
 
@@ -992,6 +1084,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             enterRow(rowCell.rowIndex)
             return
         }
+        restShowcase(on: (context.nextFocusedView as? FixedFocusShowcaseCell).flatMap { $0.rank == nil ? $0 : nil })
         if let tile = context.nextFocusedView as? FixedFocusDestinationItem, let rowCell = tile.rowCell,
            rows.indices.contains(rowCell.rowIndex) {
             focusDestination(tile.itemIndex, in: rowCell)
@@ -1583,7 +1676,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if scale < base, box.alpha == 1 { covered?.setUnderPressedBox(true) }
         UIView.animate(withDuration: duration, delay: 0,
                        options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
-            self.box.applyScale(scale, base: base)
+            self.box.applyScale(scale)
         } completion: { _ in
             if !self.boxPressed { covered?.setUnderPressedBox(false) }
         }
@@ -1806,7 +1899,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// How far the billboard is up with focus `depth` rows below it.
     func billboardUp(depth: Int) -> CGFloat {
         guard depth > 0 else { return 0 }
-        if let travel = rigidBillboardTravel { return travel + CGFloat(depth - 1) * FixedFocusMetrics.rowPitch }
+        if let travel = centredBillboardTravel ?? rigidBillboardTravel {
+            return travel + CGFloat(depth - 1) * FixedFocusMetrics.rowPitch
+        }
         return rigidRest.map {
             FixedFocusRowsLayout.billboardScroll(depth: depth, rigidRest: $0, rowTop: rowTop + rowDrop)
         } ?? FixedFocusRowsLayout.billboardScroll(depth: depth)
@@ -2409,6 +2504,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func select(_ item: MetaItem, rowIndex: Int) {
         // (Back's scroll up running: dropped, as a move.)
         guard !backing else { return }
+        // (A showcase card's trailer stops at the press; into Details with
+        // it playing is for later.)
+        restShowcase(on: nil)
         guard settled || ModeSwap.shared.handingOver else {
             heldSelectToken += 1
             let token = heldSelectToken
@@ -2458,7 +2556,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // (Rigid: by a line fixed on the screen, moved in the scroll —
             // see `concealTravel`.)
             if let rest = rigidRest {
-                let travel = FixedFocusRowsLayout.billboardScroll(depth: 1, rigidRest: rest, rowTop: rowTop)
+                let next = featuredIndex.flatMap { centredDrop($0 + 1) } ?? 0
+                let travel = FixedFocusRowsLayout.billboardScroll(depth: 1, rigidRest: rest, rowTop: rowTop + next)
                 if cell.concealTravel != travel { UIView.performWithoutAnimation { cell.concealTravel = travel } }
             }
             cell.concealed = rowConcealed(cell.rowIndex)
@@ -2900,6 +2999,8 @@ final class FixedFocusBoxView: UIView {
         let backdrop = UIImageView()
         let shade = FixedFocusShade()
         let logo = FixedFocusLogo()
+        /// The facts line under the logo; drifts with it.
+        let facts = UILabel()
         /// The backdrop on its way: the placeholder's look, nothing over it.
         let loadingCard = FixedFocusPlaceholder()
         /// It waits (true) or is in: the box's edge waits with it.
@@ -2916,6 +3017,8 @@ final class FixedFocusBoxView: UIView {
             loadingCard.layer.cornerRadius = 0
             addSubview(loadingCard)
             addSubview(logo)
+            FixedFocusMetrics.styleFacts(facts)
+            addSubview(facts)
         }
 
         required init?(coder: NSCoder) { fatalError() }
@@ -2926,11 +3029,20 @@ final class FixedFocusBoxView: UIView {
             loadingCard.frame = bounds
             shade.frame = bounds
             logo.room = FixedFocusMetrics.logoRoom(width: bounds.width, height: bounds.height)
+            let factsFrame = FixedFocusMetrics.factsFrame(width: bounds.width, height: bounds.height)
+            facts.bounds = CGRect(origin: .zero, size: factsFrame.size)
+            facts.center = CGPoint(x: factsFrame.midX, y: factsFrame.midY)
+        }
+
+        func showFacts(_ item: MetaItem) {
+            facts.text = FixedFocusPlaceholder.isPlaceholder(item) || item.type == "collection"
+                ? nil : FixedFocusShowInfo.factsLine(item)
         }
 
         /// `pictures`: the picture and logo a grown cell shows for it (same
         /// files, same size) — taken as they are, nothing to wait for.
         func show(_ item: MetaItem, pictures: FixedFocusPosterCell.Pictures? = nil) {
+            showFacts(item)
             // A folder's cover is its own picture, name and all: no shade.
             shade.isHidden = item.type == "collection"
             // (A banner row's box is wider than a landscape card: the
@@ -2992,64 +3104,12 @@ final class FixedFocusBoxView: UIView {
             loadingCard.follow(waiting: waiting)
             shade.isHidden = waiting || !shaded
             logo.isHidden = waiting
-        }
-    }
-
-    /// The box's info (name, facts) under it — part of the box: it stays
-    /// put and drifts with it.
-    private final class InfoPage: UIView {
-        let name = UILabel()
-        let facts = UILabel()
-        let summary = TopAlignedLabel()
-        /// A placeholder's name and facts still to come.
-        private let nameBar = FixedFocusPlaceholder()
-        private let factsBar = FixedFocusPlaceholder()
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            FixedFocusMetrics.styleDescription(summary)
-            addSubview(summary)
-            for bar in [nameBar, factsBar] {
-                bar.isHidden = true
-                addSubview(bar)
-            }
-            name.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
-            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
-            // (Trial: no name above it, so the facts take the title's look.)
-            facts.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
-            facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
-            addSubview(name)
-            addSubview(facts)
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            name.isHidden = true
-            nameBar.isHidden = true
-            facts.frame = CGRect(x: 0, y: 0, width: bounds.width, height: FixedFocusMetrics.factsHeight)
-            summary.frame = CGRect(x: 0, y: FixedFocusMetrics.descriptionFrameY, width: bounds.width,
-                                   height: summary.font.lineHeight * 4 + 2)
-            let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
-            for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
-                bar.layer.cornerRadius = barHeight / 2
-                bar.frame = CGRect(x: 0, y: label.frame.midY - barHeight / 2,
-                                   width: (bounds.width * share).rounded(), height: barHeight)
-            }
-        }
-
-        func show(_ item: MetaItem) {
-            let placeholder = FixedFocusPlaceholder.isPlaceholder(item)
-            factsBar.isHidden = !placeholder
-            summary.text = placeholder ? nil : FixedFocusMetrics.descriptionText(item)
-            name.text = item.name
-            facts.text = FixedFocusShowInfo.factsLine(item)
+            facts.isHidden = waiting
         }
     }
 
     /// Clips the pages to the box's rounded shape (the box itself doesn't
-    /// clip: its info sits below it).
+    /// clip: the focus shadow).
     private let clip = UIView()
     private var page = Page()
     /// The title's badges: the box's, not a page's — they don't drift or
@@ -3058,9 +3118,6 @@ final class FixedFocusBoxView: UIView {
     /// The new badges wait this long after a move's press.
     private static let badgesDelay: TimeInterval = 0.1
     private var badgesHeld = false
-    private var infoPage = InfoPage()
-    /// Holds the info pages.
-    private let infoHost = UIView()
     private var shownID: String?
     /// The cards' rim (see `FixedFocusCardEdge`), and the focus outline in
     /// the top bar's light.
@@ -3071,9 +3128,10 @@ final class FixedFocusBoxView: UIView {
     /// with a short fade.
     func refreshInfo(for item: MetaItem) {
         guard shownID == item.id else { return }
-        UIView.transition(with: infoPage, duration: Motion.fadeDuration,
+        let page = page
+        UIView.transition(with: page.facts, duration: Motion.fadeDuration,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
-                          animations: { self.infoPage.show(item) })
+                          animations: { page.showFacts(item) })
     }
 
     override init(frame: CGRect) {
@@ -3087,9 +3145,6 @@ final class FixedFocusBoxView: UIView {
         clip.addSubview(page)
         follow(page)
         addSubview(badges)
-        infoHost.isUserInteractionEnabled = false
-        addSubview(infoHost)
-        infoHost.addSubview(infoPage)
         edge.isUserInteractionEnabled = false
         addSubview(edge)
         focusRing.isUserInteractionEnabled = false
@@ -3121,36 +3176,27 @@ final class FixedFocusBoxView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Where the info sits: as under the cells (18 pt below, optically
-    /// indented).
-    private var infoFrame: CGRect {
-        CGRect(x: FixedFocusMetrics.textIndent, y: bounds.height + FixedFocusMetrics.boxInfoGap,
-               width: max(bounds.width, FixedFocusMetrics.boxWidth) - 2 * FixedFocusMetrics.textIndent,
-               height: FixedFocusMetrics.infoHeight)
-    }
-
     override func layoutSubviews() {
         super.layoutSubviews()
         applyOutlineStyle()
         clip.frame = bounds
-        badges.frame = bounds
+        placeBadges()
         // The cards' rim.
         edge.image = FixedFocusCardEdge.rim
         edge.frame = bounds
         focusRing.frame = bounds
-        infoHost.bounds = CGRect(origin: .zero, size: bounds.size)
-        infoHost.center = CGPoint(x: bounds.midX, y: bounds.midY)
         if page.layer.animationKeys()?.isEmpty ?? true { page.frame = bounds }
-        if infoPage.layer.animationKeys()?.isEmpty ?? true { infoPage.frame = infoFrame }
     }
 
-    /// The box at `scale` (lifted, pressed, held). The info under it keeps
-    /// its size and sits as far below the box as its `base` (lifted) size
-    /// overhangs — pressing or holding doesn't move it.
-    func applyScale(_ scale: CGFloat, base: CGFloat) {
+    /// The badges over the current page's logo (they wait for it).
+    private func placeBadges() {
+        page.layoutIfNeeded()
+        badges.frame = FixedFocusMetrics.badgesFrame(width: bounds.width, over: page.logo)
+    }
+
+    /// The box at `scale` (lifted, pressed, held).
+    func applyScale(_ scale: CGFloat) {
         transform = CGAffineTransform(scaleX: scale, y: scale)
-        let overhang = bounds.height * (base - 1) / 2
-        infoHost.transform = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale).translatedBy(x: 0, y: overhang)
     }
 
     /// The current page's backdrop on its way: no edge (the placeholder's
@@ -3159,6 +3205,10 @@ final class FixedFocusBoxView: UIView {
         page.onWaiting = { [weak self, weak page] waiting in
             guard let self, page === self.page else { return }
             self.syncEdge()
+        }
+        page.logo.onPlace = { [weak self, weak page] in
+            guard let self, page === self.page else { return }
+            self.placeBadges()
         }
     }
     /// The edge waits with the current page's picture — except while it
@@ -3197,14 +3247,12 @@ final class FixedFocusBoxView: UIView {
         guard animated else {
             badgesHeld = false
             page.show(item, pictures: pictures)
-            infoPage.show(item)
+            placeBadges()
             syncEdge()
             return
         }
-        // One movement with the row, on its spring, the captions' timing:
-        // - the info drifts with the picture, crossfading over the whole
-        //   move.
-        // - the picture and logo drift a share of that, on the same curve —
+        // One movement with the row, on its spring:
+        // - the picture, logo and facts drift a share of that, on the same curve —
         //   old and new alike, the old one out, the new one in — inside the
         //   room the picture's zoom leaves (`driftZoom`), so the box stays
         //   covered. The new one fades in with the captions over the old,
@@ -3212,8 +3260,7 @@ final class FixedFocusBoxView: UIView {
         //   (both fading at once, the posters passing under it showed
         //   through).
         // (Tried: the page itself shifted 30 pt — the old picture showed in
-        // a strip at the edge; the info 14–30 pt on springs of its own —
-        // every part its own pace; everything in place — no movement.)
+        // a strip at the edge; everything in place — no movement.)
         let move = vertical ? Motion.verticalDuration : Motion.moveDuration
         let margin = Self.zoomRect.minX
         let shift = CGPoint(x: vertical ? 0 : direction, y: vertical ? direction : 0)
@@ -3236,6 +3283,7 @@ final class FixedFocusBoxView: UIView {
             outgoing = under
         }
         page = incoming
+        placeBadges()
         covered = outgoing
         moveID += 1
         let id = moveID
@@ -3259,6 +3307,7 @@ final class FixedFocusBoxView: UIView {
         // the drift, they read as on a pane over the picture; at once was
         // too fast, 30 % and 75 % of the drift, and fades, were tried).
         incoming.logo.transform = CGAffineTransform(translationX: drift.x, y: drift.y)
+        incoming.facts.transform = incoming.logo.transform
         // (Held by the view's own alpha: under an opacity animation, the
         // new words weren't always drawn — a plate with nothing on it.)
         badgesHeld = true
@@ -3268,29 +3317,13 @@ final class FixedFocusBoxView: UIView {
             self.badgesHeld = false
             self.syncEdge()
         }
-        // The info drifts as the picture does, crossfading over the whole
-        // move. (Tried: 30 pt, the last commit's; on the captions' timing,
-        // moving a poster's step, `pitch`, ~750 pt on the path of the
-        // caption going under the box, 500, 180, the picture's drift.)
-        let step = drift
-        let infoIn = InfoPage(frame: infoFrame.offsetBy(dx: step.x, dy: step.y))
-        infoIn.show(item)
-        infoIn.alpha = 0
-        infoHost.addSubview(infoIn)
-        let infoOut = infoPage
-        infoPage = infoIn
-        let infoTarget = infoFrame
         FixedFocusMotion.run(duration: move) {
             incoming.logo.transform = .identity
+            incoming.facts.transform = .identity
             outgoing.logo.transform = CGAffineTransform(translationX: -drift.x, y: -drift.y)
-            infoIn.frame = infoTarget
-            infoIn.alpha = 1
-            infoOut.frame = infoTarget.offsetBy(dx: -step.x, dy: -step.y)
-            infoOut.alpha = 0
-        } completion: { _ in
-            if infoOut !== self.infoPage { infoOut.removeFromSuperview() }
-        }
-        let start = FixedFocusPosterCell.captionFadeIn(duration: move)
+            outgoing.facts.transform = outgoing.logo.transform
+        } completion: { _ in }
+        let start = FixedFocusPosterCell.fadeInStart(duration: move)
         let options: UIView.AnimationOptions = [.beginFromCurrentState, .allowUserInteraction,
                                                 .overrideInheritedDuration, .overrideInheritedCurve]
         UIView.animate(withDuration: move - start, delay: start, options: options.union(.curveEaseOut)) {
@@ -3593,10 +3626,12 @@ final class FixedFocusShade: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
+        // A bottom fade under the words (the box's, a tall card's): dark at
+        // the foot, eased, clear by the card's upper third.
         let gradient = layer as! CAGradientLayer
-        gradient.colors = [UIColor.clear.cgColor,
-                           UIColor.black.withAlphaComponent(Spotlight.logoScrimOpacity).cgColor]
-        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradient.colors = [0, 0.5, 0.8, 0.9].map { UIColor.black.withAlphaComponent($0).cgColor }
+        gradient.locations = [0.3, 0.55, 0.8, 1]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -3607,18 +3642,66 @@ final class FixedFocusShade: UIView {
 /// far right), sized by area (`areaShare` of the room, within it) and
 /// standing at the room's bottom left.
 final class FixedFocusLogo: UIImageView {
-    static let areaShare: CGFloat = 0.4
+    var areaShare: CGFloat = 0.4
     var room: CGRect = .zero { didSet { if room != oldValue { place() } } }
-    override var image: UIImage? { didSet { place() } }
+    /// A dark logo (made for a bright poster) is drawn in white: on the
+    /// art's dark foot it didn't read.
+    override var image: UIImage? {
+        didSet {
+            if let image, image.renderingMode != .alwaysTemplate, Self.isDark(image) {
+                tintColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+                self.image = image.withRenderingMode(.alwaysTemplate)
+                return
+            }
+            place()
+        }
+    }
+
+    /// Dark: no bright colour in it (The Odyssey's dim blue; a deep red
+    /// goes white too), from a tiny copy, once per picture.
+    private static let darkness = NSCache<UIImage, NSNumber>()
+    static func isDark(_ image: UIImage) -> Bool {
+        if let known = darkness.object(forKey: image) { return known.boolValue }
+        let side = 32
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        var peak: Double = 0, weight: Double = 0
+        if let cg = image.cgImage,
+           let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
+                                   bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            context.interpolationQuality = .low
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+            for i in stride(from: 0, to: pixels.count, by: 4) {
+                let alpha = Double(pixels[i + 3]) / 255
+                guard alpha > 0.5 else { continue }
+                // Premultiplied: back to the colour, then its luminance.
+                let r = Double(pixels[i]) / 255 / alpha, g = Double(pixels[i + 1]) / 255 / alpha
+                let b = Double(pixels[i + 2]) / 255 / alpha
+                peak += max(r, g, b) * alpha
+                weight += alpha
+            }
+        }
+        let dark = weight > 0 && peak / weight < 0.7
+        darkness.setObject(NSNumber(value: dark), forKey: image)
+        return dark
+    }
+    /// Called once it's placed (the badges sit over it).
+    var onPlace: (() -> Void)?
+    /// Its top as drawn (nil: no picture yet). Bounds and centre: a
+    /// transform (the box's drift) leaves them be.
+    var drawnTop: CGFloat? { image == nil || bounds.height == 0 ? nil : center.y - bounds.height / 2 }
 
     private func place() {
+        defer { onPlace?() }
         guard let size = image?.size, size.width > 0, size.height > 0, !room.isEmpty else {
-            frame = CGRect(x: room.minX, y: room.maxY, width: 0, height: 0)
+            bounds = .zero
+            center = CGPoint(x: room.minX, y: room.maxY)
             return
         }
-        let fitted = LogoFit(area: room.width * room.height * Self.areaShare, maxSize: room.size)
+        let fitted = LogoFit(area: room.width * room.height * areaShare, maxSize: room.size)
             .size(for: size)
-        frame = CGRect(x: room.minX, y: room.maxY - fitted.height, width: fitted.width, height: fitted.height)
+        bounds = CGRect(origin: .zero, size: fitted)
+        center = CGPoint(x: room.minX + fitted.width / 2, y: room.maxY - fitted.height / 2)
     }
 }
 
@@ -3639,14 +3722,12 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// Only the focused row has a grown cell; the others are all posters.
     private var isFocusRow: Bool { controller?.focusedRow == rowIndex }
 
-    /// A moving-focus row's captions only while it has focus — as the fixed
-    /// box's info: rows above and below show only their cards (the same
-    /// preview strip as any row).
-    /// A fixed row's posters too (their name and year; the box has its info).
+    /// A moving-focus row's captions only while it has focus: rows above
+    /// and below show only their cards (Home has none at all).
+    private var captionsShown: Bool { isFocusRow && controller?.captions != false }
     func applyCaptions() {
-        for case let card as FixedFocusPosterCell in strip.visibleCells { card.setCaptionShown(isFocusRow) }
         guard let destinationStrip else { return }
-        for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells { card.setCaptionShown(isFocusRow) }
+        for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells { card.setCaptionShown(captionsShown) }
     }
 
 
@@ -3740,7 +3821,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
         concealMask.alpha = 1
         // (Stretched to the cards' top, or past them by the travel.)
-        let line = cardsTop - stripHost.frame.minY + (concealed ? 0 : travel)
+        // (Shown: past the cards' end however tall they are — a Top 10's
+        // grid is taller than the travel.)
+        let line = cardsTop - stripHost.frame.minY + (concealed ? 0 : max(travel, cardHeight + 200))
         concealMask.frame = CGRect(x: base.minX, y: base.minY, width: base.width, height: line - base.minY)
     }
     /// Hides a destination row's list while it waits under the billboard.
@@ -3775,7 +3858,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             if let cv = destinationStrip, let controller {
                 let focused = index ?? (UIFocusSystem.focusSystem(for: self)?.focusedItem as? UICollectionViewCell)
                     .flatMap { $0.superview === cv ? cv.indexPath(for: $0)?.item : nil }
-                if let focused, let frame = cv.layoutAttributesForItem(at: IndexPath(item: focused, section: 0))?.frame {
+                if let focused, let frame = cv.layoutAttributesForItem(at: IndexPath(item: focused, section: 0))?.frame,
+                   frame.minY < 1 {
                     let card = controller.destinationCard(rowIndex)
                     let lift = FixedFocusMetrics.movingFocusLift
                     let centre = frame.midX - cv.contentOffset.x + cv.frame.minX + stripHost.frame.minX
@@ -4271,6 +4355,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         strip.isHidden = isDestination
         if isDestination, destinationStrip == nil { makeDestinationStrip() }
         destinationStrip?.isHidden = !isDestination
+        if let cv = destinationStrip {
+            // A Top 10: all ten at once, two lines of five (no scrolling).
+            let ranked = controller.isRanked(rowIndex)
+            if ranked {
+                gridLayout.cell = FixedFocusMetrics.rankedCard
+                gridLayout.lineHeight = FixedFocusMetrics.rankedCard.height
+            }
+            let layout: UICollectionViewLayout = ranked ? gridLayout : flowLayout
+            if cv.collectionViewLayout !== layout {
+                cv.setCollectionViewLayout(layout, animated: false)
+                shownRow = nil
+            }
+        }
         // The same catalog coming back (it keeps its own cell): leave its
         // posters, scroll position and focus memory as they are — a reload
         // would erase exactly that. Only new content reloads.
@@ -4332,8 +4429,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     /// A destination row's strip: the system's horizontal scrolling — focus
     /// moves along, the row follows only near its edge.
+    private let flowLayout = UICollectionViewFlowLayout()
+    private let gridLayout = FixedFocusGridLayout()
     private func makeDestinationStrip() {
-        let flow = UICollectionViewFlowLayout()
+        let flow = flowLayout
         flow.scrollDirection = .horizontal
         flow.minimumLineSpacing = FixedFocusMetrics.gap
         // Wider than the screen by the strips' overscan (positions shifted
@@ -4342,6 +4441,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let over = FixedFocusStripLayout.overscan
         flow.sectionInset = UIEdgeInsets(top: 0, left: over + FixedFocusMetrics.inset, bottom: 0,
                                          right: over + FixedFocusMetrics.inset)
+        gridLayout.left = over + FixedFocusMetrics.inset
         let view = UICollectionView(frame: .zero, collectionViewLayout: flow)
         view.backgroundColor = .clear
         view.clipsToBounds = false
@@ -4356,6 +4456,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         view.delegate = self
         view.register(FixedFocusDestinationCell.self, forCellWithReuseIdentifier: "destination")
         view.register(FixedFocusBannerCell.self, forCellWithReuseIdentifier: "banner")
+        view.register(FixedFocusShowcaseCell.self, forCellWithReuseIdentifier: "showcase")
         stripHost.addSubview(view)
         destinationStrip = view
         concealMask.backgroundColor = .black
@@ -4411,21 +4512,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             }
             return cell
         }
+        if cv === destinationStrip, let controller,
+           controller.isShowcase(rowIndex) || controller.isRanked(rowIndex) {
+            let cell = cv.dequeueReusableCell(withReuseIdentifier: "showcase", for: indexPath) as! FixedFocusShowcaseCell
+            if let row, row.items.indices.contains(indexPath.item) {
+                let item = row.items[indexPath.item]
+                let ranked = controller.isRanked(rowIndex)
+                cell.configure(item, index: indexPath.item, rowCell: self, art: row.art[item.id],
+                               badge: ranked ? nil : row.badges[item.id], rank: ranked ? indexPath.item + 1 : nil)
+            }
+            return cell
+        }
         if cv === destinationStrip {
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "destination", for: indexPath)
                 as! FixedFocusDestinationCell
             if let row, let controller, row.items.indices.contains(indexPath.item) {
                 let item = row.items[indexPath.item]
-                let ranked = controller.isRanked(rowIndex)
-                let lead = ranked ? FixedFocusDestinationCell.rankLead : 0
-                let card = controller.destinationCard(rowIndex)
                 cell.configure(item, subtitle: row.subtitles[item.id], index: indexPath.item, rowCell: self,
-                               card: CGSize(width: card.width - lead, height: card.height),
+                               card: controller.destinationCard(rowIndex),
                                progress: controller.isContinue(rowIndex) ? controller.progress[item.id] : nil,
                                cardState: controller.cardStates[item.id],
-                               isLogo: controller.isLogo(rowIndex),
-                               rank: ranked ? indexPath.item + 1 : nil, lead: lead)
-                cell.setCaptionShown(isFocusRow)
+                               isLogo: controller.isLogo(rowIndex))
+                cell.setCaptionShown(captionsShown)
             }
             return cell
         }
@@ -4439,7 +4547,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
             cell.setPast(isPast(indexPath.item))
             cell.setConcealed(concealed)
-            cell.setCaptionShown(isFocusRow, animated: false)
         }
         return cell
     }
@@ -4572,6 +4679,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private func windowOffset(focusing index: Int, card: CGFloat, count: Int) -> CGFloat {
         let gap = FixedFocusMetrics.gap
         let pitch = card + gap
+        // A Top 10's grid shows all its cards: never moves.
+        if controller?.isRanked(rowIndex) == true { return 0 }
         // Focus stays in place (`FixedFocusRows.anchoredRowIDs`): the
         // focused card always at the first card's spot — to the last one,
         // the row's end left open.
@@ -4592,6 +4701,49 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let end = max(0, content - 1920)
         return min(FixedFocusMetrics.inset + CGFloat(windowStart) * pitch - (space.minX + edge), end)
     }
+}
+
+/// A Top 10's cards: two lines of five, all on screen, in rank order
+/// (1–5 above, 6–10 below), the rows' gap between cards and lines alike.
+final class FixedFocusGridLayout: UICollectionViewLayout {
+    static let columns = 5
+    /// The grid's height for `count` cards, each line `card` tall (its
+    /// caption room in).
+    static func height(card: CGFloat, count: Int) -> CGFloat {
+        let lines = CGFloat(max(1, (count + columns - 1) / columns))
+        return lines * card + (lines - 1) * FixedFocusMetrics.gap
+    }
+    var left: CGFloat = 0
+    var cell: CGSize = .zero
+    /// A line's height: the card and its caption room.
+    var lineHeight: CGFloat = 0
+    private var frames: [CGRect] = []
+
+    override func prepare() {
+        super.prepare()
+        let count = collectionView?.numberOfItems(inSection: 0) ?? 0
+        let gap = FixedFocusMetrics.gap
+        frames = (0..<count).map { i in
+            let column = CGFloat(i % Self.columns), line = CGFloat(i / Self.columns)
+            return CGRect(x: left + column * (cell.width + gap), y: line * (lineHeight + gap),
+                          width: cell.width, height: lineHeight)
+        }
+    }
+    override var collectionViewContentSize: CGSize {
+        CGSize(width: collectionView?.bounds.width ?? 0, height: frames.map(\.maxY).max() ?? 0)
+    }
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        frames.indices.filter { frames[$0].intersects(rect) }.compactMap {
+            layoutAttributesForItem(at: IndexPath(item: $0, section: 0))
+        }
+    }
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        guard frames.indices.contains(indexPath.item) else { return nil }
+        let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+        attributes.frame = frames[indexPath.item]
+        return attributes
+    }
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool { false }
 }
 
 extension UIView {
@@ -4627,6 +4779,7 @@ extension FixedFocusRowsController: HoldMenuProviding {
         if isDestination(rowIndex), let cell = focused as? FixedFocusDestinationCell {
             return cell.holdMenu(entries)
         }
+        if let cell = focused as? FixedFocusShowcaseCell { return cell.holdMenu(entries) }
         guard box.alpha == 1 else {
             return HoldMenuRequest(entries: entries, anchor: focused.convert(focused.bounds, to: nil))
         }

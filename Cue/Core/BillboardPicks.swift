@@ -339,6 +339,9 @@ enum CueRows {
         /// A card's badge made with the row, by title id: For You's reason;
         /// elsewhere someone in your taste, or today's top 10.
         var badges: [String: CardBadge]? = nil
+        /// A showcase card's picture where it isn't the backdrop: TMDB's
+        /// poster with no text on it.
+        var art: [String: String]? = nil
     }
 
     /// Why a row is there (Developer → Why These Rows).
@@ -377,7 +380,7 @@ enum CueRows {
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 3
+    static let version = 9
     /// A ranked row's places (Top 10).
     static let rankedLength = 10
     /// A row needs this many titles to show; your own (Pick Back Up, Watch
@@ -1228,6 +1231,8 @@ enum CueRows {
         /// The keywords the catalogue's rows are about (TMDB's others can
         /// be noise: "duringcreditsstinger").
         let curated: Set<String>
+        /// A Top 10's pictures (`TMDBService.cardScene`), by title id.
+        var scenes: [String: String] = [:]
         var rows: [Row] = []
         var why: [Why] = []
         var used: [String: Int] = [:]
@@ -1239,7 +1244,8 @@ enum CueRows {
         @discardableResult
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
-                          own: Bool = false, ranked: Bool = false, reasons: Bool = false, reason: String) -> Bool {
+                          own: Bool = false, ranked: Bool = false, reasons: Bool = false,
+                          showcase: Showcase? = nil, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1271,7 +1277,9 @@ enum CueRows {
             for title in shown { used[title.item.id, default: 0] += 1 }
             var badges: [String: CardBadge] = [:]
             for title in shown {
-                if reasons {
+                if let showcase {
+                    badges[title.item.id] = showcase.badges[title.item.id]
+                } else if reasons {
                     badges[title.item.id] = CueRows.reason(title, model: model, known: known, curated: curated)
                 } else if let person = CueRows.person(title, taste: model.taste) {
                     badges[title.item.id] = person
@@ -1280,7 +1288,8 @@ enum CueRows {
                 }
             }
             rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item),
-                            badges: badges.isEmpty ? nil : badges))
+                            badges: badges.isEmpty ? nil : badges,
+                            art: showcase.map { $0.art.merging(scenes) { _, scene in scene } } ?? (ranked ? scenes : nil)))
             why.append(Why(tab: tab, title: title, reason: reason))
             return true
         }
@@ -1323,6 +1332,141 @@ enum CueRows {
             return overlap(a) < overlap(b)
         }
         return like?.traits.name.map { CardBadge(kind: .taste, text: "Like " + $0) }
+    }
+
+    // MARK: New & Notable
+
+    /// A showcase row's titles, with what's new about each (its badge) and
+    /// its picture (`Row.art`).
+    struct Showcase: Sendable {
+        let titles: [Title]
+        let badges: [String: CardBadge]
+        let art: [String: String]
+    }
+    /// New & Notable's cards, and the least it shows.
+    static let showcaseLength = 12
+    static let showcaseMinimum = 8
+    /// Of them, still to come (in your taste) at most.
+    static let showcaseUpcoming = 3
+    /// New: out in the last 30 days; still to come: in the next 30.
+    static let newsDays: Double = 30
+
+    /// What New & Notable picks from: the films and shows out lately or
+    /// soon, and their dates (`TMDBService.news`, a day on disk).
+    private struct NotablePool: Sendable {
+        let films: [Title]
+        let shows: [Title]
+        let news: [String: TMDBService.TitleNews]
+    }
+
+    private static func notablePool(fixed: Fixed, own: [Title], now: Date) async -> NotablePool {
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd"
+        func day(_ offset: Double) -> String { format.string(from: now.addingTimeInterval(offset * 86_400)) }
+        async let recentFilms = discover(["primary_release_date.gte": day(-newsDays), "primary_release_date.lte": day(0),
+                                          "vote_count.gte": "20"], isMovie: true, page: 1)
+        async let premieres = discover(["first_air_date.gte": day(-newsDays), "first_air_date.lte": day(0),
+                                        "vote_count.gte": "5"], isMovie: false, page: 1)
+        async let comingShows = discover(["first_air_date.gte": day(1), "first_air_date.lte": day(newsDays),
+                                          "vote_count.gte": "0"], isMovie: false, page: 1)
+        func unique(_ titles: [Title], _ limit: Int) -> [Title] {
+            var seen = Set<String>()
+            return Array(titles.filter { seen.insert($0.item.id).inserted }.prefix(limit))
+        }
+        let films = unique(fixed.cinemas + fixed.comingSoon + (await recentFilms) + fixed.trendingMovies, 60)
+        let shows = unique(own + (await premieres) + fixed.onTheAir + (await comingShows) + fixed.trendingShows, 70)
+        let found = await boundedConcurrentMap(films + shows, limit: 8) { title -> (String, TMDBService.TitleNews?) in
+            (title.item.id, await TMDBService.news(tmdbID: title.tmdbID, isMovie: title.isMovie))
+        }
+        var news: [String: TMDBService.TitleNews] = [:]
+        for (id, entry) in found { if let entry { news[id] = entry } }
+        return NotablePool(films: films, shows: shows, news: news)
+    }
+
+    /// What's new about a title: a show's premiere or new season, a film
+    /// out (new), or the date it comes (still to come). Nil: neither.
+    private static func moment(_ title: Title, _ news: TMDBService.TitleNews, now: Date)
+        -> (badge: CardBadge, upcoming: Bool)? {
+        let window = newsDays * 86_400
+        func recent(_ date: Date?) -> Bool {
+            guard let date else { return false }
+            return date <= now && now.timeIntervalSince(date) <= window
+        }
+        func coming(_ date: Date?) -> Bool {
+            guard let date else { return false }
+            return date > now && date.timeIntervalSince(now) <= window
+        }
+        if title.isMovie {
+            if recent(news.released) { return (CardBadge(kind: .news, text: "New"), false) }
+            if coming(news.released), let date = news.released { return (dateBadge(date, now: now), true) }
+            return nil
+        }
+        if recent(news.released) { return (CardBadge(kind: .news, text: "Premiere"), false) }
+        if let latest = news.seasons.filter({ $0.value <= now }).max(by: { $0.key < $1.key }),
+           latest.key > 1, recent(latest.value) {
+            return (CardBadge(kind: .news, text: "New season"), false)
+        }
+        if coming(news.released), let date = news.released { return (dateBadge(date, now: now), true) }
+        if let next = news.next, next.count == 2, next[1] == 1, coming(news.nextDate), let date = news.nextDate {
+            return (dateBadge(date, now: now), true)
+        }
+        return nil
+    }
+
+    /// "Out Fri" within the week, else "Mar 4".
+    private static func dateBadge(_ date: Date, now: Date) -> CardBadge {
+        let format = DateFormatter()
+        format.timeZone = TimeZone(identifier: "UTC")
+        let days = date.timeIntervalSince(now) / 86_400
+        format.setLocalizedDateFormatFromTemplate(days < 6 ? "EEE" : "MMMd")
+        return CardBadge(kind: .returns, text: (days < 6 ? "Out " : "") + format.string(from: date))
+    }
+
+    /// New & Notable for a tab: what's new, yours first (a new season of a
+    /// show you watch), then the most yours and the biggest; a few still to
+    /// come in your taste set among them.
+    private static func showcase(_ candidates: [Title], pool: NotablePool, yours: Set<String>, out: Set<String>,
+                                 model: Model, day: String, now: Date) -> Showcase {
+        var fresh: [(Title, CardBadge)] = []
+        var upcoming: [(Title, CardBadge)] = []
+        for title in candidates where !out.contains(title.item.id) {
+            guard let news = pool.news[title.item.id], let moment = moment(title, news, now: now) else { continue }
+            if moment.upcoming { upcoming.append((title, moment.badge)) } else { fresh.append((title, moment.badge)) }
+        }
+        let all = (fresh + upcoming).map(\.0)
+        let top = max(all.map(model.affinity).max() ?? 0, 0.0001)
+        let byPopularity = all.sorted { $0.traits.popularity > $1.traits.popularity }.map(\.item.id)
+        let count = Double(max(byPopularity.count, 1))
+        func size(_ title: Title) -> Double {
+            1 - Double(byPopularity.firstIndex(of: title.item.id) ?? byPopularity.count) / count
+        }
+        func scoreNew(_ title: Title) -> Double {
+            (yours.contains(title.item.id) ? 1 : 0) + 0.5 * model.affinity(title) / top + 0.5 * size(title)
+                + 0.1 * jitter(day, "notable", title.item.id)
+        }
+        func scoreComing(_ title: Title) -> Double {
+            model.affinity(title) / top + 0.3 * size(title) + 0.1 * jitter(day, "notable", title.item.id)
+        }
+        let soon = upcoming
+            .filter { model.taste.isEmpty || model.affinity($0.0) > 0 || yours.contains($0.0.item.id) }
+            .sorted { scoreComing($0.0) > scoreComing($1.0) }
+            .prefix(showcaseUpcoming)
+        let new = fresh.sorted { scoreNew($0.0) > scoreNew($1.0) }.prefix(showcaseLength - soon.count)
+        // One still to come after every three new.
+        var ordered: [(Title, CardBadge)] = []
+        var left = Array(soon)
+        for (index, entry) in new.enumerated() {
+            ordered.append(entry)
+            if index % 3 == 2, !left.isEmpty { ordered.append(left.removeFirst()) }
+        }
+        ordered += left
+        var badges: [String: CardBadge] = [:]
+        var art: [String: String] = [:]
+        for (title, badge) in ordered {
+            badges[title.item.id] = badge
+            if let poster = pool.news[title.item.id]?.textless { art[title.item.id] = poster }
+        }
+        return Showcase(titles: ordered.map(\.0), badges: badges, art: art)
     }
 
     /// The best matches for your taste across everything fetched today.
@@ -1473,6 +1617,24 @@ enum CueRows {
         }.filter { !$0.name.isEmpty }
         let services = await servicesTask
         let own = await ownTask
+        let notable = await notablePool(fixed: fixed, own: own.newEpisodes, now: now)
+        // Yours: shows you watch, finished or left (their new seasons come
+        // first); films you've seen or are watching, and anything dropped,
+        // stay out.
+        let yours = Set(standings.filter { $0.value != .dropped }.keys)
+        let notableOut = out.union(standings.filter { $0.value == .dropped }.keys)
+            .union(notable.films.map(\.item.id).filter { standings[$0] != nil })
+        func showcaseFor(_ candidates: [Title]) -> Showcase {
+            showcase(candidates, pool: notable, yours: yours, out: notableOut, model: model, day: day, now: now)
+        }
+        let homeShowcase = showcaseFor(interleave(notable.films, notable.shows))
+        let moviesShowcase = showcaseFor(notable.films)
+        let showsShowcase = showcaseFor(notable.shows)
+        func newAndNotable(_ layout: inout Layout, _ showcase: Showcase) {
+            layout.add("newnotable", "New & Notable", showcase.titles, fresh: false, keepOrder: true,
+                       minimum: showcaseMinimum, own: true, showcase: showcase,
+                       reason: "What's new: new seasons of your shows first, then the biggest and most yours")
+        }
 
         let pool = fixed.all + fetched.values.flatMap { $0 } + seedRows.flatMap(\.titles)
         let picksReason = "Your best matches among today's \(Set(pool.map(\.item.id)).count) titles"
@@ -1566,9 +1728,33 @@ enum CueRows {
         func seed(_ index: Int) -> Seed? { index < homeSeeds.count ? homeSeeds[index] : nil }
 
         let top10 = Set(fixed.trendingAll.prefix(10).map(\.item.id))
+        // The Top 10s' and New & Notable's pictures, chosen ahead (a few
+        // left out: the next).
+        var rankedTitles: [String: Title] = [:]
+        for title in [fixed.trendingAll, fixed.trendingMovies, fixed.trendingShows].flatMap({ $0.prefix(12) })
+            + [homeShowcase, moviesShowcase, showsShowcase].flatMap(\.titles) {
+            rankedTitles[title.item.id] = title
+        }
+        // Chosen in the background; the build waits 3 s at most and takes
+        // what's chosen by then (the rest are there for the next build).
+        let rankedList = Array(rankedTitles.values)
+        let choosing = Task {
+            _ = await boundedConcurrentMap(rankedList, limit: 8) { title in
+                await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie)
+            }
+        }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let once = OnceFlag()
+            Task { await choosing.value; if once.claim() { done.resume() } }
+            Task { try? await Task.sleep(for: .seconds(3)); if once.claim() { done.resume() } }
+        }
+        var scenes: [String: String] = [:]
+        for title in rankedList {
+            scenes[title.item.id] = await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie, cachedOnly: true)
+        }
         let curated = Set(recipes.flatMap { $0.about.joined() }.filter { $0.hasPrefix("k:") })
         var home = Layout(tab: "home", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated)
+                              known: known, top10: top10, curated: curated, scenes: scenes)
         home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: nil),
                  keepOrder: true, reasons: true, reason: picksReason)
         home.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
@@ -1581,13 +1767,14 @@ enum CueRows {
             (3, { pickBackUp(&$0) }),
             (4, { becauseRow(&$0, seed(1)) }),
             (5, { rewatch(&$0) }),
+            (5, { newAndNotable(&$0, homeShowcase) }),
             (6, { serviceRow(&$0, 1) }),
             (8, { becauseRow(&$0, seed(2)) }),
             (10, { serviceRow(&$0, 2) }),
         ])
 
         var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated)
+                              known: known, top10: top10, curated: curated, scenes: scenes)
         movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: true),
                    keepOrder: true, reasons: true, reason: picksReason)
         movies.add("top10", "Top 10 Movies Today", fixed.trendingMovies, fresh: false, keepOrder: true, ranked: true,
@@ -1598,6 +1785,7 @@ enum CueRows {
             (1, { serviceRow(&$0, 0) }),
             (3, { $0.add("upcoming", "Coming Soon", fixed.comingSoon, fresh: false, keepOrder: true,
                          reason: "Always here") }),
+            (4, { newAndNotable(&$0, moviesShowcase) }),
             (5, { $0.add("popular", "Popular Movies", fixed.popularMovies, fresh: false, reason: "Always here") }),
             (6, { rewatch(&$0) }),
             (7, { serviceRow(&$0, 1) }),
@@ -1606,7 +1794,7 @@ enum CueRows {
         ])
 
         var shows = Layout(tab: "series", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated)
+                              known: known, top10: top10, curated: curated, scenes: scenes)
         shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: false),
                   keepOrder: true, reasons: true, reason: picksReason)
         shows.add("top10", "Top 10 Shows Today", fixed.trendingShows, fresh: false, keepOrder: true, ranked: true,
@@ -1619,6 +1807,7 @@ enum CueRows {
             (2, { pickBackUp(&$0) }),
             (3, { $0.add("airingtoday", "Airing Today", own.airingToday + fixed.airingToday, fresh: false,
                          keepOrder: true, reason: newReason) }),
+            (4, { newAndNotable(&$0, showsShowcase) }),
             (5, { $0.add("popular", "Popular Shows", fixed.popularShows, fresh: false, reason: "Always here") }),
             (6, { rewatch(&$0) }),
             (7, { serviceRow(&$0, 1) }),

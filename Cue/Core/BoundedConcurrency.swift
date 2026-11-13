@@ -93,3 +93,15 @@ enum AddonSweepLimits {
         PerformanceProfile.isLowPower ? 42 : 60
     }
 }
+
+/// True for the first caller only (racing a result against a deadline).
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}

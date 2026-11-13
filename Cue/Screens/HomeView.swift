@@ -20,6 +20,9 @@ struct HomeRow: Identifiable {
     var tabs: [String]? = nil
     /// Badges made with the row (`CueRows.Row.badges`), by title id.
     var badges: [String: CardBadge] = [:]
+    /// A showcase row's (New & Notable): the line under the facts, and the
+    /// picture where it isn't the backdrop (`CueRows.Row`).
+    var art: [String: String] = [:]
 
     /// The badges a card shows (`FixedFocusBadges`), at most two: the
     /// show's news, then the row's badge (For You's reason first), else the
@@ -221,7 +224,7 @@ final class HomeViewModel: ObservableObject {
 
     private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
         rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs,
-                                    badges: $0.badges ?? [:])) }
+                                    badges: $0.badges ?? [:], art: $0.art ?? [:])) }
     }
 
     /// Cue's own rows (`CueRows`): the saved ones at once, new ones when
@@ -843,6 +846,9 @@ struct HomeView: View {
     static func isCollectionRow(_ id: String) -> Bool { id.hasPrefix(collectionItemPrefix) }
     /// Cue's Top 10 rows ("cue.home.top10"): ranked, moving focus.
     static func isRankedRow(_ id: String) -> Bool { id.hasPrefix("cue.") && id.hasSuffix(".top10") }
+    /// Cue's New & Notable rows: tall showcase cards, moving focus, a
+    /// trailer in the focused one.
+    static func isShowcaseRow(_ id: String) -> Bool { id.hasPrefix("cue.") && id.hasSuffix(".newnotable") }
 
     /// The rows in order: the billboard, Continue Watching, the Watchlist,
     /// the catalogs — filtered on Movies / Series.
@@ -1784,10 +1790,13 @@ struct HomeUIKitView: View {
                            // Later: moving focus.
                            destinationRowIDs: Set(rows.map(\.id).filter {
                                HomeView.isCollectionRow($0) || $0 == HomeView.libraryRowID || $0 == continueRowID
-                                   || HomeView.isRankedRow($0)
+                                   || HomeView.isRankedRow($0) || HomeView.isShowcaseRow($0)
                            }),
                            // Top 10: each card's place beside it.
                            rankedRowIDs: Set(rows.map(\.id).filter(HomeView.isRankedRow)),
+                           showcaseRowIDs: Set(rows.map(\.id).filter(HomeView.isShowcaseRow)),
+                           showcaseTrailers: (homeSettings.heroTrailersEnabled, homeSettings.heroTrailerSound),
+                           captions: false, centred: true,
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,
@@ -2026,7 +2035,7 @@ struct FixedFocusBillboardText: View {
     }
     /// Where the Detail page's buttons start: below the chips line.
     static var buttonsY: CGFloat {
-        FixedFocusMetrics.boxFrame.maxY + FixedFocusMetrics.infoHeight + 44
+        FixedFocusMetrics.boxFrame.maxY + 104 + FixedFocusBillboardText.chipsGap + 45 + 44
     }
     /// The chips line: the status badge, then the first ratings (nil: none).
     @MainActor

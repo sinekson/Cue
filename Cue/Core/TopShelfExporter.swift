@@ -323,7 +323,7 @@ enum TopShelfCardRenderer {
                                       end: CGPoint(x: 0, y: size.height), options: [])
             }
 
-            let k = size.height / Spotlight.rowHeight
+            let k = size.height / FixedFocusMetrics.posterCard.height
             let inset = Spotlight.stateInset * k
             let barH = Spotlight.stateBarHeight * k
             let bar = CGRect(x: inset, y: size.height - inset - barH, width: size.width - inset * 2, height: barH)

@@ -13,11 +13,11 @@ enum Spotlight {
     static let continueRowID = "spotlight.continueWatching"
     static let featuredRowID = "spotlight.featured"
 
-    /// Height of the focus box AND the posters beside it: THE poster's
-    /// height (`FixedFocusMetrics.posterCard`, six across). (490 and 440
-    /// were too large.)
-    static let rowHeight: CGFloat = 387
-    /// Portrait 2:3 poster at row height (293 pt).
+    /// Height of the focus box AND the posters beside it: 12 % past THE
+    /// poster (`FixedFocusMetrics.posterCard`, 387: the box at its height
+    /// was too small for what it carries). (490 and 440 were too large.)
+    static let rowHeight: CGFloat = 434
+    /// Portrait 2:3 poster at row height (289 pt).
     static var posterWidth: CGFloat { rowHeight * 2 / 3 }
     /// Landscape 16:9 box at row height (~707 pt).
     static var boxWidth: CGFloat { rowHeight * 16 / 9 }

@@ -712,7 +712,7 @@ final class StageTrailer: ObservableObject {
     /// The video, wherever the picture is (Home: moved onto the current
     /// card — `StagePictureView.attachTrailer`; Details: `StageTrailerView`).
     let surface = TrailerSurface()
-    weak var stage: StagePictureView?
+    weak var stage: TrailerHost?
     /// Played to their end: Home follows it, with its state of that moment.
     @Published private(set) var endings = 0
 
@@ -730,6 +730,8 @@ final class StageTrailer: ObservableObject {
     private var ended: Set<String> = []
     /// The rest's title, for one more try when a remembered URL is dead.
     private var request: (item: MetaItem, season: Int?, aired: Date?, sound: Bool)?
+    /// The sound rising from silence as it comes in (a showcase card's).
+    private var rise = false
     /// Between `rest` and the next `pause` / `stop`.
     private var resting = false
     /// Taken over from the page before (`adopt`), playing, until this page
@@ -747,8 +749,9 @@ final class StageTrailer: ObservableObject {
     /// Resolved and loaded at once, hidden (usually already resolved —
     /// `TrailerResolver.warm`): when the rest's delay is up, the first frame
     /// is there.
-    func rest(on item: MetaItem?, season: Int? = nil, aired: Date? = nil, sound: Bool) {
+    func rest(on item: MetaItem?, season: Int? = nil, aired: Date? = nil, sound: Bool, rise: Bool = false) {
         pending?.cancel()
+        self.rise = rise
         guard let item else { return stop() }
         let id = item.id + (season.map { "#\($0)" } ?? "")
         // The page before's trailer goes on, whichever season it is.
@@ -772,8 +775,13 @@ final class StageTrailer: ObservableObject {
             let left = Spotlight.trailerDelay - Date().timeIntervalSince(begun)
             if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             guard !Task.isCancelled, self.itemID == id, let player = self.player else { return }
-            self.setSound(sound)
+            self.setSound(sound && !rise)
             self.show(player)
+            if sound && rise {
+                player.volume = 0
+                player.isMuted = false
+                self.fadeSound(to: 1, over: Self.soundRise)
+            }
         }
     }
 
@@ -1055,6 +1063,7 @@ final class StageTrailer: ObservableObject {
     private func fade(to alpha: CGFloat, completion: (() -> Void)? = nil) {
         if alpha == 0 { playing = false }
         if shown != (alpha > 0) { shown = alpha > 0 }
+        stage?.trailerShown(alpha > 0)
         let view = surface
         guard view.alpha != alpha else { completion?(); return }
         UIView.animate(withDuration: alpha > 0 ? Self.fadeIn : Self.fadeOut, delay: 0,
@@ -1062,6 +1071,19 @@ final class StageTrailer: ObservableObject {
             view.alpha = alpha
         } completion: { _ in completion?() }
     }
+}
+
+/// Where a `StageTrailer` plays: Home's and Details' picture
+/// (`StagePictureView`), a showcase card (`FixedFocusShowcaseCell`).
+@MainActor
+protocol TrailerHost: AnyObject {
+    func attachTrailer(_ surface: TrailerSurface)
+    /// The trailer coming in (fading in) or going.
+    func trailerShown(_ shown: Bool)
+}
+
+extension TrailerHost {
+    func trailerShown(_ shown: Bool) {}
 }
 
 /// The trailer's video: fills its frame as the picture does.

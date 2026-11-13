@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import Vision
 
 /// TMDB settings, mirroring the Android `TmdbSettings`. Persisted locally;
 /// governs metadata enrichment and whether TMDB collection sources resolve.
@@ -2474,6 +2475,151 @@ extension TMDBService {
         guard let (tmdbID, isMovie) = await resolveTMDBID(from: imdbID, type: type),
               let traits = await traits(tmdbID: tmdbID, isMovie: isMovie) else { return nil }
         return (tmdbID, isMovie, traits)
+    }
+
+    /// What New & Notable reads (`CueRows`): a film's release, a show's
+    /// premiere, its seasons' starts and next episode, and its poster with
+    /// no text on it (TMDB's language-less ones). Kept a day.
+    struct TitleNews: Codable, Sendable {
+        let released: Date?
+        /// A show's seasons (specials left out): number and first date.
+        let seasons: [Int: Date]
+        /// A show's next episode: season, episode, date.
+        let next: [Int]?
+        let nextDate: Date?
+        let textless: String?
+    }
+
+    private static let newsCache = DiskCache<TitleNews>(name: "tmdb-news")
+
+    static func news(tmdbID: Int, isMovie: Bool) async -> TitleNews? {
+        let key = "\(isMovie ? "m" : "t"):\(tmdbID)"
+        if let hit = await newsCache.value(for: key, ttl: 24 * 60 * 60) { return hit }
+        struct Body: Decodable {
+            struct Season: Decodable { let season_number: Int; let air_date: String? }
+            struct Episode: Decodable { let season_number: Int; let episode_number: Int; let air_date: String? }
+            struct Poster: Decodable { let file_path: String; let vote_average: Double?; let width: Int?; let height: Int? }
+            struct Images: Decodable { let posters: [Poster]? }
+            let release_date: String?
+            let first_air_date: String?
+            let seasons: [Season]?
+            let next_episode_to_air: Episode?
+            let images: Images?
+        }
+        guard let body: Body = try? await get(isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)", query: [
+            "append_to_response": "images", "include_image_language": "null",
+        ]) else { return nil }
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd"
+        format.timeZone = TimeZone(identifier: "UTC")
+        func date(_ text: String?) -> Date? { text.flatMap { $0.isEmpty ? nil : format.date(from: $0) } }
+        var seasons: [Int: Date] = [:]
+        for season in body.seasons ?? [] where season.season_number > 0 {
+            if let start = date(season.air_date) { seasons[season.season_number] = start }
+        }
+        let poster = (body.images?.posters ?? [])
+            .filter { !$0.file_path.hasSuffix(".svg") && ($0.height ?? 0) >= 1000 }
+            .max { ($0.vote_average ?? 0) < ($1.vote_average ?? 0) }
+        let next = body.next_episode_to_air
+        let news = TitleNews(released: date(isMovie ? body.release_date : body.first_air_date),
+                             seasons: seasons,
+                             next: next.map { [$0.season_number, $0.episode_number] },
+                             nextDate: date(next?.air_date),
+                             textless: imageURL(poster?.file_path, size: "original"))
+        await newsCache.store(news, for: key)
+        return news
+    }
+
+    /// A small square card's picture (Top 10): the best of the title's
+    /// text-free posters (made to be looked at; backdrops are the page's
+    /// background, and the first often cut badly: The Odyssey's black
+    /// band), else of its backdrops, cut to a square around its faces —
+    /// not too dark, no large black area, a face in it. Kept 30 days.
+    private static let sceneCache = DiskCache<String>(name: "tmdb-card-pictures")
+    private static let sceneQueue = DispatchQueue(label: "cue.card-scenes", qos: .utility)
+
+    static func cardScene(tmdbID: Int, isMovie: Bool, cachedOnly: Bool = false) async -> String? {
+        let key = "\(isMovie ? "m" : "t"):\(tmdbID)"
+        if let hit = await sceneCache.value(for: key, ttl: 30 * 24 * 60 * 60) { return hit.isEmpty ? nil : hit }
+        if cachedOnly { return nil }
+        struct Body: Decodable {
+            struct Backdrop: Decodable { let file_path: String; let vote_average: Double?; let height: Int? }
+            struct Images: Decodable { let backdrops: [Backdrop]?; let posters: [Backdrop]? }
+            let backdrop_path: String?
+            let images: Images?
+        }
+        guard let body: Body = try? await get(isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)", query: [
+            "append_to_response": "images", "include_image_language": "null",
+        ]) else { return nil }
+        func best(_ pictures: [Body.Backdrop]?) -> [String] {
+            (pictures ?? []).filter { !$0.file_path.hasSuffix(".svg") }
+                .sorted { ($0.vote_average ?? 0) > ($1.vote_average ?? 0) }.map(\.file_path)
+        }
+        var paths = best(body.images?.posters?.filter { ($0.height ?? 0) >= 1000 })
+        if paths.isEmpty {
+            paths = best(body.images?.backdrops)
+            if let main = body.backdrop_path { paths.insert(main, at: 0) }
+        }
+        var unique = Set<String>()
+        // Three, judged small.
+        paths = Array(paths.filter { unique.insert($0).inserted }.prefix(3))
+        let scored = await boundedConcurrentMap(paths, limit: 3) { path -> (String, Double) in
+            guard let url = imageURL(path, size: "w300").flatMap(URL.init),
+                  let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = UIImage(data: data)?.cgImage else { return (path, -.infinity) }
+            // Vision blocks its thread: never on Swift's pool (a dozen at
+            // once filled it and stalled every task in the app).
+            return (path, await withCheckedContinuation { done in
+                sceneQueue.async { done.resume(returning: sceneScore(image)) }
+            })
+        }
+        // The main backdrop first among equals.
+        let best = scored.enumerated().max { a, b in
+            a.element.1 + (a.offset == 0 ? 0.05 : 0) < b.element.1 + (b.offset == 0 ? 0.05 : 0)
+        }?.element
+        let chosen = best.flatMap { $0.1 > -.infinity ? imageURL($0.0, size: "original") : nil }
+        await sceneCache.store(chosen ?? "", for: key)
+        return chosen
+    }
+
+    /// How well a backdrop cut to a square around its faces (as the card
+    /// cuts it) reads: a face, a middling light, little pure black.
+    private static func sceneScore(_ image: CGImage) -> Double {
+        let request = VNDetectFaceRectanglesRequest()
+        try? VNImageRequestHandler(cgImage: image).perform([request])
+        let found = (request.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+        let large = found.filter { $0.boundingBox.width >= (found.first?.boundingBox.width ?? 0) / 2 }
+        let width = CGFloat(image.width), height = CGFloat(image.height)
+        let cut: CGRect
+        if height > width {
+            // A poster: a square down it, around the faces (Vision's y is
+            // from the foot).
+            let centre = large.isEmpty ? 0.4 : 1 - large.reduce(0) { $0 + $1.boundingBox.midY } / CGFloat(large.count)
+            cut = CGRect(x: 0, y: min(max(0, centre * height - width / 2), height - width), width: width, height: width)
+        } else {
+            let centre = large.isEmpty ? 0.5 : large.reduce(0) { $0 + $1.boundingBox.midX } / CGFloat(large.count)
+            cut = CGRect(x: min(max(0, centre * width - height / 2), max(0, width - height)), y: 0,
+                         width: min(height, width), height: height)
+        }
+        guard let square = image.cropping(to: cut) else { return -.infinity }
+        let side = 48
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return -.infinity }
+        context.draw(square, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var total = 0.0, black = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let light = (0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1])
+                         + 0.0722 * Double(pixels[i + 2])) / 255
+            total += light
+            if light < 0.06 { black += 1 }
+        }
+        let count = Double(side * side)
+        let mean = total / count
+        let face = large.isEmpty ? 0 : 0.4
+        let light = 1 - min(1, abs(mean - 0.35) / 0.35)
+        return face + 0.3 * light - 1.0 * (black / count)
     }
 
     /// A title's TMDB logo by its IMDb id (Cue's own rows: the billboard's

@@ -1,4 +1,5 @@
 import SwiftUI
+import Vision
 
 /// A card in a destination row, as the controller sees it: its row and
 /// its place in it.
@@ -196,6 +197,375 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     }
 }
 
+/// A showcase row's card (New & Notable): tall, 4:5, three across, with
+/// everything on it — at its foot, left-aligned over a shade, what's new
+/// (a badge), the logo, the facts (no reason line: a badge's job). The picture: TMDB's poster with no
+/// text, else the backdrop, cut to the card around the faces in it
+/// (Vision). Focused: grown as every moving-focus card, outlined; after a
+/// rest its trailer plays in it (`StageTrailer`, the controller's), cut to
+/// the card, the words and shade fading out under it.
+/// A Top 10's card is the same, small (`rankedCard`): its place in the
+/// top-left corner over a soft shade, a smaller logo, a slim line (genre,
+/// year), no badge and no trailer.
+final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationItem, TrailerHost {
+    private(set) var itemIndex = 0
+    private(set) weak var rowCell: FixedFocusRowCell?
+    private(set) var item: MetaItem?
+    private let card = UIView()
+    private let picture = UIImageView()
+    private let shade = FixedFocusShade()
+    private let edge = UIImageView()
+    private let outline = UIView()
+    /// The words: they go while a trailer plays.
+    private let words = UIView()
+    private let badges = FixedFocusBadges()
+    private let logo = FixedFocusLogo()
+    private let name = UILabel()
+    private let facts = UILabel()
+    private let loadingCard = FixedFocusPlaceholder()
+    /// A Top 10's place (nil elsewhere), and the shade behind it.
+    private(set) var rank: Int?
+    private let place = UILabel()
+    private let corner = UIImageView(image: FixedFocusShowcaseCell.cornerShade)
+    private var art: String?
+    private var extras: Task<Void, Never>?
+    private var pressed = false
+    private var held = false
+    private var focusedNow = false
+    private var trailerSurface: TrailerSurface?
+
+    /// From the card's foot: the facts' line, the logo's room (smaller
+    /// on a Top 10's card).
+    private var footPad: CGFloat { rank == nil ? 34 : 24 }
+    private static let lineHeight: CGFloat = 30
+    private var logoGap: CGFloat { rank == nil ? 20 : 14 }
+    private var logoBox: CGSize { rank == nil ? CGSize(width: 400, height: 130) : CGSize(width: 240, height: 84) }
+    private static let badgeGap: CGFloat = 18
+    private var sideInset: CGFloat { rank == nil ? 32 : 24 }
+    /// The place's corner: a soft dark from the top left, so the digits
+    /// read on a bright picture.
+    private static let cornerShade: UIImage = {
+        let size = CGSize(width: 220, height: 180)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            let colours = [UIColor.black.withAlphaComponent(0.5).cgColor, UIColor.black.withAlphaComponent(0).cgColor]
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colours as CFArray,
+                                            locations: [0, 1]) else { return }
+            context.cgContext.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0, endCenter: .zero,
+                                                 endRadius: size.width, options: [])
+        }
+    }()
+    /// Where the faces are across each backdrop (0–1), found once.
+    private static var faces: [String: CGFloat] = [:]
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        FixedFocusRing.follow(self)
+        card.clipsToBounds = true
+        card.layer.cornerRadius = Spotlight.cornerRadius
+        card.layer.cornerCurve = .continuous
+        card.backgroundColor = UIColor(white: 0.12, alpha: 1)
+        contentView.addSubview(card)
+        picture.contentMode = .scaleAspectFill
+        card.addSubview(picture)
+        loadingCard.isHidden = true
+        loadingCard.layer.cornerRadius = 0
+        card.addSubview(loadingCard)
+        card.addSubview(shade)
+        card.addSubview(words)
+        logo.contentMode = .scaleAspectFit
+        logo.areaShare = 0.55
+        name.font = .systemFont(ofSize: 40, weight: .semibold)
+        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        name.numberOfLines = 2
+        facts.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
+        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        facts.lineBreakMode = .byTruncatingTail
+        place.font = .systemFont(ofSize: 44, weight: .bold)
+        place.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        corner.contentMode = .topLeft
+        for view: UIView in [corner, place, badges, logo, name, facts] { words.addSubview(view) }
+        logo.isHidden = true
+        edge.isUserInteractionEnabled = false
+        card.addSubview(edge)
+        outline.isUserInteractionEnabled = false
+        outline.layer.cornerRadius = Spotlight.cornerRadius
+        outline.layer.cornerCurve = .continuous
+        outline.alpha = 0
+        contentView.addSubview(outline)
+        FixedFocusRing.attachShadow(to: outline)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell?, art poster: String?,
+                   badge: CardBadge?, rank: Int? = nil) {
+        itemIndex = index
+        self.rowCell = rowCell
+        self.rank = rank
+        place.text = rank.map(String.init)
+        place.isHidden = rank == nil
+        corner.isHidden = rank == nil
+        logo.areaShare = rank == nil ? 0.55 : 0.5
+        name.font = .systemFont(ofSize: rank == nil ? 40 : 28, weight: .semibold)
+        let changed = self.item?.id != item.id
+        self.item = item
+        badges.show(badge.map { [$0] } ?? [])
+        name.text = item.name
+        if changed {
+            trailerShown(false, animated: false)
+            let art = poster ?? item.background ?? item.poster
+            self.art = art
+            FixedFocusImages.load(art, into: picture, maxDimension: PictureSize.showcase,
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                self.loadingCard.follow(waiting: waiting)
+                self.edge.isHidden = waiting
+                if !waiting { self.findFaces() }
+                self.setNeedsLayout()
+            })
+            logo.image = nil
+            logo.isHidden = true
+            name.isHidden = false
+            FixedFocusImages.load(item.logo, into: logo, maxDimension: PictureSize.cardLogo,
+                                  waiting: { [weak self] waiting in
+                guard let self, !waiting else { return }
+                self.logo.isHidden = self.logo.image == nil
+                self.name.isHidden = self.logo.image != nil
+                self.setNeedsLayout()
+            })
+            parts = line(item)
+            fitFacts()
+            extras?.cancel()
+            if rank == nil {
+                extras = Task { @MainActor [weak self] in
+                    guard await TitleRecords.shared.refresh(item, [.show, .facts]),
+                          let self, !Task.isCancelled, self.item?.id == item.id else { return }
+                    self.parts = self.line(item)
+                    self.fitFacts()
+                }
+            }
+        }
+        applyFocus(isFocused)
+        setNeedsLayout()
+    }
+
+    /// The facts line; a Top 10's slim one: its genre and year.
+    /// The facts' parts. TMDB's paired TV genres cut short ("Action &
+    /// Adventure": Action): the first half fits the card.
+    private func line(_ item: MetaItem) -> [String] {
+        func short(_ genre: String) -> String { genre.components(separatedBy: " & ")[0] }
+        guard rank != nil else {
+            let full = Set(item.genres ?? [])
+            return FixedFocusShowInfo.factsLine(item).components(separatedBy: "  •  ")
+                .map { full.contains($0) ? short($0) : $0 }
+        }
+        return [item.genres?.first.map(short), item.year].compactMap { $0 }
+    }
+
+    private var parts: [String] = []
+
+    /// The parts that fit, whole, the last dropped first: never cut short.
+    private func fitFacts() {
+        let room = facts.bounds.width
+        var shown = parts
+        let attributes: [NSAttributedString.Key: Any] = [.font: facts.font as Any]
+        while shown.count > 1, room > 0,
+              (shown.joined(separator: "  •  ") as NSString).size(withAttributes: attributes).width > room {
+            shown.removeLast()
+        }
+        let text = shown.joined(separator: "  •  ")
+        if facts.text != text { facts.text = text }
+    }
+
+    /// The backdrop's faces, once per picture, off the main thread: the
+    /// card is cut around them (none: its middle).
+    private static let faceQueue = DispatchQueue(label: "cue.card-faces", qos: .utility)
+
+    private func findFaces() {
+        guard let art, Self.faces[art] == nil, let image = picture.image?.cgImage else { return }
+        // Vision blocks its thread: a queue of its own, not Swift's pool.
+        Self.faceQueue.async {
+            let request = VNDetectFaceRectanglesRequest()
+            try? VNImageRequestHandler(cgImage: image).perform([request])
+            let found = (request.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+            // The largest faces (half the largest's size or more) together.
+            let large = found.filter { $0.boundingBox.width >= (found.first?.boundingBox.width ?? 0) / 2 }
+            // Along the cut: across a backdrop, down a poster (Vision's y
+            // is from the foot; no faces: a poster's upper middle).
+            let tall = image.height > image.width
+            let centre = large.isEmpty ? (tall ? 0.4 : 0.5)
+                : tall ? 1 - large.reduce(0) { $0 + $1.boundingBox.midY } / CGFloat(large.count)
+                : large.reduce(0) { $0 + $1.boundingBox.midX } / CGFloat(large.count)
+            DispatchQueue.main.async { [weak self] in
+                Self.faces[art] = centre
+                guard let self, self.art == art else { return }
+                UIView.performWithoutAnimation { self.layoutPicture() }
+            }
+        }
+    }
+
+    private func layoutPicture() {
+        let size = card.bounds.size
+        guard let image = picture.image, image.size.height > 0, size.height > 0 else {
+            picture.frame = card.bounds
+            return
+        }
+        let aspect = image.size.width / image.size.height
+        if aspect <= size.width / size.height {
+            // A poster: the card's width, centred (cut around its faces).
+            let height = size.width / aspect
+            let centre = art.flatMap { Self.faces[$0] } ?? 0.5
+            let y = min(0, max(size.height - height, size.height / 2 - centre * height))
+            picture.frame = CGRect(x: 0, y: y, width: size.width, height: height)
+        } else {
+            // A backdrop: the card's height, around its faces.
+            let width = size.height * aspect
+            let centre = art.flatMap { Self.faces[$0] } ?? 0.5
+            let x = min(0, max(size.width - width, size.width / 2 - centre * width))
+            picture.frame = CGRect(x: x, y: 0, width: width, height: size.height)
+        }
+        trailerSurface?.frame = card.bounds
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Bounds and centre: they may be grown (transformed).
+        card.bounds = CGRect(origin: .zero, size: bounds.size)
+        card.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        outline.center = card.center
+        outline.layer.borderWidth = FixedFocusRing.width
+        outline.layer.borderColor = FixedFocusRing.color.cgColor
+        layoutPicture()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shade.frame = card.bounds
+        CATransaction.commit()
+        edge.image = FixedFocusCardEdge.rim
+        edge.frame = card.bounds
+        loadingCard.frame = card.bounds
+        words.frame = card.bounds
+        // From the foot up: the facts, the logo (or the name), the badge.
+        corner.frame = CGRect(origin: .zero, size: Self.cornerShade.size)
+        place.sizeToFit()
+        place.frame.origin = CGPoint(x: sideInset, y: 14)
+        let sideInset = self.sideInset, logoBox = self.logoBox
+        let width = bounds.width - 2 * sideInset
+        let y = bounds.height - footPad - Self.lineHeight
+        facts.frame = CGRect(x: sideInset, y: y, width: width, height: Self.lineHeight)
+        fitFacts()
+        let titleBottom = y - logoGap + 6
+        let titleTop: CGFloat
+        if !logo.isHidden, logo.image != nil {
+            // Sized by its area, its foot on the line, at the left.
+            logo.room = CGRect(x: sideInset, y: titleBottom - logoBox.height,
+                               width: logoBox.width, height: logoBox.height)
+            titleTop = logo.frame.minY
+        } else {
+            let fitted = name.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+            name.frame = CGRect(x: sideInset, y: titleBottom - fitted, width: width, height: fitted)
+            titleTop = name.frame.minY
+        }
+        let plate = FixedFocusBadges.plateHeight
+        badges.frame = CGRect(x: sideInset - FixedFocusBadges.inset,
+                              y: titleTop - Self.badgeGap - plate - FixedFocusBadges.inset,
+                              width: width + 2 * FixedFocusBadges.inset, height: plate + 2 * FixedFocusBadges.inset)
+        sizeOutline()
+    }
+
+    // MARK: The trailer
+
+    func attachTrailer(_ surface: TrailerSurface) {
+        trailerSurface = surface
+        guard surface.superview !== card else { return }
+        card.insertSubview(surface, aboveSubview: picture)
+        surface.frame = card.bounds
+    }
+
+    func trailerShown(_ shown: Bool) { trailerShown(shown, animated: true) }
+
+    /// The words and the shade out while the trailer plays (Details' fade).
+    private func trailerShown(_ shown: Bool, animated: Bool) {
+        let apply = {
+            self.words.alpha = shown ? 0 : 1
+            self.shade.alpha = shown ? 0 : 1
+        }
+        guard animated else { return UIView.performWithoutAnimation(apply) }
+        UIView.animate(withDuration: Motion.presentDuration, delay: 0,
+                       options: [.beginFromCurrentState, .curveEaseInOut, .allowUserInteraction], animations: apply)
+    }
+
+    // MARK: Focus
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        let focused = isFocused || (HoldMenu.shared.isOpen && context.previouslyFocusedView === self)
+        FixedFocusMotion.run(duration: Motion.moveDuration) {
+            self.applyFocus(focused)
+        } completion: { _ in }
+    }
+
+    private var scale: CGFloat {
+        guard focusedNow else { return 1 }
+        return 1 + FixedFocusMetrics.movingFocusLift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
+            + (held ? FixedFocusMetrics.heldGrowth : 0)
+    }
+
+    /// The outline SIZED with the card, not scaled: its line stays even.
+    private func sizeOutline() {
+        let scale = scale
+        outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: bounds.height * scale))
+        outline.layer.cornerRadius = Spotlight.cornerRadius * scale
+    }
+
+    private func applyFocus(_ focused: Bool) {
+        focusedNow = focused
+        card.transform = CGAffineTransform(scaleX: scale, y: scale)
+        sizeOutline()
+        outline.alpha = focused ? 1 : 0
+        if focused { superview?.bringSubviewToFront(self) }
+    }
+
+    func setHeld(_ held: Bool) {
+        guard held != self.held else { return }
+        self.held = held
+        UIView.animate(withDuration: FixedFocusMetrics.heldDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.applyFocus(self.focusedNow)
+        }
+    }
+
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != self.pressed else { return }
+        self.pressed = pressed
+        UIView.animate(withDuration: pressed ? 0.12 : 0.2, delay: 0,
+                       options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            self.applyFocus(self.focusedNow)
+        }
+    }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(true) }
+        super.pressesBegan(presses, with: event)
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(false) }
+        super.pressesEnded(presses, with: event)
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setPressed(false) }
+        super.pressesCancelled(presses, with: event)
+    }
+
+    /// Its hold menu (`HoldMenu`): beside the card at its held size.
+    func holdMenu(_ entries: [MenuEntry]) -> HoldMenuRequest {
+        let lift = FixedFocusMetrics.movingFocusLift
+        func sized(_ scale: CGFloat) -> CGRect {
+            convert(bounds.insetBy(dx: -bounds.width * (scale - 1) / 2, dy: -bounds.height * (scale - 1) / 2), to: nil)
+        }
+        let now = 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
+        return HoldMenuRequest(entries: entries, anchor: sized(1 + lift + FixedFocusMetrics.heldGrowth),
+                               from: sized(now), rest: sized(1 + lift),
+                               onHeld: { [weak self] in self?.setHeld($0) })
+    }
+}
+
 /// The chips line on its own — the status badge (optional), then the first
 /// ratings — loading the ratings itself: the Top Result's banner, and the
 /// window opening from it into Details.
@@ -314,49 +684,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let logo = UIImageView()
     static let logoInset = CGSize(width: 34, height: 30)
 
-    /// A ranked row's place (Top 10): a short card behind the poster,
-    /// `rankInset` under its top, showing `rankLead` of it at its left, in
-    /// the tertiary white, lifted with the poster, the digit cut out of it.
-    /// (Stretched tall was tried.) (A numeral over the poster, Netflix's numeral behind
-    /// it, a strip joined to the poster with the word turned, the word
-    /// written downwards, alone or with the digit, were tried.)
-    private let spine = UIImageView()
-    private var lead: CGFloat = 0
-    /// The caption starts under the poster, not the card behind it.
-    private var captionLeading: NSLayoutConstraint!
-    static let rankLead: CGFloat = 56
-    /// How far the card behind runs under the poster.
-    static let rankUnder: CGFloat = 60
-    /// Its distance from the poster's top, and its height.
-    static let rankInset: CGFloat = 48
-    static let rankHeight: CGFloat = 90
-    private static var spines: [Int: UIImage] = [:]
-    static func spineImage(_ place: Int) -> UIImage {
-        if let image = spines[place] { return image }
-        let size = CGSize(width: rankLead + rankUnder, height: rankHeight)
-        let font = UIFont.systemFont(ofSize: 40, weight: .bold)
-        let digit = NSAttributedString(string: "\(place)", attributes: [.font: font])
-        let image = UIGraphicsImageRenderer(size: size).image { context in
-            let cg = context.cgContext
-            UIColor.white.withAlphaComponent(FixedFocusText.tertiary).setFill()
-            cg.fill(CGRect(origin: .zero, size: size))
-            cg.setBlendMode(.clear)
-            // Centred on its capitals.
-            digit.draw(at: CGPoint(x: (rankLead - digit.size().width) / 2,
-                                   y: size.height / 2 - font.ascender + font.capHeight / 2))
-        }
-        spines[place] = image
-        return image
-    }
-    private var place = 0
-    /// Grown about the poster's centre, not its own.
-    private func grow(_ view: UIView, _ scale: CGFloat) {
-        let unit = cardFrame
-        let dx = (view.center.x - unit.midX) * (scale - 1)
-        let dy = (view.center.y - unit.midY) * (scale - 1)
-        view.transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale)
-    }
-
     /// The name and second line under the card (its row focused).
     func setCaptionShown(_ shown: Bool) {
         name.alpha = shown ? 1 : 0
@@ -371,6 +698,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let stateShade = CAGradientLayer()
     /// The captions' gap below the card (larger while it's grown).
     private var captionGap: NSLayoutConstraint!
+
     private var cardHeight: CGFloat = 0
     private var shown: String?
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
@@ -394,11 +722,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             picture.layer.cornerRadius = Spotlight.cornerRadius
             picture.layer.cornerCurve = .continuous
         }
-        spine.isHidden = true
-        spine.layer.cornerRadius = Spotlight.cornerRadius
-        spine.layer.cornerCurve = .continuous
-        spine.clipsToBounds = true
-        contentView.addSubview(spine)
         contentView.addSubview(picture)
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
@@ -439,11 +762,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         // Below the picture's FOCUSED frame: a lift pushes them down.
         captionGap = name.topAnchor.constraint(equalTo: picture.focusedFrameGuide.bottomAnchor,
                                                constant: FixedFocusMetrics.infoGap)
-        captionLeading = name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor,
-                                                       constant: FixedFocusMetrics.textIndent)
         NSLayoutConstraint.activate([
             captionGap,
-            captionLeading,
+            name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: FixedFocusMetrics.textIndent),
             name.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -FixedFocusMetrics.textIndent),
             name.heightAnchor.constraint(equalToConstant: 30),
             detail.topAnchor.constraint(equalTo: name.topAnchor, constant: FixedFocusMetrics.captionLineOffset),
@@ -478,14 +799,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         outline.center = picture.center
         outline.bounds = CGRect(origin: .zero, size: CGSize(width: card.width * outlineScale,
                                                             height: card.height * outlineScale))
-        if !spine.isHidden {
-            let top = Self.spineImage(place)
-            spine.image = top
-            spine.bounds = CGRect(origin: .zero, size: top.size)
-            let x = top.size.width / 2
-            spine.center = CGPoint(x: x, y: Self.rankInset + top.size.height / 2)
-            grow(spine, outlineScale)
-        }
         edge.image = Self.lift ? nil : FixedFocusCardEdge.rim
         edge.frame = picture.bounds
         loadingCard.frame = picture.bounds
@@ -509,7 +822,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
 
     /// The card itself, without its caption (in the cell).
-    var cardFrame: CGRect { CGRect(x: lead, y: 0, width: bounds.width - lead, height: cardHeight) }
+    var cardFrame: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: cardHeight) }
 
     /// Its hold menu (`HoldMenu`): beside the card at its held size —
     /// lifted and a little grown — without its caption.
@@ -533,15 +846,10 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
-                   progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false,
-                   rank place: Int? = nil, lead: CGFloat = 0) {
+                   progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil, isLogo: Bool = false) {
         itemIndex = index
         self.rowCell = rowCell
         cardHeight = card.height
-        self.lead = lead
-        spine.isHidden = place == nil
-        captionLeading.constant = FixedFocusMetrics.textIndent + lead
-        if let place { self.place = place }
         isPlaceholder = FixedFocusPlaceholder.isPlaceholder(item)
         setNeedsLayout()
         // (A reused cell: its last focus look gone.)
@@ -684,7 +992,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             : 1
         let grown = CGAffineTransform(scaleX: scale, y: scale)
         picture.transform = grown
-        if !spine.isHidden { grow(spine, scale) }
         // The outline SIZED with the card, not scaled: its line stays the
         // fixed box's width (scaled, it grew thicker with the lift).
         outlineScale = scale
@@ -739,52 +1046,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// The grown cell's own outline — fades in as it opens (Up/Down), while
     /// the fixed box is away.
     private let outline = UIView()
-    /// The title's info (name, facts) — BELOW the cell, so it travels with
-    /// its title: in with it, away with it.
-    private let info = UIView()
-    private let name = UILabel()
+    /// The facts line on the grown picture, under the logo (as the box's).
     private let facts = UILabel()
-    /// A placeholder's name and facts still to come.
-    private let nameBar = FixedFocusPlaceholder()
-    private let factsBar = FixedFocusPlaceholder()
-    /// A poster's caption (not grown): its name and year, as under a
-    /// moving-focus card at rest.
-    private let caption = UIView()
-    private let captionName = UILabel()
-    private let captionYear = UILabel()
-    private var grown = false
-    /// Its row focused (rows above and below: the cards alone).
-    private var captionShown = false
-    func setCaptionShown(_ shown: Bool, animated: Bool = true) {
-        guard shown != captionShown else { return }
-        captionShown = shown
-        if animated { fadeCaption(out: !shown) } else { UIView.performWithoutAnimation { applyAlpha() } }
-    }
-    /// Out quickly (gone before its card has travelled far — the move's
-    /// own duration carried it a long way); in as the mirror of that: over
-    /// the same share of the way, at its end (`captionFadeIn`).
-    static let captionFadeOut: Double = 0.08
-    /// When, in a move of `duration` (the rows' no-bounce spring), the card
-    /// has as much of its way left as it covered in `captionFadeOut`.
-    static func captionFadeIn(duration: Double) -> Double {
-        FixedFocusMotion.time(at: 1 - FixedFocusMotion.progress(captionFadeOut, duration: duration),
-                              duration: duration)
-    }
-    /// The poster going under the box or coming out: its caption shows
-    /// only the first and last 30 % of the way (it travels the box's
-    /// width and more — with the captions' fades, ~40 %, it showed too
-    /// much movement beside the box's info, which barely drifts; tried:
-    /// 10 % — too little; 25 %).
-    static let grownFadeShare: Double = 0.3
-    private func fadeCaption(out: Bool, share: Double? = nil) {
-        let move = rowCell?.move?.vertical?.duration ?? Motion.moveDuration
-        let start = share.map { FixedFocusMotion.time(at: 1 - $0, duration: move) }
-            ?? Self.captionFadeIn(duration: move)
-        let gone = share.map { FixedFocusMotion.time(at: $0, duration: move) } ?? Self.captionFadeOut
-        UIView.animate(withDuration: out ? gone : move - start,
-                       delay: out ? 0 : start,
-                       options: [out ? .curveLinear : .curveEaseOut, .beginFromCurrentState,
-                                 .overrideInheritedDuration, .overrideInheritedCurve]) { self.applyAlpha() }
+    /// A move's new picture fades in over its last part, as far from its
+    /// end as the spring covers in its first 0.08 s (the box's).
+    static func fadeInStart(duration: Double) -> Double {
+        FixedFocusMotion.time(at: 1 - FixedFocusMotion.progress(0.08, duration: duration), duration: duration)
     }
     private var item: MetaItem?
     private var backdropFor: String?
@@ -828,10 +1095,13 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         contentView.addSubview(loadingCard)
         backdrop.addSubview(shade)
         backdrop.addSubview(logo)
+        FixedFocusMetrics.styleFacts(facts)
+        backdrop.addSubview(facts)
+        logo.onPlace = { [weak self] in self?.placeBadges() }
         state.alpha = 0
         backdrop.addSubview(state)
-        // The badges on the grown picture only, as the box's (posters
-        // have none).
+        // The badges on the grown picture only, over its logo, as the
+        // box's (posters have none).
         backdrop.addSubview(badges)
         // The card's edge (on top of its pictures) and its shadow (under
         // the card, outside it).
@@ -847,30 +1117,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         outline.alpha = 0
         addSubview(outline)
         FixedFocusRing.attachShadow(to: outline)
-        name.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
-        // (Trial: no name above it, so the facts take the title's look.)
-        facts.font = FixedFocusText.titleFont(FixedFocusMetrics.textSize)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: true))
-        info.addSubview(name)
-        info.addSubview(facts)
-        FixedFocusMetrics.styleDescription(summary)
-        info.addSubview(summary)
-        for bar in [nameBar, factsBar] {
-            bar.isHidden = true
-            info.addSubview(bar)
-        }
-        info.alpha = 0
-        info.isUserInteractionEnabled = false
-        addSubview(info)
-        captionName.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
-        captionName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: false))
-        captionYear.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
-        captionYear.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: false))
-        caption.addSubview(captionName)
-        caption.addSubview(captionYear)
-        caption.isUserInteractionEnabled = false
-        addSubview(caption)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -893,6 +1139,8 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             : FixedFocusBoxView.zoomRect
         shade.frame = backdrop.bounds
         logo.room = FixedFocusMetrics.logoRoom(width: landscapeWidth, height: cardHeight)
+        facts.frame = FixedFocusMetrics.factsFrame(width: landscapeWidth, height: cardHeight)
+        placeBadges()
         outline.frame = bounds
         let lit = FixedFocusCardEdge.focusLight
         outline.layer.borderWidth = lit ? 0 : FixedFocusRing.width
@@ -914,38 +1162,15 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         poster.isHidden = placeholder
         backdrop.isHidden = placeholder
         state.frame = CGRect(x: 0, y: 0, width: landscapeWidth, height: cardHeight)
-        // (Bounds and centre: it may be counter-scaled — see `apply`.)
-        let infoRect = CGRect(x: FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.boxInfoGap,
-                              width: landscapeWidth - 2 * FixedFocusMetrics.textIndent,
-                              height: FixedFocusMetrics.infoHeight)
-        info.bounds = CGRect(origin: .zero, size: infoRect.size)
-        info.center = CGPoint(x: infoRect.midX, y: infoRect.midY)
-        applyInfoCounterScale()
-        summary.frame = CGRect(x: 0, y: FixedFocusMetrics.descriptionFrameY, width: info.bounds.width,
-                               height: summary.font.lineHeight * 4 + 2)
-        name.isHidden = true
-        facts.frame = CGRect(x: 0, y: 0, width: info.bounds.width, height: FixedFocusMetrics.factsHeight)
-        let barHeight = (FixedFocusMetrics.textSize * 0.72).rounded()
-        for (bar, label, share) in [(nameBar, name, 0.5), (factsBar, facts, 0.35)] {
-            bar.layer.cornerRadius = barHeight / 2
-            bar.frame = CGRect(x: 0, y: label.frame.midY - barHeight / 2,
-                               width: (info.bounds.width * share).rounded(), height: barHeight)
-            bar.isHidden = !placeholder || bar === nameBar
-        }
-        // Under its poster, wherever that sits in the cell (centred: under
-        // the box the cell is box-wide), so it moves with it.
-        let posterLeft = max(0, (contentView.bounds.width - FixedFocusMetrics.posterWidth) / 2)
-        caption.frame = CGRect(x: posterLeft + FixedFocusMetrics.textIndent, y: cardHeight + FixedFocusMetrics.infoGap,
-                               width: FixedFocusMetrics.posterWidth - 2 * FixedFocusMetrics.textIndent,
-                               height: FixedFocusMetrics.captionRoom - FixedFocusMetrics.infoGap)
-        captionName.frame = CGRect(x: 0, y: 0, width: caption.bounds.width, height: 30)
-        captionYear.frame = CGRect(x: 0, y: FixedFocusMetrics.captionLineOffset,
-                                   width: caption.bounds.width, height: 30)
+    }
+
+    /// The badges' foot just over the logo (over the logo's room without one).
+    private func placeBadges() {
+        badges.frame = FixedFocusMetrics.badgesFrame(width: landscapeWidth, over: logo)
     }
 
     /// New progress for the title it already shows.
     func showProgress(_ progress: WatchProgress) {
-        facts.text = progress.episodeTitle ?? facts.text
         state.show(progress)
     }
 
@@ -965,7 +1190,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             // The billboard's focus target: nothing to show or load.
             for view in [poster, backdrop, logo] { FixedFocusImages.load(nil, into: view, maxDimension: 0) }
             setOutline(false)
-            info.alpha = 0
             return
         }
         setNeedsLayout()
@@ -985,15 +1209,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                                   waiting: { [weak self] in self?.posterWaiting = $0 })
             state.show(progress)
             state.alpha = progress == nil ? 0 : 1
-            name.text = item.name
-            facts.text = progress?.episodeTitle
-                ?? FixedFocusShowInfo.factsLine(item)
+            // Continue Watching: its state line is the card's text.
+            facts.text = progress == nil ? FixedFocusShowInfo.factsLine(item) : nil
             return
         }
         state.alpha = 0
         shade.isHidden = false
-        captionName.text = item.name
-        captionYear.text = item.year
         applyAlpha()
         FixedFocusImages.load(item.poster ?? item.background, into: poster,
                               maxDimension: PictureSize.poster,
@@ -1001,8 +1222,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         FixedFocusImages.load(nil, into: backdrop, maxDimension: 0,
                               waiting: { [weak self] in self?.backdropWaiting = $0 })
         FixedFocusImages.load(nil, into: logo, maxDimension: 0)
-        name.text = item.name
-        facts.text = FixedFocusShowInfo.factsLine(item)
+        facts.text = FixedFocusPlaceholder.isPlaceholder(item) ? nil : FixedFocusShowInfo.factsLine(item)
     }
 
     /// The picture it shows still on its way: the placeholder's look, no
@@ -1026,8 +1246,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     /// The card's height (the landscape picture's width follows).
     private var cardHeight = FixedFocusMetrics.height
     private var landscapeWidth: CGFloat { FixedFocusMetrics.landscapeWidth(height: cardHeight) }
-    /// The third line under the grown cell (as under the box).
-    private let summary = TopAlignedLabel()
 
     /// Left of the box: dimmed.
     func setPast(_ past: Bool) {
@@ -1047,39 +1265,11 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     private func applyAlpha() {
         contentView.alpha = concealed || underPressedBox ? 0 : past ? FixedFocusMetrics.previousAlpha : 1
-        // The caption: only under a poster (not the box, a landscape card,
-        // a placeholder) in
-        // the box's row, not left of the box (its sliver at the edge).
-        let plain = captionShown && !past && !invisible && !landscape && !grown
-            && !FixedFocusPlaceholder.isPlaceholder(item)
-        caption.alpha = plain && !concealed && !underPressedBox ? 1 : 0
     }
 
     /// Showing the box itself (grown, not under the fixed box).
     private var showsBox = false
 
-    /// The layout's scale for this card (the grown title at the lifted box's
-    /// size). Its info keeps its size and sits where the box's does — the
-    /// card's own scale undone, moved down by the overhang — or at the
-    /// handover to the box it jumped back.
-    private var layoutScale: CGFloat = 1
-    override func apply(_ layoutAttributes: UICollectionViewLayoutAttributes) {
-        super.apply(layoutAttributes)
-        layoutScale = layoutAttributes.transform.a == 0 ? 1 : layoutAttributes.transform.a
-        applyInfoCounterScale(size: layoutAttributes.size)
-    }
-
-    private func applyInfoCounterScale(size: CGSize? = nil) {
-        let s = layoutScale
-        guard s != 1 else { info.transform = .identity; return }
-        let size = size ?? bounds.size
-        let centre = CGPoint(x: size.width / 2, y: size.height / 2)
-        let overhang = cardHeight * (s - 1) / 2
-        // Net for the info: moved down by `overhang`, unscaled.
-        let tx = -(s - 1) * (info.center.x - centre.x) / s
-        let ty = (overhang - (s - 1) * (info.center.y - centre.y)) / s
-        info.transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: 1 / s, y: 1 / s)
-    }
     /// Under the pressed fixed box (it shrinks a little): hidden, or its
     /// edges showed around the box.
     func setUnderPressedBox(_ under: Bool) {
@@ -1093,24 +1283,15 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private let outlineLight = UIImageView()
 
     /// Grown: the backdrop shows — unless the fixed box shows it
-    /// (`contentHidden`), then the cell is just a box-wide gap. The info
-    /// shows under every grown cell (it travels with its title).
+    /// (`contentHidden`), then the cell is just a box-wide gap.
     func setGrown(_ grown: Bool, contentHidden: Bool) {
         if invisible { return }
-        if grown != self.grown {
-            self.grown = grown
-            fadeCaption(out: grown, share: Self.grownFadeShare)
-        }
-        if grown, let item {
-            summary.text = FixedFocusPlaceholder.isPlaceholder(item) ? nil : FixedFocusMetrics.descriptionText(item)
-        }
         if landscape {
             // Continue Watching: always the landscape card; the outline only
             // while it shows itself (under the fixed box: none).
             poster.alpha = 0
             backdrop.alpha = 1
             setOutline(grown && !contentHidden)
-            info.alpha = grown && !contentHidden ? 1 : 0
             return
         }
         if grown, let item, backdropFor != item.id {
@@ -1141,17 +1322,12 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             backdrop.alpha = shows ? 1 : 0
         }
         // A placeholder (`FixedFocusRows.placeholderRows`): the empty card
-        // only — no shade, no outline (nothing has focus yet); the wide one
-        // its info's bars.
+        // only — no shade, no outline (nothing has focus yet).
         if item?.id.hasPrefix("placeholder-") == true {
             shade.isHidden = true
-            info.alpha = grown ? 1 : 0
             setOutline(false)
             return
         }
-        // The info too only while the cell shows itself (Up/Down); under the
-        // box, the box's own info drifts in place.
-        info.alpha = shows ? 1 : 0
         if let vertical = move?.vertical {
             // Up/Down: the outlines hand over gradually: the old one fades out over
             // the first 70 %, the new one in over the last 70 %, linearly.
@@ -1362,6 +1538,9 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     /// How much lower than usual the focused row stands (the row under the
     /// billboard): `rowTop()` includes it.
     var rowDrop: () -> CGFloat = { 0 }
+    /// Centred rows: how much lower than the usual spot row `r` stands in
+    /// focus (nil: at the spot).
+    var centredDrop: (Int) -> CGFloat? = { _ in nil }
     /// See `FixedFocusRows.rigidRest`.
     var rigidRest: () -> CGFloat? = { nil }
     /// The billboard's own distance up at a depth, if it has one.
@@ -1384,7 +1563,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     /// top) to the end of what shows under its cards (the fixed box's info,
     /// captions, a panel's edge): the next row's name the peek gap below it.
     var drawnHeight: (Int) -> CGFloat = { _ in
-        FixedFocusMetrics.titleHeight + FixedFocusMetrics.height + FixedFocusMetrics.infoGap + FixedFocusMetrics.infoHeight
+        FixedFocusMetrics.titleHeight + FixedFocusMetrics.height
     }
     /// The row below always shows at least this much of its cards (a tall
     /// focused row pushes it down only so far).
@@ -1472,25 +1651,34 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
             var y = [CGFloat](repeating: 0, count: count)
             guard count > 0 else { return y }
             let f = min(max(f, 0), count - 1)
+            let centred = centredDrop(f)
+            let focusY = centred.map { focusY - rowDrop() + $0 } ?? focusY
+            let gap = centred == nil ? FixedFocusMetrics.peekGap : FixedFocusMetrics.centredGap
             y[f] = focusY + reaches[f].above
             if f + 1 < count {
-                let after = focusY + drawnHeight(f) + FixedFocusMetrics.peekGap
-                y[f + 1] = min(after, lowestBelow) + reaches[f + 1].above
+                let after = focusY + drawnHeight(f) + gap
+                y[f + 1] = (centred == nil ? min(after, lowestBelow) : after) + reaches[f + 1].above
             }
             // Further down: the same gap below each row (its height, captions
             // in) — a row coming up to be next doesn't move again.
             if f + 2 < count {
                 for r in (f + 2)..<count {
-                    y[r] = y[r - 1] + heights[r - 1] + reaches[r - 1].below + FixedFocusMetrics.peekGap
+                    y[r] = y[r - 1] + heights[r - 1] + reaches[r - 1].below + gap
                         + reaches[r].above
                 }
             }
-            if f > 0 { y[f - 1] = peek.above - heights[f - 1] - reaches[f - 1].below + belowCards(f - 1) }
+            if f > 0, centred != nil {
+                // Centred: the row above the same gap over it as the one below.
+                y[f - 1] = y[f] - reaches[f].above - gap - reaches[f - 1].below
+                    - heights[f - 1] + belowCards(f - 1)
+            } else if f > 0 {
+                y[f - 1] = peek.above - heights[f - 1] - reaches[f - 1].below + belowCards(f - 1)
+            }
             // Further up: the same gap above each row, below the cards of the
             // one over it (out of focus, its captions don't show).
             if f > 1 {
                 for r in stride(from: f - 2, through: 0, by: -1) {
-                    y[r] = y[r + 1] - reaches[r + 1].above - FixedFocusMetrics.peekGap - reaches[r].below
+                    y[r] = y[r + 1] - reaches[r + 1].above - gap - reaches[r].below
                         - heights[r] + belowCards(r)
                 }
             }
@@ -1524,7 +1712,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
                 if let rest = rigidRest() {
                     // Rigid: the rows as with the next one in focus, lower
                     // by exactly the scroll.
-                    y = normal(r, next) + rest - focusY
+                    y = normal(r, next) + rest - focusY - (centredDrop(next) ?? 0)
                 } else if belowAway() {
                     y = normal(r, next) + Self.billboardScroll(depth: 1)
                 } else {
@@ -1644,7 +1832,7 @@ final class FixedFocusPanelView: UIView {
 }
 
 /// A card's state line, laid over the whole card: the player's bar
-/// (`Spotlight.stateBarHeight`) at the foot, above it "S1:E5" on the left
+/// (`Spotlight.stateBarHeight`) at the foot, above it "S1:E5 · Title" on the left
 /// and "20m left" / "Up Next" / "Watched" at its end.
 final class FixedFocusProgressView: UIView {
     private let episode = UILabel()
@@ -1695,7 +1883,12 @@ final class FixedFocusProgressView: UIView {
 
     func show(_ entry: WatchProgress?) {
         guard let entry else { return }
-        episode.text = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
+        // Continue Watching: "S1:E5 · Its title", cut short where it meets
+        // the time left.
+        let number = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
+        let title = entry.episodeTitle?.trimmingCharacters(in: .whitespaces)
+        episode.text = [number, title?.isEmpty == false ? title : nil].compactMap { $0 }
+            .joined(separator: " · ")
         let started = entry.isStarted
         remaining.text = started ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress") : "Up Next"
         fraction = started ? CGFloat(entry.fraction) : 0
@@ -1795,15 +1988,18 @@ enum FixedFocusMotion {
     }
 }
 
-/// A card's badges (`HomeRow.badges(for:)`): dark plates at the picture's
-/// top left, a symbol and the words in sentence case. Only on the fixed box (and the grown
-/// card handing over to it). Side by side where they fit, else stacked.
+/// A card's badges (`HomeRow.badges(for:)`): Apple TV's plates, the words
+/// alone in sentence case, at the foot over the logo (the box's, a
+/// showcase card's): the frame's bottom left. Side by side where they
+/// fit, else stacked upwards.
 /// Part of the art: it fills its picture and grows with it.
 final class FixedFocusBadges: UIView {
     static let inset: CGFloat = 16
     static let gap: CGFloat = 8
     private var plates: [Plate] = []
     private var shown: [CardBadge] = []
+    /// One plate's height.
+    static var plateHeight: CGFloat { (Plate.font.lineHeight + Plate.padding.top + Plate.padding.bottom).rounded(.up) }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1844,79 +2040,51 @@ final class FixedFocusBadges: UIView {
         let row = sizes.reduce(0) { $0 + $1.width } + gap * CGFloat(max(0, sizes.count - 1))
         let sideBySide = row <= room
         var x = inset
-        var y = inset
+        var bottom = bounds.height - inset
         for (plate, size) in zip(showing, sizes) {
-            plate.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
-            if sideBySide { x += size.width + gap } else { y += size.height + gap }
+            plate.frame = CGRect(x: x, y: bottom - size.height, width: size.width, height: size.height)
+            if sideBySide { x += size.width + gap } else { bottom -= size.height + gap }
         }
     }
 
-    static func symbol(_ kind: CardBadge.Kind) -> String {
-        switch kind {
-        case .news: return "sparkles"
-        case .returns: return "calendar"
-        case .finale: return "flag.checkered"
-        case .person: return "person.fill"
-        case .gem: return "diamond"
-        case .acclaimed: return "laurel.leading"
-        case .limited: return "square.stack"
-        case .top10: return "chart.bar.fill"
-        case .taste: return "heart"
-        }
-    }
-
-    /// One badge: a dark plate, a hairline edge, the symbol a level under
-    /// the words.
+    /// One badge, Apple TV's (measured): the words, 25 pt medium at the
+    /// primary level, 15 pt either side; a 2 pt edge at 40 % white, 14 pt
+    /// corners (a third of its height); darker than Apple's, black 70 %.
     private final class Plate: UIView {
-        static let padding = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 16)
-        static let symbolGap: CGFloat = 10
-        static let font = UIFont.systemFont(ofSize: 26, weight: .medium)
-        private let symbol = UIImageView()
+        static let padding = UIEdgeInsets(top: 8, left: 15, bottom: 8, right: 15)
+        static let font = UIFont.systemFont(ofSize: 25, weight: .medium)
         private let label = UILabel()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            backgroundColor = UIColor.black.withAlphaComponent(0.65)
-            layer.cornerRadius = 10
+            backgroundColor = UIColor.black.withAlphaComponent(0.7)
+            layer.cornerRadius = 14
             layer.cornerCurve = .continuous
-            layer.borderWidth = 1
-            layer.borderColor = UIColor.white.withAlphaComponent(0.12).cgColor
-            symbol.contentMode = .center
-            symbol.tintColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
-            symbol.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
+            layer.borderWidth = 2
+            layer.borderColor = UIColor.white.withAlphaComponent(0.4).cgColor
             label.font = Self.font
             label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
             label.lineBreakMode = .byTruncatingTail
-            addSubview(symbol)
             addSubview(label)
         }
 
         required init?(coder: NSCoder) { fatalError() }
 
         func show(_ badge: CardBadge) {
-            symbol.image = UIImage(systemName: FixedFocusBadges.symbol(badge.kind))
             label.text = badge.text
             setNeedsLayout()
         }
 
-        private var symbolWidth: CGFloat { max(26, symbol.image?.size.width ?? 0) }
-
         /// Its size, at most `room` wide (the words cut short past it).
         func fitting(_ room: CGFloat) -> CGSize {
             let pad = Self.padding
-            let text = label.intrinsicContentSize
-            let width = pad.left + symbolWidth + Self.symbolGap + text.width + pad.right
-            return CGSize(width: min(room, width.rounded(.up)),
-                          height: (Self.font.lineHeight + pad.top + pad.bottom).rounded(.up))
+            let width = pad.left + label.intrinsicContentSize.width + pad.right
+            return CGSize(width: min(room, width.rounded(.up)), height: FixedFocusBadges.plateHeight)
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            let pad = Self.padding
-            let height = bounds.height - pad.top - pad.bottom
-            symbol.frame = CGRect(x: pad.left, y: pad.top, width: symbolWidth, height: height)
-            let textX = symbol.frame.maxX + Self.symbolGap
-            label.frame = CGRect(x: textX, y: pad.top, width: max(0, bounds.width - textX - pad.right), height: height)
+            label.frame = bounds.inset(by: Self.padding)
         }
     }
 }

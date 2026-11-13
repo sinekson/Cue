@@ -368,3 +368,6 @@ enum StageArt {
         return mean
     }
 }
+
+/// The billboard's and Details' picture hosts their trailer.
+extension StagePictureView: TrailerHost {}
