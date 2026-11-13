@@ -115,7 +115,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). One poster in every row (`FixedFocusMetrics.posterCard`, 293 × 440: Home's fixed rows, Saved for Later, Top 10, Search, Details' rows; about 5½ across), the next row peeking 194 pt, the gap above its name as at 490 (fixed rows at 490 with the others at 398 was too large beside too small; 420 was tried); grids keep their whole columns, six across (`gridCard`, 265 × 398). Continue Watching 16:9, three across (`continueHeight`, about 559 × 315; 300 looked small).
+  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Home's fixed rows, Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
@@ -195,6 +195,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   titles, order and pictures until focus leaves it (a reordered Continue
   Watching showed one title and played another); other rows update at once,
   new pictures in place (`heldRows`, `refreshArt`).
+  Rows out of focus, peeking above and below or under a billboard (Home's,
+  Details' episodes), gently dimmed: 80 % (`peekAlpha`; 45 % too dark,
+  full brightness too loud).
   Continue Watching's art is the episode's TMDB still as Details', else the
   add-on's, looked up under the launch curtain (`ContinueStills`).
 - **Catalogs** are pulled: fresh at every launch (under the curtain), then

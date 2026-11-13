@@ -98,7 +98,7 @@ struct SeasonProgressMap: View {
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     /// Inline: an episode card's width — the label ends at the first
     /// card's right edge below. (The line starts at the text indent.)
-    static let inlineWidth = FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight)
+    static let inlineWidth = FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight)
         - FixedFocusMetrics.textIndent
     /// Inline: between the ticks and the label.
     static let labelGap: CGFloat = 16

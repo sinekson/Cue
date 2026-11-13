@@ -314,11 +314,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let logo = UIImageView()
     static let logoInset = CGSize(width: 34, height: 30)
 
-    /// Darkened (0…1 black over the picture — not see-through).
-    var dim: CGFloat = 0 {
-        didSet { if dim != oldValue { dimCover.alpha = dim; spine.alpha = 1 - dim } }
-    }
-    private let dimCover = UIView()
     /// A ranked row's place (Top 10): a short card behind the poster,
     /// `rankInset` under its top, showing `rankLead` of it at its left, in
     /// the tertiary white, lifted with the poster, the digit cut out of it.
@@ -423,10 +418,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         logo.contentMode = .scaleAspectFit
         logo.isHidden = true
         picture.addSubview(logo)
-        dimCover.backgroundColor = .black
-        dimCover.alpha = 0
-        dimCover.isUserInteractionEnabled = false
-        picture.addSubview(dimCover)
         outline.isUserInteractionEnabled = false
         outline.layer.borderColor = UIColor.white.cgColor
         outline.layer.cornerRadius = Spotlight.cornerRadius
@@ -503,7 +494,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         nameBar.isHidden = !isPlaceholder
         detailBar.isHidden = !isPlaceholder
         picture.isHidden = isPlaceholder
-        dimCover.frame = picture.bounds
         logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
         // (As on Continue Watching's fixed-focus cards.)
         state.frame = card
@@ -802,11 +792,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private var landscape = false
     private let state = FixedFocusProgressView()
 
-    /// Darkened (0…1 black over the card — not see-through).
-    var dim: CGFloat = 0 {
-        didSet { if dim != oldValue { dimCover.alpha = dim } }
-    }
-    private let dimCover = UIView()
     private let badges = FixedFocusBadges()
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()
@@ -852,10 +837,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
         // the card, outside it).
         edge.isUserInteractionEnabled = false
         contentView.addSubview(edge)
-        dimCover.backgroundColor = .black
-        dimCover.alpha = 0
-        dimCover.isUserInteractionEnabled = false
-        contentView.addSubview(dimCover)
         outline.isUserInteractionEnabled = false
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         outline.layer.borderWidth = FixedFocusRing.width
@@ -896,7 +877,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        dimCover.frame = contentView.bounds
         // Fixed sizes: the cell's width only reveals — except in an Up/Down
         // opening, where both fill the card (`shaped`). The poster centred:
         // under the box (a box-wide gap) it comes out and goes in on both

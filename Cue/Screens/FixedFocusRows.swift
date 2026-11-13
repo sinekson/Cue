@@ -267,8 +267,10 @@ struct FixedFocusRows: UIViewControllerRepresentable {
 
 /// Geometry shared by the controller and its cells (points, 1920 × 1080).
 enum FixedFocusMetrics {
-    /// The original Home's gap.
-    static let gap: CGFloat = Spotlight.spacing
+    /// THE GAP between cards at rest, every row (fixed or moving focus,
+    /// the box beside its posters, grids): Apple TV's. A lifted card grows
+    /// into it. (24 in the fixed rows beside 32 in the others read uneven.)
+    static let gap: CGFloat = 40
     /// The original margin: the box lines up with the row names; a strip
     /// of the previous poster peeks in left of it.
     static let inset: CGFloat = Spotlight.screenInset
@@ -306,7 +308,10 @@ enum FixedFocusMetrics {
     /// The row below: this much of its posters shows at the bottom (as on
     /// the original Home — a little under half).
     static var belowVisible: CGFloat { Spotlight.previewVisibleHeight }
-    /// Rows other than the focused one (the preview below).
+    /// Rows out of focus that peek (above and below, under a billboard):
+    /// gently dimmed (45 % was too dark, full brightness too loud).
+    static let peekAlpha: CGFloat = 0.8
+    /// Rows waiting under a rigid billboard (Details) that don't peek.
     static let dimmedAlpha: CGFloat = 0.45
     /// The posters left of the box in the focused row.
     static let previousAlpha: CGFloat = 0.45
@@ -315,14 +320,11 @@ enum FixedFocusMetrics {
     /// DESTINATION rows (Saved for Later, collections) — you go there for
     /// something you already know, not to be shown one title at a time:
     /// the system's own scrolling and lift, and a caption under every card.
-    /// THE PORTRAIT POSTER of every row — Home's fixed rows and moving
-    /// focus alike (Search, Saved for Later, Top 10, Details' rows): the
-    /// fixed rows' height (`Spotlight.rowHeight`), about 5½ across.
-    static let posterCard = CGSize(width: Spotlight.posterWidth.rounded(), height: Spotlight.rowHeight)
-    /// The grids' poster (a folder, a person's or studio's titles): six
-    /// across the content's width, the rows' gaps between them — whole
-    /// columns, so not the rows' poster.
-    static let gridCard = posters(across: 6)
+    /// THE PORTRAIT POSTER, everywhere — Home's fixed rows (their height,
+    /// `Spotlight.rowHeight`), moving focus (Search, Saved for Later, Top
+    /// 10, Details' rows) and the grids: six across the content's width,
+    /// the rows' gaps between them, the next one peeking (Apple TV's size).
+    static let posterCard = posters(across: 6)
     /// Smaller portraits for long rows of people (Details' Cast & Crew):
     /// seven across.
     static let portraitCard = posters(across: 7)
@@ -336,7 +338,7 @@ enum FixedFocusMetrics {
     private static func cardWidth(across count: Int) -> CGFloat {
         let n = CGFloat(count)
         var width = (bannerWidth / n).rounded(.down)
-        while width > 100, n * width + (n - 1) * (gap + width * movingFocusLift / 2).rounded() > bannerWidth {
+        while width > 100, n * width + (n - 1) * gap > bannerWidth {
             width -= 1
         }
         return width
@@ -350,22 +352,12 @@ enum FixedFocusMetrics {
         let width = cardWidth(across: 5)
         return CGSize(width: width, height: (width * 9 / 16).rounded())
     }()
-    /// …collections: landscape tiles (doors).
-    static let destinationTileHeight: CGFloat = 300
-    /// Continue Watching's cards: 16:9, three across the content's width
-    /// (300 tall, 3.2 across, looked small).
-    static let continueHeight: CGFloat = (cardWidth(across: 3) * 9 / 16).rounded()
-    /// The gap between moving-focus cards: wider than the fixed rows'
-    /// (`gap`) — a lifted card grows into it.
-    static let destinationGap: CGFloat = 40
-    /// Between a row's cards: what the fixed rows keep beside their box
-    /// (`gap`), around the LIFTED card — the gap at rest grows by as much
-    /// as a card of that width grows on each side.
+    /// THE LANDSCAPE CARD (Continue Watching, Details' episodes,
+    /// collections' tiles, landscape rows): 16:9, three across the
+    /// content's width (Apple TV's size; 300 tall, 3.2 across, looked small).
+    static let landscapeHeight: CGFloat = (cardWidth(across: 3) * 9 / 16).rounded()
     /// How much a moving-focus card grows when focused.
     static let movingFocusLift: CGFloat = 0.06
-    @MainActor static func destinationGap(cardWidth: CGFloat) -> CGFloat {
-        (gap + cardWidth * movingFocusLift / 2).rounded()
-    }
     /// The text under cards (captions, the box's description): the base
     /// size (22 looked too small); the second line this far below the first.
     static let captionSize: CGFloat = 24
@@ -539,8 +531,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Continue Watching (moving focus): its cards at their own size —
         // the fixed box's.
         if isContinue(rowIndex) {
-            return CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.continueHeight),
-                          height: FixedFocusMetrics.continueHeight)
+            return CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight),
+                          height: FixedFocusMetrics.landscapeHeight)
         }
         // Ranked: the poster with its numeral's room before it.
         if isRanked(rowIndex) {
@@ -548,8 +540,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                           height: FixedFocusMetrics.posterCard.height)
         }
         return isLandscape(rowIndex)
-            ? CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.destinationTileHeight),
-                     height: FixedFocusMetrics.destinationTileHeight)
+            ? CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight),
+                     height: FixedFocusMetrics.landscapeHeight)
             : rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id)
                 ? FixedFocusMetrics.portraitCard : FixedFocusMetrics.posterCard
     }
@@ -1862,8 +1854,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // under the rows.
         if rigidBillboardTravel != nil {
             stage.transform = CGAffineTransform(translationX: 0, y: -billboardUp(depth: depth))
-            // Its text, below: dimmed as the overlay is.
-            stage.textAlpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
             return
         }
         stage.setBelow(depth > 0)
@@ -2008,7 +1998,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     /// The overlay where the billboard is: scrolled up with it, and above
-    /// the rows dimmed like the row above. Inside a move: on its animation.
+    /// the rows. Inside a move: on its animation.
     private func applyOverlayPosition() {
         guard let featured = featuredIndex else { return }
         let depth = max(focusedRow - featured, 0)
@@ -2017,7 +2007,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {
             let shift = moved === overlayHost?.view && depth > 0 ? billboardOverlayShift : 0
             moved.transform = CGAffineTransform(translationX: 0, y: shift - scroll)
-            moved.alpha = depth == 0 ? 1 : FixedFocusMetrics.dimmedAlpha
+            moved.alpha = 1
         }
     }
 
@@ -2465,7 +2455,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         for case let cell as FixedFocusRowCell in outer.visibleCells {
             cell.contentView.alpha = rowAlpha(cell.rowIndex)
             cell.applyCaptions()
-            cell.applyCardDim()
             // (Rigid: by a line fixed on the screen, moved in the scroll —
             // see `concealTravel`.)
             if let rest = rigidRest {
@@ -2491,14 +2480,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (The billboard's picture is never dimmed: it scrolls away whole.)
         // (Under the billboard the rows are full: the scroll is a move.)
         if isFeatured(focusedRow) {
-            // Rigid: the row waiting under it is a row out of focus — the
-            // peeking one (`rigidPeek`) only lightly dimmed: its cards
-            // darkened, the row itself opaque (`cardDim`); other kinds of
-            // rows through their brightness.
-            if rigidPeek != nil, isNext(rowIndex) { return cardsDarkened(rowIndex) ? 1 : Self.peekAlpha }
+            // Rigid: the row peeking under it (`rigidPeek`) gently dimmed;
+            // the others waiting there dimmed.
+            if rigidPeek != nil, isNext(rowIndex) { return FixedFocusMetrics.peekAlpha }
             return rigidRest != nil && !isFeatured(rowIndex) ? FixedFocusMetrics.dimmedAlpha : 1
         }
-        return rowIndex == focusedRow || isFeatured(rowIndex) ? 1 : FixedFocusMetrics.dimmedAlpha
+        // (Rows out of focus, peeking above and below: gently dimmed.)
+        return rowIndex == focusedRow || isFeatured(rowIndex) ? 1 : FixedFocusMetrics.peekAlpha
     }
 
     /// Waiting under the billboard (at the bottom edge) the rows are hidden:
@@ -2522,7 +2510,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (Rigid: the row's own brightness dims it. Peeking: no name.)
         if isNext(rowIndex) {
             if rigidPeek != nil {
-                return rigidPeekShowsName && cardsDarkened(rowIndex) ? Self.peekAlpha : 0
+                return rigidPeekShowsName ? 1 : 0
             }
             return rigidRest != nil ? 1 : FixedFocusMetrics.dimmedAlpha
         }
@@ -2544,19 +2532,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// Up to the billboard, the share of the row's move over which the
     /// season buttons and their map fade out (Down: the whole move).
     static let headerOutShare: CGFloat = 0.4
-    /// The peeking row's brightness under the billboard (see `rigidPeek`).
-    static let peekAlpha: CGFloat = 0.45
-
-    /// How dark a row's cards are drawn (0: as they are) — the peeking
-    /// row's: darkened, not see-through (the billboard's picture behind).
-    func cardDim(_ rowIndex: Int) -> CGFloat {
-        rigidPeek != nil && isFeatured(focusedRow) && isNext(rowIndex) && cardsDarkened(rowIndex)
-            ? 1 - Self.peekAlpha : 0
-    }
-
-    /// Rows whose cards can be darkened one by one (posters, moving-focus
-    /// cards) — a collection's panel or a banner dims as a whole.
-    private func cardsDarkened(_ rowIndex: Int) -> Bool { !isPanel(rowIndex) && !isBanner(rowIndex) }
     /// A header row's name (Details' "Episodes") stays at least this far
     /// below the billboard's buttons while they're on the screen.
     static let nameButtonsMargin: CGFloat = 32
@@ -2608,7 +2583,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // `headerOutShare` — gone before the name is back.)
             cell.moveHeader(fade: samples.map { down ? $0 : 1 - min($0 / Self.headerOutShare, 1) },
                             lift: samples.map { _ in lift },
-                            titleOpacity: samples.map { Self.peekAlpha * (down ? 1 - min($0, 1) : min($0, 1)) },
+                            titleOpacity: samples.map { down ? 1 - min($0, 1) : min($0, 1) },
                             scale: 1,
                             timing: spring == nil ? timing : nil,
                             duration: progress?.duration ?? duration, entering: down)
@@ -3674,15 +3649,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells { card.setCaptionShown(isFocusRow) }
     }
 
-    /// The cards darkened as the row's state says (see the controller's
-    /// `cardDim`).
-    func applyCardDim() {
-        guard let controller else { return }
-        let dim = controller.cardDim(rowIndex)
-        for case let card as FixedFocusDestinationCell in destinationStrip?.visibleCells ?? [] { card.dim = dim }
-        for case let card as FixedFocusPosterCell in strip.visibleCells { card.dim = dim }
-    }
-    var cardDim: CGFloat { controller?.cardDim(rowIndex) ?? 0 }
 
     /// Continue Watching: landscape cards (its progress, Select resumes).
     var isContinue: Bool { controller?.isContinue(rowIndex) == true }
@@ -4369,7 +4335,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private func makeDestinationStrip() {
         let flow = UICollectionViewFlowLayout()
         flow.scrollDirection = .horizontal
-        flow.minimumLineSpacing = FixedFocusMetrics.destinationGap
+        flow.minimumLineSpacing = FixedFocusMetrics.gap
         // Wider than the screen by the strips' overscan (positions shifted
         // by it): cards scrolling out keep their cells and SLIDE away —
         // outside its bounds UIKit drops them at once.
@@ -4460,7 +4426,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                                isLogo: controller.isLogo(rowIndex),
                                rank: ranked ? indexPath.item + 1 : nil, lead: lead)
                 cell.setCaptionShown(isFocusRow)
-                UIView.performWithoutAnimation { cell.dim = cardDim }
             }
             return cell
         }
@@ -4475,7 +4440,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             cell.setPast(isPast(indexPath.item))
             cell.setConcealed(concealed)
             cell.setCaptionShown(isFocusRow, animated: false)
-            UIView.performWithoutAnimation { cell.dim = cardDim }
         }
         return cell
     }
@@ -4523,8 +4487,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     func collectionView(_ cv: UICollectionView, layout: UICollectionViewLayout,
                         minimumLineSpacingForSectionAt section: Int) -> CGFloat {
-        guard let controller else { return FixedFocusMetrics.destinationGap }
-        return gap(card: controller.destinationCard(rowIndex).width)
+        FixedFocusMetrics.gap
     }
 
     func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -4606,15 +4569,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// the row has moved, a sliver of the one before and the one after split
     /// evenly — always a hint when there's more. At the start: the cards from
     /// the usual inset, the next one's sliver at the right.
-    /// The gap after a card: a ranked row's as its poster's alone, so the
-    /// room before each poster reads as the other rows' gaps.
-    private func gap(card: CGFloat) -> CGFloat {
-        let ranked = controller?.isRanked(rowIndex) == true
-        return FixedFocusMetrics.destinationGap(cardWidth: ranked ? card - FixedFocusDestinationCell.rankLead : card)
-    }
-
     private func windowOffset(focusing index: Int, card: CGFloat, count: Int) -> CGFloat {
-        let gap = gap(card: card)
+        let gap = FixedFocusMetrics.gap
         let pitch = card + gap
         // Focus stays in place (`FixedFocusRows.anchoredRowIDs`): the
         // focused card always at the first card's spot — to the last one,

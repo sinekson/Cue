@@ -33,7 +33,6 @@ final class StagePictureView: UIView {
         /// Copies riding on it (the buttons going out with it).
         var carried: [UIView] = []
         private var textHost: UIHostingController<AnyView>?
-        var textAlpha: CGFloat = 1 { didSet { textHost?.view.alpha = textAlpha } }
 
         func setText(_ content: AnyView?) {
             guard let content else {
@@ -50,7 +49,6 @@ final class StagePictureView: UIView {
             host.view.backgroundColor = .clear
             host.view.isUserInteractionEnabled = false
             host.safeAreaRegions = []
-            host.view.alpha = textAlpha
             addSubview(host.view)
             textHost = host
             setNeedsLayout()
@@ -105,10 +103,6 @@ final class StagePictureView: UIView {
     /// returning card shows right of it (else left) — the buttons hide
     /// behind it (they're over everything; they showed in front of it).
     private(set) var lastCover: (from: CGFloat, to: CGFloat, showsRight: Bool)?
-    /// The text's opacity (dimmed below the billboard, as the rows above).
-    var textAlpha: CGFloat = 1 {
-        didSet { for case let page as Page in zoom.subviews { page.textAlpha = textAlpha } }
-    }
 
     /// A still copy of something on screen (the billboard's buttons) put
     /// on the current card where it shows: it goes out with the card.
@@ -261,7 +255,6 @@ final class StagePictureView: UIView {
         incoming.itemID = item?.id
         incoming.url = url
         incoming.shade.alpha = shadeAlpha
-        incoming.textAlpha = textAlpha
         load(url, into: incoming.picture)
         incoming.setText(item.flatMap { text?($0) })
         zoom.insertSubview(incoming, belowSubview: blurred)

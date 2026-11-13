@@ -802,7 +802,7 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         let size = CGSize(width: (height / 1.5).rounded(), height: height)
         if size != card, size.width > 0 {
             card = size
-            let gap = FixedFocusMetrics.destinationGap(cardWidth: size.width)
+            let gap = FixedFocusMetrics.gap
             layout.minimumLineSpacing = gap
             layout.itemSize = CGSize(width: size.width, height: size.height + FixedFocusMetrics.captionRoom)
             layout.sectionInset = UIEdgeInsets(top: Self.growthRoom(rowHeight: rowHeight),

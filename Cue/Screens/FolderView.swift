@@ -394,7 +394,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     var headerFirst = false
 
     /// A poster: THE portrait poster (`columns` of them fill the width).
-    static var card: CGSize { FixedFocusMetrics.gridCard }
+    static var card: CGSize { FixedFocusMetrics.posterCard }
 
     /// The header: a view of its own in the scroll view's top inset, there
     /// while it scrolls (a cell goes once scrolled off, and its controls with
@@ -413,7 +413,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         super.viewDidLoad()
         view.backgroundColor = .clear
         let layout = UICollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = FixedFocusMetrics.destinationGap(cardWidth: Self.card.width)
+        layout.minimumInteritemSpacing = FixedFocusMetrics.gap
         layout.minimumLineSpacing = 24
         layout.sectionInset = UIEdgeInsets(top: Self.firstLineGap, left: FixedFocusMetrics.inset, bottom: 48,
                                            right: FixedFocusMetrics.inset)
