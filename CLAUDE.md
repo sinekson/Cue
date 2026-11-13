@@ -243,9 +243,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   TMDB's text-free poster, else the best of three backdrops, cut to the
   square around its faces (`TMDBService.cardScene`: scored small for a
   face, middling light, little black; 30 days on disk; the rows' build
-  waits 3 s at most, the rest are the next build's; Vision never on
+  waits 10 s at most (about 1 s for 40; 3 s left new titles on
+  old pictures until the next build), the rest are the next build's; Vision never on
   Swift's pool: a dozen blocked it and stalled the launch), dark logos
-  drawn white at primary (`FixedFocusLogo.isDark`, brightest under 0.7:
+  drawn white at primary (`FixedFocusLogo.isDark`, brightest under 0.7 and one even colour (spread
+  under 0.1: Infinity Castle's emblem went a white blob):
   a red one goes white too; by light alone left The Odyssey's blue),
   the place top left (44 pt bold, a
   soft dark corner behind it), at the foot the logo and a slim line

@@ -4,11 +4,19 @@ import Combine
 
 struct HomeRow: Identifiable {
     /// What a row shows, to tell whether it changed: each title and its art.
-    var contentKey: [String] { items.map { "\($0.id)|\($0.background ?? "")" } }
+    var contentKey: [String] { items.map { "\($0.id)|\(art[$0.id] ?? $0.background ?? "")" } }
 
     let id: String
     let title: String
-    let items: [MetaItem]
+    private(set) var items: [MetaItem]
+
+    /// The same row with fewer titles (a tab's or a filter's): its badges,
+    /// pictures and tabs kept.
+    func with(_ items: [MetaItem]) -> HomeRow {
+        var row = self
+        row.items = items
+        return row
+    }
     /// A second caption line per title (destination rows: when a title was
     /// saved, how many catalogs a folder holds), by title id.
     var subtitles: [String: String] = [:]
@@ -871,8 +879,7 @@ struct HomeView: View {
                 item.isSeries ? !finishedShows.contains(item.id) : !watched.isWatched(contentID: item.id)
             }
             guard !items.isEmpty else { return nil }
-            return items.count == row.items.count ? row
-                : HomeRow(id: row.id, title: row.title, items: items, subtitles: row.subtitles)
+            return items.count == row.items.count ? row : row.with(items)
         }
     }
 
@@ -920,7 +927,7 @@ struct HomeView: View {
             let keep = row.id == Spotlight.featuredRowID || row.id == Spotlight.continueRowID
                 || row.id == Self.libraryRowID || items.count >= min(4, row.items.count)
             if keep, !items.isEmpty {
-                out.append(HomeRow(id: row.id, title: row.title, items: items, subtitles: row.subtitles))
+                out.append(row.with(items))
             }
         }
         if !out.contains(where: { $0.id == Spotlight.featuredRowID }) {

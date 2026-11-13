@@ -3657,14 +3657,15 @@ final class FixedFocusLogo: UIImageView {
         }
     }
 
-    /// Dark: no bright colour in it (The Odyssey's dim blue; a deep red
-    /// goes white too), from a tiny copy, once per picture.
+    /// Dark: one even colour, none of it bright (The Odyssey's dim blue,
+    /// spread 0.004; a deep red goes white too), from a tiny copy, once
+    /// per picture.
     private static let darkness = NSCache<UIImage, NSNumber>()
     static func isDark(_ image: UIImage) -> Bool {
         if let known = darkness.object(forKey: image) { return known.boolValue }
         let side = 32
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
-        var peak: Double = 0, weight: Double = 0
+        var peak: Double = 0, weight: Double = 0, square: Double = 0
         if let cg = image.cgImage,
            let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
                                    bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
@@ -3677,11 +3678,17 @@ final class FixedFocusLogo: UIImageView {
                 // Premultiplied: back to the colour, then its luminance.
                 let r = Double(pixels[i]) / 255 / alpha, g = Double(pixels[i + 1]) / 255 / alpha
                 let b = Double(pixels[i + 2]) / 255 / alpha
-                peak += max(r, g, b) * alpha
+                let light = max(r, g, b)
+                peak += light * alpha
+                square += light * light * alpha
                 weight += alpha
             }
         }
-        let dark = weight > 0 && peak / weight < 0.7
+        let mean = weight > 0 ? peak / weight : 1
+        let spread = weight > 0 ? (max(0, square / weight - mean * mean)).squareRoot() : 0
+        // One even colour only: a logo with a picture in it (Infinity
+        // Castle's emblem, spread 0.2) went a white blob.
+        let dark = weight > 0 && mean < 0.7 && spread < 0.1
         darkness.setObject(NSNumber(value: dark), forKey: image)
         return dark
     }

@@ -380,7 +380,7 @@ enum CueRows {
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 9
+    static let version = 11
     /// A ranked row's places (Top 10).
     static let rankedLength = 10
     /// A row needs this many titles to show; your own (Pick Back Up, Watch
@@ -1735,8 +1735,9 @@ enum CueRows {
             + [homeShowcase, moviesShowcase, showsShowcase].flatMap(\.titles) {
             rankedTitles[title.item.id] = title
         }
-        // Chosen in the background; the build waits 3 s at most and takes
-        // what's chosen by then (the rest are there for the next build).
+        // Chosen in the background (about 1 s for 40 titles); the build
+        // waits 10 s at most, for a bad network, and takes what's chosen by
+        // then (3 s left titles on their old pictures until the next build).
         let rankedList = Array(rankedTitles.values)
         let choosing = Task {
             _ = await boundedConcurrentMap(rankedList, limit: 8) { title in
@@ -1746,7 +1747,7 @@ enum CueRows {
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             let once = OnceFlag()
             Task { await choosing.value; if once.claim() { done.resume() } }
-            Task { try? await Task.sleep(for: .seconds(3)); if once.claim() { done.resume() } }
+            Task { try? await Task.sleep(for: .seconds(10)); if once.claim() { done.resume() } }
         }
         var scenes: [String: String] = [:]
         for title in rankedList {
