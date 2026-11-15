@@ -210,12 +210,19 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 /// A wide card (`wide`: landscape, three across, for picking something now:
 /// New Episodes, Pick Back Up) the same on the backdrop, a smaller logo,
 /// no trailer.
+/// A large row's card (`feature`): a poster that opens into a wide card at
+/// the spot (`setOpen`): both pictures pinned left at their own sizes, only
+/// the card's width changing (a clip, nothing stretched), the backdrop and
+/// words fading in over the poster as it opens, out as it closes.
 final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationItem, TrailerHost {
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private(set) var item: MetaItem?
     private let card = UIView()
     private let picture = UIImageView()
+    /// A large row's backdrop, over the poster while open.
+    private let backdrop = UIImageView()
+    private var backdropArt: String?
     private let shade = FixedFocusShade()
     private let edge = UIImageView()
     private let outline = UIView()
@@ -230,8 +237,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private(set) var rank: Int?
     /// A landscape card.
     private(set) var wide = false
-    /// Its trailer after a rest: tall cards only.
-    var plays: Bool { rank == nil && !wide }
+    /// A large row's card: a poster, open at the spot.
+    private(set) var feature = false
+    /// Its trailer after a rest: tall cards, and a large row's open card.
+    var plays: Bool { rank == nil && (!wide || feature) }
     private let place = UILabel()
     private let corner = UIImageView(image: FixedFocusShowcaseCell.cornerShade)
     private var art: String?
@@ -276,6 +285,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         contentView.addSubview(card)
         picture.contentMode = .scaleAspectFill
         card.addSubview(picture)
+        backdrop.contentMode = .scaleAspectFill
+        backdrop.alpha = 0
+        card.addSubview(backdrop)
         loadingCard.isHidden = true
         loadingCard.layer.cornerRadius = 0
         card.addSubview(loadingCard)
@@ -307,25 +319,31 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell?, art poster: String?,
-                   badges shown: [CardBadge], rank: Int? = nil, wide: Bool = false) {
+                   badges shown: [CardBadge], rank: Int? = nil, wide: Bool = false, feature: Bool = false) {
         itemIndex = index
         self.rowCell = rowCell
         self.rank = rank
-        self.wide = wide
+        self.wide = wide || feature
+        let featureChanged = feature != self.feature
+        self.feature = feature
         place.text = rank.map(String.init)
         place.isHidden = rank == nil
         corner.isHidden = rank == nil
         logo.areaShare = plays ? 0.55 : 0.5
         name.font = .systemFont(ofSize: plays ? 40 : wide ? 32 : 28, weight: .semibold)
-        let changed = self.item?.id != item.id
+        let changed = self.item?.id != item.id || featureChanged
         self.item = item
         badges.show(shown)
         name.text = item.name
         if changed {
-            trailerShown(false, animated: false)
-            let art = wide ? item.background ?? poster ?? item.poster : poster ?? item.background ?? item.poster
+            let art = wide && !feature ? item.background ?? poster ?? item.poster
+                : poster ?? item.poster ?? item.background
             self.art = art
-            FixedFocusImages.load(art, into: picture, maxDimension: PictureSize.showcase,
+            backdrop.image = nil
+            backdropArt = feature ? item.background ?? art : nil
+            backdropWanted = false
+            FixedFocusImages.load(art, into: picture,
+                                  maxDimension: feature ? PictureSize.featurePoster : PictureSize.showcase,
                                   waiting: { [weak self] waiting in
                 guard let self else { return }
                 self.loadingCard.follow(waiting: waiting)
@@ -355,8 +373,24 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
                 }
             }
         }
+        // Out of a large row: its words and shade back.
+        if !feature, featureChanged { setOpen(true, animated: false) }
         applyFocus(isFocused)
         setNeedsLayout()
+    }
+
+    /// A large row's backdrop, loaded once it's near the spot (the open
+    /// card and the next two): not for every poster in view.
+    private var backdropWanted = false
+
+    func wantBackdrop() {
+        guard feature, !backdropWanted, let backdropArt else { return }
+        backdropWanted = true
+        FixedFocusImages.load(backdropArt, into: backdrop, maxDimension: PictureSize.showcase,
+                              waiting: { [weak self] waiting in
+            guard let self, !waiting else { return }
+            UIView.performWithoutAnimation { self.layoutPicture() }
+        })
     }
 
     /// The facts line; a Top 10's slim one: its genre and year.
@@ -414,27 +448,33 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         }
     }
 
-    private func layoutPicture() {
-        let size = card.bounds.size
-        guard let image = picture.image, image.size.height > 0, size.height > 0 else {
-            picture.frame = card.bounds
-            return
-        }
+    /// A picture filling `size` from the top left, cut around its faces.
+    private func fill(_ image: UIImage?, art: String?, in size: CGSize) -> CGRect {
+        guard let image, image.size.height > 0, size.height > 0 else { return CGRect(origin: .zero, size: size) }
         let aspect = image.size.width / image.size.height
+        let centre = art.flatMap { Self.faces[$0] } ?? 0.5
         if aspect <= size.width / size.height {
-            // A poster: the card's width, centred (cut around its faces).
+            // A poster: the width, cut down its height.
             let height = size.width / aspect
-            let centre = art.flatMap { Self.faces[$0] } ?? 0.5
             let y = min(0, max(size.height - height, size.height / 2 - centre * height))
-            picture.frame = CGRect(x: 0, y: y, width: size.width, height: height)
-        } else {
-            // A backdrop: the card's height, around its faces.
-            let width = size.height * aspect
-            let centre = art.flatMap { Self.faces[$0] } ?? 0.5
-            let x = min(0, max(size.width - width, size.width / 2 - centre * width))
-            picture.frame = CGRect(x: x, y: 0, width: width, height: size.height)
+            return CGRect(x: 0, y: y, width: size.width, height: height)
         }
-        trailerSurface?.frame = card.bounds
+        // A backdrop: the height, cut across.
+        let width = size.height * aspect
+        let x = min(0, max(size.width - width, size.width / 2 - centre * width))
+        return CGRect(x: x, y: 0, width: width, height: size.height)
+    }
+
+    private func layoutPicture() {
+        if feature {
+            // Each at its own size from the left: the card's width only clips.
+            picture.frame = fill(picture.image, art: art, in: FixedFocusFeatureLayout.poster)
+            backdrop.frame = fill(backdrop.image, art: nil, in: FixedFocusFeatureLayout.large)
+            trailerSurface?.frame = CGRect(origin: .zero, size: FixedFocusFeatureLayout.large)
+        } else {
+            picture.frame = fill(picture.image, art: art, in: card.bounds.size)
+            trailerSurface?.frame = card.bounds
+        }
     }
 
     override func layoutSubviews() {
@@ -446,21 +486,24 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         outline.layer.borderWidth = FixedFocusRing.width
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         layoutPicture()
+        // A large row's words and shade at the open size, from the left:
+        // the card's width clips them, nothing moves inside it.
+        let face = feature ? FixedFocusFeatureLayout.large : bounds.size
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        shade.frame = card.bounds
+        shade.frame = CGRect(origin: .zero, size: face)
         CATransaction.commit()
         edge.image = FixedFocusCardEdge.rim
         edge.frame = card.bounds
-        loadingCard.frame = card.bounds
-        words.frame = card.bounds
+        loadingCard.frame = feature ? CGRect(origin: .zero, size: FixedFocusFeatureLayout.poster) : card.bounds
+        words.frame = CGRect(origin: .zero, size: face)
         // From the foot up: the facts, the logo (or the name), the badge.
         corner.frame = CGRect(origin: .zero, size: Self.cornerShade.size)
         place.sizeToFit()
         place.frame.origin = CGPoint(x: sideInset, y: 14)
         let sideInset = self.sideInset, logoBox = self.logoBox
-        let width = bounds.width - 2 * sideInset
-        let y = bounds.height - footPad - Self.lineHeight
+        let width = face.width - 2 * sideInset
+        let y = face.height - footPad - Self.lineHeight
         facts.frame = CGRect(x: sideInset, y: y, width: width, height: Self.lineHeight)
         fitFacts()
         let titleBottom = y - logoGap + 6
@@ -487,21 +530,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     func attachTrailer(_ surface: TrailerSurface) {
         trailerSurface = surface
         guard surface.superview !== card else { return }
-        card.insertSubview(surface, aboveSubview: picture)
-        surface.frame = card.bounds
-    }
-
-    func trailerShown(_ shown: Bool) { trailerShown(shown, animated: true) }
-
-    /// The words and the shade out while the trailer plays (Details' fade).
-    private func trailerShown(_ shown: Bool, animated: Bool) {
-        let apply = {
-            self.words.alpha = shown ? 0 : 1
-            self.shade.alpha = shown ? 0 : 1
-        }
-        guard animated else { return UIView.performWithoutAnimation(apply) }
-        UIView.animate(withDuration: Motion.presentDuration, delay: 0,
-                       options: [.beginFromCurrentState, .curveEaseInOut, .allowUserInteraction], animations: apply)
+        card.insertSubview(surface, aboveSubview: backdrop)
+        layoutPicture()
     }
 
     // MARK: Focus
@@ -513,9 +543,14 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         } completion: { _ in }
     }
 
+    /// Focused, grown; a large row's card not (level with its posters):
+    /// pressed or held it goes a little smaller than them instead.
+    private var lift: CGFloat { feature ? 0 : FixedFocusMetrics.movingFocusLift }
+
     private var scale: CGFloat {
         guard focusedNow else { return 1 }
-        return 1 + FixedFocusMetrics.movingFocusLift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
+        if feature { return pressed || held ? FixedFocusMetrics.pressScale : 1 }
+        return 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
             + (held ? FixedFocusMetrics.heldGrowth : 0)
     }
 
@@ -528,6 +563,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
+        if !focused, !held { pressed = false }
         card.transform = CGAffineTransform(scaleX: scale, y: scale)
         sizeOutline()
         outline.alpha = focused ? 1 : 0
@@ -537,9 +573,43 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     func setHeld(_ held: Bool) {
         guard held != self.held else { return }
         self.held = held
+        // (A large row's card: the press ends with the hold.)
+        if !held { pressed = false }
         UIView.animate(withDuration: FixedFocusMetrics.heldDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
             self.applyFocus(self.focusedNow)
         }
+    }
+
+    /// A large row's card open (the backdrop and words over the poster) or
+    /// a poster. Their fades on their own timing in the move's spring
+    /// (Core Animation: a nested UIView animation takes the spring's):
+    /// opening, in over the first part; closing, the words at once, the
+    /// backdrop over the last part, as the card narrows back to the poster.
+    private var open = true
+
+    func setOpen(_ open: Bool, animated: Bool) {
+        guard open != self.open || !animated else { return }
+        self.open = open
+        if open { wantBackdrop() }
+        let move = Motion.moveDuration, fade = Motion.fadeDuration
+        Self.fade(words, to: open ? 1 : 0, animated: animated)
+        Self.fade(shade, to: open ? 1 : 0, animated: animated)
+        Self.fade(backdrop, to: feature && open ? 1 : 0, delay: open ? 0 : move - fade, animated: animated)
+    }
+
+    private static func fade(_ view: UIView, to alpha: CGFloat, delay: Double = 0, animated: Bool) {
+        let from = view.layer.presentation()?.opacity ?? Float(view.alpha)
+        view.layer.removeAnimation(forKey: "open")
+        UIView.performWithoutAnimation { view.alpha = alpha }
+        guard animated, abs(from - Float(alpha)) > 0.01 else { return }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = from
+        animation.toValue = Float(alpha)
+        animation.duration = Motion.fadeDuration
+        animation.beginTime = view.layer.convertTime(CACurrentMediaTime(), from: nil) + delay
+        animation.fillMode = .backwards
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        view.layer.add(animation, forKey: "open")
     }
 
     private func setPressed(_ pressed: Bool) {
@@ -559,18 +629,22 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         super.pressesEnded(presses, with: event)
     }
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { setPressed(false) }
+        // A hold cancels the press just before the menu holds the card: a
+        // large row's card stays small through it (back up and down again
+        // was a wiggle); the hold's end or focus leaving lets it go.
+        if presses.contains(where: { $0.type == .select }), !feature { setPressed(false) }
         super.pressesCancelled(presses, with: event)
     }
 
     /// Its hold menu (`HoldMenu`): beside the card at its held size.
     func holdMenu(_ entries: [MenuEntry]) -> HoldMenuRequest {
-        let lift = FixedFocusMetrics.movingFocusLift
+        let lift = self.lift
         func sized(_ scale: CGFloat) -> CGRect {
             convert(bounds.insetBy(dx: -bounds.width * (scale - 1) / 2, dy: -bounds.height * (scale - 1) / 2), to: nil)
         }
         let now = 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0)
-        return HoldMenuRequest(entries: entries, anchor: sized(1 + lift + FixedFocusMetrics.heldGrowth),
+        let heldScale = feature ? FixedFocusMetrics.pressScale : 1 + lift + FixedFocusMetrics.heldGrowth
+        return HoldMenuRequest(entries: entries, anchor: sized(heldScale),
                                from: sized(now), rest: sized(1 + lift),
                                onHeld: { [weak self] in self?.setHeld($0) })
     }
@@ -1842,7 +1916,7 @@ final class FixedFocusPanelView: UIView {
 }
 
 /// A card's state line, laid over the whole card: the player's bar
-/// (`Spotlight.stateBarHeight`) at the foot, above it "S1:E5 · Title" on the left
+/// (`Spotlight.stateBarHeight`) at the foot, above it "S1:E5" on the left
 /// and "20m left" / "Up Next" / "Watched" at its end.
 final class FixedFocusProgressView: UIView {
     private let episode = UILabel()
@@ -1893,12 +1967,8 @@ final class FixedFocusProgressView: UIView {
 
     func show(_ entry: WatchProgress?) {
         guard let entry else { return }
-        // Continue Watching: "S1:E5 · Its title", cut short where it meets
-        // the time left.
-        let number = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
-        let title = entry.episodeTitle?.trimmingCharacters(in: .whitespaces)
-        episode.text = [number, title?.isEmpty == false ? title : nil].compactMap { $0 }
-            .joined(separator: " · ")
+        // Continue Watching: "S1:E5" (its title in the caption under the card).
+        episode.text = entry.season.flatMap { s in entry.episode.map { "S\(s):E\($0)" } }
         let started = entry.isStarted
         remaining.text = started ? (entry.remainingTimeText.map { "\($0) left" } ?? "In progress") : "Up Next"
         fraction = started ? CGFloat(entry.fraction) : 0

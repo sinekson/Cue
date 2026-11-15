@@ -1798,7 +1798,7 @@ struct HomeUIKitView: View {
                            showcaseRowIDs: Set(rows.filter { $0.shape == .tall }.map(\.id)),
                            showcaseTrailers: (homeSettings.heroTrailersEnabled, homeSettings.heroTrailerSound),
                            wideRowIDs: Set(rows.filter { $0.shape == .wide }.map(\.id)),
-                           posterInfo: true, captions: false, centred: true,
+                           featureRows: true, captions: false, centred: true,
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,

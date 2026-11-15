@@ -667,6 +667,8 @@ enum PictureSize {
     static var showcase: CGFloat {
         FixedFocusMetrics.showcaseCard.height * (1 + FixedFocusMetrics.movingFocusLift) * 16 / 9
     }
+    /// A large row's poster (never grown).
+    static var featurePoster: CGFloat { FixedFocusMetrics.featurePoster.height }
     /// A landscape card's logo.
     static var cardLogo: CGFloat { landscape * 0.55 }
     /// Full screen: the billboard, Details, the stage.

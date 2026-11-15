@@ -116,20 +116,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
   ring, 6 % larger (8, 10 and 12 were tried). Every Home row has moving
-  focus but the poster rows (focus in place, words under it: below), its cards by what the row is for (`CueRows.CardShape`, on the
+  focus but the large rows (focus in place: below), its cards by what the row is for (`CueRows.CardShape`, on the
   row): tall showcase cards for what's chosen for you (Top Picks, the
   tab's first Because You Watched, New & Notable; trailers in all of
   them), wide cards (the showcase cell at the landscape size: logo,
   badges and facts on the backdrop, no trailer) for picking something
   now (the other Because You Watched, New Episodes, Airing Today, Pick
-  Back Up, rewatch), posters for browsing (catalogue, services, popular,
-  top rated, cinemas, coming soon, add-on catalogs), Top 10's grid. (The
+  Back Up, rewatch), large rows for browsing (catalogue, services, popular,
+  top rated, cinemas, coming soon, add-on catalogs; on Home: elsewhere
+  still posters), Saved for Later plain posters with moving focus, Top 10's grid. (The
   fixed focus box was retired 2026-11-13: too many hacks for what it gave;
   in git history if wanted back.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
-  it, 22 pt, medium (on the art): "S1:E5 · Episode title" left (cut short where it meets the time), the time left or "Up Next" at its end (above and below
+  it, 22 pt, medium (on the art): "S1:E5" left (the episode's title in the caption under the card), the time left or "Up Next" at its end (above and below
   the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
   Badges (`FixedFocusBadges`, chosen by `HomeRow.badges(for:)`, set at
   configure, never late), Apple TV's plates, measured: the words alone,
@@ -240,7 +241,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   a smaller font is below the floor, running text was rejected for cards);
   no reason line (a reason is
   a badge if anything); after the trailers' 2 s rest the
-  trailer plays in the card, the words and shade fading out, the sound
+  trailer plays in the card, badge, logo, facts and shade staying over it (fading them out was tried), the sound
   rising (the billboard's trailer settings). Later: Select opens the
   billboard with the trailer playing.
   little). Top 10 (Home "Top 10 Today", Movies, Shows: TMDB's
@@ -314,25 +315,44 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
   pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
-- **Home: no captions** (the art says it all): tall and wide cards carry
+- **Home: no captions** (the art says it all) but Continue Watching (the
+  show's name over the episode's title) and Saved for Later (the name
+  over "Added 3 days ago"), in the focused row (`hasCaptions`; tried
+  inside the box's caption before, back under the card 2026-11-15):
+  tall and wide cards carry
   at their foot, left, the badges over the logo over the facts line,
   over a bottom fade (`FixedFocusShade`); Continue
-  Watching "S1:E5 · Episode title" over its bar. Posters carry nothing;
-  under the focused poster row only, in one place 30 pt below its cards,
-  the focused title in words (`FixedFocusInfoStrip`, `posterInfo`): the
-  name 32 pt medium at primary with its badges beside it, the facts line
-  with "IMDb 8.2" at body, two lines of description at secondary; only
-  the words change as focus moves (0.2 s crossfade), the strip goes with
-  focus leaving the row, centred with the cards. These rows keep focus in
-  place at the first card's spot (as Details' episodes), the cards sliding
-  under it, so the words are always under the focused card (posters alone
-  were "judging a book by its cover"; posters growing into wide cards
-  morphed; the strip under moving focus made the eyes wander). (Tried: one caption line
-  under the box and tall cards, the episode's title under Continue
-  Watching, the date under Saved for Later: inside was better; before that
+  Watching "S1:E5" over its bar.
+  **Large rows** (Home's browsing rows, `FixedFocusFeatureLayout` at the
+  end of `FixedFocusRows.swift`, `featureRows`): posters (`featurePoster`,
+  330 × 495), focus held at the first card's spot; in the focused row the
+  focused card open there as a wide card as tall as a poster
+  (`featureCard`, 880 × 495, its right edge near the screen's middle;
+  badges, logo, facts on it; not grown: level with the posters, outline
+  and shadow only; pressed or held 3 % smaller than them; the row's name
+  makes no room), the posters after it beside it, the ones
+  before gone out at the left (a sliver peeks); rows out of focus all
+  posters, their card still at the spot. A card's frame follows only
+  from the focused index and whether the row has focus: Left/Right
+  changes one, Up/Down the other, every card to its new frame on one
+  spring; the row's height never changes (no box, no hand-over, no masks,
+  no stretch). Opening: one cell holding poster and backdrop, each pinned
+  left at its own size, only the card's width clipping; the backdrop,
+  shade and words fade in over the first 0.25 s; closing, the words at
+  once, the backdrop over the last part (`setOpen`, Core Animation fades).
+  After the trailers' 2 s rest the open card plays its trailer, as the
+  showcase cards (the billboard's trailer settings).
+  Backdrops load for the focused card and the next two only. Focus
+  leaving the rows (hold menu, Details, top bar) leaves it open. (All
+  landscape, small cards after the large one, was tried 2026-11-15: posters
+  look better. Before: posters with the focused title's words in a
+  strip under the row; posters were "judging a book by its cover";
+  the box's stretched morph from poster to wide card; the strip under moving focus
+  made the eyes wander. Tried: one caption line
+  under the box and tall cards: inside was better; before that
   the facts and a 4-line description under the box.) Details' rows,
   Search and grids keep name and second line, 24 pt. The focused row's
-  cards centred on the screen, Apple TV's (`FixedFocusRows.centred`, Home
+  cards centred on the screen (captions not counted), Apple TV's (`FixedFocusRows.centred`, Home
   only; centring name and cards together sat the cards 31 pt low), the
   rows above and below the same 64 pt gap from it (`centredGap`; 56, the
   other pages' `peekGap`, was tight, 72 a little much), so both peek alike (~200 pt by a fixed row); the row under the billboard too, the billboard
@@ -525,7 +545,14 @@ view's own alpha and a timer.
 - Rejected looks: a floating glass top bar, glows, underlines, dimming the screen for the top bar, bouncy springs, "through colour" / cascade /
   wipe transitions, billboard strip above the rows; on the billboard's
   Left/Right: a full page scroll (too much movement), the text's parts
-  staggered (cascade).
+  staggered (cascade). A full-screen stage (Crunchyroll's tvOS look: the
+  focused title's backdrop over the whole screen with the billboard's text,
+  one row of landscape cards at the bottom, no billboard, no special rows):
+  it needs sharp pictures in at once to make sense; tried 2026-11-15.
+  A 16:9 window left of the rows showing the focused title (backdrop,
+  trailer, logo and facts; info under it), the rows beside it as columns
+  or stacked, small posters: tried 2026-11-15 (code in `git stash`,
+  "window-home experiment").
 
 ## Open / later
 
