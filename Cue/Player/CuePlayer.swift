@@ -1157,8 +1157,8 @@ final class SourceCard: UICollectionViewCell {
         SourceCardStyle.current == .raw ? rawFace : CGSize(width: face.width, height: PlayerShelf.cardRow)
     }
     private var faceSize: CGSize { isRaw ? Self.rawFace : Self.face }
-    /// The episode card's growth in points: as a share, a wide card grows too far.
-    private var lift: CGFloat { PlayerShelf.cardWidth * FixedFocusMetrics.movingFocusLift / faceSize.width }
+    /// Every card's growth in points (`FixedFocusMetrics.focusGrowth`).
+    private var lift: CGFloat { FixedFocusMetrics.focusLift(faceSize) }
     private static let inset: CGFloat = 28
     private static let lineGap: CGFloat = 6
     private static let footGap: CGFloat = 14
@@ -1550,7 +1550,7 @@ final class SourceCard: UICollectionViewCell {
     private func applyFocus(_ focused: Bool) {
         applyInk()
         card.backgroundColor = cardColour(focused)
-        scale = focused ? 1 + lift - (pressed ? 1 - FixedFocusMetrics.pressScale : 0) : 1
+        scale = focused ? 1 + lift - (pressed ? FixedFocusMetrics.pressDrop(faceSize) : 0) : 1
         card.transform = CGAffineTransform(scaleX: scale, y: scale)
         sizeShadow()
         shadow.alpha = focused ? 1 : 0

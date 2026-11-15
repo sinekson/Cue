@@ -269,7 +269,7 @@ enum TopShelfCardRenderer {
         let key = "\(source)|\(episode ?? "")|\(timeLeft ?? "")"
         let digest = SHA256.hash(data: Data(key.utf8))
             .prefix(8).map { String(format: "%02x", $0) }.joined()
-        let name = "\(prefix)v8-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0 ? "" : "n").jpg"
+        let name = "\(prefix)v9-\(digest)-\(landscape ? "l" : "p")-\(bucket)\(clamped > 0 ? "" : "n").jpg"
         guard let file = AppGroupResolver.sharedFile(name) else { return nil }
         if FileManager.default.fileExists(atPath: file.path) { return file }
 
@@ -279,10 +279,11 @@ enum TopShelfCardRenderer {
             data = try? await ImageCache.shared.download(url)
         }
         let size = landscape ? landscapeSize : portraitSize
+        let tint = await SourceTint.tint(for: source)
         guard let data,
               let image = ImageCache.decodeDownsampled(data, budget: max(size.width, size.height)),
               let jpeg = render(image, size: size, progress: Double(bucket) / 20,
-                                started: clamped > 0, episode: episode, timeLeft: timeLeft)
+                                started: clamped > 0, episode: episode, timeLeft: timeLeft, tint: tint)
         else { return nil }
         do {
             try jpeg.write(to: file, options: .atomic)
@@ -296,11 +297,12 @@ enum TopShelfCardRenderer {
     private static let footStart: CGFloat = 0.4
     private static let footOpacity: CGFloat = 0.7
 
-    /// `started`: the bar and the time left; else "Up Next". The state line
-    /// is Home's card's (`FixedFocusProgressView`, `Spotlight.state…`),
-    /// scaled from its 398 pt to the picture's height.
+    /// `started`: the bar and the time left; else "Up Next". Home's card's
+    /// state (`FixedFocusProgressView`, `Spotlight.state…`): the episode and
+    /// the time on the badges' plates in the picture's colour, top left and
+    /// right, the bar alone at the foot, scaled to the picture's height.
     private static func render(_ image: UIImage, size: CGSize, progress: Double, started: Bool,
-                               episode: String?, timeLeft: String?) -> Data? {
+                               episode: String?, timeLeft: String?, tint: UIColor?) -> Data? {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -314,40 +316,39 @@ enum TopShelfCardRenderer {
                                   width: drawn.width, height: drawn.height))
 
             let cg = ctx.cgContext
-            let colors = [UIColor.black.withAlphaComponent(0).cgColor,
-                          UIColor.black.withAlphaComponent(footOpacity).cgColor] as CFArray
-            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                         colors: colors, locations: [0, 1]) {
-                cg.drawLinearGradient(gradient,
-                                      start: CGPoint(x: 0, y: size.height * footStart),
-                                      end: CGPoint(x: 0, y: size.height), options: [])
-            }
-
             let k = size.height / FixedFocusMetrics.posterCard.height
             let inset = Spotlight.stateInset * k
             let barH = Spotlight.stateBarHeight * k
             let bar = CGRect(x: inset, y: size.height - inset - barH, width: size.width - inset * 2, height: barH)
-            let shadow = NSShadow()
-            shadow.shadowColor = UIColor.black.withAlphaComponent(0.8)
-            shadow.shadowBlurRadius = 8 * k
-            shadow.shadowOffset = .zero
-            let white = UIColor.white.withAlphaComponent(FixedFocusText.primary)
-            let medium = UIFont.systemFont(ofSize: Spotlight.stateTextSize * k, weight: .medium)
-            // Both on one baseline above the bar (as `FixedFocusProgressView`).
-            let baseline = bar.minY - Spotlight.stateBaselineGap * k
-            func line(_ text: String, mono: Bool) -> NSAttributedString {
-                let font = mono ? UIFont.monospacedDigitSystemFont(ofSize: Spotlight.stateTextSize * k, weight: .medium)
-                    : medium
-                return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: white, .shadow: shadow])
+            // The dark foot under the bar only, as on Home.
+            if started {
+                let colors = [UIColor.black.withAlphaComponent(0).cgColor,
+                              UIColor.black.withAlphaComponent(footOpacity).cgColor] as CFArray
+                if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                             colors: colors, locations: [0, 1]) {
+                    cg.drawLinearGradient(gradient,
+                                          start: CGPoint(x: 0, y: size.height * footStart),
+                                          end: CGPoint(x: 0, y: size.height), options: [])
+                }
             }
-            if let episode {
-                let text = line(episode, mono: false)
-                text.draw(at: CGPoint(x: inset, y: baseline - medium.ascender))
+            // The plates (`FixedFocusBadges`): the words in line with the
+            // bar's ends, as far from the top as from the side.
+            let pad = FixedFocusBadges.padding * k
+            let plateH = FixedFocusBadges.height * k
+            let font = UIFont.systemFont(ofSize: FixedFocusBadges.font.pointSize * k, weight: .semibold)
+            let ink = tint.map { SourceTint.ink($0, FixedFocusText.primary) }
+                ?? UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            func plate(_ text: String, leading: Bool) {
+                let words = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: ink])
+                let width = ceil(words.size().width) + 2 * pad
+                let x = leading ? inset - pad : size.width - inset + pad - width
+                let rect = CGRect(x: x, y: inset - pad, width: width, height: plateH)
+                FixedFocusBadges.plate(tint).setFill()
+                UIBezierPath(roundedRect: rect, cornerRadius: 10 * k).fill()
+                words.draw(at: CGPoint(x: rect.minX + pad, y: rect.midY - words.size().height / 2))
             }
-            if let right = started ? (timeLeft ?? "In progress") : "Up Next" as String? {
-                let text = line(right, mono: true)
-                text.draw(at: CGPoint(x: bar.maxX - text.size().width, y: baseline - medium.ascender))
-            }
+            if let episode { plate(episode, leading: true) }
+            plate(started ? (timeLeft ?? "In progress") : "Up Next", leading: false)
             guard started else { return }
             let capsule = UIBezierPath(roundedRect: bar, cornerRadius: barH / 2)
             // The soft shadow round it, not under it (the bar is see-through).

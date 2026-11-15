@@ -35,6 +35,10 @@ struct HoldMenuRequest {
     var direct = false
     /// A dropdown: the panel opens under the anchor, on its left edge.
     var below = false
+    /// A card too wide to have a side (Today's Pick): the panel over it,
+    /// at its right (its words are on the left), this far in from its
+    /// top and right edges.
+    var inside: CGFloat? = nil
 }
 
 /// A UIKit screen with hold menus: the menu for the focused card (nil: none
@@ -277,6 +281,13 @@ private final class HoldMenuController: UIViewController {
             panel.center = CGPoint(x: alignRight ? x + size.width : x, y: y)
             return
         }
+        if let inset = request.inside {
+            // Over the card's right, grown out of its top-right corner.
+            panel.layer.anchorPoint = CGPoint(x: 1, y: 0)
+            panel.bounds = CGRect(origin: .zero, size: size)
+            panel.center = CGPoint(x: anchor.maxX - inset, y: anchor.minY + inset)
+            return
+        }
         let right = start + size.width <= view.bounds.width - Self.margin
         let x = right ? start : end - size.width
         // Level with the card's top — a card low on the screen (Search's):
@@ -294,7 +305,7 @@ private final class HoldMenuController: UIViewController {
     /// The dim with the card cut out (window rect), its corners grown with it.
     private func holePath(around card: CGRect) -> CGPath {
         let path = UIBezierPath(rect: view.bounds)
-        let grown = 1 + FixedFocusMetrics.movingFocusLift + FixedFocusMetrics.heldGrowth
+        let grown = 1 + FixedFocusMetrics.focusLift(card.size) + FixedFocusMetrics.heldGrowth(card.size)
         path.append(UIBezierPath(roundedRect: view.convert(card, from: nil),
                                  cornerRadius: Spotlight.cornerRadius * grown))
         return path.cgPath

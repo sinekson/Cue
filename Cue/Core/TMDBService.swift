@@ -1606,6 +1606,31 @@ enum TMDBService {
         return rating
     }
 
+    /// A show's newest episode, aired or airing today (New Episodes' cards):
+    /// TMDB's next one when it's due today or earlier, else its last.
+    static func latestEpisode(tmdbID: Int) async -> CueRows.EpisodeCard? {
+        struct Episode: Decodable {
+            let air_date: String?
+            let season_number: Int?
+            let episode_number: Int?
+            let name: String?
+            let still_path: String?
+        }
+        struct Response: Decodable {
+            let last_episode_to_air: Episode?
+            let next_episode_to_air: Episode?
+        }
+        guard let body: Response = try? await get("/tv/\(tmdbID)") else { return nil }
+        let today = Calendar.current.startOfDay(for: Date()).addingTimeInterval(86_399)
+        let next = body.next_episode_to_air
+        let due = next?.air_date.flatMap { isoDateOnly.date(from: $0) }.map { $0 <= today } ?? false
+        guard let episode = due ? next : body.last_episode_to_air,
+              let season = episode.season_number, let number = episode.episode_number else { return nil }
+        return CueRows.EpisodeCard(season: season, episode: number, name: episode.name,
+                                   still: imageURL(episode.still_path, size: "original"),
+                                   aired: episode.air_date.flatMap { isoDateOnly.date(from: $0) })
+    }
+
     /// Per-episode extras for a season, keyed by episode number. Used to show
     /// ratings + air dates on the Detail episode row. Best-effort.
     static func seasonEpisodes(imdbID: String, type: String, season: Int) async -> [Int: EpisodeExtra] {
@@ -2452,6 +2477,54 @@ extension TMDBService {
         query["language"] = preferredLanguage
         guard let body: PickList = try? await get(path, query: query) else { return [] }
         return await cueTitles(body.raw(defaultMovie: isMovie, limit: limit * 2), limit: limit)
+    }
+
+    /// A person's titles (a person row's): their real roles only — a
+    /// film's top four billed, a show's regular (5+ episodes), or as its
+    /// director or creator — as a list's titles (pictures and IMDb ids).
+    static func cuePersonTitles(personID: Int, limit: Int = 40) async -> [CueTitle] {
+        struct Credit: Decodable {
+            let id: Int
+            let media_type: String?
+            let title: String?
+            let name: String?
+            let poster_path: String?
+            let backdrop_path: String?
+            let overview: String?
+            let release_date: String?
+            let first_air_date: String?
+            let vote_average: Double?
+            let vote_count: Int?
+            let genre_ids: [Int]?
+            let order: Int?
+            let episode_count: Int?
+            let job: String?
+        }
+        struct Body: Decodable { let cast: [Credit]?; let crew: [Credit]? }
+        guard let body: Body = try? await get("/person/\(personID)/combined_credits",
+                                              query: ["language": preferredLanguage]) else { return [] }
+        let jobs: Set<String> = ["Director", "Creator", "Series Director", "Original Story", "Original Concept"]
+        let roles = (body.cast ?? []).filter { credit in
+            credit.media_type == "movie" ? (credit.order ?? 99) < 4 : (credit.episode_count ?? 0) >= 5
+        } + (body.crew ?? []).filter { jobs.contains($0.job ?? "") }
+        var seen = Set<String>()
+        let raw = roles
+            .filter { seen.insert("\($0.media_type ?? ""):\($0.id)").inserted && ($0.vote_count ?? 0) >= 50 }
+            .sorted { ($0.vote_count ?? 0) > ($1.vote_count ?? 0) }
+            .compactMap { credit -> TMDBRawItem? in
+                let isMovie = credit.media_type == "movie"
+                guard credit.media_type == "movie" || credit.media_type == "tv",
+                      let name = isMovie ? credit.title : credit.name, !name.isEmpty else { return nil }
+                let date = isMovie ? credit.release_date : credit.first_air_date
+                let genres = (credit.genre_ids ?? []).compactMap { isMovie ? movieGenres[$0] : tvGenres[$0] }
+                return TMDBRawItem(
+                    tmdbID: credit.id, isMovie: isMovie, name: name,
+                    poster: imageURL(credit.poster_path, size: "w500"),
+                    background: imageURL(credit.backdrop_path, size: "original"),
+                    description: credit.overview, releaseInfo: date.map { String($0.prefix(4)) },
+                    rating: credit.vote_average, genres: genres.isEmpty ? nil : genres)
+            }
+        return await cueTitles(Array(raw.prefix(limit * 2)), limit: limit)
     }
 
     /// A title you watched as a row shows it (Pick Back Up, Watch Again):

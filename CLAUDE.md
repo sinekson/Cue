@@ -115,32 +115,45 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (8, 10 and 12 were tried). Every Home row has moving
+  ring, grown on its longer side by its square root, every card
+  everywhere (`FixedFocusMetrics.focusLift`: the tall cards 33 pt, 4.7 %;
+  square 22, 7 %; poster 25, 6.4 %; episode 30, 5.3 %; the wide ones at
+  most 36; 6 % of each card grew the tall ones 42, the squares 19; 33 pt
+  on every card made the squares jump; 8, 10 and 12 % were tried before). Every Home row has moving
   focus but the large rows (focus in place: below), its cards by what the row is for (`CueRows.CardShape`, on the
-  row): tall showcase cards for what's chosen for you (Top Picks, the
-  tab's first Because You Watched, New & Notable; trailers in all of
-  them), wide cards (the showcase cell at the landscape size: logo,
-  badges and facts on the backdrop, no trailer) for picking something
-  now (the other Because You Watched, New Episodes, Airing Today, Pick
-  Back Up, rewatch), large rows for browsing (catalogue, services, popular,
-  top rated, cinemas, coming soon, add-on catalogs; on Home: elsewhere
-  still posters), Saved for Later plain posters with moving focus, Top 10's grid. (The
+  row): tall showcase cards for what's chosen for you (Top Picks, New &
+  Notable, Coming Soon for You; trailers in all of them; a kind of row
+  keeps one style: every Because You Watched is a large row), Continue Watching's landscape card for a row of episodes
+  (`episode`: New Episodes, Airing Today: each show's newest episode,
+  TMDB's, looked up in the rows' build: its still, "S2:E5" and its day
+  on it, the show over the episode's title under it; Select opens
+  Details), large rows for the rest (catalogue, services, popular, top
+  rated, cinemas, coming soon, the other Because You Watched, Pick Back
+  Up, rewatch, add-on catalogs; elsewhere still posters). (Wide cards,
+  the showcase cell at the landscape size with logo, badges and facts,
+  for "picking something now" rows, were removed 2026-11-15: the large
+  rows made them pointless.) Saved for Later plain posters with moving focus, Top 10's grid. (The
   fixed focus box was retired 2026-11-13: too many hacks for what it gave;
   in git history if wanted back.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
-  (3, scaled, was too faint), 30 pt from the foot and sides; one line above
-  it, 22 pt, medium (on the art): "S1:E5" left (the episode's title in the caption under the card), the time left or "Up Next" at its end (above and below
-  the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
+  (3, scaled, was too faint), 30 pt from the foot and sides, alone at the
+  foot, the picture darkened under it only; the episode and the state on
+  the badges' plates (their look and tint) at the top, their words in line
+  with the bar's ends: "S1:E5" left (the episode's title in the caption
+  under the card), the time left, "Up Next" or the day (after the dates' calendar) at the right, in
+  the rating's place (`FixedFocusProgressView`, `Spotlight.state…`) (one
+  22 pt line over the bar read only with the bar under it; above and
+  below the bar looked odd). Every landscape card, the player's shelf and
+  the Top Shelf alike.
   Badges (`FixedFocusBadges`, chosen by `HomeRow.badges(for:)`, set at
   configure, never late): top left, a series' status first, Netflix's:
   a symbol (21 pt semibold; Cue's red is the icon's FF3873 P3, grey at
   body; `FixedFocusBadges.symbol(_:)`), by shape: red for an emblem, a
-  compact solid mark; two-tone where a drawing has a natural accent (news a bell with a red dot, Returns a calendar with a red
-  clock, Top 10 a rising red line, Airing radio waves round a red dot); grey for a drawing or a line glyph (in red they read
+  compact solid mark; two-tone where a drawing has a natural accent (news a bell with a red dot, Top 10 a rising red line, Airing radio waves round a red dot); grey for a drawing or a line glyph (in red they read
   as clip art, thin red strokes shimmer). Red: Finale a checkered flag,
   Hidden gem a sparkle, taste a heart, Acclaimed a laurel (a grey trophy
-  was mixed, a star plain); grey: With/From a person, Miniseries a stack, Returning two
+  was mixed, a star plain); grey: With/From a person, Miniseries a stack, a date (Returns, Coming Soon's, the episode rows' day) a calendar (its red clock was tried), Returning two
   circling arrows, Ended a checkmark (all red was tried) (two-tone
   for its own sake looked bad: a grey circle behind a flag, a magnifier
   round a sparkle, a bubble round a star); then the words in sentence case (23 pt
@@ -159,7 +172,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   not moving: on a move the old ones go at
   the press, the new appear 0.1 s later, no fade (at once was too fast;
   fades, 30 % and 75 % of the drift, drifting with the picture: on a pane
-  over it). Only on tall and wide cards (New & Notable: its own badge
+  over it). Only on tall cards and the open large card (New & Notable: its own badge
   alone); posters have none. Two at most: a show's news first
   (`TitleRecords.news`: New episode, out in 14 days, unwatched, one of the
   three before it watched; Season N, begun in 14 days; Returns Mar 4,
@@ -183,7 +196,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`FixedFocusBadges.rating`): the first source in Rating Providers' order
   that has one (MDBList's from the title's record, else IMDb's: the
   catalog's, else the daily file), its mark (`RatingMark`, 22 pt tall as the symbols; 18 looked small) and the score, plate and font the badges';
-  tall and wide cards only, not Top 10's; none with ratings off or Details Only.
+  tall cards and the open large card only, not Top 10's; none with ratings off or Details Only.
   Ratings for ranking and badges are IMDb's own daily file
   (`IMDbRatings`, end of `MDBListService.swift`: `title.ratings.tsv.gz`,
   titles with 100+ votes, ~4 MB on disk, fetched again once a day, the
@@ -253,7 +266,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   little). New & Notable (`CueRows.showcase`, one mid-page row per tab
   (Movies films only, Series shows only): new seasons of
   your shows and premieres of the last 30 days, scored by yours, taste and
-  popularity, one of up to 3 upcoming in your taste after every three; 8–12.
+  popularity; 8–12. Coming Soon for You (`CueRows.comingSoon`, Home): what
+  comes in the next 60 days in your taste (your shows' new seasons
+  always), the date as its badge, the same cards; 8–12.
   Showcase cards (`FixedFocusShowcaseCell`), moving focus: the picture
   chosen as Top 10's (`TMDBService.cardScene`, below), cut around its
   faces (Vision); at the foot over
@@ -288,10 +303,50 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   trailer, no caption (posters with a short card behind them, the digit
   cut out, was the look before; tried: the digit stretched tall, the
   word written downwards, a numeral over or behind the poster, a strip
-  joined to the poster). Fixed rows set among them: Top Picks, Top 10 (second on every
-  tab), Because You Watched (the latest title, two more of the last five
-  by the day), new
-  episodes, cinemas, the country's three biggest services. Titles in a row
+  joined to the poster). **Home's order**: Continue Watching, Saved for
+  Later (second: the quickest way back to it), then the special rows at
+  fixed places with 12 large rows between them (`homeLarge`): large,
+  Top Picks, large, Top 10, large, New Episodes, large, New & Notable,
+  large, a best-ten grid, large, Today's Pick for You, large, Coming
+  Soon for You, large, large, large, the second
+  grid, the rest large (grids at about rows 12 and 19: further apart
+  than two near each other). A special row that doesn't make it closes up. The large rows
+  by score, the catalogue's and your own together (Because You Watched,
+  the latest title first and always the first large row, two more of
+  the last five by the day; Pick Back Up; the country's three biggest
+  services; rewatch), yours on the catalogue's scale (Because You Watched
+  fit 0.9, Pick Back Up 0.8, rewatch 0.6, services 0.5, each with the
+  day's chance), never two of a group side by side (talked over
+  2026-11-15: the specials dense at the top, spaced lower; 12 large rows,
+  about 22 in all; 15 catalogue rows and every fixed row pinned to a
+  slot was before). Today's Pick for You (`spotlight`, the full-width
+  card): one showcase card the content's width, as tall as the tall
+  cards (600 pt looked short), on the
+  backdrop, grown as every card (not grown at all was hard to see), its description
+  under the facts (640 pt, 5 lines as the billboard's, body level), badges (the reason as Top Picks') top left, rating top right,
+  logo and facts at its foot, its trailer after the rest; your best
+  match of the day (Top Picks' first), the same all day, not again
+  within a week (`spotlightRest`, `Saved.spotlights`), on Home nowhere
+  else that day (not Top Picks, no row, not the billboard); films and
+  shows. The best-ten grids (`gridsMade`): Top 10's grid,
+  two lines, ranked, two on Home: one person's, one studio's or
+  network's (two people read as the same row twice), which first by the
+  day; a family with none qualifying gives its place to the other's
+  next. Each from its family's three with the most pull in your taste,
+  the day picking (fit within the family, the day's chance), the first
+  with ten. "The Best of …": IMDb's weighted rating (the Top 250's:
+  25,000 votes' worth of 7.0; plain rating with a vote floor let a
+  12-minute short in); some days (35 %) "Essentials: …" by votes.
+  Films under 40 minutes and TV films out; watched ones kept. A
+  person's real roles (films top four billed, shows 5+ episodes, or
+  directing/creating; animation's people as the badges';
+  `TMDBService.cuePersonTitles`), 2,000 votes at least; a studio or
+  network only the catalogue's own or an anime studio by name
+  (`animeStudios`: a title's companies are mostly its production
+  committee, TOHO, Shueisha, TOKYO MX), 5,000. Five in one line looked
+  lost among the large rows. A grid means a ranked list wherever it is
+  (talked over: portraits opening person pages, as browse may go). Movies and Series (going away) keep their own
+  fixed rows: Top Picks, Top 10, Because You Watched, cinemas, services. Titles in a row
   ordered for you, a title in two rows at most per tab; rows up to 25
   (TMDB's pages until 30 unseen, at most 3), under 10 not shown. Watched titles stay
   in the world's rows (trending, new episodes, airing today, cinemas,
@@ -337,11 +392,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
   pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
-- **Home: no captions** (the art says it all) but Continue Watching (the
-  show's name over the episode's title) and Saved for Later (the name
+- **Home: no captions** (the art says it all) but the landscape rows
+  (Continue Watching, the episode rows: the show's name over the
+  episode's title) and Saved for Later (the name
   over "Added 3 days ago"), in the focused row (`hasCaptions`; tried
   inside the box's caption before, back under the card 2026-11-15):
-  tall and wide cards carry
+  tall cards and the open large card carry
   at their foot, left, the badges over the logo over the facts line,
   over a bottom fade (`FixedFocusShade`); Continue
   Watching "S1:E5" over its bar.
@@ -350,9 +406,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   330 × 495), focus held at the first card's spot; in the focused row the
   focused card open there as a wide card as tall as a poster
   (`featureCard`, 880 × 495, its right edge near the screen's middle;
-  badges, logo, facts on it; not grown: level with the posters, outline
-  and shadow only; pressed or held 3 % smaller than them; the row's name
-  makes no room), the posters after it beside it, the ones
+  badges, logo, facts on it; grown as every card (level with the posters, only outline and shadow, was hard to see), pressed and held as every card; the row's name
+  steps up by the growth, as over every grown card: `focusLift`), the posters after it beside it, the ones
   before gone out at the left (a sliver peeks); rows out of focus all
   posters, their card still at the spot. A card's frame follows only
   from the focused index and whether the row has focus: Left/Right
@@ -394,7 +449,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   else the row's name; never a fact badge (the line under the logo says
   those, Details too, so opening in place doesn't jump). Details' line
   keeps its spot. The description between the tagline
-  and the buttons, 600 pt wide, 3 lines, in Apple TV's vibrancy with a 30 %
+  and the buttons, 600 pt wide, 5 lines (3 were too few), in Apple TV's vibrancy with a 30 %
   white over it (`VibrantSummary`; plain at body level was hard to read).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
@@ -519,8 +574,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   watched (narrow to wide), Rate, Use as Background, red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
-  A held card grows 3 % past focused (2, 4, 5 tried); the menu sits 16 pt
-  beside it (24, and aligned to the next card, were tried).
+  A held card grows half its focus growth more, a press takes half back
+  (3 % of 6 % before; 2, 4, 5 tried); the menu sits 16 pt
+  beside it (Today's Pick, too wide for a side: over its right, 32 pt in
+  from its top and right, where its picture is; centred on screen, or
+  above or below it, were talked over) (24, and aligned to the next card, were tried).
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
   and recreated, one level at a time; focus by name (`settingsRowFocus`).
   What's only to read takes no focus. Developer is still on the old cards. Profile management lives under Nuvio.

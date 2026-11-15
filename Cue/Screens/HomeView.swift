@@ -33,6 +33,34 @@ struct HomeRow: Identifiable {
     var art: [String: String] = [:]
     /// Its cards (`CueRows.CardShape`): posters unless said.
     var shape: CueRows.CardShape = .poster
+    /// An episode row's episode per show (`CueRows.EpisodeCard`).
+    var episodes: [String: CueRows.EpisodeCard] = [:]
+
+    /// The episode rows' state lines, as Continue Watching's: "S2:E5" and
+    /// its day ("Today", "Yesterday", the weekday within a week, else the
+    /// date).
+    static func episodeStates(_ rows: [HomeRow]) -> [String: FixedFocusCardState] {
+        var out: [String: FixedFocusCardState] = [:]
+        for row in rows where row.shape == .episode {
+            for (id, episode) in row.episodes where out[id] == nil {
+                out[id] = FixedFocusCardState(label: "S\(episode.season):E\(episode.episode)",
+                                              right: episode.aired.map(day),
+                                              rightSymbol: FixedFocusBadges.symbol(.returns))
+            }
+        }
+        return out
+    }
+
+    private static func day(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date),
+                                           to: calendar.startOfDay(for: Date())).day ?? 0
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate(days < 7 ? "EEEE" : "MMMd")
+        return formatter.string(from: date)
+    }
 
     /// The badges a card shows (`FixedFocusBadges`), at most two: the
     /// show's news, then the row's badge (For You's reason first), else the
@@ -191,11 +219,16 @@ final class HomeViewModel: ObservableObject {
     /// The billboard for a tab: its picks (of that type on Movies / Series),
     /// filled with the rows' highlights while the picks aren't made yet.
     func billboard(type: String?, max: Int = BillboardPicks.count) -> [BillboardPick] {
+        // Today's Pick has its own card below: not on the billboard too.
+        let spotlight = Set(entries.compactMap { entry -> String? in
+            guard case .catalog(let row) = entry, row.shape == .spotlight else { return nil }
+            return row.items.first?.id
+        })
         func fits(_ item: MetaItem) -> Bool {
-            type.map { $0 == "series" ? item.isSeries : item.type == $0 } ?? true
+            !spotlight.contains(item.id) && (type.map { $0 == "series" ? item.isSeries : item.type == $0 } ?? true)
         }
         let picks = billboardPicks.filter { fits($0.item) }
-        return Array((picks.isEmpty ? highlights(max: max, type: type) : picks).prefix(max))
+        return Array((picks.isEmpty ? highlights(max: max, type: type).filter { fits($0.item) } : picks).prefix(max))
     }
 
     private var loadedFingerprint: [String] = []
@@ -233,8 +266,20 @@ final class HomeViewModel: ObservableObject {
     }
 
     private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
-        rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs,
-                                    badges: $0.badges ?? [:], art: $0.art ?? [:], shape: $0.shape ?? .poster)) }
+        rows.map { row in
+            // An episode row: the episode's still as the card's picture, its
+            // title under the show's name.
+            let episodes = row.episodes ?? [:]
+            var art = row.art ?? [:]
+            var subtitles: [String: String] = [:]
+            for (id, episode) in episodes {
+                if let still = episode.still { art[id] = still }
+                if let name = episode.name, !name.isEmpty { subtitles[id] = name }
+            }
+            return .catalog(HomeRow(id: row.id, title: row.title, items: row.items, subtitles: subtitles,
+                                    tabs: row.tabs, badges: row.badges ?? [:], art: art,
+                                    shape: row.shape ?? .poster, episodes: episodes))
+        }
     }
 
     /// Cue's own rows (`CueRows`): the saved ones at once, new ones when
@@ -1795,15 +1840,17 @@ struct HomeUIKitView: View {
             FixedFocusRows(rows: rows, featuredRowID: featuredRowID, continueRowID: continueRowID,
                            active: active,
                            progress: progress,
+                           // Episode rows: Continue Watching's cards.
+                           landscapeRowIDs: Set(rows.filter { $0.shape == .episode }.map(\.id)),
                            panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
                            // Every row: moving focus, its cards by its
                            // shape (`CueRows.CardShape`; posters unless said).
                            destinationRowIDs: Set(rows.map(\.id).filter { $0 != featuredRowID }),
                            // Top 10: each card's place beside it.
                            rankedRowIDs: Set(rows.filter { $0.shape == .ranked }.map(\.id)),
-                           showcaseRowIDs: Set(rows.filter { $0.shape == .tall }.map(\.id)),
+                           showcaseRowIDs: Set(rows.filter { $0.shape == .tall || $0.shape == .spotlight }.map(\.id)),
                            showcaseTrailers: (homeSettings.heroTrailersEnabled, homeSettings.heroTrailerSound),
-                           wideRowIDs: Set(rows.filter { $0.shape == .wide }.map(\.id)),
+                           spotlightRowIDs: Set(rows.filter { $0.shape == .spotlight }.map(\.id)),
                            featureRows: true, captions: false, centred: true,
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
@@ -1826,6 +1873,7 @@ struct HomeUIKitView: View {
                            },
                            // The billboard's focus: its buttons (as Details').
                            externalBillboard: true,
+                           cardStates: HomeRow.episodeStates(rows),
                            // The billboard paging (its buttons, and by itself
                            // — Settings → Appearance → Billboard pages by itself).
                            command: billboardCommand,
@@ -2033,10 +2081,10 @@ struct FixedFocusBillboardText: View {
     static let lineInset: CGFloat = 7
     /// How many rating sources show (the first ones, in Settings' order).
     static let ratingsShown = 3
-    /// The description under the tagline (`VibrantSummary`): three lines'
+    /// The description under the tagline (`VibrantSummary`): five lines'
     /// room, narrower than the block so it stays on the shade's dark side.
     static let summaryWidth: CGFloat = 600
-    static let summaryLines = 3
+    static let summaryLines = 5
     static let summarySpacing: CGFloat = 4
     static var summaryHeight: CGFloat {
         let line = UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).lineHeight
@@ -2320,8 +2368,8 @@ enum FixedFocusText {
 }
 
 /// The focused card's look: the unfocused cards' edge, bright (no ring
-/// around the card), a soft shadow under it and, where cards grow, a 6 %
-/// lift (`FixedFocusMetrics.movingFocusLift`).
+/// around the card), a soft shadow under it and, where cards grow, the
+/// same growth on every card's longer side (`FixedFocusMetrics.focusGrowth`).
 @MainActor
 enum FixedFocusRing {
     /// Settings → Appearance → Card outlines, by how much they show: high —

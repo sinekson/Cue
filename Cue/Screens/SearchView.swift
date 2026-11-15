@@ -743,20 +743,23 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         view.addSubview(collectionView)
     }
 
+    /// A poster's growth (`FixedFocusMetrics.focusGrowth`).
+    private static var posterLift: CGFloat { FixedFocusMetrics.focusLift(FixedFocusMetrics.posterCard) }
+
     /// The row's room for THE portrait poster (`FixedFocusMetrics.posterCard`):
     /// the cards, their growth, their captions.
     static let rowHeight: CGFloat =
-        (FixedFocusMetrics.posterCard.height * (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.up)
+        (FixedFocusMetrics.posterCard.height * (1 + posterLift / 2)).rounded(.up)
         + FixedFocusMetrics.captionRoom
 
     /// The card: the row's room less its captions and the growth above.
     static func cardHeight(rowHeight: CGFloat) -> CGFloat {
-        ((rowHeight - FixedFocusMetrics.captionRoom) / (1 + FixedFocusMetrics.movingFocusLift / 2)).rounded(.down)
+        ((rowHeight - FixedFocusMetrics.captionRoom) / (1 + posterLift / 2)).rounded(.down)
     }
 
     /// Above the cards: what a focused one grows by on each side.
     static func growthRoom(rowHeight: CGFloat) -> CGFloat {
-        (cardHeight(rowHeight: rowHeight) * FixedFocusMetrics.movingFocusLift / 2).rounded()
+        (cardHeight(rowHeight: rowHeight) * posterLift / 2).rounded()
     }
 
     func show(_ items: [MetaItem], subtitles: [String: String], height: CGFloat, placeholder: Bool,

@@ -30,8 +30,8 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// focused one), and whether its trailers play, with sound.
     var showcaseRowIDs: Set<String> = []
     var showcaseTrailers: (on: Bool, sound: Bool) = (false, false)
-    /// Of them, wide (landscape showcase cards, no trailer).
-    var wideRowIDs: Set<String> = []
+    /// Of them, Today's Pick: one card the content's width (`spotlightCard`).
+    var spotlightRowIDs: Set<String> = []
     /// Poster rows as large landscape rows (`FixedFocusFeatureLayout`; Home).
     var featureRows = false
     /// Names under moving-focus cards (Home has none: the art says it).
@@ -235,7 +235,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rankedRowIDs = rankedRowIDs
         controller.showcaseRowIDs = showcaseRowIDs
         controller.showcaseTrailers = showcaseTrailers
-        controller.wideRowIDs = wideRowIDs
+        controller.spotlightRowIDs = spotlightRowIDs
         controller.featureRows = featureRows
         controller.captions = captions
         controller.centred = centred
@@ -344,6 +344,9 @@ enum FixedFocusMetrics {
         let width = cardWidth(across: 3)
         return CGSize(width: width, height: (width * 5 / 4).rounded())
     }()
+    /// TODAY'S PICK: one showcase card the content's width, as tall as
+    /// the tall cards (600 pt looked short beside them).
+    static let spotlightCard = CGSize(width: bannerWidth, height: showcaseCard.height)
     /// A TOP 10'S CARD: a small showcase card, five across (two lines of
     /// five fill the screen), square (8:9 left the row below only its
     /// name to peek): the
@@ -383,16 +386,28 @@ enum FixedFocusMetrics {
     /// collections' tiles, landscape rows): 16:9, three across the
     /// content's width (Apple TV's size; 300 tall, 3.2 across, looked small).
     static let landscapeHeight: CGFloat = (cardWidth(across: 3) * 9 / 16).rounded()
-    /// How much a moving-focus card grows when focused.
-    static let movingFocusLift: CGFloat = 0.06
+    /// THE FOCUS GROWTH, every card everywhere: on its longer side, by the
+    /// square root of that side — a bigger card grows more points but a
+    /// smaller share — the tall cards `focusGrowth`, at most `focusGrowthCap`
+    /// (the wide ones). (6 % of each card grew the tall ones 42, the squares
+    /// 19; 33 pt on every card made the squares jump, 10 %.)
+    static let focusGrowth: CGFloat = 33
+    static let focusGrowthCap: CGFloat = 36
+    /// That growth as a card's scale share.
+    static func focusLift(_ size: CGSize) -> CGFloat {
+        let side = max(size.width, size.height, 1)
+        let points = min(focusGrowth * (side / max(showcaseCard.width, showcaseCard.height)).squareRoot(), focusGrowthCap)
+        return points / side
+    }
+    /// Pressed, half of it back; held (its hold menu open), half more.
+    static func pressDrop(_ size: CGSize) -> CGFloat { focusLift(size) / 2 }
+    static func heldGrowth(_ size: CGSize) -> CGFloat { focusLift(size) / 2 }
     /// The text under cards (captions, the box's description): the base
     /// size (22 looked too small); the second line this far below the first.
     static let captionSize: CGFloat = 24
     static let captionLineOffset: CGFloat = 35
-    /// The fixed box while Select is pressed or held: a little smaller.
-    /// (A moving-focus card instead loses its lift: back to its own size.)
-    static let pressScale: CGFloat = 0.97
-    /// …and while its hold menu is open: a little larger than focused.
+    /// Details' buttons while their hold menu is open: a little larger
+    /// than focused.
     static let heldGrowth: CGFloat = 0.03
     /// How long the card takes to grow to that, the dim's hole with it.
     static let heldDuration: Double = 0.28
@@ -583,6 +598,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
     let showcaseTrailer = StageTrailer()
 
+    /// Today's Pick: its one card the content's width.
+    var spotlightRowIDs: Set<String> = []
+
+    func isSpotlight(_ rowIndex: Int) -> Bool {
+        rows.indices.contains(rowIndex) && spotlightRowIDs.contains(rows[rowIndex].id)
+    }
+
     func isShowcase(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && showcaseRowIDs.contains(rows[rowIndex].id)
     }
@@ -592,19 +614,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     func isFeature(_ rowIndex: Int) -> Bool {
         featureRows && isDestination(rowIndex) && !isFeatured(rowIndex) && !isBanner(rowIndex)
-            && !isShowcase(rowIndex) && !isWide(rowIndex) && !isRanked(rowIndex) && !isContinue(rowIndex)
+            && !isShowcase(rowIndex) && !isRanked(rowIndex) && !isContinue(rowIndex)
             && custom(rowIndex) == nil && !isLandscape(rowIndex) && !isLogo(rowIndex)
             && !(rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id))
             // Saved for Later: plain posters, moving focus.
             && rows[rowIndex].id != HomeView.libraryRowID
-    }
-
-    /// Wide rows (New Episodes, Pick Back Up): landscape showcase cards,
-    /// everything on them, no trailer.
-    var wideRowIDs: Set<String> = []
-
-    func isWide(_ rowIndex: Int) -> Bool {
-        rows.indices.contains(rowIndex) && wideRowIDs.contains(rows[rowIndex].id)
     }
 
     /// The trailer on the focused showcase card (nil: none) — another card,
@@ -638,12 +652,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// A destination row's card (picture only — the caption is below it).
     func destinationCard(_ rowIndex: Int) -> CGSize {
         if isBanner(rowIndex) { return CGSize(width: FixedFocusMetrics.bannerWidth, height: bannerHeight) }
+        if isSpotlight(rowIndex) { return FixedFocusMetrics.spotlightCard }
         if isShowcase(rowIndex) { return FixedFocusMetrics.showcaseCard }
         if isFeature(rowIndex) { return FixedFocusMetrics.featureCard }
-        if isWide(rowIndex) {
-            return CGSize(width: FixedFocusMetrics.landscapeWidth(height: FixedFocusMetrics.landscapeHeight),
-                          height: FixedFocusMetrics.landscapeHeight)
-        }
         if isLogo(rowIndex) { return FixedFocusMetrics.logoCard }
         // Continue Watching (moving focus): its cards at their own size —
         // the fixed box's.
@@ -665,17 +676,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// How much of the rows above and below the focused one shows.
     var aboveVisible: CGFloat = FixedFocusMetrics.aboveVisible
     var belowVisible: CGFloat = FixedFocusMetrics.belowVisible
-    /// Captions under the cards: everywhere but Home, where only Continue
-    /// Watching (the episode's title) and Saved for Later (when it was
-    /// added) have them.
+    /// Captions under the cards: everywhere but Home, where only the
+    /// landscape rows (Continue Watching, New Episodes: the show over the
+    /// episode's title) and Saved for Later (when it was added) have them.
     func hasCaptions(_ rowIndex: Int) -> Bool {
-        captions || isContinue(rowIndex)
+        captions || isLandscape(rowIndex)
             || (rows.indices.contains(rowIndex) && rows[rowIndex].id == HomeView.libraryRowID)
     }
     /// The room under a row's cards for their captions (in `cardHeight`).
     /// (Not a collection's: its panel is its edge — placed by that.)
     func captionBelow(_ r: Int) -> CGFloat {
-        isDestination(r) && !isBanner(r) && !isPanel(r) && !isShowcase(r) && !isWide(r) && !isRanked(r)
+        isDestination(r) && !isBanner(r) && !isPanel(r) && !isShowcase(r) && !isRanked(r)
             && !isFeature(r) && custom(r) == nil && hasCaptions(r) ? FixedFocusMetrics.captionRoom : 0
     }
     /// The row's cards' height (a Top 10: its grid's).
@@ -683,9 +694,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let caption = hasCaptions(rowIndex) ? FixedFocusMetrics.captionRoom : 0
         if let custom = custom(rowIndex) { return custom.height }
         return isBanner(rowIndex) ? bannerHeight
+            : isSpotlight(rowIndex) ? FixedFocusMetrics.spotlightCard.height
             : isShowcase(rowIndex) ? FixedFocusMetrics.showcaseCard.height
             : isFeature(rowIndex) ? FixedFocusMetrics.featureCard.height
-            : isWide(rowIndex) ? FixedFocusMetrics.landscapeHeight
             : isRanked(rowIndex) ? FixedFocusGridLayout.height(card: FixedFocusMetrics.rankedCard.height,
                                                                count: rows[rowIndex].items.count)
             : isDestination(rowIndex) ? destinationCard(rowIndex).height + caption
@@ -2655,6 +2666,8 @@ struct FixedFocusCardState: Equatable {
     var right: String?
     /// Hide spoilers: the picture blurred (an episode not yet watched).
     var blurred = false
+    /// A symbol before `right` (the episode rows' day: a grey calendar).
+    var rightSymbol: FixedFocusBadges.Symbol? = nil
 }
 
 /// A row's list of cards. Doesn't take focus itself while `selfFocus` says
@@ -3207,15 +3220,14 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// Inside the surrounding animation (the row's move).
     func applyNameRoom(focusing index: Int? = nil) {
         var room: CGFloat = 0
-        // (A large row's card never grows: no room to make.)
-        if isFocusRow, !isFeatured, controller?.custom(rowIndex) == nil, controller?.isFeature(rowIndex) != true {
+        if isFocusRow, !isFeatured, controller?.custom(rowIndex) == nil {
             if let cv = destinationStrip, let controller {
                 let focused = index ?? (UIFocusSystem.focusSystem(for: self)?.focusedItem as? UICollectionViewCell)
                     .flatMap { $0.superview === cv ? cv.indexPath(for: $0)?.item : nil }
                 if let focused, let frame = cv.layoutAttributesForItem(at: IndexPath(item: focused, section: 0))?.frame,
                    frame.minY < 1 {
                     let card = controller.destinationCard(rowIndex)
-                    let lift = FixedFocusMetrics.movingFocusLift
+                    let lift = FixedFocusMetrics.focusLift(card)
                     let centre = frame.midX - cv.contentOffset.x + cv.frame.minX + stripHost.frame.minX
                     let half = card.width * (1 + lift) / 2
                     let nameEnd = FixedFocusMetrics.titleInset + title.intrinsicContentSize.width
@@ -3825,20 +3837,21 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             return cell
         }
         if cv === destinationStrip, let controller,
-           controller.isShowcase(rowIndex) || controller.isRanked(rowIndex) || controller.isWide(rowIndex)
+           controller.isShowcase(rowIndex) || controller.isRanked(rowIndex)
             || controller.isFeature(rowIndex) {
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "showcase", for: indexPath) as! FixedFocusShowcaseCell
             if let row, row.items.indices.contains(indexPath.item) {
                 let item = row.items[indexPath.item]
                 let ranked = controller.isRanked(rowIndex)
-                // New & Notable: what's new, its own badge alone; the
+                // New & Notable, Coming Soon for You: what's new or when
+                // it comes, its own badge alone; the
                 // others: the row's badges (`HomeRow.badges(for:)`).
-                let badges = ranked ? [] : row.id.hasSuffix(".newnotable")
+                let badges = ranked ? [] : row.id.hasSuffix(".newnotable") || row.id.hasSuffix(".comingsoon")
                     ? row.badges[item.id].map { [$0] } ?? [] : row.badges(for: item)
                 let feature = controller.isFeature(rowIndex)
                 cell.configure(item, index: indexPath.item, rowCell: self, art: row.art[item.id],
                                badges: badges, rank: ranked ? indexPath.item + 1 : nil,
-                               wide: controller.isWide(rowIndex), feature: feature)
+                               feature: feature, spotlight: controller.isSpotlight(rowIndex))
                 if feature { showFeature(cell, animated: false) }
             }
             return cell
@@ -3851,7 +3864,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 cell.configure(item, subtitle: row.subtitles[item.id], index: indexPath.item, rowCell: self,
                                card: controller.destinationCard(rowIndex),
                                progress: controller.isContinue(rowIndex) ? controller.progress[item.id] : nil,
-                               cardState: controller.cardStates[item.id],
+                               // The episode rows' state by title: not Continue Watching's (its own progress).
+                               cardState: controller.isLandscape(rowIndex) && !controller.isContinue(rowIndex)
+                                   ? controller.cardStates[item.id] : nil,
+                               art: row.art[item.id],
                                isLogo: controller.isLogo(rowIndex))
                 cell.setCaptionShown(captionsShown)
             }
