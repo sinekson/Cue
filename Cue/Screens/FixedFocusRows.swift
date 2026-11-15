@@ -329,8 +329,6 @@ enum FixedFocusMetrics {
     static let peekAlpha: CGFloat = 0.8
     /// Rows waiting under a rigid billboard (Details) that don't peek.
     static let dimmedAlpha: CGFloat = 0.45
-    /// The posters left of the box in the focused row.
-    static let previousAlpha: CGFloat = 0.45
     /// The focused row's name (trial: fixed, just under the top bar).
     static let rowTop: CGFloat = 122
     /// DESTINATION rows (Saved for Later, collections) — you go there for
@@ -1144,17 +1142,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Up/Down moves much more than a step: its own, longer spring.
         let duration = billboardScroll ? FixedFocusMotion.billboardScroll
             : rowChanged ? Motion.verticalDuration : Motion.moveDuration
-        // For the cells' Up/Down details: the image drift's direction and
-        // the outlines' own, gradual crossfade (see `setGrown`).
         // Down from the billboard: the rows show at once (the move is the
         // scroll, not a fade); Up hides them as they sink back.
-        // (Now: focus is taken right after, and a held move runs later.)
-        let hadFocus = hasFocus
         let move = {
-            let id = self.beginMove(FixedFocusMove(
-                vertical: rowChanged && hadFocus ? (direction: direction, duration: duration) : nil,
-                reshaping: rowChanged && hadFocus ? duration : nil))
-            defer { self.move = nil }
+            let id = self.beginMove()
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
@@ -1188,18 +1179,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         loadShowInfo(for: item, in: row, at: itemIndex)
     }
 
-    /// The move being set up (inside `FixedFocusMotion.run`'s animation
-    /// block): what the cells laid out in it animate by (`setGrown`).
-    private(set) var move: FixedFocusMove?
     /// Moves (Up/Down, Left/Right) still running in the rows; a hurry
     /// (`hurryMoves`) empties it, so their own completions do nothing.
     private var liveMoves: Set<Int> = []
     private var lastMoveID = 0
     private var isMoving: Bool { !liveMoves.isEmpty }
-    private func beginMove(_ move: FixedFocusMove) -> Int {
+    private func beginMove() -> Int {
         lastMoveID += 1
         liveMoves.insert(lastMoveID)
-        self.move = move
         return lastMoveID
     }
     /// False for a move already counted done (hurried).
@@ -1376,20 +1363,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if custom(rowIndex) != nil { onDepth(depth(of: rowIndex)) }
         let rowChanged = rowIndex != focusedRow || !hasFocus
         let fromBillboard = rowChanged && hasFocus && isFeatured(focusedRow)
-        let hadFocus = hasFocus
         hasFocus = true
         guard rowChanged else { return }
         let oldRowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
-        let direction: CGFloat = rowIndex > focusedRow ? 1 : -1
         focusedRow = rowIndex
         let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
         let move = {
-            // The old row's card closes as into a fixed row (see `setGrown`).
-            let id = self.beginMove(FixedFocusMove(
-                vertical: hadFocus ? (direction: direction, duration: duration) : nil,
-                reshaping: hadFocus ? duration : nil))
-            defer { self.move = nil }
+            let id = self.beginMove()
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
@@ -3102,8 +3083,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                                UICollectionViewDelegateFlowLayout {
     private(set) var rowIndex = 0
     private weak var controller: FixedFocusRowsController?
-    /// The move its controller is setting up (`FixedFocusMove`).
-    var move: FixedFocusMove? { controller?.move }
     private let title = UILabel()
     private let strip: UICollectionView
     private var row: HomeRow? {
@@ -3164,9 +3143,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// focusable).
     var concealed = false {
         didSet {
-            for case let poster as FixedFocusPosterCell in strip.visibleCells {
-                poster.setConcealed(postersHidden)
-            }
             // (A destination row's list through a mask, not its alpha: the
             // focus engine skips everything in a fully transparent view, and
             // Down from the billboard went past the row.)
@@ -3200,8 +3176,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             layer.add(move, forKey: "drop")
         }
     }
-    /// The posters' contents hidden (concealed by a line: not them).
-    private var postersHidden: Bool { concealed && concealTravel == nil }
 
     private func applyConcealMask() {
         let over = FixedFocusStripLayout.overscan
@@ -3517,10 +3491,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // The billboard's invisible cards: not while its focus is outside
         // (Details' buttons) — neither they nor the list in their place.
         (strip as? FixedFocusStripView)?.selfFocus = { [weak self] in !(self?.billboardCardsOff ?? false) }
-        layout.wideIndex = { [weak self] in
-            guard let self, self.isFocusRow, !self.isLandscape, !self.isFeatured else { return nil }
-            return self.selectedIndex
-        }
         layout.cardWidth = { [weak self] in self?.cardWidth ?? FixedFocusMetrics.posterWidth }
         layout.cardHeight = { [weak self] in self?.cardHeight ?? FixedFocusMetrics.height }
         clipsToBounds = false
@@ -3695,9 +3665,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         for case let card as FixedFocusDestinationCell in destinationStrip?.visibleCells ?? [] {
             if let progress = entry(card.itemIndex) { card.showProgress(progress) }
         }
-        for case let card as FixedFocusPosterCell in strip.visibleCells {
-            if let progress = entry(card.itemIndex) { card.showProgress(progress) }
-        }
     }
 
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {
@@ -3837,36 +3804,23 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         setNeedsLayout()
     }
 
-    /// Inside the controller's animation: grow the new, shrink the old,
-    /// move the row so the new one sits at the spot.
+    /// Inside the controller's animation: the strip moves so the title
+    /// sits at the spot.
     func focus(index: Int) {
         guard !isDestination else { return }
         relayout()
         strip.contentOffset = CGPoint(x: offset(for: index), y: 0)
     }
 
-    /// Re-lay out (grown cell or not) and restyle the visible cells.
+    /// Re-lay out the strip.
     func relayout() {
         guard !isDestination else { return }
         strip.collectionViewLayout.invalidateLayout()
         strip.layoutIfNeeded()
-        applyGrown()
         if !isFocusRow { strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0) }
     }
 
-    private func applyGrown() {
-        for cell in strip.visibleCells {
-            guard let poster = cell as? FixedFocusPosterCell else { continue }
-            poster.setGrown(isFocusRow && poster.itemIndex == selectedIndex)
-            poster.setPast(isPast(poster.itemIndex))
-        }
-    }
-
-    /// Left of the box in the focused row: where you came from — dimmed.
-    private func isPast(_ index: Int) -> Bool { isFocusRow && index < selectedIndex }
-
-    /// The row offset that puts title `index` at the spot. Exact: every
-    /// title before it is card-wide (`FixedFocusStripLayout`).
+    /// The row offset that puts title `index` at the spot.
     private func offset(for index: Int) -> CGFloat {
         CGFloat(index) * (cardWidth + FixedFocusMetrics.gap)
     }
@@ -3917,16 +3871,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             return cell
         }
         let cell = cv.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath) as! FixedFocusPosterCell
-        if let row {
-            let item = row.items[indexPath.item]
-            cell.configure(item, index: indexPath.item, rowCell: self,
-                           progress: isContinue ? controller?.progress[item.id] : nil,
-                           landscape: isLandscape, invisible: isFeatured,
-                           cardHeight: cardHeight, badges: row.badges(for: item))
-            cell.setGrown(isFocusRow && indexPath.item == selectedIndex)
-            cell.setPast(isPast(indexPath.item))
-            cell.setConcealed(concealed)
-        }
+        cell.configure(index: indexPath.item, rowCell: self)
         return cell
     }
 
