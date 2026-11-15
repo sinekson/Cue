@@ -144,9 +144,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   circling arrows, Ended a checkmark (all red was tried) (two-tone
   for its own sake looked bad: a grey circle behind a flag, a magnifier
   round a sparkle, a bubble round a star); then the words in sentence case (23 pt
-  semibold, primary) on a dark plate (black 80 %, no edge, 8 pt corners,
-  40 pt tall, 12 pt in), the symbols in line with the logo's left, the plates as far
-  from the top as from the side; one that doesn't fit is left out (one
+  semibold, primary) on a dark plate (a deep shade of the picture's colour, `SourceTint`, brightness 0.2 at 90 %, the words and grey symbols in its ink, black 80 % until sampled; dimmed to 60 % out of focus was tried; plain black 80 % stood out too hard against the art; no edge,
+  40 pt tall, 10 pt corners (a quarter of the height; 6, concentric with the card, looked sharp: too far from its corner to read as nested; 8 was before), 12 pt in), the symbols in line with the logo's left, the plates as far
+  from the top as from the side; one that doesn't fit on its line starts a second at the left, none left out or shortened (one
   line of capitals with no plate, joined by " · ", was too plain: over the
   logo it sat above the shade's dense part, under the facts line the foot
   was busy, top left on a dark corner; small spaced capitals with a red
@@ -179,6 +179,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the top-left corner in spaced capitals was tried; service and quality
   badges, and awards, were talked over: rows already say them; TMDB's
   score made a run-of-the-mill isekai a gem: niche fans vote alone there.)
+  A rating top right on the same plate, alone on the first line, the badges wrapping under it
+  (`FixedFocusBadges.rating`): the first source in Rating Providers' order
+  that has one (MDBList's from the title's record, else IMDb's: the
+  catalog's, else the daily file), its mark (`RatingMark`, 22 pt tall as the symbols; 18 looked small) and the score, plate and font the badges';
+  tall and wide cards only, not Top 10's; none with ratings off or Details Only.
   Ratings for ranking and badges are IMDb's own daily file
   (`IMDbRatings`, end of `MDBListService.swift`: `title.ratings.tsv.gz`,
   titles with 100+ votes, ~4 MB on disk, fetched again once a day, the
@@ -375,11 +380,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   other pages' `peekGap`, was tight, 72 a little much), so both peek alike (~200 pt by a fixed row); the row under the billboard too, the billboard
   peeking above it the same gap away (~265 pt). Row names 34 pt
   semibold, a little low in their line, near their cards.
-- **Billboard** (Details shares it): the ratings as each source's mark
-  (its colour: information) and the score beside it as plain text, the
-  status a plain word ("Ended 2019"), both in the facts line's style
-  (`RatingChip`, `TitleBadge`; outlined chips in the source's colour read
-  as stickers). The description between the tagline
+- **Billboard** (Details shares it): the cards' badges in their words
+  and symbols, no plates (the text is on the shade; outlined chips read as
+  stickers): one line under the logo, the status ("✓ Ended 2019"), one
+  fact badge (the first of finale, Hidden gem, Acclaimed, Miniseries),
+  then the ratings, each source's mark (its colour: information) and the
+  score, all words at primary (`BadgeLabel`, `TitleBadge`, `RatingChip`).
+  The reason above the logo is the cards' top badge: symbol, words in
+  sentence case, the detail at body ("New episode · S3 E7 · Yesterday";
+  spaced capitals and the trending rank in a white key were before);
+  a pick from a row says the row's own reason for it where Cue's rows
+  have one (who's in it, your taste, what's new: "With Bryan Cranston"),
+  else the row's name; never a fact badge (the line under the logo says
+  those, Details too, so opening in place doesn't jump). Details' line
+  keeps its spot. The description between the tagline
   and the buttons, 600 pt wide, 3 lines, in Apple TV's vibrancy with a 30 %
   white over it (`VibrantSummary`; plain at body level was hard to read).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,

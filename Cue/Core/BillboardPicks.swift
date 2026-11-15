@@ -18,6 +18,9 @@ enum BillboardReason: Equatable {
     case trending(rank: Int)
     /// From one of Home's rows (no picks without TMDB).
     case row(title: String)
+    /// The row's own reason for it, as its card's badge ("With Bryan
+    /// Cranston", "Anime", "Premiere"): said better than the row's name.
+    case card(CardBadge)
 
     /// The kind of pick: "NEW EPISODE", "BECAUSE YOU WATCHED", …
     var lead: String {
@@ -27,6 +30,7 @@ enum BillboardReason: Equatable {
         case .because: return "Because you watched"
         case .trending: return "Trending today"
         case .row(let title): return title
+        case .card(let badge): return badge.text
         }
     }
 
@@ -39,7 +43,7 @@ enum BillboardReason: Equatable {
             return "Season \(season) · \(Self.day(aired))"
         case .because(let title):
             return title
-        case .trending, .row:
+        case .trending, .row, .card:
             return nil
         }
     }

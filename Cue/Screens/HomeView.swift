@@ -689,8 +689,13 @@ final class HomeViewModel: ObservableObject {
 
     /// Highlights of Home: the top two titles of each of the first rows
     /// (no repeats, only titles with a backdrop — a billboard without one is
-    /// a dead frame), in row order, up to `max`, the row's name as the
-    /// reason. `type` filters for the Movies / Series tabs.
+    /// a dead frame), in row order, up to `max`, the row's own reason for
+    /// it (its card's: who's in it, your taste, what's new) as the reason,
+    /// else the row's name. Not a fact (Hidden gem, Acclaimed…): the line
+    /// under the logo says those, on Details too. `type` filters for the
+    /// Movies / Series tabs.
+    private static let reasonKinds: Set<CardBadge.Kind> = [.person, .taste, .news, .returns]
+
     func highlights(max: Int, type: String? = nil) -> [BillboardPick] {
         var seen = Set<String>()
         var picks: [BillboardPick] = []
@@ -702,7 +707,8 @@ final class HomeViewModel: ObservableObject {
             }
             for item in fresh.prefix(2) {
                 seen.insert(item.id)
-                picks.append(BillboardPick(item: item, reason: .row(title: row.title)))
+                let own = row.badges[item.id].flatMap { Self.reasonKinds.contains($0.kind) ? $0 : nil }
+                picks.append(BillboardPick(item: item, reason: own.map { .card($0) } ?? .row(title: row.title)))
                 if picks.count == max { return picks }
             }
         }
@@ -1974,11 +1980,16 @@ struct FixedFocusBillboardText: View {
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     static let logoToChips: CGFloat = 20
-    /// The status, then the ratings.
+    /// The status, one badge of the cards' (the first fact that holds:
+    /// finale, Hidden gem, Acclaimed, Miniseries; the news is the reason's),
+    /// then the ratings.
     private var chips: some View {
         HStack(spacing: RatingChip.spacing) {
             ForEach([FixedFocusShowInfo.status(item)].compactMap { $0 }, id: \.self) {
                 TitleBadge(text: $0)
+            }
+            if let fact = TitleRecords.shared.facts(item).first {
+                BadgeLabel(badge: .init(symbol: FixedFocusBadges.symbol(fact.kind), text: fact.text))
             }
             ratings
         }
@@ -2119,32 +2130,41 @@ struct FixedFocusBillboardText: View {
     }
 }
 
-/// The billboard's reason: the kind of pick, muted, and its detail in white
-/// ("NEW EPISODE · S3 E7 · YESTERDAY", "BECAUSE YOU WATCHED DARK"); trending
-/// with its rank in a small white key — all on one line.
+/// The billboard's reason, as the cards' top badge: its symbol and words in
+/// sentence case on the shade, the detail a level down ("🔔 New episode ·
+/// S3 E7 · Yesterday", "♥ Because you watched Dark", "📈 Trending today";
+/// spaced capitals with the rank in a white key were the look before).
 private struct BillboardReasonLabel: View {
     let reason: BillboardReason
 
+    private var symbol: FixedFocusBadges.Symbol? {
+        switch reason {
+        case .newEpisode, .newSeason: return FixedFocusBadges.symbol(.news)
+        case .because: return FixedFocusBadges.symbol(.taste)
+        case .trending: return FixedFocusBadges.symbol(.top10)
+        case .card(let badge): return FixedFocusBadges.symbol(badge.kind)
+        case .row: return nil
+        }
+    }
+
+    private var detail: String? {
+        if case .trending(let rank) = reason { return "No. \(rank)" }
+        return reason.detail
+    }
+
     var body: some View {
-        Group {
-            if case .trending(let rank) = reason {
-                // The rank in a small white key, the line's own height.
-                HStack(spacing: 12) {
-                    Text("\(rank)")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(Color.black)
-                        .frame(minWidth: 30)
-                        .frame(height: 30)
-                        .padding(.horizontal, 2)
-                        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.white.opacity(FixedFocusText.primary)))
-                    caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white.opacity(FixedFocusText.primary)))
-                }
-            } else {
-                caps(Text(reason.lead.uppercased()).foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
-                     + Text(reason.detail.map { (separator + $0).uppercased() } ?? "")
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary)))
+        HStack(spacing: 8) {
+            if let symbol {
+                let colours = symbol.colours.map { Color(uiColor: $0) }
+                Image(systemName: symbol.name)
+                    .font(.system(size: FixedFocusMetrics.textSize - 2, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(colours[0], colours.count > 1 ? colours[1] : colours[0])
             }
+            (Text(reason.lead).foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+             + Text(detail.map { separator + $0 } ?? "")
+                .foregroundStyle(Color.white.opacity(FixedFocusText.body)))
+                .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
         }
         .lineLimit(1)
     }
@@ -2153,11 +2173,6 @@ private struct BillboardReasonLabel: View {
     private var separator: String {
         if case .because = reason { return " " }
         return " · "
-    }
-
-    private func caps(_ text: Text) -> some View {
-        text.font(.system(size: SectionHint.size, weight: SectionHint.weight))
-            .tracking(SectionHint.tracking)
     }
 }
 

@@ -341,6 +341,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             backdrop.image = nil
             backdropArt = feature ? item.background ?? art : nil
             backdropWanted = false
+            tintBadges(feature ? backdropArt : art)
             FixedFocusImages.load(art, into: picture,
                                   maxDimension: feature ? PictureSize.featurePoster : PictureSize.showcase,
                                   waiting: { [weak self] waiting in
@@ -381,10 +382,26 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     }
 
     private var shownBadges: [CardBadge] = []
+    private var tintTask: Task<Void, Never>?
+
+    /// The plates' colour from the card's picture: at once if known, else
+    /// faded in once sampled.
+    private func tintBadges(_ url: String?) {
+        tintTask?.cancel()
+        guard let url else { badges.setTint(nil, animated: false); return }
+        if let known = SourceTint.cached(for: url) { badges.setTint(known, animated: false); return }
+        badges.setTint(nil, animated: false)
+        tintTask = Task { @MainActor [weak self] in
+            let tint = await SourceTint.tint(for: url)
+            guard let self, !Task.isCancelled else { return }
+            self.badges.setTint(tint, animated: true)
+        }
+    }
 
     /// The badges' line: a series' status first (not on a Top 10's card).
     private func showBadges(_ item: MetaItem) {
-        badges.show(status: rank == nil ? FixedFocusShowInfo.status(item) : nil, shownBadges)
+        badges.show(status: rank == nil ? FixedFocusShowInfo.status(item) : nil, shownBadges,
+                    rating: rank == nil ? FixedFocusBadges.rating(item) : nil)
     }
 
     /// A large row's backdrop, loaded once it's near the spot (the open
@@ -515,7 +532,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         // plates as far from the top as from the side.
         let plateInset = sideInset - FixedFocusBadges.padding
         badges.frame = CGRect(x: plateInset, y: plateInset, width: face.width - 2 * plateInset,
-                              height: FixedFocusBadges.height)
+                              height: FixedFocusBadges.wrappedHeight)
         let y = face.height - footPad - Self.lineHeight
         facts.frame = CGRect(x: sideInset, y: y, width: width, height: Self.lineHeight)
         fitFacts()
@@ -1628,16 +1645,49 @@ final class FixedFocusBadges: UIView {
     static let gap: CGFloat = 8
     private var plates: [Plate] = []
     private var shown: [Badge] = []
+    private let ratingPlate = Plate()
+    private var rating: Badge?
 
     /// The symbols, Netflix's way: grey, some with one part in Cue's colour, the
     /// app icon's red (its top, Display P3; `Tools/AppIcon/render.swift`).
     static let cue = UIColor(displayP3Red: 1, green: 0x38 / 255, blue: 0x73 / 255, alpha: 1)
     static let symbolGrey = UIColor.white.withAlphaComponent(FixedFocusText.body)
 
-    /// What a plate shows: a symbol and words.
+    /// What a plate shows: a symbol and words, or a rating's mark (in its
+    /// own colours) and score.
     struct Badge: Equatable {
-        let symbol: Symbol
+        var symbol: Symbol?
+        var mark: UIImage?
         let text: String
+    }
+
+    /// The card's rating, top right: the first source in Settings' order
+    /// that has one (MDBList's, from the title's record), else IMDb's (the
+    /// catalog's, else IMDb's own file). None where ratings are off here.
+    static func rating(_ item: MetaItem) -> Badge? {
+        let settings = MDBListSettingsStore.current
+        guard settings.showsRatings(onDetails: false) else { return nil }
+        let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
+        let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
+        let known = TitleRecords.shared.ratings(item) ?? nil
+        guard let entry = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb,
+                                                    onDetails: false).first else { return nil }
+        return Badge(mark: mark(entry.provider), text: entry.text)
+    }
+
+    /// A source's mark (`RatingMark`, Details' and the billboard's) as a
+    /// picture, drawn as tall as the badges' symbols (the billboard's 18 pt
+    /// looked small beside them), sharp: drawn at the larger scale.
+    private static let markHeight: CGFloat = 22
+    private static var marks: [MDBListProvider: UIImage] = [:]
+    private static func mark(_ provider: MDBListProvider) -> UIImage? {
+        if let known = marks[provider] { return known }
+        let screen = UIScreen.main.scale
+        let renderer = ImageRenderer(content: RatingMark(provider: provider))
+        renderer.scale = screen * markHeight / RatingMark.size
+        let image = renderer.cgImage.map { UIImage(cgImage: $0, scale: screen, orientation: .up) }
+        marks[provider] = image
+        return image
     }
 
     /// A symbol and its colours. Red for an emblem (a compact solid mark:
@@ -1693,18 +1743,41 @@ final class FixedFocusBadges: UIView {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         isHidden = true
+        ratingPlate.isHidden = true
+        addSubview(ratingPlate)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(status: String?, _ badges: [CardBadge]) {
+    /// The card's picture's colour (`SourceTint`), the plates a dark shade of
+    /// it, the words and grey symbols in its ink: they belong to the card.
+    /// Black until the colour is known.
+    private(set) var tint: UIColor?
+
+    func setTint(_ tint: UIColor?, animated: Bool) {
+        guard tint != self.tint else { return }
+        self.tint = tint
+        let apply = { for plate in self.plates + [self.ratingPlate] { plate.tint(tint) } }
+        if animated {
+            UIView.animate(withDuration: Motion.fadeDuration, delay: 0, options: [.beginFromCurrentState], animations: apply)
+        } else { apply() }
+    }
+
+    func show(status: String?, _ badges: [CardBadge], rating: Badge? = nil) {
         let all = [status.map(Self.status)].compactMap { $0 }
             + badges.map { Badge(symbol: Self.symbol($0.kind), text: $0.text) }
-        isHidden = all.isEmpty
+        isHidden = all.isEmpty && rating == nil
+        if rating != self.rating {
+            self.rating = rating
+            ratingPlate.isHidden = rating == nil
+            if let rating { ratingPlate.show(rating) }
+            setNeedsLayout()
+        }
         guard all != shown else { return }
         shown = all
         while plates.count < all.count {
             let plate = Plate()
+            plate.tint(tint)
             addSubview(plate)
             plates.append(plate)
         }
@@ -1715,30 +1788,50 @@ final class FixedFocusBadges: UIView {
         setNeedsLayout()
     }
 
-    /// Side by side from the top left; one that doesn't fit is left out.
+    /// Side by side from the top left, the rating alone at the top right; a
+    /// badge that doesn't fit on its line starts the next, at the left (none
+    /// left out, none shortened: only one wider than the card is cut, "…").
     override func layoutSubviews() {
         super.layoutSubviews()
-        var x: CGFloat = 0
+        var room = bounds.width
+        if rating != nil {
+            let width = ratingPlate.width
+            ratingPlate.frame = CGRect(x: bounds.width - width, y: 0, width: width, height: Self.height)
+            room = ratingPlate.frame.minX - Self.gap
+        }
+        var x: CGFloat = 0, y: CGFloat = 0
         for plate in plates.prefix(shown.count) {
-            let width = plate.width
-            plate.isHidden = x + width > bounds.width
-            plate.frame = CGRect(x: x, y: 0, width: width, height: Self.height)
+            if x > 0, x + plate.width > room {
+                x = 0
+                y += Self.height + Self.gap
+                room = bounds.width
+            }
+            let width = min(plate.width, room)
+            plate.isHidden = false
+            plate.frame = CGRect(x: x, y: y, width: width, height: Self.height)
             x += width + Self.gap
         }
     }
 
-    /// One badge, Netflix's: nearly black (80 %), no edge, 8 pt corners.
+    /// Two lines' room: the cells lay the view out this tall.
+    static let wrappedHeight = 2 * height + gap
+
+    /// One badge: a plate in a dark shade of the card's colour (black 80 %
+    /// until it's known), no edge, 10 pt corners.
     private final class Plate: UIView {
         static let symbolGap: CGFloat = 9
         private let symbol = UIImageView()
         private let label = UILabel()
+        private var badge: Badge?
+        private var tinted: UIColor?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
             backgroundColor = UIColor.black.withAlphaComponent(0.8)
-            layer.cornerRadius = 8
+            layer.cornerRadius = 10
             layer.cornerCurve = .continuous
             symbol.contentMode = .center
+            label.lineBreakMode = .byTruncatingTail
             addSubview(symbol)
             addSubview(label)
         }
@@ -1746,14 +1839,39 @@ final class FixedFocusBadges: UIView {
         required init?(coder: NSCoder) { fatalError() }
 
         func show(_ badge: Badge) {
-            symbol.image = UIImage(systemName: badge.symbol.name, withConfiguration:
-                UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
-                    .applying(UIImage.SymbolConfiguration(paletteColors: badge.symbol.colours)))
+            self.badge = badge
+            draw()
+            setNeedsLayout()
+        }
+
+        func tint(_ tint: UIColor?) {
+            tinted = tint
+            backgroundColor = tint.map { Self.plate($0) } ?? UIColor.black.withAlphaComponent(0.8)
+            draw()
+        }
+
+        /// The card's colour, deep: dark enough for the words on any picture.
+        private static func plate(_ tint: UIColor) -> UIColor {
+            var hue: CGFloat = 0, saturation: CGFloat = 0
+            tint.getHue(&hue, saturation: &saturation, brightness: nil, alpha: nil)
+            return UIColor(hue: hue, saturation: saturation, brightness: 0.2, alpha: 0.9)
+        }
+
+        private func draw() {
+            guard let badge else { return }
+            let ink = { (alpha: CGFloat) in
+                self.tinted.map { SourceTint.ink($0, alpha) } ?? UIColor.white.withAlphaComponent(alpha) }
+            if let mark = badge.mark {
+                symbol.image = mark
+            } else if let glyph = badge.symbol {
+                let colours = glyph.colours.map { $0 == FixedFocusBadges.symbolGrey ? ink(FixedFocusText.body) : $0 }
+                symbol.image = UIImage(systemName: glyph.name, withConfiguration:
+                    UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
+                        .applying(UIImage.SymbolConfiguration(paletteColors: colours)))
+            } else { symbol.image = nil }
             label.attributedText = NSAttributedString(
                 string: badge.text,
-                attributes: [.font: FixedFocusBadges.font,
-                             .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusText.primary)])
-            setNeedsLayout()
+                attributes: [.font: FixedFocusBadges.font, .foregroundColor: ink(FixedFocusText.primary)])
         }
 
         private var symbolWidth: CGFloat { symbol.image?.size.width.rounded(.up) ?? 0 }

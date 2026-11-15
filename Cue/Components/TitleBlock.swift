@@ -280,22 +280,32 @@ final class ModeSwap: ObservableObject {
     static func depthScale(_ p: CGFloat) -> CGFloat { 1 + (depthScale - 1) * p }
 }
 
-/// A series' status beside the ratings: a plain word in the facts line's
-/// style ("Ended 2019", "Airing"), no box (an outlined chip with the word
-/// on an off-white plate was the look before: it read as a sticker).
+/// A card badge on the billboard and Details' shade: the cards' symbol and
+/// words (`FixedFocusBadges`), no plate (the text sits on the shade; an
+/// outlined chip read as a sticker there), in the ratings' line style.
+struct BadgeLabel: View {
+    let badge: FixedFocusBadges.Badge
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let symbol = badge.symbol {
+                let colours = symbol.colours.map { Color(uiColor: $0) }
+                Image(systemName: symbol.name)
+                    .font(.system(size: FixedFocusMetrics.textSize - 2, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(colours[0], colours.count > 1 ? colours[1] : colours[0])
+            }
+            Text(badge.text)
+                .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+        }
+        .frame(height: 30)
+    }
+}
+
+/// A series' status beside the ratings, with its card symbol ("✓ Ended 2019").
 struct TitleBadge: View {
     let text: String
 
-    private var words: String {
-        let parts = text.split(separator: " ", maxSplits: 1)
-        guard let first = parts.first else { return text }
-        return ([first.capitalized] + parts.dropFirst().map(String.init)).joined(separator: " ")
-    }
-
-    var body: some View {
-        Text(words)
-            .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
-            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
-            .frame(height: 30)
-    }
+    var body: some View { BadgeLabel(badge: FixedFocusBadges.status(text)) }
 }

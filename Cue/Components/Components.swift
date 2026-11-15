@@ -1653,7 +1653,7 @@ struct RatingChip: View {
             if let score {
                 Text(score)
                     .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
             }
         }
         .frame(height: 30)
@@ -1664,7 +1664,7 @@ struct RatingChip: View {
 /// two, about 14 pt, in its own colours — a wordmark on its plate, the
 /// others their emblem (tried: the names in their colours — "LBXD", "RT",
 /// "MC" meant little; Rotten Tomatoes' two in two small lines).
-private struct RatingMark: View {
+struct RatingMark: View {
     let provider: MDBListProvider
     /// Every mark's height.
     static let size: CGFloat = 18
