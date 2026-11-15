@@ -427,7 +427,6 @@ enum FixedFocusMetrics {
     /// that (as a showcase card). Nothing under the box.
     static let footPad: CGFloat = 24
     static let factsGap: CGFloat = 10
-    static let badgesGap: CGFloat = 14
     static func factsFrame(width: CGFloat, height: CGFloat) -> CGRect {
         CGRect(x: Spotlight.logoInset, y: height - footPad - factsHeight,
                width: width - 2 * Spotlight.logoInset, height: factsHeight)
@@ -442,18 +441,6 @@ enum FixedFocusMetrics {
         let room = height * 0.26
         return CGRect(x: Spotlight.logoInset, y: factsFrame(width: width, height: height).minY - factsGap - room,
                       width: width * 0.5, height: room)
-    }
-    /// The badges' frame (`FixedFocusBadges` lays out from its bottom left):
-    /// their foot just over the logo as drawn, else over its room.
-    static func badgesFrame(width: CGFloat, over logo: FixedFocusLogo) -> CGRect {
-        let top = logo.drawnTop ?? logo.room.minY
-        let inset = FixedFocusBadges.inset
-        let plate = FixedFocusBadges.plateHeight
-        let bottom = top - badgesGap
-        // Room for two stacked, should they not fit side by side.
-        let height = 2 * plate + FixedFocusBadges.gap
-        return CGRect(x: Spotlight.logoInset - inset, y: bottom - height - inset,
-                      width: width - 2 * Spotlight.logoInset + 2 * inset, height: height + 2 * inset)
     }
     static func descriptionText(_ item: MetaItem) -> String? {
         item.description?.replacingOccurrences(of: "\n", with: " ")

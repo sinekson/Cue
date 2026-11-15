@@ -1974,10 +1974,9 @@ struct FixedFocusBillboardText: View {
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     static let logoToChips: CGFloat = 20
-    /// The status badge, then the ratings (outlined boxes: `chipsGap` of
-    /// extra room next to text).
+    /// The status, then the ratings.
     private var chips: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: RatingChip.spacing) {
             ForEach([FixedFocusShowInfo.status(item)].compactMap { $0 }, id: \.self) {
                 TitleBadge(text: $0)
             }
@@ -2002,9 +2001,6 @@ struct FixedFocusBillboardText: View {
         }
     }
 
-    /// Extra room above the chips (and the tagline after them): a plain
-    /// line step left ~6 pt between the facts and the chips' boxes.
-    static let chipsGap: CGFloat = 9
     /// THE BLOCK'S GAPS, as seen (between what's drawn, not the lines'
     /// frames): one gap between its parts, a little more around the chips.
     static let gap: CGFloat = 19
@@ -2037,7 +2033,7 @@ struct FixedFocusBillboardText: View {
     }
     /// Where the Detail page's buttons start: below the chips line.
     static var buttonsY: CGFloat {
-        FixedFocusMetrics.boxFrame.maxY + 104 + FixedFocusBillboardText.chipsGap + 45 + 44
+        FixedFocusMetrics.boxFrame.maxY + 104 + 45 + 44
     }
     /// The chips line: the status badge, then the first ratings (nil: none).
     @MainActor

@@ -1021,7 +1021,7 @@ enum CueRows {
             film("short", "Under 90 Minutes", "format", broad: 0.35,
                  ["with_runtime.lte": "90", "with_runtime.gte": "60", "vote_average.gte": "6.8"]),
             film("epics", "Epics", "format", broad: 0.3, ["with_runtime.gte": "150", "vote_average.gte": "7"]),
-            show("limited", "Limited Series", "format", broad: 0.4, ["with_type": "2"]),
+            show("limited", "Miniseries", "format", broad: 0.4, ["with_type": "2"]),
             film("new.films", "New Releases", "new", broad: 0.5,
                  ["primary_release_date.gte": recent, "primary_release_date.lte": today, "vote_count.gte": "50"]),
             show("new.shows", "New Series", "new", broad: 0.5,

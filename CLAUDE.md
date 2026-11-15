@@ -80,7 +80,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 - **Direction:** flat artwork, glass controls, one outline for focus. Calm,
   quick motion; a stable 60 fps beats fancy. No accent colours: colour only
-  for information (rating sources).
+  for information (rating sources) and Cue's red on the card badges' symbols.
 - **Glass only for what floats above the page** (hold menus, source
   picker, dropdowns, toasts): `liquidGlass(in:)`, always as a background, one
   glass everywhere (`AppGlass`). Everything in the page is flat
@@ -133,16 +133,33 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   it, 22 pt, medium (on the art): "S1:E5" left (the episode's title in the caption under the card), the time left or "Up Next" at its end (above and below
   the bar looked odd) (`FixedFocusProgressView`, `Spotlight.state…`).
   Badges (`FixedFocusBadges`, chosen by `HomeRow.badges(for:)`, set at
-  configure, never late), Apple TV's plates, measured: the words alone,
-  sentence case, 25 pt medium at primary, 15 pt either side, a 2 pt edge
-  at 40 % white, 14 pt corners, black 70 % (Apple's nearly clear, and
-  55 %, were hard to read at times; a symbol before the words, black 65 % with a 1 pt edge at
-  12 %, was the look before; black 80 % with no edge looked pasted on; the status badge's off-white plate with the words cut out
-  clashed; 22 and 20 pt were small), at the foot over the logo, left
-  (the picture's top left, and the foot right beside the logo, were tried), not moving: on a move the old ones go at
+  configure, never late): top left, a series' status first, Netflix's:
+  a symbol (21 pt semibold; Cue's red is the icon's FF3873 P3, grey at
+  body; `FixedFocusBadges.symbol(_:)`), by shape: red for an emblem, a
+  compact solid mark; two-tone where a drawing has a natural accent (news a bell with a red dot, Returns a calendar with a red
+  clock, Top 10 a rising red line, Airing radio waves round a red dot); grey for a drawing or a line glyph (in red they read
+  as clip art, thin red strokes shimmer). Red: Finale a checkered flag,
+  Hidden gem a sparkle, taste a heart, Acclaimed a laurel (a grey trophy
+  was mixed, a star plain); grey: With/From a person, Miniseries a stack, Returning two
+  circling arrows, Ended a checkmark (all red was tried) (two-tone
+  for its own sake looked bad: a grey circle behind a flag, a magnifier
+  round a sparkle, a bubble round a star); then the words in sentence case (23 pt
+  semibold, primary) on a dark plate (black 80 %, no edge, 8 pt corners,
+  40 pt tall, 12 pt in), the symbols in line with the logo's left, the plates as far
+  from the top as from the side; one that doesn't fit is left out (one
+  line of capitals with no plate, joined by " · ", was too plain: over the
+  logo it sat above the shade's dense part, under the facts line the foot
+  was busy, top left on a dark corner; small spaced capitals with a red
+  symbol on black 45 % with a 1 pt edge were hard to read at times) (Apple TV's plates, measured — 25 pt
+  medium, 15 pt either side, a 2 pt edge at 40 % white, black 70 % —
+  read as stickers; before them a symbol before the words, black 65 %
+  with a 1 pt edge at 12 %; black 80 % with no edge looked pasted on;
+  the status badge's off-white plate with the words cut out clashed;
+  as plates the picture's top left, and the foot right beside the logo, were tried),
+  not moving: on a move the old ones go at
   the press, the new appear 0.1 s later, no fade (at once was too fast;
   fades, 30 % and 75 % of the drift, drifting with the picture: on a pane
-  over it); side by side, else stacked. Only on tall and wide cards (New & Notable: its own badge
+  over it). Only on tall and wide cards (New & Notable: its own badge
   alone); posters have none. Two at most: a show's news first
   (`TitleRecords.news`: New episode, out in 14 days, unwatched, one of the
   three before it watched; Season N, begun in 14 days; Returns Mar 4,
@@ -154,7 +171,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   "Like <a title you watched>". Other rows, the first that holds: Season /
   Series finale (TMDB's episode type, aired in 7 days; "Finale Mar 4"
   next), With someone in your taste, Hidden gem (IMDb 7.5+, 1,000–20,000
-  votes), Acclaimed (IMDb 8+, 50,000 votes), Limited series, Top 10
+  votes), Acclaimed (IMDb 8+, 50,000 votes), Miniseries, Top 10
   (today's trending). What the row says isn't repeated: no news in New
   Episodes or Airing Today, no Acclaimed in Top Rated, no Top 10 in the
   Top 10 row. Not on
@@ -358,7 +375,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   other pages' `peekGap`, was tight, 72 a little much), so both peek alike (~200 pt by a fixed row); the row under the billboard too, the billboard
   peeking above it the same gap away (~265 pt). Row names 34 pt
   semibold, a little low in their line, near their cards.
-- **Billboard** (Details shares it): the description between the tagline
+- **Billboard** (Details shares it): the ratings as each source's mark
+  (its colour: information) and the score beside it as plain text, the
+  status a plain word ("Ended 2019"), both in the facts line's style
+  (`RatingChip`, `TitleBadge`; outlined chips in the source's colour read
+  as stickers). The description between the tagline
   and the buttons, 600 pt wide, 3 lines, in Apple TV's vibrancy with a 30 %
   white over it (`VibrantSummary`; plain at body level was hard to read).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,

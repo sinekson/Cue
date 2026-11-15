@@ -409,7 +409,7 @@ final class TitleRecords {
     ///   Mar 4: the next episode, within `newsWindow`.
     /// - Hidden gem: IMDb 7.5 or more from 1,000–20,000 votes.
     /// - Acclaimed: IMDb 8 or more from 50,000 votes.
-    /// - Limited series: TMDB's Miniseries.
+    /// - Miniseries: TMDB's Miniseries ("Limited series" read oddly).
     func facts(_ item: MetaItem) -> [CardBadge] {
         guard let record = records[item.id] else { return [] }
         var out: [CardBadge] = []
@@ -425,7 +425,7 @@ final class TitleRecords {
         }
         if CueRows.isGem(item.id) { out.append(CardBadge(kind: .gem, text: "Hidden gem")) }
         if CueRows.isAcclaimed(item.id) { out.append(CardBadge(kind: .acclaimed, text: "Acclaimed")) }
-        if record.limited == true { out.append(CardBadge(kind: .limited, text: "Limited series")) }
+        if record.limited == true { out.append(CardBadge(kind: .limited, text: "Miniseries")) }
         return out
     }
 

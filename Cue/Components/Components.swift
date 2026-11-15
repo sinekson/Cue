@@ -1582,18 +1582,18 @@ struct MDBListRatingsRow: View {
 
     var body: some View {
         if wraps {
-            WrapRow(spacing: 10, lineSpacing: 10) {
+            WrapRow(spacing: RatingChip.spacing, lineSpacing: 10) {
                 ForEach(entries) { chip($0) }
             }
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: RatingChip.spacing) {
                 ForEach(entries) { chip($0) }
             }
         }
     }
 }
 
-/// A rating source's chip outline, after its own branding (its name is
+/// A rating source's colour, after its own branding (its name is
 /// its mark — `RatingMark`).
 struct RatingBadgeStyle {
     let fill: AnyShapeStyle
@@ -1637,33 +1637,26 @@ extension MDBListProvider {
     }
 }
 
-/// One rating chip: the source's mark, then its score — without a score
-/// the mark alone (Settings' Order row, a preview of the order).
+/// One rating: the source's mark, then its score as plain text in the
+/// facts line's style — no box (outlined chips in the source's colour were
+/// the look before: they read as stickers). Without a score the mark alone
+/// (Settings' Order row, a preview of the order).
 struct RatingChip: View {
     let provider: MDBListProvider
     var score: String? = nil
+    /// Between one rating and the next, and the status before them.
+    static let spacing: CGFloat = 22
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             RatingMark(provider: provider)
             if let score {
                 Text(score)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
             }
         }
-        // (One height for every chip.)
-        .frame(height: 22)
-        // The mark as far from the left edge as from the top and bottom.
-        .padding(.leading, RatingMark.gap)
-        .padding(.trailing, score == nil ? RatingMark.gap : 10)
-        .padding(.vertical, 4)
-        // The source's own colour, solid, as its mark's (see-through, a
-        // bright picture tinted it; tried: white, as the status badge's).
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(provider.badgeStyle.fill, lineWidth: 1.75)
-        }
+        .frame(height: 30)
     }
 }
 
@@ -1673,10 +1666,8 @@ struct RatingChip: View {
 /// "MC" meant little; Rotten Tomatoes' two in two small lines).
 private struct RatingMark: View {
     let provider: MDBListProvider
-    /// Every mark's height: the chip's inner height less the same gap at
-    /// the chip's left as above and below (`gap`).
+    /// Every mark's height.
     static let size: CGFloat = 18
-    static let gap: CGFloat = (22 - size) / 2 + 4   // the chip's 22 + 4 above and below
     /// The emblems are drawn on a 14 pt grid, scaled up to `size`.
     private static func grid(_ frame: CGSize, _ context: inout GraphicsContext) -> CGSize {
         let k = frame.height / 14
@@ -1705,7 +1696,6 @@ private struct RatingMark: View {
     }
 
     /// The wordmark, dark on its colour (MAL's white on its blue).
-    /// The plate is the chip's outline colour (`badgeStyle`), so they match.
     private func plate(_ name: String, text: Color) -> some View {
         Text(name)
             .font(.system(size: 14, weight: .heavy))

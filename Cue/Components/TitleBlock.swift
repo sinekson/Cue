@@ -280,39 +280,22 @@ final class ModeSwap: ObservableObject {
     static func depthScale(_ p: CGFloat) -> CGFloat { 1 + (depthScale - 1) * p }
 }
 
-/// One badge in the badges row, shaped as a rating chip (`RatingChip`):
-/// the outline off-white (primary), the status on a plate of that colour,
-/// dark, as a rating's wordmark ("ENDED"), then the year as its score
-/// (tried: the whole text in the chip's colour, no plate).
+/// A series' status beside the ratings: a plain word in the facts line's
+/// style ("Ended 2019", "Airing"), no box (an outlined chip with the word
+/// on an off-white plate was the look before: it read as a sticker).
 struct TitleBadge: View {
     let text: String
 
-    private var word: String { text.split(separator: " ").first.map(String.init) ?? text }
-    private var year: String? {
+    private var words: String {
         let parts = text.split(separator: " ", maxSplits: 1)
-        return parts.count > 1 ? String(parts[1]) : nil
+        guard let first = parts.first else { return text }
+        return ([first.capitalized] + parts.dropFirst().map(String.init)).joined(separator: " ")
     }
-    private static let colour = Color(white: FixedFocusText.primary)
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(word)
-                .font(.system(size: 14, weight: .heavy))
-                .foregroundStyle(Color.black)
-                .padding(.horizontal, 5)
-                .frame(height: 18)
-                .background(Self.colour, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-            if let year {
-                Text(year)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
-            }
-        }
-        .frame(height: 22)
-        .padding(.leading, 6)
-        .padding(.trailing, year == nil ? 6 : 10)
-        .padding(.vertical, 4)
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .stroke(Self.colour, lineWidth: 1.75))
+        Text(words)
+            .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
+            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .frame(height: 30)
     }
 }
