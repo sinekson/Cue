@@ -597,6 +597,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         didSet { if !showcaseTrailers.on { showcaseTrailer.rest(on: nil, sound: false) } }
     }
     let showcaseTrailer = StageTrailer()
+    /// A trailer handed into Details: by then Details covers its card.
+    private static let handOverCovered: Double = 1.5
 
     /// Today's Pick: its one card the content's width.
     var spotlightRowIDs: Set<String> = []
@@ -2234,9 +2236,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func select(_ item: MetaItem, rowIndex: Int) {
         // (Back's scroll up running: dropped, as a move.)
         guard !backing else { return }
-        // (A showcase card's trailer stops at the press; into Details with
-        // it playing is for later.)
-        restShowcase(on: nil)
+        // A showcase card's trailer: playing, it goes on into Details
+        // (`perform`); still to come, it stops at the press.
+        if showcaseTrailer.playingTitle != item.id { restShowcase(on: nil) }
         guard settled || ModeSwap.shared.handingOver else {
             heldSelectToken += 1
             let token = heldSelectToken
@@ -2262,6 +2264,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         if !isFeatured(rowIndex), !isContinue(rowIndex), item.type != "collection", let onOpenDetails {
+            // A card playing its trailer: it goes on into Details (the
+            // opening plays it, Details takes it — `StageTrailer.adopt`).
+            // The card lets go of the picture once Details covers it (its
+            // player is Details' now: stopped there, it would leave the card black).
+            if showcaseTrailer.playingTitle == item.id,
+               let carried = showcaseTrailer.handOver(from: (showcaseTrailer.stage as? FixedFocusShowcaseCell)?.screenCard) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.handOverCovered) { [weak self] in
+                    guard let self, self.showcaseTrailer.surface.player === carried else { return }
+                    self.showcaseTrailer.stop()
+                }
+            }
             onOpenDetails(item)
         } else if isFeatured(rowIndex) {
             onSelectFeatured(item)

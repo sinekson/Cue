@@ -279,8 +279,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   no reason line (a reason is
   a badge if anything); after the trailers' 2 s rest the
   trailer plays in the card, badge, logo, facts and shade staying over it (fading them out was tried), the sound
-  rising (the billboard's trailer settings). Later: Select opens the
-  billboard with the trailer playing.
+  rising (the billboard's trailer settings). Select while it plays opens
+  Details with the trailer playing on (handed over as the billboard's,
+  `StageTrailer.carried`), growing out of the card, its corners easing
+  off, into the screen on the opening's zoom (0.55 s), the picture and
+  shade coming in under and over it (`DetailTransitionOverlay.grow`); the
+  large rows' open card and Today's Pick too.
   little). Top 10 (Home "Top 10 Today", Movies, Shows: TMDB's
   trending today, 10 titles, the badge "Top 10" left out there): a grid
   of two lines of five, all ten in view, no scrolling

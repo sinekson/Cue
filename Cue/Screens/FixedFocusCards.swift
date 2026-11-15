@@ -510,6 +510,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         return CGRect(x: x, y: 0, width: width, height: size.height)
     }
 
+    /// The card on screen as it looks now (grown): where a trailer handed
+    /// into Details grows from.
+    var screenCard: CGRect { card.convert(card.bounds, to: nil) }
+
     private func layoutPicture() {
         if feature {
             // Each at its own size from the left: the card's width only clips.

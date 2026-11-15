@@ -123,10 +123,14 @@ final class DetailTransition {
 
     /// `keepsPicture`: Details opens with the picture `item` carries (the
     /// billboard's) — else with TMDB's (`TitlePictures`).
-    /// `trailer`: the billboard's, playing — it plays on over the picture,
-    /// never zooming, into Details' (which takes it, `StageTrailer.adopt`).
+    /// `trailer`: one playing (the billboard's, else a card's handed over —
+    /// `StageTrailer.carried`) — it plays on over the picture, never
+    /// zooming, into Details' (which takes it, `StageTrailer.adopt`).
     func open(_ item: MetaItem, keepsPicture: Bool = false, trailer: AVPlayer? = nil, push: @escaping () -> Void) {
         guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
+        let trailer = trailer ?? StageTrailer.carried(for: item.id)
+        // From a card: its trailer grows out of the card into the screen.
+        let card = trailer == nil ? nil : StageTrailer.carriedFrame(for: item.id)
         CueRows.Memory.shared.opened(item.id)
         let opening = Self.opening(startScale: 1)
         busy = true
@@ -139,6 +143,7 @@ final class DetailTransition {
         // building doesn't touch them).
         let page = window.snapshotView(afterScreenUpdates: false)
         overlay.install(in: window, page: page)
+        if let card, let trailer { overlay.grow(trailer, from: card, Self.pictureSettle * Self.length, Self.zoomInCurve) }
         // Kept: Back dissolves into it at once (`close`).
         if let page { PageFade.shared.keep(page, for: item.id) }
         let watch = FrameWatch()
@@ -171,11 +176,19 @@ final class DetailTransition {
                 overlay.video.player = trailer
                 overlay.video.alpha = trailer == nil ? 0 : 1
                 // The billboard's own shade (Details uses the same).
-                overlay.place(opening, shade: StageArt.shade)
+                overlay.place(opening, shade: StageArt.shade, keepsVideo: card != nil)
                 zoomEnd = CACurrentMediaTime() + Self.pictureSettle * k
                 moves.append(Task {
                     await Self.run {
-                        Self.animate(self.overlay.pictureFrame.layer, "opacity", from: 0, to: 1, Self.pictureFade * k, Self.out)
+                        // (Grown from a card: the frame is up already, the
+                        // picture and shade come in under and over the video.)
+                        if card != nil {
+                            for layer in [self.overlay.picture.layer, self.overlay.shade.layer] {
+                                Self.animate(layer, "opacity", from: 0, to: 1, Self.pictureFade * k, Self.out)
+                            }
+                        } else {
+                            Self.animate(self.overlay.pictureFrame.layer, "opacity", from: 0, to: 1, Self.pictureFade * k, Self.out)
+                        }
                         self.overlay.open(from: opening, Self.pictureSettle * k, Self.zoomInCurve)
                     }
                 })
@@ -961,10 +974,26 @@ final class DetailTransitionOverlay {
     func ring(_ on: Bool) { on ? spinner.startAnimating() : spinner.stopAnimating() }
 
     /// The picture at the opening's start, Home's framing (no animation).
-    func place(_ opening: DetailTransitionOpening, shade image: UIImage?) {
+    func place(_ opening: DetailTransitionOpening, shade image: UIImage?, keepsVideo: Bool = false) {
         shade.image = image
         DetailTransition.place(picture.layer, opening.picture)
-        DetailTransition.place(video.layer, DetailTransition.screen)
+        if !keepsVideo { DetailTransition.place(video.layer, DetailTransition.screen) }
+    }
+
+    /// A card's trailer grown out of the card (`from`, on screen, its
+    /// corners) to the whole screen; the frame shown at once, clear, so the
+    /// page stays round it until the picture comes in under the video.
+    func grow(_ player: AVPlayer, from card: CGRect, _ duration: Double, _ curve: CAMediaTimingFunction) {
+        pictureFrame.backgroundColor = .clear
+        DetailTransition.set(pictureFrame.layer, "opacity", 1)
+        DetailTransition.set(picture.layer, "opacity", 0)
+        DetailTransition.set(shade.layer, "opacity", 0)
+        video.player = player
+        video.alpha = 1
+        video.layer.masksToBounds = true
+        video.layer.cornerCurve = .continuous
+        DetailTransition.move(video.layer, from: card, to: DetailTransition.screen, duration, curve)
+        DetailTransition.animate(video.layer, "cornerRadius", from: Spotlight.cornerRadius, to: 0, duration, curve)
     }
 
     /// The picture at Details' framing (no animation). The video always on
@@ -993,6 +1022,10 @@ final class DetailTransitionOverlay {
         for layer in [pictureFrame.layer, picture.layer, video.layer] { layer.removeAllAnimations() }
         video.player = nil
         video.alpha = 0
+        video.layer.masksToBounds = false
+        video.layer.cornerRadius = 0
+        for layer in [picture.layer, shade.layer] { layer.removeAllAnimations(); layer.opacity = 1 }
+        pictureFrame.backgroundColor = .black
         pictureFrame.layer.mask = nil
         pictureFrame.layer.opacity = 0
         placeOpen()

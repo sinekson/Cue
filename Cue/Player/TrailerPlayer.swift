@@ -740,7 +740,8 @@ final class StageTrailer: ObservableObject {
     private var retried: Set<String> = []
     /// The trailer going on into the next page (Home's billboard → Details):
     /// its player, playing, until that page takes it (`adopt`).
-    private static var carried: (titleID: String, player: AVPlayer, key: String)?
+    /// `from`: a card's place on screen (the opening grows the video out of it).
+    private static var carried: (titleID: String, player: AVPlayer, key: String, from: CGRect?)?
     static let fadeIn: Double = 0.6
     static let fadeOut: Double = 0.35
 
@@ -815,10 +816,10 @@ final class StageTrailer: ObservableObject {
     /// of it. Nil: none playing. Not taken `within` that long (the opening
     /// didn't happen, no billboard on that title): let go.
     @discardableResult
-    func handOver(within wait: Double = 5) -> AVPlayer? {
+    func handOver(within wait: Double = 5, from card: CGRect? = nil) -> AVPlayer? {
         guard playing, let player, let key = youtubeKey, let id = itemID else { return nil }
         let titleID = String(id.split(separator: "#", maxSplits: 1).first ?? "")
-        Self.carried = (titleID, player, key)
+        Self.carried = (titleID, player, key, card)
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
             guard Self.carried?.player === player else { return }
             Self.carried = nil
@@ -855,6 +856,16 @@ final class StageTrailer: ObservableObject {
 
     /// Home handed over `titleID`'s trailer (Details opening on it takes it).
     static func carries(_ titleID: String) -> Bool { carried?.titleID == titleID }
+    /// The player handed over for `titleID`, if it is (the opening plays it on).
+    static func carried(for titleID: String) -> AVPlayer? { carried?.titleID == titleID ? carried?.player : nil }
+    /// The card it was handed over from, on screen (nil: the billboard's).
+    static func carriedFrame(for titleID: String) -> CGRect? { carried?.titleID == titleID ? carried?.from : nil }
+
+    /// The title whose trailer is playing (nil: none).
+    var playingTitle: String? {
+        guard playing, let itemID else { return nil }
+        return String(itemID.split(separator: "#", maxSplits: 1).first ?? "")
+    }
     /// One handed over, not yet taken (Back from Details: Home's billboard).
     static var carrying: Bool { carried != nil }
 
