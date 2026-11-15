@@ -206,19 +206,17 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 /// A Top 10's card is the same, small (`rankedCard`): its place in the
 /// top-left corner over a soft shade, a smaller logo, a slim line (genre,
 /// year), no badge and no trailer.
-/// A large row's card (`feature`): a poster that opens into a wide card
-/// from its middle (`setOpen`; the first card from its left): both
-/// pictures at their own sizes, centred on the poster, only the card's
-/// width changing (a clip, nothing stretched), the backdrop and words
-/// fading in over the poster as it opens, out as it closes.
+/// A large row's card (`feature`): a poster that opens into a wide card at
+/// the spot (`setOpen`): both pictures pinned left at their own sizes, only
+/// the card's width changing (a clip, nothing stretched), the poster fading
+/// off the backdrop as it opens, back as it closes.
 final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationItem, TrailerHost {
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private(set) var item: MetaItem?
     private let card = UIView()
     /// What the card shows at its open size (a large row's: pictures, shade,
-    /// words), placed in the card by where it opens from
-    /// (`FixedFocusFeatureLayout.anchor`): the card's width only clips it.
+    /// words), from the card's left: the card's width only clips it.
     private let stage = UIView()
     private let picture = UIImageView()
     /// A large row's backdrop, over the poster while open.
@@ -512,18 +510,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         return CGRect(x: x, y: 0, width: width, height: size.height)
     }
 
-    /// A large row's poster in the stage: where the open card holds it.
-    private var posterX: CGFloat {
-        (FixedFocusFeatureLayout.large.width - FixedFocusFeatureLayout.poster.width)
-            * FixedFocusFeatureLayout.anchor(itemIndex)
-    }
-
     private func layoutPicture() {
         if feature {
-            // Each at its own size, the poster where the open card holds it
-            // (its middle; the first card's left): the card's width only clips.
+            // Each at its own size from the left: the card's width only clips.
             picture.frame = fill(picture.image, art: art, in: FixedFocusFeatureLayout.poster)
-                .offsetBy(dx: posterX, dy: 0)
             backdrop.frame = fill(backdrop.image, art: nil, in: FixedFocusFeatureLayout.large)
             trailerSurface?.frame = CGRect(origin: .zero, size: FixedFocusFeatureLayout.large)
         } else {
@@ -540,11 +530,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         outline.center = card.center
         outline.layer.borderWidth = FixedFocusRing.width
         outline.layer.borderColor = FixedFocusRing.color.cgColor
-        // A large row's stage at the open size, placed by where the card
-        // opens from: as it opens its edges move out round what it shows.
+        // A large row's stage at the open size, from the left: the card's
+        // width clips it, nothing moves inside it.
         let face = feature ? FixedFocusFeatureLayout.large : bounds.size
-        let anchor = feature ? FixedFocusFeatureLayout.anchor(itemIndex) : 0
-        stage.frame = CGRect(x: (bounds.width - face.width) * anchor, y: 0, width: face.width, height: face.height)
+        stage.frame = CGRect(origin: .zero, size: face)
         layoutPicture()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -552,8 +541,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         CATransaction.commit()
         edge.image = FixedFocusCardEdge.rim
         edge.frame = card.bounds
-        loadingCard.frame = feature ? CGRect(origin: CGPoint(x: posterX, y: 0), size: FixedFocusFeatureLayout.poster)
-            : card.bounds
+        loadingCard.frame = feature ? CGRect(origin: .zero, size: FixedFocusFeatureLayout.poster) : card.bounds
         words.frame = CGRect(origin: .zero, size: face)
         // From the foot up: the facts, the logo (or the name); the badges top left.
         corner.frame = CGRect(origin: .zero, size: Self.cornerShade.size)

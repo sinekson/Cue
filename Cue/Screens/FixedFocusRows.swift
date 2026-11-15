@@ -608,8 +608,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func isShowcase(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && showcaseRowIDs.contains(rows[rowIndex].id)
     }
-    /// Poster rows as large rows (Home): posters, the focused one open
-    /// where it is (`FixedFocusFeatureLayout`).
+    /// Poster rows as large landscape rows (Home): the focused card large
+    /// at the spot, the rest small landscape cards (`FixedFocusFeatureLayout`).
     var featureRows = false
 
     func isFeature(_ rowIndex: Int) -> Bool {
@@ -4057,7 +4057,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let pitch = card + gap
         // A Top 10's grid shows all its cards: never moves.
         if controller?.isRanked(rowIndex) == true { return 0 }
-        if controller?.isFeature(rowIndex) == true { return featureOffset(focusing: index, count: count) }
+        // A large landscape row: the focused card large at the spot.
+        if controller?.isFeature(rowIndex) == true { return featureLayout.offset(for: index) }
         // Focus stays in place (`FixedFocusRows.anchoredRowIDs`): the
         // focused card always at the first card's spot — to the last one,
         // the row's end left open.
@@ -4078,36 +4079,13 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let end = max(0, content - 1920)
         return min(FixedFocusMetrics.inset + CGFloat(windowStart) * pitch - (space.minX + edge), end)
     }
-
-    /// A large row's window: the same rule by the cards' real widths — the
-    /// focused card measured open (880) whether the row is open or not, so
-    /// coming back in opens it where it is, no slide. Focus moves across
-    /// the posters until the open card would pass the right edge's sliver,
-    /// then the row moves a poster a press; once moved, a sliver of the
-    /// card before at the left.
-    private func featureOffset(focusing index: Int, count: Int) -> CGFloat {
-        guard count > 0 else { return 0 }
-        let gap = FixedFocusMetrics.gap, sliver = FixedFocusMetrics.destinationSliver
-        let over = FixedFocusStripLayout.overscan
-        // The cards' places on screen at offset 0, the focused one open.
-        let place = { (i: Int) in self.featureLayout.frame(i, focused: index, open: true).offsetBy(dx: -over, dy: 0) }
-        // Card `first` shown first in full, a sliver of the one before.
-        let offset = { (first: Int) in place(first).minX - (sliver + gap) }
-        if index < windowStart { windowStart = index }
-        while windowStart < index, place(index).maxX - offset(windowStart) > 1920 - gap - sliver {
-            windowStart += 1
-        }
-        guard windowStart > 0 else { return 0 }
-        let end = place(count - 1).maxX + FixedFocusMetrics.inset - 1920
-        return min(offset(windowStart), max(0, end))
-    }
 }
 
-/// A large row (Home's browsing rows): portrait posters, moving focus. In
-/// the focused row the focused card is open where it is, a wide card as
-/// tall as a poster (`featureCard`), the posters after it moved aside; the
-/// row scrolls by `featureOffset`'s window. A row out of focus is all
-/// posters.
+/// A large row (Home's browsing rows): portrait posters, focus held at
+/// the spot. In the focused row the focused card is open there, a wide card
+/// as tall as a poster (`featureCard`, its right edge near the screen's
+/// middle); the posters after it beside it, the ones before gone out at the
+/// left. A row out of focus is all posters, its card still at the spot.
 /// A card's frame follows from where it is against the focused one and
 /// whether the row is open, nothing else: a move changes `focused` or
 /// `open`, and every card goes to its new frame on one spring. The row's
@@ -4121,30 +4099,22 @@ final class FixedFocusFeatureLayout: UICollectionViewLayout {
     private var frames: [CGRect] = []
     private var width: CGFloat = 0
 
-    /// Where in its growth a card opens from: its centre (0.5), the posters
-    /// before and after moving apart evenly; the first card from its left
-    /// (0), never past the row's inset.
-    static func anchor(_ index: Int) -> CGFloat { index == 0 ? 0 : 0.5 }
-
-    /// Card `index`'s frame with `focused` focused, the row open or not.
-    func frame(_ index: Int, focused: Int, open: Bool) -> CGRect {
-        let grow = Self.large.width - Self.poster.width
-        let x = left + CGFloat(index) * (Self.poster.width + FixedFocusMetrics.gap)
-        guard open else { return CGRect(origin: CGPoint(x: x, y: 0), size: Self.poster) }
-        let anchor = Self.anchor(focused)
-        if index == focused { return CGRect(origin: CGPoint(x: x - grow * anchor, y: 0), size: Self.large) }
-        let shift = index < focused ? -grow * anchor : grow * (1 - anchor)
-        return CGRect(origin: CGPoint(x: x + shift, y: 0), size: Self.poster)
-    }
+    /// The offset that puts card `index` at the spot (open or not).
+    func offset(for index: Int) -> CGFloat { CGFloat(index) * (Self.poster.width + FixedFocusMetrics.gap) }
 
     override func prepare() {
         super.prepare()
         guard let cv = collectionView else { return }
         let count = cv.numberOfSections > 0 ? cv.numberOfItems(inSection: 0) : 0
-        frames = (0..<count).map { frame($0, focused: focused, open: open) }
-        // Room for the last card open.
-        width = 2 * left + CGFloat(count) * (Self.poster.width + FixedFocusMetrics.gap) - FixedFocusMetrics.gap
-            + Self.large.width - Self.poster.width
+        let gap = FixedFocusMetrics.gap
+        var x = left
+        frames = (0..<count).map { index in
+            let size = open && index == focused ? Self.large : Self.poster
+            defer { x += size.width + gap }
+            return CGRect(origin: CGPoint(x: x, y: 0), size: size)
+        }
+        // Room for the last card open at the spot.
+        width = x - gap + left + Self.large.width - Self.poster.width
     }
 
     override var collectionViewContentSize: CGSize {
