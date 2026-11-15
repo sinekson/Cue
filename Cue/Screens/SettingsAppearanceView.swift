@@ -9,7 +9,7 @@ struct AppearanceSettingsDetail: View {
     var body: some View {
         SettingsPage(title: SettingsCategory.appearance.title) {
             SettingsSection {
-                SettingsLinkRow(title: "Background", value: background.shown?.name ?? "Bands") {
+                SettingsLinkRow(title: "Background", value: background.shown?.name ?? "Grey") {
                     BackgroundPage()
                 }
                 SettingsOptionsRow(
@@ -39,7 +39,7 @@ private struct BackgroundPage: View {
 
     var body: some View {
         SettingsPage(title: "Background",
-                     subtitle: "A picture from a title on Home, changing with the time of day: lighter by day, "
+                     subtitle: "A title on Home's colours, in a layout of their own, changing with the time of day: lighter by day, "
                         + "darkest at night. To use a title's own, hold its card and choose Use as Background; "
                         + "it stays until the next change.") {
             SettingsSection {
@@ -50,7 +50,7 @@ private struct BackgroundPage: View {
             }
             SettingsSection(title: "Now") {
                 VStack(spacing: 0) {
-                    SettingsInfoRow(title: background.shown?.name ?? "Bands", value: reason)
+                    SettingsInfoRow(title: background.shown?.name ?? "Grey", value: reason)
                 }
             }
         }

@@ -599,18 +599,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   searches and the titles opened from Search. Playback scratch
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
-  one Home title's TMDB backdrop, blurred as Details', app-wide, still.
+  one Home title's TMDB backdrop as its colours: up to four main ones
+  (k-means), the darkest the base, the rest soft pools in a random layout
+  of their own (tvOS's way; seeded by the picture, so it draws the same
+  again), eight across the width, every third the base's colour for dark
+  bands; dimmed as Details', no colour past 0.40, grained, app-wide,
+  still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
+  too busy at times, and with it the hue-runs rule went).
   Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
-  picture's mean light ≥ 0.14, its brightest 5 % ≤ 0.40, two hue runs
-  holding ≥ 95 % of the colour (busy rainbows like One Piece out). Passing
+  picture's mean light ≥ 0.14. Passing
   pictures split into thirds by light: day (7–17) the light third, evening
   (17–21) the middle, night (21–7) the dark. Changed only at launch, or on
   coming back when the time of day changed or 4 h passed; never one of the
-  last 7; drawn ahead, one per time of day. Bands (`BandsPicture`) only
+  last 7; drawn ahead, one per time of day. Grey pools (`BandsPicture`) only
   until the first scoring. Settings → Appearance → Background: what's up
   and why, Pick Another. A card's hold menu has Use as Background: that
-  title's picture (any title; a bright spot dimmed to the rule) until the
-  next change.
+  title's colours (any title) until the next change.
   (Dynamic, the focused title's colours, and the title's blurred picture
   behind the rows were too much going on.) Details' dim for bright pictures
   reaches 0.28 under it (`StageArt.brightestBelow`; 0.50 never took).
