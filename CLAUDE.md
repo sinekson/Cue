@@ -403,20 +403,30 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Watching "S1:E5" over its bar.
   **Large rows** (Home's browsing rows, `FixedFocusFeatureLayout` at the
   end of `FixedFocusRows.swift`, `featureRows`): posters (`featurePoster`,
-  330 × 495), focus held at the first card's spot; in the focused row the
-  focused card open there as a wide card as tall as a poster
-  (`featureCard`, 880 × 495, its right edge near the screen's middle;
+  330 × 495), moving focus: in the focused row the focused card open
+  where it is as a wide card as tall as a poster (`featureCard`, 880 × 495;
   badges, logo, facts on it; grown as every card (level with the posters, only outline and shadow, was hard to see), pressed and held as every card; the row's name
-  steps up by the growth, as over every grown card: `focusLift`), the posters after it beside it, the ones
-  before gone out at the left (a sliver peeks); rows out of focus all
-  posters, their card still at the spot. A card's frame follows only
+  steps up by the growth, as over every grown card: `focusLift`), the posters after it moved aside; the
+  row scrolls by the other rows' window, measured by the real widths (the
+  focused card always counted open, so coming back in opens it where it
+  is, no slide): focus moves across about three spots, then the row a
+  poster a press, a sliver at either side once moved
+  (`featureOffset`; focus held at the first card's spot, the ones before
+  out at the left, was before); rows out of focus all posters. A card's frame follows only
   from the focused index and whether the row has focus: Left/Right
   changes one, Up/Down the other, every card to its new frame on one
   spring; the row's height never changes (no box, no hand-over, no masks,
-  no stretch). Opening: one cell holding poster and backdrop, each pinned
-  left at its own size, only the card's width clipping; the backdrop,
-  shade and words fade in over the first 0.25 s; closing, the words at
-  once, the backdrop over the last part (`setOpen`, Core Animation fades).
+  no stretch). Opening: from the card's middle, the posters before and after
+  moving apart evenly (275 pt each way; the first card from its left,
+  never past the inset; growing right only, the posters after pushed
+  550, was before) (`FixedFocusFeatureLayout.anchor`); one cell holding
+  poster and backdrop at their own sizes, centred on the poster, only
+  the card's width clipping (`stage`); the backdrop
+  there at once under the poster, the poster (once the backdrop is in; growing 3 % as it goes, back as it returns),
+  shade and words fading over the first 0.25 s; closing, the words at
+  once, the poster back over the last part, the backdrop gone after it:
+  the edges only ever uncover a picture (the backdrop fading in over the
+  card's grey showed a dark card widening ahead of it) (`setOpen`, Core Animation fades).
   After the trailers' 2 s rest the open card plays its trailer, as the
   showcase cards (the billboard's trailer settings).
   Backdrops load for the focused card and the next two only. Focus
