@@ -1107,20 +1107,6 @@ struct FixedFocusMove {
 
 final class FixedFocusPosterCell: UICollectionViewCell {
 
-    // Select pressed / held: the box (which shows this card) sinks a little.
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { rowCell?.setBoxPressed(true) }
-        super.pressesBegan(presses, with: event)
-    }
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { rowCell?.setBoxPressed(false) }
-        super.pressesEnded(presses, with: event)
-    }
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { rowCell?.setBoxPressed(false) }
-        super.pressesCancelled(presses, with: event)
-    }
-
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
     private let poster = UIImageView()
@@ -1218,9 +1204,6 @@ final class FixedFocusPosterCell: UICollectionViewCell {
                      width: posterWidth, height: cardHeight)
         backdrop.frame = shaped ? contentView.bounds
             : CGRect(x: 0, y: 0, width: landscapeWidth, height: cardHeight)
-        // Grown, the box's picture: at the box's zoom.
-        backdrop.layer.contentsRect = landscape ? CGRect(x: 0, y: 0, width: 1, height: 1)
-            : FixedFocusBoxView.zoomRect
         shade.frame = backdrop.bounds
         logo.room = FixedFocusMetrics.logoRoom(width: landscapeWidth, height: cardHeight)
         facts.frame = FixedFocusMetrics.factsFrame(width: landscapeWidth, height: cardHeight)
@@ -1348,34 +1331,24 @@ final class FixedFocusPosterCell: UICollectionViewCell {
     private var concealed = false
 
     private func applyAlpha() {
-        contentView.alpha = concealed || underPressedBox ? 0 : past ? FixedFocusMetrics.previousAlpha : 1
+        contentView.alpha = concealed ? 0 : past ? FixedFocusMetrics.previousAlpha : 1
     }
 
-    /// Showing the box itself (grown, not under the fixed box).
+    /// Grown: showing the wide card.
     private var showsBox = false
-
-    /// Under the pressed fixed box (it shrinks a little): hidden, or its
-    /// edges showed around the box.
-    func setUnderPressedBox(_ under: Bool) {
-        underPressedBox = under
-        applyAlpha()
-    }
-    private var underPressedBox = false
 
     /// The card's rim (see `FixedFocusCardEdge`).
     private let edge = UIImageView()
     private let outlineLight = UIImageView()
 
-    /// Grown: the backdrop shows — unless the fixed box shows it
-    /// (`contentHidden`), then the cell is just a box-wide gap.
-    func setGrown(_ grown: Bool, contentHidden: Bool) {
+    /// Grown: the backdrop shows.
+    func setGrown(_ grown: Bool) {
         if invisible { return }
         if landscape {
-            // Continue Watching: always the landscape card; the outline only
-            // while it shows itself (under the fixed box: none).
+            // Always the landscape card.
             poster.alpha = 0
             backdrop.alpha = 1
-            setOutline(grown && !contentHidden)
+            setOutline(grown)
             return
         }
         if grown, let item, backdropFor != item.id {
@@ -1390,10 +1363,7 @@ final class FixedFocusPosterCell: UICollectionViewCell {
             })
             FixedFocusImages.load(item.logo, into: logo, maxDimension: PictureSize.cardLogo)
         }
-        // Under the fixed box (contentHidden) the poster simply stays: the
-        // box covers it — no fade, only movement. It only gives way to the
-        // backdrop while the cell itself shows the box (Up/Down opening).
-        let shows = grown && !contentHidden
+        let shows = grown
         let changes = shows != showsBox
         if changes { showsBox = shows; updateWaiting(); setNeedsLayout() }
         let move = rowCell?.move
@@ -1566,13 +1536,9 @@ final class FixedFocusStripLayout: UICollectionViewLayout {
         height = cardHeight()
         let pitch = card + FixedFocusMetrics.gap
         let extra = FixedFocusMetrics.boxWidth - card
-        // A lifted box overhangs its spot: its neighbours step
-        // aside by as much, keeping the usual gap.
-        let overhang = FixedFocusMetrics.boxWidth * (FixedFocusMetrics.boxScale - 1) / 2
         frames = (0..<count).map { i in
             var x = Self.overscan + FixedFocusMetrics.inset + CGFloat(i) * pitch
-            if let wide, i > wide { x += extra + overhang }
-            if let wide, i < wide { x -= overhang }
+            if let wide, i > wide { x += extra }
             let width = i == wide ? FixedFocusMetrics.boxWidth : card
             return CGRect(x: x, y: 0, width: width, height: height)
         }
@@ -1597,15 +1563,6 @@ final class FixedFocusStripLayout: UICollectionViewLayout {
     private func attributes(_ i: Int) -> UICollectionViewLayoutAttributes {
         let a = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: i, section: 0))
         a.frame = frames[i]
-        // The grown title at the box's size (lifted): with its
-        // size and place, so opening into the box and growing are one move.
-        if i == wideIndex() {
-            let scale = FixedFocusMetrics.boxScale
-            if scale != 1 {
-                a.transform = CGAffineTransform(scaleX: scale, y: scale)
-                a.zIndex = 1
-            }
-        }
         return a
     }
 }

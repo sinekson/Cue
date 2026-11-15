@@ -50,8 +50,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// …and how much of the rows above and below shows.
     var aboveVisible: CGFloat = FixedFocusMetrics.aboveVisible
     var belowVisible: CGFloat = FixedFocusMetrics.belowVisible
-    /// The focus outline only while focus is in the rows.
-    var ringOnlyWithFocus = false
     /// New content starts over: the first row, each row's first title
     /// (Search: a new query). Home keeps its places.
     var startsOverOnChange = false
@@ -248,7 +246,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rowTop = rowTop
         controller.aboveVisible = aboveVisible
         controller.belowVisible = belowVisible
-        controller.ringOnlyWithFocus = ringOnlyWithFocus
         controller.startsOverOnChange = startsOverOnChange
         controller.featuredRowID = featuredRowID
         // Another tab in front: out of the focus engine's way (a
@@ -401,9 +398,6 @@ enum FixedFocusMetrics {
     static let heldGrowth: CGFloat = 0.03
     /// How long the card takes to grow to that, the dim's hole with it.
     static let heldDuration: Double = 0.28
-    /// The fixed box's own size: the portrait posters' height, its left edge
-    /// on the row name's (not grown: 4 % larger was tried).
-    static let boxScale: CGFloat = 1
     /// Their focus: tvOS's lift (tilt, sheen) — off: Cue's own outline, as
     /// on the other rows.
     static let destinationSystemLift = false
@@ -546,7 +540,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var destinationRowIDs: Set<String> = [] {
         didSet {
             guard destinationRowIDs != oldValue, isViewLoaded else { return }
-            if isDestination(focusedRow) { box.alpha = 0 }
             outer.reloadData()
             outer.collectionViewLayout.invalidateLayout()
             applyDimming()
@@ -687,9 +680,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// How much of the rows above and below the focused one shows.
     var aboveVisible: CGFloat = FixedFocusMetrics.aboveVisible
     var belowVisible: CGFloat = FixedFocusMetrics.belowVisible
-    /// The focus outline only while focus is in the rows (Search; Home
-    /// keeps it while you're up in the top bar).
-    var ringOnlyWithFocus = false
     /// Captions under the cards: everywhere but Home, where only Continue
     /// Watching (the episode's title) and Saved for Later (when it was
     /// added) have them.
@@ -717,15 +707,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             : FixedFocusMetrics.height
     }
 
-    /// The box, on screen, for the focused row's card size (under its name:
-    /// lower for a collection, whose panel's top is the row's anchor).
-    private var boxFrame: CGRect {
-        let height = cardHeight(focusedRow)
-        let anchorOffset = isPanel(focusedRow) ? FixedFocusMetrics.panelReach.above : 0
-        let width = FixedFocusMetrics.landscapeWidth(height: height)
-        return CGRect(x: FixedFocusMetrics.inset, y: rowTop + rowDrop + anchorOffset + FixedFocusMetrics.titleHeight,
-                      width: width, height: height)
-    }
     private(set) var rows: [HomeRow] = []
     /// Each row's title at the spot.
     private(set) var selected: [String: Int] = [:]
@@ -738,9 +719,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var outer: UICollectionView!
     /// Reuse identifiers registered so far (one per catalog).
     private var registeredRows = Set<String>()
-    /// THE FIXED BOX: on Left/Right it never moves — only its content
-    /// changes; the posters slide in behind it.
-    private let box = FixedFocusBoxView()
     private var hasFocus = false
     /// See `FixedFocusRows.externalBillboard`. (Focus is "in" the billboard
     /// from the start: Down from its buttons is the billboard's scroll.)
@@ -767,8 +745,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-    /// The fixed box shows over this row's grown card.
-    func boxCovers(_ rowIndex: Int) -> Bool { box.alpha == 1 && rowIndex == focusedRow }
     var billboardFocusOutside: Bool { externalBillboard && isFeatured(focusedRow) && passingUp == nil }
     /// Back's way up (`passUp`): the rows go up to the billboard, focus
     /// held on its hidden cards (never its buttons), then handed on.
@@ -858,12 +834,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 } else {
                     cell.configure(rowIndex: cell.rowIndex, controller: self)
                 }
-                if cell.rowIndex == focusedRow, box.alpha > 0 {
-                    let index = selected[new.id] ?? 0
-                    if new.items.indices.contains(index) {
-                        box.show(new.items[index], badges: new.badges(for: new.items[index]), animated: false)
-                    }
-                }
             }
         }
         if !changed, featuredChanged, let featured, isViewLoaded {
@@ -894,15 +864,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         applyDimming()
         revealNextNameIfNew()
         startOnCollectionIfAsked()
-        // The box shows the focused row's title as it is now.
-        if box.alpha > 0, rows.indices.contains(focusedRow) {
-            let row = rows[focusedRow]
-            let index = selected[row.id] ?? 0
-            if row.items.indices.contains(index) {
-                let item = row.items[index]
-                box.show(item, badges: row.badges(for: item), animated: false)
-            }
-        }
     }
 
     /// Dev (`-homeFocusCollection`): start on the first collection row —
@@ -925,7 +886,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             applyDimming()
             outer.collectionViewLayout.invalidateLayout()
             outer.layoutIfNeeded()
-            place(box, boxFrame)
             pendingFocusRow = index
             setNeedsFocusUpdate()
             updateFocusIfNeeded()
@@ -1005,13 +965,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         outer.dataSource = self
         outer.delegate = self
         root.addSubview(outer)
-        place(box, FixedFocusMetrics.boxFrame)
-        box.alpha = 0
-        box.isUserInteractionEnabled = false
-        root.addSubview(box)
         // Along the bottom edge, below the billboard's (invisible) cells.
         root.addLayoutGuide(belowGuide)
-        observeHeldSteps()
         observeBadges()
         NSLayoutConstraint.activate([
             belowGuide.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -1038,10 +993,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             host.view.bounds = CGRect(x: 0, y: 0, width: view.bounds.width, height: pageHeaderHeight)
             host.view.center = CGPoint(x: view.bounds.midX, y: pageHeaderHeight / 2)
             UIView.performWithoutAnimation { applyPageHeaderPosition() }
-        }
-        place(box, boxFrame)
-        if !boxPressed, !boxHeld {
-            UIView.performWithoutAnimation { box.applyScale(FixedFocusMetrics.boxScale) }
         }
     }
 
@@ -1115,11 +1066,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if billboardFocusOutside, let host = controlsHost, next.isDescendant(of: host.view) {
                 onDepth(0)
             }
-            // (Into a hold menu: the card keeps its look.)
-            if ringOnlyWithFocus, !HoldMenu.shared.isOpen { box.ringHidden = true }
             return
         }
-        box.ringHidden = false
         if let button = context.nextFocusedView as? FixedFocusHeaderButton, let rowCell = button.rowCell,
            rows.indices.contains(rowCell.rowIndex) {
             onHeaderFocus(rows[rowCell.rowIndex].id, button.index)
@@ -1158,30 +1106,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // from the top bar, back from a page): nothing moved — no move to
         // play (it replayed the box's slide, and the next press waited on it).
         let fromOutside = context.previouslyFocusedView.map { !$0.isDescendant(of: outer) } ?? true
-        if fromOutside, hasFocus, rowIndex == focusedRow, itemIndex == selected[row.id],
-           box.alpha == 1 || featured {
+        if fromOutside, hasFocus, rowIndex == focusedRow, itemIndex == selected[row.id], featured {
             return
         }
         let rowChanged = rowIndex != focusedRow || !hasFocus
-        // An opening into a fixed-box row: Left/Right waits for it to land.
-        if rowChanged, !featured, !isDestination(rowIndex) { openingRow = rowIndex }
-        // Up/Down is the "opening": the box steps aside, the new row's title
-        // grows into it, the old one shrinks back to a poster.
         let direction: CGFloat = rowChanged
             ? (rowIndex > focusedRow ? 1 : -1)
             : (itemIndex >= (selected[row.id] ?? 0) ? 1 : -1)
         let oldRowCell = rowChanged
             ? outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell : nil
-        if rowChanged, box.alpha == 1 {
-            // Opening: the old row's cell first takes on the box's exact
-            // look (still the focused row here) — the box can step aside
-            // without anything changing — and then shrinks, animated.
-            oldRowCell?.contentHidden = false
-            // Commit that look NOW: the, animation below continues from what's
-            // on screen (beginFromCurrentState), and without this it started
-            // from the plain poster — the old box was instantly small.
-            CATransaction.flush()
-        }
         // Between the billboard and the rows: ONE SCROLL — the picture goes
         // up a whole screen while the rows rise from just below the screen,
         // where they wait under the billboard (no jump first).
@@ -1195,11 +1128,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if billboardScroll, featured, rigidRest == nil { belowAway = true }
         selected[row.id] = itemIndex
         focusedRow = rowIndex
-        // The row's card size (a change of row hands the box over to the
-        // cells first, so it never visibly resizes).
-        if rowChanged {
-            UIView.performWithoutAnimation { place(box, boxFrame); box.layoutIfNeeded() }
-        }
 
         if featured, let handOn = passingUp {
             // Back's way up: the top bar takes it from here.
@@ -1213,40 +1141,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // was the default.)
             focusBillboardOutside()
         }
-        // This Left/Right's cut-out (`FixedFocusRowCell.cutOut`), gone once
-        // it settles unless a later one took over.
-        var cut: Int?
-        if featured {
-            // The billboard has no box (coming up from a catalog, that row's
-            // cell already took over its look above and shrinks back).
-            box.alpha = 0
-        } else if rowChanged {
-            // The opening: the grown cell shows its own content.
-            box.alpha = 0
-            rowCell.contentHidden = false
-        } else if box.alpha < 1 {
-            // Left/Right while an opening is still running: the CELLS carry
-            // it — the old one shrinks, the next grows, in this step's move,
-            // riding the row's rise. (The box taking over at once sat in its
-            // final place, full grown, while the row still rose under it: the
-            // card seemed to grow at once and slide in diagonally.) The box
-            // takes over once every move has settled (see `handOverToBox`).
-            rowCell.contentHidden = false
-        } else {
-            // The box stays; its content changes with the row's move
-            // (`FixedFocusBoxView.show`).
-            rowCell.contentHidden = true
-            oldRowCell?.contentHidden = true
-            if !rowChanged {
-                cutToken += 1
-                cut = cutToken
-                cutRow?.cutOut(nil)
-                cutRow = rowCell
-                rowCell.cutOut(box.convert(box.bounds, to: rowCell),
-                               radius: Spotlight.cornerRadius * FixedFocusMetrics.boxScale)
-            }
-            box.show(item, badges: row.badges(for: item), animated: true, direction: direction, vertical: rowChanged)
-        }
         // Up/Down moves much more than a step: its own, longer spring.
         let duration = billboardScroll ? FixedFocusMotion.billboardScroll
             : rowChanged ? Motion.verticalDuration : Motion.moveDuration
@@ -1259,7 +1153,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let move = {
             let id = self.beginMove(FixedFocusMove(
                 vertical: rowChanged && hadFocus ? (direction: direction, duration: duration) : nil,
-                reshaping: (rowChanged && hadFocus) || self.box.alpha < 1 ? duration : nil))
+                reshaping: rowChanged && hadFocus ? duration : nil))
             defer { self.move = nil }
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
@@ -1271,7 +1165,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 self.outer.layoutIfNeeded()
                 self.applyPageHeaderPosition()
             } completion: { _ in
-                if let cut, cut == self.cutToken { self.cutRow?.cutOut(nil); self.cutRow = nil }
                 if billboardScroll, featured, self.focusedRow == rowIndex {
                     // Back on the billboard: the rows (off the screen) return to
                     // wait, hidden, at the bottom edge.
@@ -1283,11 +1176,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                     }
                 }
                 guard self.endMove(id) else { return }
-                if !rowChanged, !self.isMoving { self.runPendingStep() }
                 if !self.isMoving { self.landBack() }
                 self.runHeldSelect()
-                guard !featured, self.focusedRow == rowIndex else { return }
-                self.handOverToBox(rowCell, row: row, rowIndex: rowIndex)
             }
             if billboardScroll { self.liftNextTitle(down: !featured) }
         }
@@ -1314,12 +1204,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
     /// False for a move already counted done (hurried).
     private func endMove(_ id: Int) -> Bool { liveMoves.remove(id) != nil }
-    private var cutToken = 0
-    private weak var cutRow: FixedFocusRowCell?
-    /// A fixed-box row opening (Up/Down into it), until the box has it.
-    private var openingRow: Int?
-    /// Left/Right presses held during an opening (+ right, − left).
-    private var pendingSteps = 0
     /// What focus can reach from here, decoded ahead at the size it shows
     /// at (`PicturePreloader`), so it's there from the first frame:
     /// Left/Right's next titles (the box's picture and logo, or on the
@@ -1357,8 +1241,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         TitleExtras.shared.want(extras)
     }
 
-    private var hurried = false
-    /// The opening's rest in this much time, from where it is now.
+    /// A hurried move's rest in this much time, from where it is now.
     static let hurryDuration: Double = 0.10
 
     /// A held press (its move failed: `shouldUpdateFocus` said no) counts
@@ -1377,47 +1260,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func refreshBadges() {
         guard isViewLoaded else { return }
         for case let cell as FixedFocusRowCell in outer.visibleCells { cell.refreshArt() }
-        guard box.alpha > 0, rows.indices.contains(focusedRow) else { return }
-        let row = rows[focusedRow]
-        let index = selected[row.id] ?? 0
-        guard row.items.indices.contains(index) else { return }
-        let item = row.items[index]
-        box.show(item, badges: row.badges(for: item), animated: false)
-    }
-
-    private var heldStepToken: NSObjectProtocol?
-    private func observeHeldSteps() {
-        guard heldStepToken == nil else { return }
-        heldStepToken = NotificationCenter.default.addObserver(
-            forName: UIFocusSystem.movementDidFailNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
-            else { return }
-            MainActor.assumeIsolated {
-                // (Back's scroll drops its presses.)
-                guard let self, !self.backing, let opening = self.openingRow,
-                      let from = ctx.previouslyFocusedItem as? FixedFocusPosterCell,
-                      from.rowCell?.rowIndex == opening, from.isDescendant(of: self.outer) else { return }
-                if ctx.focusHeading.contains(.left) { self.pendingSteps -= 1 }
-                if ctx.focusHeading.contains(.right) { self.pendingSteps += 1 }
-                self.hurryOpening(opening)
-            }
-        }
-    }
-
-    /// Finish the running opening quickly, from where it is (once per
-    /// opening): every animation running in the rows is replaced by a short
-    /// one from what's on screen to its end (re-animating to the same target
-    /// doesn't retarget a spring), and the opening counts as done at once.
-    private func hurryOpening(_ rowIndex: Int) {
-        guard !hurried, openingRow == rowIndex,
-              let rowCell = outer.cellForItem(at: IndexPath(item: rowIndex, section: 0)) as? FixedFocusRowCell
-        else { return }
-        hurried = true
-        hurryMoves {
-            guard self.focusedRow == rowIndex, self.openingRow == rowIndex else { return }
-            self.handOverToBox(rowCell, row: self.rows[rowIndex], rowIndex: rowIndex)
-        }
     }
 
     /// Every animation running in the rows replaced by a short one from
@@ -1468,11 +1310,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         for rows in all.allObjects where rows.isMoving && rows.view.window != nil {
-            if let opening = rows.openingRow, opening == rows.focusedRow {
-                rows.hurryOpening(opening)
-            } else {
-                rows.hurryMoves {}
-            }
+            rows.hurryMoves {}
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + hurryDuration) {
             CATransaction.flush()
@@ -1504,46 +1342,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         waiting.forEach { $0() }
     }
 
-    /// One held Left/Right, as a normal step (the box has the row now).
-    private func runPendingStep() {
-        guard openingRow == nil, !isMoving, pendingSteps != 0,
-              rows.indices.contains(focusedRow),
-              let rowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
-        else { return }
-        let step = pendingSteps > 0 ? 1 : -1
-        pendingSteps -= step
-        let target = (selected[rows[focusedRow].id] ?? 0) + step
-        guard rows[focusedRow].items.indices.contains(target), let cell = rowCell.posterCell(at: target),
-              let system = UIFocusSystem.focusSystem(for: view) else { pendingSteps = 0; return }
-        // (Through this controller's preferred focus: a request straight to
-        // a card in a strip is ignored.)
-        pendingFocusCell = cell
-        system.requestFocusUpdate(to: self)
-        system.updateFocusIfNeeded()
-    }
     private var pendingFocusCell: UIView?
-
-    /// After an opening, once NOTHING moves any more (a Left/Right during it
-    /// keeps the cells carrying it): the box takes over — identical look,
-    /// same place, no jump — on the title focused now.
-    private func handOverToBox(_ rowCell: FixedFocusRowCell, row: HomeRow, rowIndex: Int) {
-        guard !isMoving else { return }
-        if box.alpha < 1, let current = selected[row.id], row.items.indices.contains(current) {
-            let now = row.items[current]
-            // The grown cell's picture and logo, as they are: the box's own
-            // copy (the same decode) is often gone from memory by a revisit
-            // — back from disk a few frames late, its see-through
-            // placeholder flashed the cell's poster, the logo popped in.
-            let cell = rowCell.posterCell(at: current) as? FixedFocusPosterCell
-            box.show(now, badges: row.badges(for: now), animated: false, pictures: cell?.pictures(for: now))
-            box.alpha = 1
-            rowCell.contentHidden = true
-        }
-        openingRow = nil
-        hurried = false
-        // Held presses: now, one step at a time.
-        DispatchQueue.main.async { self.runPendingStep(); self.runHeldSelect(); self.runWaitingPress() }
-    }
 
     /// Focus in a destination row: the system scrolls it and lifts the card;
     /// here only the rest — the background and panel colour, and on arriving
@@ -1581,12 +1380,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         hasFocus = true
         guard rowChanged else { return }
         let oldRowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
-        if box.alpha == 1 {
-            // The old row's grown cell takes the box's look, then shrinks.
-            oldRowCell?.contentHidden = false
-            CATransaction.flush()
-        }
-        box.alpha = 0
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
         let direction: CGFloat = rowIndex > focusedRow ? 1 : -1
         focusedRow = rowIndex
@@ -1613,18 +1406,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         move()
     }
 
-    /// The season count for the title you rest on — then the box's text
-    /// takes it. (The ones focus can reach next: `TitleExtras`.)
+    /// The title you rest on, its records brought up to date. (The ones
+    /// focus can reach next: `TitleExtras`.)
     private var infoLoading: Task<Void, Never>?
 
     private func loadShowInfo(for item: MetaItem, in row: HomeRow, at index: Int) {
         infoLoading?.cancel()
-        infoLoading = Task { @MainActor [weak self] in
+        infoLoading = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            if await TitleRecords.shared.refresh(item, [.show, .facts, .ratings]), !Task.isCancelled {
-                self?.box.refreshInfo(for: item)
-            }
+            _ = await TitleRecords.shared.refresh(item, [.show, .facts, .ratings])
         }
     }
 
@@ -1655,78 +1446,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard let titleMenu, !isFeatured(rowIndex), !isBanner(rowIndex), !isPanel(rowIndex),
               item.type != "collection" else { return nil }
         return (item.name, titleMenu(item, row.id))
-    }
-
-    /// What the context menu lifts: a COPY of the fixed box (it covers the
-    /// cell), in the box's place. Handed the box itself, the system takes it
-    /// off the screen while the menu is up — its info under it too — and
-    /// only puts it back once its closing animation has fully run.
-    private var boxPressed = false
-
-    /// The box's place, by bounds and centre: a frame set while it is scaled
-    /// (pressed) silently enlarged it — it grew after the press.
-    private func place(_ view: UIView, _ rect: CGRect) {
-        view.bounds = CGRect(origin: .zero, size: rect.size)
-        view.center = CGPoint(x: rect.midX, y: rect.midY)
-    }
-
-    /// Select pressed or held on a fixed row's card: the box sinks a little
-    /// (as Apple TV's cards do), back on release or when the menu closes.
-    func setBoxPressed(_ pressed: Bool) {
-        // Down mid-move (a quick hold after Up/Down): the move finishes
-        // quickly first, as for a held Select, then the settled box sinks
-        // (sunk while the grown card still stood in for it, it came in
-        // shrunk over that card's edges).
-        if pressed, !settled {
-            pressWaiting = true
-            if let opening = openingRow, opening == focusedRow {
-                hurryOpening(opening)
-            } else if isMoving {
-                hurryMoves { self.runWaitingPress() }
-            }
-            return
-        }
-        if !pressed { pressWaiting = false }
-        // One state, one move: repeats (began twice, end after cancel) change nothing.
-        guard pressed != boxPressed else { return }
-        boxPressed = pressed
-        applyBoxScale(duration: pressed ? 0.12 : 0.2)
-    }
-
-    /// Select went down mid-move and is still down: the box sinks once
-    /// the move has landed.
-    private var pressWaiting = false
-    private func runWaitingPress() {
-        guard settled, pressWaiting else { return }
-        pressWaiting = false
-        setBoxPressed(true)
-    }
-
-    /// The box's hold menu open (see `HoldMenuRequest.onHeld`): 102 %.
-    private func setBoxHeld(_ held: Bool) {
-        guard held != boxHeld else { return }
-        boxHeld = held
-        applyBoxScale(duration: FixedFocusMetrics.heldDuration)
-    }
-    private var boxHeld = false
-
-    /// 97 % pressed, 102 % with its menu open, else 100 %. Smaller, the card
-    /// under it is out of sight (its edges showed around the box).
-    private func applyBoxScale(duration: Double) {
-        let base = FixedFocusMetrics.boxScale
-        let scale = boxHeld ? base + FixedFocusMetrics.heldGrowth
-            : boxPressed ? base - (1 - FixedFocusMetrics.pressScale) : base
-        let covered = currentCard(row: focusedRow).first as? FixedFocusPosterCell
-        // (Below its own size the card under it — as large — shows. Not
-        // while an opening's card still carries the box's look, the box
-        // unseen: hidden, the card vanished at the press.)
-        if scale < base, box.alpha == 1 { covered?.setUnderPressedBox(true) }
-        UIView.animate(withDuration: duration, delay: 0,
-                       options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
-            self.box.applyScale(scale)
-        } completion: { _ in
-            if !self.boxPressed { covered?.setUnderPressedBox(false) }
-        }
     }
 
     /// Gives SwiftUI hosted in a cell the app's stores.
@@ -2497,18 +2216,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             DispatchQueue.main.async { self.onUpExit(id) }
             return false
         }
-        // LEFT/RIGHT DURING AN OPENING: held — first land, then step. The
-        // opening is hurried to its end (`hurryOpening`); the press runs as
-        // a normal step after it (`runPendingStep`). The card beside never
-        // takes focus mid-move (it grew in both ways while still moving).
-        if let opening = openingRow, previousInside,
-           context.focusHeading.contains(.left) || context.focusHeading.contains(.right),
-           let from = context.previouslyFocusedView as? FixedFocusPosterCell, from.rowCell?.rowIndex == opening {
-            // (Counted once per press, when the move fails — see
-            // `observeHeldSteps`: tvOS asks this several times per press.)
-            DispatchQueue.main.async { self.hurryOpening(opening) }
-            return false
-        }
         // Into a moving-focus row from outside: its CURRENT card, not the
         // one nearest by position (it may be aimed — Details' episodes).
         if !previousInside, !ModeSwap.shared.handingOver,
@@ -2524,13 +2231,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return false
     }
 
-    /// Nothing moving in the rows, the box holding its row (an opening's
-    /// card handed over).
-    private var settled: Bool { !isMoving && openingRow != focusedRow }
-    /// A Select during a move: held, run as the move lands (opened mid-move,
-    /// Details took the screen with the box still empty — the grown card
-    /// had its content until the hand-over). The move finishes quickly
-    /// first, as for a held Left/Right (`hurryOpening`, `hurryMoves`).
+    /// Nothing moving in the rows.
+    private var settled: Bool { !isMoving }
+    /// A Select during a move: held, run as the move lands; the move
+    /// finishes quickly first (`hurryMoves`).
     private var heldSelect: (() -> Void)?
     /// At the latest (a move whose end never came).
     static let heldSelectLimit: Double = 1
@@ -2538,8 +2242,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func runHeldSelect() {
         guard settled, let run = heldSelect else { return }
         heldSelect = nil
-        // The landed rows drawn first (the box just took the card over):
-        // Details starts from a still of the screen as last drawn.
+        // The landed rows drawn first: Details starts from a still of the
+        // screen as last drawn.
         CATransaction.flush()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.drawnDelay, execute: run)
     }
@@ -2558,12 +2262,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             heldSelectToken += 1
             let token = heldSelectToken
             heldSelect = { [weak self] in self?.perform(item, rowIndex: rowIndex) }
-            // The move finishing quickly, as for a held Left/Right.
-            if let opening = openingRow, opening == focusedRow {
-                hurryOpening(opening)
-            } else if isMoving {
-                hurryMoves { self.runHeldSelect() }
-            }
+            // The move finishing quickly.
+            if isMoving { hurryMoves { self.runHeldSelect() } }
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.heldSelectLimit) { [weak self] in
                 guard let self, self.heldSelectToken == token, let held = self.heldSelect else { return }
                 self.heldSelect = nil
@@ -3034,368 +2734,6 @@ final class FixedFocusRedirectGuide: UIFocusGuide {
     override var preferredFocusEnvironments: [UIFocusEnvironment]! {
         get { targets() }
         set {}
-    }
-}
-
-/// The fixed box: backdrop, shade, logo, focus outline. Content changes
-/// crossfade; the box itself never moves.
-final class FixedFocusBoxView: UIView {
-    /// One "page" of the box: backdrop, shade, logo. A change either slides
-    /// a new page in (the old one out) or crossfades on the current page.
-    private final class Page: UIView {
-        let backdrop = UIImageView()
-        let shade = FixedFocusShade()
-        let logo = FixedFocusLogo()
-        /// The facts line under the logo; drifts with it.
-        let facts = UILabel()
-        /// The backdrop on its way: the placeholder's look, nothing over it.
-        let loadingCard = FixedFocusPlaceholder()
-        /// It waits (true) or is in: the box's edge waits with it.
-        var onWaiting: (Bool) -> Void = { _ in }
-
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            backdrop.contentMode = .scaleAspectFill
-            backdrop.clipsToBounds = true
-            backdrop.layer.contentsRect = FixedFocusBoxView.zoomRect
-            addSubview(backdrop)
-            addSubview(shade)
-            loadingCard.isHidden = true
-            loadingCard.layer.cornerRadius = 0
-            addSubview(loadingCard)
-            addSubview(logo)
-            FixedFocusMetrics.styleFacts(facts)
-            addSubview(facts)
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            backdrop.frame = bounds
-            loadingCard.frame = bounds
-            shade.frame = bounds
-            logo.room = FixedFocusMetrics.logoRoom(width: bounds.width, height: bounds.height)
-            let factsFrame = FixedFocusMetrics.factsFrame(width: bounds.width, height: bounds.height)
-            facts.bounds = CGRect(origin: .zero, size: factsFrame.size)
-            facts.center = CGPoint(x: factsFrame.midX, y: factsFrame.midY)
-        }
-
-        func showFacts(_ item: MetaItem) {
-            facts.text = FixedFocusPlaceholder.isPlaceholder(item) || item.type == "collection"
-                ? nil : FixedFocusShowInfo.factsLine(item)
-        }
-
-        /// `pictures`: the picture and logo a grown cell shows for it (same
-        /// files, same size) — taken as they are, nothing to wait for.
-        func show(_ item: MetaItem, pictures: FixedFocusPosterCell.Pictures? = nil) {
-            showFacts(item)
-            // A folder's cover is its own picture, name and all: no shade.
-            shade.isHidden = item.type == "collection"
-            // (A banner row's box is wider than a landscape card: the
-            // screen's size.)
-            let large = bounds.width > FixedFocusMetrics.boxWidth * FixedFocusMetrics.boxScale
-            let width = large ? PictureSize.screen : PictureSize.landscape
-            let shaded = item.type != "collection"
-            self.shaded = shaded
-            let backdropURL = item.background ?? item.poster
-            let pictureIn: (Bool) -> Void = { [weak self] waiting in
-                guard let self else { return }
-                self.waiting = waiting
-                if self.overPicture {
-                    // Over the old picture: the page itself waits, unseen,
-                    // and comes in once its picture's there.
-                    if waiting {
-                        self.isHidden = true
-                    } else if self.isHidden {
-                        self.isHidden = false
-                        if self.layer.animation(forKey: "opacity") == nil {
-                            self.alpha = 0
-                            UIView.animate(withDuration: Motion.fadeDuration) { self.alpha = 1 }
-                        }
-                    }
-                } else {
-                    self.showWaiting(waiting)
-                }
-                self.onWaiting(waiting)
-            }
-            if let picture = pictures?.backdrop {
-                FixedFocusImages.adopt(picture, url: backdropURL, into: backdrop)
-                pictureIn(false)
-            } else {
-                FixedFocusImages.load(backdropURL, into: backdrop, maxDimension: width, waiting: pictureIn)
-            }
-            if let logoPicture = pictures?.logo {
-                FixedFocusImages.adopt(logoPicture, url: item.logo, into: logo)
-            } else {
-                FixedFocusImages.load(item.logo, into: logo, maxDimension: large ? PictureSize.logo : PictureSize.cardLogo)
-            }
-        }
-
-        private var shaded = true
-        /// Its picture isn't there yet.
-        private(set) var waiting = false
-        /// Coming in over the old picture (the box's change): a wait shows
-        /// nothing — the placeholder's fill, then the shade coming back,
-        /// flashed bright then dim over the old picture.
-        var overPicture = false {
-            didSet {
-                guard oldValue, !overPicture, waiting else { return }
-                // Still waiting once the old one goes: the placeholder.
-                isHidden = false
-                showWaiting(true)
-            }
-        }
-
-        private func showWaiting(_ waiting: Bool) {
-            loadingCard.follow(waiting: waiting)
-            shade.isHidden = waiting || !shaded
-            logo.isHidden = waiting
-            facts.isHidden = waiting
-        }
-    }
-
-    /// Clips the pages to the box's rounded shape (the box itself doesn't
-    /// clip: the focus shadow).
-    private let clip = UIView()
-    private var page = Page()
-    /// The title's badges: the box's, not a page's — they don't drift or
-    /// fade, they change at the press.
-    private let badges = FixedFocusBadges()
-    /// The new badges wait this long after a move's press.
-    private static let badgesDelay: TimeInterval = 0.1
-    private var badgesHeld = false
-    private var shownID: String?
-    /// The cards' rim (see `FixedFocusCardEdge`), and the focus outline in
-    /// the top bar's light.
-    private let edge = UIImageView()
-    private let focusRing = UIImageView()
-
-    /// The season count arrived for the title shown: its text takes it,
-    /// with a short fade.
-    func refreshInfo(for item: MetaItem) {
-        guard shownID == item.id else { return }
-        let page = page
-        UIView.transition(with: page.facts, duration: Motion.fadeDuration,
-                          options: [.transitionCrossDissolve, .allowUserInteraction],
-                          animations: { page.showFacts(item) })
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        FixedFocusRing.follow(self)
-        clipsToBounds = false
-        clip.clipsToBounds = true
-        clip.layer.cornerRadius = Spotlight.cornerRadius
-        clip.layer.cornerCurve = .continuous
-        addSubview(clip)
-        clip.addSubview(page)
-        follow(page)
-        addSubview(badges)
-        edge.isUserInteractionEnabled = false
-        addSubview(edge)
-        focusRing.isUserInteractionEnabled = false
-        addSubview(focusRing)
-        FixedFocusRing.attachShadow(to: focusRing)
-        // (A layer's border is drawn above its sublayers: above the pages.)
-        layer.cornerRadius = Spotlight.cornerRadius
-        layer.cornerCurve = .continuous
-        layer.borderColor = UIColor.white.cgColor
-        applyOutlineStyle()
-    }
-
-    /// The focus outline: the top bar's light or a white line.
-    /// Focus is elsewhere (Search: on the keyboard or the top result): the
-    /// box keeps showing its title, without the focus outline.
-    var ringHidden = false {
-        didSet { if ringHidden != oldValue { applyOutlineStyle() } }
-    }
-    private func applyOutlineStyle() {
-        // The focus outline: the top bar's light, clearer, or a plain
-        // white line.
-        let lit = FixedFocusCardEdge.focusLight
-        let hidden = ringHidden
-        focusRing.image = lit && !hidden ? FixedFocusCardEdge.focusImage : nil
-        focusRing.isHidden = hidden
-        layer.borderWidth = lit || hidden ? 0 : FixedFocusRing.width
-        layer.borderColor = FixedFocusRing.color.cgColor
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        applyOutlineStyle()
-        clip.frame = bounds
-        placeBadges()
-        // The cards' rim.
-        edge.image = FixedFocusCardEdge.rim
-        edge.frame = bounds
-        focusRing.frame = bounds
-        if page.layer.animationKeys()?.isEmpty ?? true { page.frame = bounds }
-    }
-
-    /// The badges over the current page's logo (they wait for it).
-    private func placeBadges() {
-        page.layoutIfNeeded()
-        badges.frame = FixedFocusMetrics.badgesFrame(width: bounds.width, over: page.logo)
-    }
-
-    /// The box at `scale` (lifted, pressed, held).
-    func applyScale(_ scale: CGFloat) {
-        transform = CGAffineTransform(scaleX: scale, y: scale)
-    }
-
-    /// The current page's backdrop on its way: no edge (the placeholder's
-    /// look).
-    private func follow(_ page: Page) {
-        page.onWaiting = { [weak self, weak page] waiting in
-            guard let self, page === self.page else { return }
-            self.syncEdge()
-        }
-        page.logo.onPlace = { [weak self, weak page] in
-            guard let self, page === self.page else { return }
-            self.placeBadges()
-        }
-    }
-    /// The edge waits with the current page's picture — except while it
-    /// comes in over the old picture (a picture under it — hidden for the
-    /// first frames, it flickered in). Set from the state, not from the
-    /// callbacks alone: a page that got its picture before it was the
-    /// current one (a quick second move) left the edge off for good.
-    private func syncEdge() {
-        edge.isHidden = page.waiting && covered == nil
-        badges.alpha = edge.isHidden || badgesHeld ? 0 : 1
-    }
-    /// The old page under the one coming in, until its move ends.
-    private var covered: Page?
-    /// Counts the box's moves: a move's end only clears what a later move
-    /// hasn't taken over.
-    private var moveID = 0
-
-    /// The box's picture a little larger than the box (as the grown cell's
-    /// landscape, so they match): room for the drift (`show`).
-    static let driftZoom: CGFloat = 1.04
-    /// That zoom as the part of the picture shown.
-    static let zoomRect: CGRect = {
-        let margin = (1 - 1 / driftZoom) / 2
-        return CGRect(x: margin, y: margin, width: 1 - 2 * margin, height: 1 - 2 * margin)
-    }()
-    /// `direction`: +1 moving right (new content comes from the right),
-    /// −1 moving left; `vertical`: an Up/Down move (its longer spring).
-    /// `pictures` (not animated): a grown cell's, for the hand-over.
-    func show(_ item: MetaItem, badges: [CardBadge], animated: Bool,
-              direction: CGFloat = 1, vertical: Bool = false,
-              pictures: FixedFocusPosterCell.Pictures? = nil) {
-        self.badges.show(badges)
-        guard item.id != shownID else { syncEdge(); return }
-        shownID = item.id
-        applyOutlineStyle()
-        guard animated else {
-            badgesHeld = false
-            page.show(item, pictures: pictures)
-            placeBadges()
-            syncEdge()
-            return
-        }
-        // One movement with the row, on its spring:
-        // - the picture, logo and facts drift a share of that, on the same curve —
-        //   old and new alike, the old one out, the new one in — inside the
-        //   room the picture's zoom leaves (`driftZoom`), so the box stays
-        //   covered. The new one fades in with the captions over the old,
-        //   which stays opaque until covered: the box is never see-through
-        //   (both fading at once, the posters passing under it showed
-        //   through).
-        // (Tried: the page itself shifted 30 pt — the old picture showed in
-        // a strip at the edge; everything in place — no movement.)
-        let move = vertical ? Motion.verticalDuration : Motion.moveDuration
-        let margin = Self.zoomRect.minX
-        let shift = CGPoint(x: vertical ? 0 : direction, y: vertical ? direction : 0)
-        let drift = CGPoint(x: shift.x * bounds.width * (Self.driftZoom - 1) / 2,
-                            y: shift.y * bounds.height * (Self.driftZoom - 1) / 2)
-        let incoming = Page(frame: bounds)
-        follow(incoming)
-        incoming.overPicture = true
-        incoming.show(item)
-        incoming.alpha = 0
-        clip.addSubview(incoming)
-        // The page in front still waiting, unseen, over the picture the
-        // last move left: that picture is the one on screen, so it goes out
-        // now (with the waiting page dropped, the old one removed at the
-        // last move's end left the box see-through — a flicker).
-        var outgoing = page
-        let reused = outgoing.isHidden && covered != nil
-        if reused, let under = covered {
-            outgoing.removeFromSuperview()
-            outgoing = under
-        }
-        page = incoming
-        placeBadges()
-        covered = outgoing
-        moveID += 1
-        let id = moveID
-        syncEdge()
-        // Core Animation: a layer's contents don't move in a UIView animation.
-        func slide(_ page: Page, from: CGPoint, to: CGPoint) {
-            let spring = CASpringAnimation(perceptualDuration: move, bounce: 0)
-            spring.keyPath = "contentsRect"
-            spring.fromValue = NSValue(cgRect: Self.zoomRect.offsetBy(dx: from.x * margin, dy: from.y * margin))
-            spring.toValue = NSValue(cgRect: Self.zoomRect.offsetBy(dx: to.x * margin, dy: to.y * margin))
-            spring.duration = spring.settlingDuration
-            spring.fillMode = .forwards
-            spring.isRemovedOnCompletion = false
-            page.backdrop.layer.add(spring, forKey: "drift")
-        }
-        let still = CGPoint.zero
-        slide(incoming, from: CGPoint(x: -shift.x, y: -shift.y), to: still)
-        if !reused { slide(outgoing, from: still, to: shift) }
-        // The logo rides the picture's drift. The badges, the box's, go at
-        // the press and the new ones appear 0.1 s later, no fade (riding
-        // the drift, they read as on a pane over the picture; at once was
-        // too fast, 30 % and 75 % of the drift, and fades, were tried).
-        incoming.logo.transform = CGAffineTransform(translationX: drift.x, y: drift.y)
-        incoming.facts.transform = incoming.logo.transform
-        // (Held by the view's own alpha: under an opacity animation, the
-        // new words weren't always drawn — a plate with nothing on it.)
-        badgesHeld = true
-        syncEdge()
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.badgesDelay) { [weak self] in
-            guard let self, id == self.moveID else { return }
-            self.badgesHeld = false
-            self.syncEdge()
-        }
-        FixedFocusMotion.run(duration: move) {
-            incoming.logo.transform = .identity
-            incoming.facts.transform = .identity
-            outgoing.logo.transform = CGAffineTransform(translationX: -drift.x, y: -drift.y)
-            outgoing.facts.transform = outgoing.logo.transform
-        } completion: { _ in }
-        let start = FixedFocusPosterCell.fadeInStart(duration: move)
-        let options: UIView.AnimationOptions = [.beginFromCurrentState, .allowUserInteraction,
-                                                .overrideInheritedDuration, .overrideInheritedCurve]
-        UIView.animate(withDuration: move - start, delay: start, options: options.union(.curveEaseOut)) {
-            incoming.alpha = 1
-        } completion: { _ in
-            // The old picture handed on to a later move: that move's.
-            if outgoing === self.covered, id != self.moveID { return }
-            if self.covered === outgoing { self.covered = nil }
-            // Its move done: from now on it waits as any page (a change
-            // without a move shows on it).
-            if incoming === self.page, !incoming.waiting { incoming.overPicture = false }
-            self.syncEdge()
-            if outgoing !== self.page {
-                // The new picture still on its way: the old one goes now,
-                // the edge with it; the placeholder shows.
-                if incoming === self.page, incoming.waiting {
-                    incoming.overPicture = false
-                    UIView.animate(withDuration: Motion.fadeDuration) { outgoing.alpha = 0 } completion: { _ in
-                        outgoing.removeFromSuperview()
-                    }
-                } else {
-                    outgoing.removeFromSuperview()
-                }
-            }
-        }
     }
 }
 
@@ -4171,27 +3509,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             title.transform = CGAffineTransform(scaleX: titleScale, y: titleScale)
         }
     }
-    /// The grown cell's own content hidden (the fixed box shows it).
-    var contentHidden = true {
-        didSet { if !contentHidden { cutOut(nil) }; applyGrown() }
-    }
-    /// Left/Right under the fixed box: the box's place cut out of the row,
-    /// so the posters drifting under it don't show at its rounded corners
-    /// and beside its edges. Only while a move runs (a mask costs a pass).
-    func cutOut(_ hole: CGRect?, radius: CGFloat = 0) {
-        guard let hole else { layer.mask = nil; return }
-        let mask = (layer.mask as? CAShapeLayer) ?? CAShapeLayer()
-        let path = UIBezierPath(rect: bounds.insetBy(dx: -4000, dy: -4000))
-        path.append(UIBezierPath(roundedRect: hole, cornerRadius: radius))
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        mask.fillRule = .evenOdd
-        mask.frame = bounds
-        mask.path = path.cgPath
-        CATransaction.commit()
-        layer.mask = mask
-    }
-
     private let layout = FixedFocusStripLayout()
 
     override init(frame: CGRect) {
@@ -4454,10 +3771,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             }
             return
         }
-        // Under the box only while it shows: before focus first arrives
-        // (a page just opened) the cell draws the grown card itself — else
-        // the wide place showed the plain poster until the box popped in.
-        contentHidden = controller.boxCovers(rowIndex)
         strip.reloadData()
         strip.layoutIfNeeded()
         strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0)
@@ -4472,9 +3785,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             cv.reconfigureItems(at: cv.indexPathsForVisibleItems)
         }
     }
-
-    /// Select pressed on a fixed row's card (the box shows it).
-    func setBoxPressed(_ pressed: Bool) { controller?.setBoxPressed(pressed) }
 
     /// This row's first card on screen, at rest (see the controller).
     func restingCardOrigin() -> CGPoint? { controller?.restingCardOrigin(rowIndex) }
@@ -4547,8 +3857,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private func applyGrown() {
         for cell in strip.visibleCells {
             guard let poster = cell as? FixedFocusPosterCell else { continue }
-            poster.setGrown(isFocusRow && poster.itemIndex == selectedIndex,
-                            contentHidden: contentHidden)
+            poster.setGrown(isFocusRow && poster.itemIndex == selectedIndex)
             poster.setPast(isPast(poster.itemIndex))
         }
     }
@@ -4614,7 +3923,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                            progress: isContinue ? controller?.progress[item.id] : nil,
                            landscape: isLandscape, invisible: isFeatured,
                            cardHeight: cardHeight, badges: row.badges(for: item))
-            cell.setGrown(isFocusRow && indexPath.item == selectedIndex, contentHidden: contentHidden)
+            cell.setGrown(isFocusRow && indexPath.item == selectedIndex)
             cell.setPast(isPast(indexPath.item))
             cell.setConcealed(concealed)
         }
@@ -4937,7 +4246,7 @@ extension UIView {
 
 @MainActor
 /// Holding Select on a card (see `HoldMenu`): Continue Watching's menu, or
-/// the title's — beside the fixed box, or the moving-focus card itself.
+/// the title's, beside the card itself.
 extension FixedFocusRowsController: HoldMenuProviding {
     func holdMenu(for focused: UIView) -> HoldMenuRequest? {
         let rowIndex: Int, itemIndex: Int
@@ -4950,27 +4259,11 @@ extension FixedFocusRowsController: HoldMenuProviding {
         }
         guard let (_, entries) = menuEntries(rowIndex: rowIndex, itemIndex: itemIndex), !entries.isEmpty
         else { return nil }
-        // The card at its held size (the menu lines up with its top).
-        func held(_ rect: CGRect, _ scale: CGFloat) -> CGRect {
-            rect.insetBy(dx: -rect.width * (scale - 1) / 2, dy: -rect.height * (scale - 1) / 2)
-        }
         if isDestination(rowIndex), let cell = focused as? FixedFocusDestinationCell {
             return cell.holdMenu(entries)
         }
         if let cell = focused as? FixedFocusShowcaseCell { return cell.holdMenu(entries) }
-        guard box.alpha == 1 else {
-            return HoldMenuRequest(entries: entries, anchor: focused.convert(focused.bounds, to: nil))
-        }
-        // (`frame`: the box's own transform — pressed — left out.)
-        let boxRect = view.convert(CGRect(x: box.center.x - box.bounds.width / 2,
-                                          y: box.center.y - box.bounds.height / 2,
-                                          width: box.bounds.width, height: box.bounds.height), to: nil)
-        let base = FixedFocusMetrics.boxScale
-        return HoldMenuRequest(entries: entries,
-                               anchor: held(boxRect, base + FixedFocusMetrics.heldGrowth),
-                               from: held(boxRect, boxPressed ? base - (1 - FixedFocusMetrics.pressScale) : base),
-                               rest: held(boxRect, base),
-                               onHeld: { [weak self] in self?.setBoxHeld($0) })
+        return HoldMenuRequest(entries: entries, anchor: focused.convert(focused.bounds, to: nil))
     }
 }
 

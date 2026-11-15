@@ -656,12 +656,10 @@ struct LogoFit {
 enum PictureSize {
     /// Portrait posters (one size everywhere), focused.
     static var poster: CGFloat { FixedFocusMetrics.posterCard.height * (1 + FixedFocusMetrics.movingFocusLift) }
-    /// Landscape cards (the fixed box and a grown card, Continue Watching,
-    /// episode stills, collection tiles): the box lifted and zoomed for
-    /// its drift — the largest of them.
-    static var landscape: CGFloat {
-        FixedFocusMetrics.boxWidth * FixedFocusMetrics.boxScale * FixedFocusBoxView.driftZoom
-    }
+    /// Landscape cards (Continue Watching, episode stills, collection
+    /// tiles, wide cards): the box-wide card with a little room, as the
+    /// pictures already on disk were cut.
+    static var landscape: CGFloat { FixedFocusMetrics.boxWidth * 1.04 }
     /// A showcase card (New & Notable), focused: the height a backdrop
     /// is cut at, so its width at 16:9.
     static var showcase: CGFloat {
