@@ -115,7 +115,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   contents or mask instead.
 - Cards: corners 22 pt continuous (`Spotlight.cornerRadius`), a 2 pt rim
   (`FixedFocusCardEdge`), focus the same edge bright plus a soft shadow, no
-  ring, 6 % larger (8, 10 and 12 were tried); Home's fixed box not grown, the posters' height (4 % was tried). Home's fixed rows 12 % larger than the poster, box and posters alike (`Spotlight.rowHeight` 434: posters 289 × 434, the box 16:9; at the poster's size the box was too small for what it carries; growing the box alone was talked over: a ragged row, read as focus). One poster everywhere else (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
+  ring, 6 % larger (8, 10 and 12 were tried). Every Home row has moving
+  focus but the poster rows (focus in place, words under it: below), its cards by what the row is for (`CueRows.CardShape`, on the
+  row): tall showcase cards for what's chosen for you (Top Picks, the
+  tab's first Because You Watched, New & Notable; trailers in all of
+  them), wide cards (the showcase cell at the landscape size: logo,
+  badges and facts on the backdrop, no trailer) for picking something
+  now (the other Because You Watched, New Episodes, Airing Today, Pick
+  Back Up, rewatch), posters for browsing (catalogue, services, popular,
+  top rated, cinemas, coming soon, add-on catalogs), Top 10's grid. (The
+  fixed focus box was retired 2026-11-13: too many hacks for what it gave;
+  in git history if wanted back.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides; one line above
@@ -131,8 +141,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the picture's top left, and the foot right beside the logo, were tried), not moving: on a move the old ones go at
   the press, the new appear 0.1 s later, no fade (at once was too fast;
   fades, 30 % and 75 % of the drift, drifting with the picture: on a pane
-  over it); side by side, else stacked. Only on the fixed box (and the grown card handing over to
-  it): posters and moving-focus cards have none. Two at most: a show's news first
+  over it); side by side, else stacked. Only on tall and wide cards (New & Notable: its own badge
+  alone); posters have none. Two at most: a show's news first
   (`TitleRecords.news`: New episode, out in 14 days, unwatched, one of the
   three before it watched; Season N, begun in 14 days; Returns Mar 4,
   within 90), then one more. Top Picks: always a reason, made with the rows
@@ -188,8 +198,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   disabled while hidden. (The floating glass pill, and auto-hiding it,
   were dropped, the setting with them.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
-  Animation in `didUpdateFocus`. A fixed box at the focus spot for most rows;
-  collections, Continue Watching and Saved for Later have moving focus.
+  Animation in `didUpdateFocus`. Every row moving focus (folders too:
+  posters with names).
   SwiftUI scrolling was rejected (main-thread animation, lost targets).
   What a row shows is what Select acts on: the row focus is in keeps its
   titles, order and pictures until focus leaves it (a reordered Continue
@@ -304,11 +314,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
   pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
-- **Home: no captions** (the art says it all): the box carries at its
-  foot, left, the badges over the logo over the facts line (24 pt,
-  regular, body), drifting and crossfading with the picture, over a
-  bottom fade (`FixedFocusShade`, the showcase cards' too); Continue
-  Watching "S1:E5 · Episode title" over its bar. (Tried: one caption line
+- **Home: no captions** (the art says it all): tall and wide cards carry
+  at their foot, left, the badges over the logo over the facts line,
+  over a bottom fade (`FixedFocusShade`); Continue
+  Watching "S1:E5 · Episode title" over its bar. Posters carry nothing;
+  under the focused poster row only, in one place 30 pt below its cards,
+  the focused title in words (`FixedFocusInfoStrip`, `posterInfo`): the
+  name 32 pt medium at primary with its badges beside it, the facts line
+  with "IMDb 8.2" at body, two lines of description at secondary; only
+  the words change as focus moves (0.2 s crossfade), the strip goes with
+  focus leaving the row, centred with the cards. These rows keep focus in
+  place at the first card's spot (as Details' episodes), the cards sliding
+  under it, so the words are always under the focused card (posters alone
+  were "judging a book by its cover"; posters growing into wide cards
+  morphed; the strip under moving focus made the eyes wander). (Tried: one caption line
   under the box and tall cards, the episode's title under Continue
   Watching, the date under Saved for Later: inside was better; before that
   the facts and a 4-line description under the box.) Details' rows,

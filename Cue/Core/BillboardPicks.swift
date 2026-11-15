@@ -339,10 +339,17 @@ enum CueRows {
         /// A card's badge made with the row, by title id: For You's reason;
         /// elsewhere someone in your taste, or today's top 10.
         var badges: [String: CardBadge]? = nil
-        /// A showcase card's picture where it isn't the backdrop: TMDB's
-        /// poster with no text on it.
+        /// A tall or ranked card's picture where it isn't the backdrop
+        /// (`TMDBService.cardScene`).
         var art: [String: String]? = nil
+        /// Its cards; nil: posters.
+        var shape: CardShape? = nil
     }
+
+    /// A row's cards, by what the row is for: tall showcase cards for what's
+    /// chosen for you, landscape cards with logo and facts for picking
+    /// something now, posters for browsing, Top 10's ranked grid.
+    enum CardShape: String, Codable, Sendable { case poster, wide, tall, ranked }
 
     /// Why a row is there (Developer → Why These Rows).
     struct Why: Codable, Sendable {
@@ -380,7 +387,7 @@ enum CueRows {
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 11
+    static let version = 12
     /// A ranked row's places (Top 10).
     static let rankedLength = 10
     /// A row needs this many titles to show; your own (Pick Back Up, Watch
@@ -1231,8 +1238,6 @@ enum CueRows {
         /// The keywords the catalogue's rows are about (TMDB's others can
         /// be noise: "duringcreditsstinger").
         let curated: Set<String>
-        /// A Top 10's pictures (`TMDBService.cardScene`), by title id.
-        var scenes: [String: String] = [:]
         var rows: [Row] = []
         var why: [Why] = []
         var used: [String: Int] = [:]
@@ -1245,7 +1250,7 @@ enum CueRows {
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
                           own: Bool = false, ranked: Bool = false, reasons: Bool = false,
-                          showcase: Showcase? = nil, reason: String) -> Bool {
+                          showcase: Showcase? = nil, shape: CardShape = .poster, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1289,7 +1294,7 @@ enum CueRows {
             }
             rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item),
                             badges: badges.isEmpty ? nil : badges,
-                            art: showcase.map { $0.art.merging(scenes) { _, scene in scene } } ?? (ranked ? scenes : nil)))
+                            art: showcase?.art, shape: ranked ? .ranked : showcase != nil ? .tall : shape))
             why.append(Why(tab: tab, title: title, reason: reason))
             return true
         }
@@ -1642,10 +1647,11 @@ enum CueRows {
         let newReason = "Always here, your shows first"
         let serviceReason = "One of the biggest services in \(Locale.current.localizedString(forRegionCode: region) ?? region)"
 
-        func becauseRow(_ layout: inout Layout, _ seed: Seed?) {
+        /// The tab's first (your latest title) tall, the others wide.
+        func becauseRow(_ layout: inout Layout, _ seed: Seed?, tall: Bool = false) {
             guard let seed else { return }
             layout.add("because.\(seed.known.watch.id)", "Because You Watched \(seed.name)", seed.titles,
-                       reason: seedReason)
+                       shape: tall ? .tall : .wide, reason: seedReason)
         }
         func serviceRow(_ layout: inout Layout, _ index: Int) {
             guard index < services.count else { return }
@@ -1684,7 +1690,7 @@ enum CueRows {
         /// Shows you started and left, the most watched and latest first.
         func pickBackUp(_ layout: inout Layout) {
             layout.add("pickbackup", "Pick Back Up", own.pickBackUp, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
-                       reason: "Shows you started, untouched for over a month")
+                       shape: .wide, reason: "Shows you started, untouched for over a month")
         }
         /// Some days (`rewatchChance`): what you finished long ago, for the
         /// season where it fits, else from a year ago, else any.
@@ -1711,7 +1717,7 @@ enum CueRows {
                 let titles = ranked(own.rewatch.filter { !Set($0.traits.keywords).isDisjoint(with: keywords) })
                 if layout.add("rewatch.season", "\(season.prefix(1).uppercased() + season.dropFirst()) Favourites",
                               titles, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
-                              reason: "For \(season): titles you finished before") { return }
+                              shape: .wide, reason: "For \(season): titles you finished before") { return }
             }
             let yearAgo = ranked(own.rewatch.filter { title in
                 let ago = now.timeIntervalSince(byID[title.item.id]?.last ?? now) / 86_400
@@ -1719,51 +1725,26 @@ enum CueRows {
             })
             if jitter(day, "rewatch.year") < 0.5,
                layout.add("rewatch.year", "A Year Ago This Month", yearAgo, fresh: false, keepOrder: true,
-                          minimum: minimumOwn, own: true, reason: "What you were watching a year ago") { return }
+                          minimum: minimumOwn, own: true, shape: .wide, reason: "What you were watching a year ago") { return }
             layout.add("rewatch", "Watch Again", ranked(own.rewatch), fresh: false, keepOrder: true,
-                       minimum: minimumOwn, own: true, reason: "Finished at least \(rewatchAfterDays) days ago, some days")
+                       minimum: minimumOwn, own: true, shape: .wide, reason: "Finished at least \(rewatchAfterDays) days ago, some days")
         }
 
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
         func seed(_ index: Int) -> Seed? { index < homeSeeds.count ? homeSeeds[index] : nil }
 
         let top10 = Set(fixed.trendingAll.prefix(10).map(\.item.id))
-        // The Top 10s' and New & Notable's pictures, chosen ahead (a few
-        // left out: the next).
-        var rankedTitles: [String: Title] = [:]
-        for title in [fixed.trendingAll, fixed.trendingMovies, fixed.trendingShows].flatMap({ $0.prefix(12) })
-            + [homeShowcase, moviesShowcase, showsShowcase].flatMap(\.titles) {
-            rankedTitles[title.item.id] = title
-        }
-        // Chosen in the background (about 1 s for 40 titles); the build
-        // waits 10 s at most, for a bad network, and takes what's chosen by
-        // then (3 s left titles on their old pictures until the next build).
-        let rankedList = Array(rankedTitles.values)
-        let choosing = Task {
-            _ = await boundedConcurrentMap(rankedList, limit: 8) { title in
-                await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie)
-            }
-        }
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            let once = OnceFlag()
-            Task { await choosing.value; if once.claim() { done.resume() } }
-            Task { try? await Task.sleep(for: .seconds(10)); if once.claim() { done.resume() } }
-        }
-        var scenes: [String: String] = [:]
-        for title in rankedList {
-            scenes[title.item.id] = await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie, cachedOnly: true)
-        }
         let curated = Set(recipes.flatMap { $0.about.joined() }.filter { $0.hasPrefix("k:") })
         var home = Layout(tab: "home", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated, scenes: scenes)
+                              known: known, top10: top10, curated: curated)
         home.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: nil),
-                 keepOrder: true, reasons: true, reason: picksReason)
+                 keepOrder: true, reasons: true, shape: .tall, reason: picksReason)
         home.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
                  reason: "Always here: today's trending, ranked")
-        becauseRow(&home, seed(0))
+        becauseRow(&home, seed(0), tall: true)
         themed(&home, homeRecipes, count: 15, inserts: [
             (1, { $0.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
-                         keepOrder: true, reason: newReason) }),
+                         keepOrder: true, shape: .wide, reason: newReason) }),
             (2, { serviceRow(&$0, 0) }),
             (3, { pickBackUp(&$0) }),
             (4, { becauseRow(&$0, seed(1)) }),
@@ -1775,12 +1756,12 @@ enum CueRows {
         ])
 
         var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated, scenes: scenes)
+                              known: known, top10: top10, curated: curated)
         movies.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: true),
-                   keepOrder: true, reasons: true, reason: picksReason)
+                   keepOrder: true, reasons: true, shape: .tall, reason: picksReason)
         movies.add("top10", "Top 10 Movies Today", fixed.trendingMovies, fresh: false, keepOrder: true, ranked: true,
                    reason: "Always here: today's trending, ranked")
-        becauseRow(&movies, seedRows.first { $0.known.isMovie })
+        becauseRow(&movies, seedRows.first { $0.known.isMovie }, tall: true)
         movies.add("cinemas", "Now in Cinemas", fixed.cinemas, fresh: false, keepOrder: true, reason: "Always here")
         themed(&movies, movieRecipes, count: 12, inserts: [
             (1, { serviceRow(&$0, 0) }),
@@ -1795,19 +1776,19 @@ enum CueRows {
         ])
 
         var shows = Layout(tab: "series", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
-                              known: known, top10: top10, curated: curated, scenes: scenes)
+                              known: known, top10: top10, curated: curated)
         shows.add("picks", "Top Picks for You", topPicks(pool, model: model, seen: seen.union(left).union(out), passes: passes, day: day, isMovie: false),
-                  keepOrder: true, reasons: true, reason: picksReason)
+                  keepOrder: true, reasons: true, shape: .tall, reason: picksReason)
         shows.add("top10", "Top 10 Shows Today", fixed.trendingShows, fresh: false, keepOrder: true, ranked: true,
                   reason: "Always here: today's trending, ranked")
-        becauseRow(&shows, seedRows.first { !$0.known.isMovie })
+        becauseRow(&shows, seedRows.first { !$0.known.isMovie }, tall: true)
         shows.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
-                  keepOrder: true, reason: newReason)
+                  keepOrder: true, shape: .wide, reason: newReason)
         themed(&shows, seriesRecipes, count: 12, inserts: [
             (1, { serviceRow(&$0, 0) }),
             (2, { pickBackUp(&$0) }),
             (3, { $0.add("airingtoday", "Airing Today", own.airingToday + fixed.airingToday, fresh: false,
-                         keepOrder: true, reason: newReason) }),
+                         keepOrder: true, shape: .wide, reason: newReason) }),
             (4, { newAndNotable(&$0, showsShowcase) }),
             (5, { $0.add("popular", "Popular Shows", fixed.popularShows, fresh: false, reason: "Always here") }),
             (6, { rewatch(&$0) }),
@@ -1821,7 +1802,37 @@ enum CueRows {
             .prefix(30)
             .map { TasteLine(label: label($0, taste), share: taste.shares[$0] ?? 0) }
         let layouts = [home, movies, shows]
-        return Saved(builtAt: now, seeds: seeds, rows: layouts.flatMap(\.rows), day: day,
+        // The tall and ranked cards' pictures, chosen once the rows are
+        // laid out, in the background (about 1 s for 40 titles); the build
+        // waits 10 s at most, for a bad network, and takes what's chosen by
+        // then (3 s left titles on their old pictures until the next build).
+        var rows = layouts.flatMap(\.rows)
+        var titleByID: [String: Title] = [:]
+        for title in pool + [homeShowcase, moviesShowcase, showsShowcase].flatMap(\.titles) {
+            titleByID[title.item.id] = title
+        }
+        let chosenList = Array(Set(rows.filter { $0.shape == .tall || $0.shape == .ranked }
+            .flatMap { $0.items.map(\.id) })).compactMap { titleByID[$0] }
+        let choosing = Task {
+            _ = await boundedConcurrentMap(chosenList, limit: 8) { title in
+                await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie)
+            }
+        }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let once = OnceFlag()
+            Task { await choosing.value; if once.claim() { done.resume() } }
+            Task { try? await Task.sleep(for: .seconds(10)); if once.claim() { done.resume() } }
+        }
+        var scenes: [String: String] = [:]
+        for title in chosenList {
+            scenes[title.item.id] = await TMDBService.cardScene(tmdbID: title.tmdbID, isMovie: title.isMovie, cachedOnly: true)
+        }
+        for index in rows.indices where rows[index].shape == .tall || rows[index].shape == .ranked {
+            var art = rows[index].art ?? [:]
+            for item in rows[index].items { if let scene = scenes[item.id] { art[item.id] = scene } }
+            rows[index].art = art
+        }
+        return Saved(builtAt: now, seeds: seeds, rows: rows, day: day,
                      picked: Array(Set(layouts.flatMap(\.themed))), previous: previous,
                      titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why),
                      passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name },

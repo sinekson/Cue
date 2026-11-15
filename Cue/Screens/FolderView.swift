@@ -229,7 +229,7 @@ struct FolderView: View {
 
     // MARK: Rows
 
-    /// Each catalog a row, Home's (the box tells the focused title); still
+    /// Each catalog a row of posters, named under each; still
     /// loading (nil), two rows of empty cards, unnamed, out of focus's way.
     private static func rows(_ catalogs: [CollectionResolver.FolderCatalog]?, header: FolderHeader,
                              onSelect: @escaping (MetaItem) -> Void, openDetails: ((MetaItem) -> Void)?,
@@ -238,6 +238,8 @@ struct FolderView: View {
                            ?? FixedFocusRows.placeholderRows,
                        featuredRowID: "", continueRowID: "", active: true, progress: [:],
                        placeholder: catalogs == nil,
+                       // Moving focus, posters with their names.
+                       destinationRowIDs: Set((catalogs?.map(\.id) ?? FixedFocusRows.placeholderRows.map(\.id))),
                        rowTop: Self.rowTop,
                        aboveVisible: Self.rowTop - FixedFocusMetrics.peekGap,
                        onSelect: onSelect, onSelectFeatured: onSelect, onResume: { _ in },

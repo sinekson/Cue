@@ -207,6 +207,9 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 /// A Top 10's card is the same, small (`rankedCard`): its place in the
 /// top-left corner over a soft shade, a smaller logo, a slim line (genre,
 /// year), no badge and no trailer.
+/// A wide card (`wide`: landscape, three across, for picking something now:
+/// New Episodes, Pick Back Up) the same on the backdrop, a smaller logo,
+/// no trailer.
 final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationItem, TrailerHost {
     private(set) var itemIndex = 0
     private(set) weak var rowCell: FixedFocusRowCell?
@@ -225,6 +228,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private let loadingCard = FixedFocusPlaceholder()
     /// A Top 10's place (nil elsewhere), and the shade behind it.
     private(set) var rank: Int?
+    /// A landscape card.
+    private(set) var wide = false
+    /// Its trailer after a rest: tall cards only.
+    var plays: Bool { rank == nil && !wide }
     private let place = UILabel()
     private let corner = UIImageView(image: FixedFocusShowcaseCell.cornerShade)
     private var art: String?
@@ -236,12 +243,14 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     /// From the card's foot: the facts' line, the logo's room (smaller
     /// on a Top 10's card).
-    private var footPad: CGFloat { rank == nil ? 34 : 24 }
+    private var footPad: CGFloat { plays ? 34 : wide ? 28 : 24 }
     private static let lineHeight: CGFloat = 30
-    private var logoGap: CGFloat { rank == nil ? 20 : 14 }
-    private var logoBox: CGSize { rank == nil ? CGSize(width: 400, height: 130) : CGSize(width: 240, height: 84) }
-    private static let badgeGap: CGFloat = 18
-    private var sideInset: CGFloat { rank == nil ? 32 : 24 }
+    private var logoGap: CGFloat { plays ? 20 : 14 }
+    private var logoBox: CGSize {
+        plays ? CGSize(width: 400, height: 130) : wide ? CGSize(width: 300, height: 96) : CGSize(width: 240, height: 84)
+    }
+    private var badgeGap: CGFloat { wide ? 14 : 18 }
+    private var sideInset: CGFloat { plays ? 32 : 28 - (rank == nil ? 0 : 4) }
     /// The place's corner: a soft dark from the top left, so the digits
     /// read on a bright picture.
     private static let cornerShade: UIImage = {
@@ -298,22 +307,23 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(_ item: MetaItem, index: Int, rowCell: FixedFocusRowCell?, art poster: String?,
-                   badge: CardBadge?, rank: Int? = nil) {
+                   badges shown: [CardBadge], rank: Int? = nil, wide: Bool = false) {
         itemIndex = index
         self.rowCell = rowCell
         self.rank = rank
+        self.wide = wide
         place.text = rank.map(String.init)
         place.isHidden = rank == nil
         corner.isHidden = rank == nil
-        logo.areaShare = rank == nil ? 0.55 : 0.5
-        name.font = .systemFont(ofSize: rank == nil ? 40 : 28, weight: .semibold)
+        logo.areaShare = plays ? 0.55 : 0.5
+        name.font = .systemFont(ofSize: plays ? 40 : wide ? 32 : 28, weight: .semibold)
         let changed = self.item?.id != item.id
         self.item = item
-        badges.show(badge.map { [$0] } ?? [])
+        badges.show(shown)
         name.text = item.name
         if changed {
             trailerShown(false, animated: false)
-            let art = poster ?? item.background ?? item.poster
+            let art = wide ? item.background ?? poster ?? item.poster : poster ?? item.background ?? item.poster
             self.art = art
             FixedFocusImages.load(art, into: picture, maxDimension: PictureSize.showcase,
                                   waiting: { [weak self] waiting in
@@ -467,7 +477,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         }
         let plate = FixedFocusBadges.plateHeight
         badges.frame = CGRect(x: sideInset - FixedFocusBadges.inset,
-                              y: titleTop - Self.badgeGap - plate - FixedFocusBadges.inset,
+                              y: titleTop - badgeGap - plate - FixedFocusBadges.inset,
                               width: width + 2 * FixedFocusBadges.inset, height: plate + 2 * FixedFocusBadges.inset)
         sizeOutline()
     }

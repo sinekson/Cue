@@ -28,9 +28,11 @@ struct HomeRow: Identifiable {
     var tabs: [String]? = nil
     /// Badges made with the row (`CueRows.Row.badges`), by title id.
     var badges: [String: CardBadge] = [:]
-    /// A showcase row's (New & Notable): the line under the facts, and the
-    /// picture where it isn't the backdrop (`CueRows.Row`).
+    /// A tall or ranked card's picture where it isn't the backdrop
+    /// (`CueRows.Row`).
     var art: [String: String] = [:]
+    /// Its cards (`CueRows.CardShape`): posters unless said.
+    var shape: CueRows.CardShape = .poster
 
     /// The badges a card shows (`FixedFocusBadges`), at most two: the
     /// show's news, then the row's badge (For You's reason first), else the
@@ -232,7 +234,7 @@ final class HomeViewModel: ObservableObject {
 
     private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
         rows.map { .catalog(HomeRow(id: $0.id, title: $0.title, items: $0.items, tabs: $0.tabs,
-                                    badges: $0.badges ?? [:], art: $0.art ?? [:])) }
+                                    badges: $0.badges ?? [:], art: $0.art ?? [:], shape: $0.shape ?? .poster)) }
     }
 
     /// Cue's own rows (`CueRows`): the saved ones at once, new ones when
@@ -852,11 +854,6 @@ struct HomeView: View {
 
     /// The collection rows (their panels).
     static func isCollectionRow(_ id: String) -> Bool { id.hasPrefix(collectionItemPrefix) }
-    /// Cue's Top 10 rows ("cue.home.top10"): ranked, moving focus.
-    static func isRankedRow(_ id: String) -> Bool { id.hasPrefix("cue.") && id.hasSuffix(".top10") }
-    /// Cue's New & Notable rows: tall showcase cards, moving focus, a
-    /// trailer in the focused one.
-    static func isShowcaseRow(_ id: String) -> Bool { id.hasPrefix("cue.") && id.hasSuffix(".newnotable") }
 
     /// The rows in order: the billboard, Continue Watching, the Watchlist,
     /// the catalogs — filtered on Movies / Series.
@@ -1793,17 +1790,15 @@ struct HomeUIKitView: View {
                            active: active,
                            progress: progress,
                            panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
-                           // Collections, Continue Watching and Saved for
-                           // Later: moving focus.
-                           destinationRowIDs: Set(rows.map(\.id).filter {
-                               HomeView.isCollectionRow($0) || $0 == HomeView.libraryRowID || $0 == continueRowID
-                                   || HomeView.isRankedRow($0) || HomeView.isShowcaseRow($0)
-                           }),
+                           // Every row: moving focus, its cards by its
+                           // shape (`CueRows.CardShape`; posters unless said).
+                           destinationRowIDs: Set(rows.map(\.id).filter { $0 != featuredRowID }),
                            // Top 10: each card's place beside it.
-                           rankedRowIDs: Set(rows.map(\.id).filter(HomeView.isRankedRow)),
-                           showcaseRowIDs: Set(rows.map(\.id).filter(HomeView.isShowcaseRow)),
+                           rankedRowIDs: Set(rows.filter { $0.shape == .ranked }.map(\.id)),
+                           showcaseRowIDs: Set(rows.filter { $0.shape == .tall }.map(\.id)),
                            showcaseTrailers: (homeSettings.heroTrailersEnabled, homeSettings.heroTrailerSound),
-                           captions: false, centred: true,
+                           wideRowIDs: Set(rows.filter { $0.shape == .wide }.map(\.id)),
+                           posterInfo: true, captions: false, centred: true,
                            onSelect: onSelect,
                            onSelectFeatured: { openBillboardTitle($0) },
                            onResume: onResume,
