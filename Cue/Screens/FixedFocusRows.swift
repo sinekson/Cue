@@ -1156,14 +1156,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             : rowChanged ? Motion.verticalDuration : Motion.moveDuration
         // Down from the billboard: the rows show at once (the move is the
         // scroll, not a fade); Up hides them as they sink back.
-        // The billboard's scroll a frame late: Home's top bar (SwiftUI)
-        // goes up with it on the same spring, and SwiftUI's animations
-        // start on the next frame (a frame behind at full speed, the gap
-        // between them closed up as they moved).
-        let delay = billboardScroll ? 1 / Double(max(UIScreen.main.maximumFramesPerSecond, 1)) : 0
         let move = {
             let id = self.beginMove()
-            FixedFocusMotion.run(duration: duration, delay: delay) {
+            FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 rowCell.focus(index: itemIndex)
@@ -1388,12 +1383,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
         focusedRow = rowIndex
         let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
-        // (A frame late from the billboard: the top bar's SwiftUI move, as
-        // in `didUpdateFocus`.)
-        let delay = fromBillboard ? 1 / Double(max(UIScreen.main.maximumFramesPerSecond, 1)) : 0
         let move = {
             let id = self.beginMove()
-            FixedFocusMotion.run(duration: duration, delay: delay) {
+            FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 self.outer.collectionViewLayout.invalidateLayout()
@@ -1758,6 +1750,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 .scaledBy(x: cardScale, y: cardScale)
             billboardShadow?.transform = stage.transform
             billboardShadow?.alpha = billboardLit ? 1 : 0
+            // Home's top bar with the card — set here, in the same
+            // animation, so it moves as printed on the page with it. Its
+            // place, not its growth (following the top edge as it grew,
+            // the bar stepped up and down as focus came and went), nor the
+            // paging dip (it would bob).
+            TopBarFollow.shared.set(stage.transform.ty)
             return
         }
         stage.setBelow(depth > 0)
@@ -1979,11 +1977,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func applyOverlayPosition() {
         guard let featured = featuredIndex else { return }
         let depth = max(focusedRow - featured, 0)
-        // Home's top bar goes up with the card, as far (`TopBarPlace.lift`).
-        if pinnedStage?.cardFrame != nil, let travel = centredBillboardTravel,
-           TopBarPlace.shared.lift != travel {
-            DispatchQueue.main.async { TopBarPlace.shared.lift = travel }
-        }
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
         for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {

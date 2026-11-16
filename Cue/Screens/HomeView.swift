@@ -1796,7 +1796,6 @@ struct HomeUIKitView: View {
         .onAppear { if active { takeBack() } }
         .onChange(of: active) { _, now in
             if now { takeBack() }
-            if now { TopBarPlace.shared.pageDown = depth > 0 }
             opening.trailerShown = now && trailerOut
         }
         // The top bar moves out with the peek while it plays.
@@ -1866,10 +1865,7 @@ struct HomeUIKitView: View {
                            },
                            onDepth: {
                                depth = $0
-                               if active {
-                                   HomeBack.shared.depth = $0
-                                   TopBarPlace.shared.pageDown = $0 > 0
-                               }
+                               if active { HomeBack.shared.depth = $0 }
                            },
                            // The billboard's focus: the card itself (its
                            // hidden cards: Left/Right page, Select opens,

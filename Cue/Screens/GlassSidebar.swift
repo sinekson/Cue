@@ -55,26 +55,49 @@ enum AppTab: Int, CaseIterable, Identifiable {
 /// gate's picked avatar lands on it.
 @MainActor
 enum TopBarAvatar {
-    static var frame: CGRect?
+    /// At the bar's spot (the focus layer's); `frame` where it's drawn.
+    static var base: CGRect?
+    static var frame: CGRect? { base?.offsetBy(dx: 0, dy: TopBarFollow.shared.offset) }
 }
 
-/// Where the page in front has put the top bar: Home's (and Movies',
-/// Series') below the billboard — the bar has gone up with it. Set by the
-/// page (`HomeUIKitView`); other tabs are always at their top.
+/// Home's top bar's place: the UIKit view the bar is drawn in
+/// (`TopBarFace`), moved by the rows (`FixedFocusRowsController`'s
+/// `applyPinnedStage`) inside the same animation as the billboard card,
+/// so it moves as printed on the page with it. (Set frame by frame from
+/// SwiftUI, it fell behind whenever the main thread skipped frames, as a
+/// move begins; its own SwiftUI spring started a frame late.)
 @MainActor
-final class TopBarPlace: ObservableObject {
-    static let shared = TopBarPlace()
-    @Published var pageDown = false
-    /// How far it goes up then: the billboard's own travel.
-    @Published var lift: CGFloat = HomeUIKitView.rigidBillboardTravel
+final class TopBarFollow {
+    static let shared = TopBarFollow()
+    weak var view: UIView? { didSet { apply() } }
+    /// On Home (and Movies / Series): on the card; elsewhere at its spot.
+    var lifted = false {
+        didSet { if lifted != oldValue { UIView.performWithoutAnimation(apply) } }
+    }
+    private var y: CGFloat = 0
+    /// In the caller's animation, if any.
+    func set(_ value: CGFloat) {
+        y = value
+        apply()
+    }
+    /// Where it's drawn, from its spot.
+    var offset: CGFloat { lifted ? y : 0 }
+    private func apply() {
+        view?.transform = CGAffineTransform(translationX: 0, y: offset)
+    }
 }
 
 /// The top navigation: part of the page, not floating over it — the tabs
 /// as words at the page's left edge, the profile at its right, on the
 /// background with nothing behind them. The current tab's name brighter;
-/// focused, the one white capsule (dark text) gliding from tab to tab.
-/// Pages are laid out below it (`topBarClearance`); on Home it is on the
-/// billboard's picture and goes up with it (`lifted`).
+/// focused, the white capsule on the item. Pages are laid out below it
+/// (`topBarClearance`); on Home it is on the billboard's picture and goes
+/// up with it (`TopBarFollow`).
+///
+/// Two layers at the same spots: this one holds focus (SwiftUI's focus
+/// state runs Back, tab switching and the hand-offs to the pages; SwiftUI's
+/// host refuses UIKit's focus requests) and draws nothing; `TopBarFace`
+/// draws the bar in a UIKit view the rows can move.
 struct GlassSidebar: View {
     @EnvironmentObject private var profiles: ProfileStore
     @Binding var selected: Int
@@ -85,13 +108,10 @@ struct GlassSidebar: View {
     /// tab you're already on) and react accordingly.
     var onTabSelected: (Int) -> Void = { _ in }
     /// Hidden: the bar moves out the top (shown: back in) — with the page's
-    /// parts (off a tab's root, into Details in place, a trailer). On the
-    /// items themselves — an offset on the whole full-screen bar view never
-    /// showed.
+    /// parts (off a tab's root, into Details in place, a trailer).
     var hidden = false
-    /// Home's page below its billboard: up with the billboard, as far and
-    /// on the same move, so it reads as the page's own top.
-    var lifted = false
+    /// The item held down (Select), for the face's press dip.
+    var onPress: (Int?) -> Void = { _ in }
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
@@ -105,79 +125,37 @@ struct GlassSidebar: View {
     /// the page underneath follows as you browse the tabs. Select on a tab
     /// (or Down) goes into its content.
     var body: some View {
-        let tabs = AppTab.topBarOrder
         let navFocused = focusBinding.wrappedValue != nil
-        // The highlighted item: the focused one (a tab or the profile, -1)
-        // while the navigation has focus, else the current tab.
-        let lit = focusBinding.wrappedValue ?? selected
-        return HStack(alignment: .center, spacing: Self.itemSpacing) {
-            if Self.centred {
-                // The avatar's room mirrored, so the tabs sit on the
-                // screen's middle.
-                Color.clear.frame(width: Self.topBarItemHeight, height: 1)
-                Spacer(minLength: 0)
-            }
-            ForEach(tabs) { tab in
+        return Self.layout(hidden: hidden) {
+            ForEach(AppTab.topBarOrder) { tab in
                 Button {
                     onTabSelected(tab.rawValue)
                     selected = tab.rawValue
                 } label: {
-                    TopNavLabel(tab: tab, current: selected == tab.rawValue,
-                                focused: navFocused && lit == tab.rawValue)
+                    TopNavLabel(tab: tab, current: false, ghost: true)
                 }
-                .buttonStyle(PlainCardButtonStyle())
+                .buttonStyle(PlainCardButtonStyle { onPress($0 ? tab.rawValue : nil) })
                 .focused(focusBinding, equals: tab.rawValue)
                 // Coming in from the page only the current tab takes focus,
                 // so the engine lands on it (it landed on the nearest tab
                 // first, Home lit faintly before the snap).
                 .disabled(!navFocused && tab.rawValue != selected)
             }
-            Spacer(minLength: 0)
-            // The profile, at the right edge: its name as a tab's, then the
-            // avatar near the bar's full height with the cards' light rim,
-            // `avatarInset` inside the capsule's round end (flush, focused
-            // it had no white round it); its edge on the cards' right
-            // edge. (A 42 pt avatar alone, 16 pt past the cards, read lost.)
+        } profile: {
             Button(action: onProfileTap) {
-                HStack(spacing: Self.iconGap) {
-                    Text(profiles.active.name)
-                        .font(.system(size: Self.textSize, weight: .medium))
-                        .lineLimit(1)
-                    ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 2 * Self.avatarInset)
-                        .overlay { Circle().strokeBorder(.white.opacity(0.25), lineWidth: 2) }
-                        // Where the gate's picked avatar flies (`ProfileGate`).
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                            TopBarAvatar.frame = $0
-                        }
-                }
-                .padding(.leading, Self.slotPadding)
-                .padding(.trailing, Self.avatarInset)
-                .frame(height: Self.topBarItemHeight)
-                .modifier(TopNavFocus(lit: navFocused && lit == -1,
-                                      rest: CueInk.color(FixedFocusText.secondary)))
+                ProfileItem(profile: profiles.active, ghost: true)
+                    // Where the gate's picked avatar flies (`ProfileGate`).
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        let side = Self.topBarItemHeight - 2 * Self.avatarInset
+                        TopBarAvatar.base = CGRect(x: $0.maxX - Self.avatarInset - side,
+                                                    y: $0.minY + Self.avatarInset, width: side, height: side)
+                    }
             }
-            .buttonStyle(PlainCardButtonStyle())
+            .buttonStyle(PlainCardButtonStyle { onPress($0 ? -1 : nil) })
             .focused(focusBinding, equals: -1)
             .disabled(!navFocused)
         }
         .defaultFocus(focusBinding, selected)
-        // The first icon starts on the rows' text edge, as their names (on
-        // the cards' edge it read 4 pt left of them; the first item's
-        // padding is the capsule's room, so the edge is the slot's).
-        .padding(.leading, Self.centred ? Spotlight.screenInset - Self.slotPadding
-                                        : FixedFocusMetrics.titleInset - Self.slotPadding)
-        .padding(.trailing, Spotlight.screenInset - Self.avatarInset)
-        .frame(maxWidth: .infinity)
-        .offset(y: hidden ? -Self.hideTravel : lifted ? -TopBarPlace.shared.lift : 0)
-        .animation(Motion.move, value: hidden)
-        // On the billboard's scroll, the same spring and length: it reads as
-        // fixed on the card, scrolled out of view with it (on `Motion.move`,
-        // 0.35 s against the scroll's 0.6, it moved on its own).
-        .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll), value: lifted)
-        .padding(.top, Self.topBarTop)
-        .frame(maxWidth: .infinity, alignment: .top)
-        // Placed against the real screen edges (the inset above is ours).
-        .ignoresSafeArea()
         .onChange(of: expanded) { _, isExpanded in
             if isExpanded && focusBinding.wrappedValue != selected {
                 focusBinding.wrappedValue = selected
@@ -196,6 +174,37 @@ struct GlassSidebar: View {
             guard old != nil, let focused, focused >= 0, focused != selected else { return }
             selected = focused
         }
+    }
+
+    /// The bar's items placed on the screen — the same for the focus layer
+    /// and the face, so they sit on each other.
+    static func layout<Tabs: View, Profile: View>(hidden: Bool,
+                                                  @ViewBuilder tabs: () -> Tabs,
+                                                  @ViewBuilder profile: () -> Profile) -> some View {
+        HStack(alignment: .center, spacing: itemSpacing) {
+            if centred {
+                // The avatar's room mirrored, so the tabs sit on the
+                // screen's middle.
+                Color.clear.frame(width: topBarItemHeight, height: 1)
+                Spacer(minLength: 0)
+            }
+            tabs()
+            Spacer(minLength: 0)
+            profile()
+        }
+        // The first icon starts on the rows' text edge, as their names (on
+        // the cards' edge it read 4 pt left of them; the first item's
+        // padding is the capsule's room, so the edge is the slot's).
+        .padding(.leading, centred ? Spotlight.screenInset - slotPadding
+                                   : FixedFocusMetrics.titleInset - slotPadding)
+        .padding(.trailing, Spotlight.screenInset - avatarInset)
+        .frame(maxWidth: .infinity)
+        .offset(y: hidden ? -hideTravel : 0)
+        .animation(Motion.move, value: hidden)
+        .padding(.top, topBarTop)
+        .frame(maxWidth: .infinity, alignment: .top)
+        // Placed against the real screen edges (the inset above is ours).
+        .ignoresSafeArea()
     }
 
     /// Hiding: up past the screen's top edge.
@@ -257,9 +266,11 @@ private struct TopNavLabel: View {
     let tab: AppTab
     let current: Bool
     var focused = false
+    /// The focus layer's: laid out, nothing drawn.
+    var ghost = false
 
     var body: some View {
-        HStack(spacing: GlassSidebar.iconGap) {
+        let label = HStack(spacing: GlassSidebar.iconGap) {
             Image(systemName: tab.icon)
                 .font(.system(size: GlassSidebar.iconSize, weight: .semibold))
             Text(tab.label)
@@ -267,10 +278,119 @@ private struct TopNavLabel: View {
         }
         .padding(.horizontal, GlassSidebar.slotPadding)
         .frame(height: GlassSidebar.topBarItemHeight)
-        .modifier(TopNavFocus(lit: focused,
-                              rest: CueInk.color(current ? FixedFocusText.primary : FixedFocusText.secondary),
-                              pill: current))
-        .animation(.easeOut(duration: 0.18), value: current)
+        if ghost {
+            label.foregroundStyle(.clear).contentShape(Capsule())
+        } else {
+            label
+                .modifier(TopNavFocus(lit: focused,
+                                      rest: CueInk.color(current ? FixedFocusText.primary : FixedFocusText.secondary),
+                                      pill: current))
+                .animation(.easeOut(duration: 0.18), value: current)
+        }
+    }
+}
+
+/// The profile at the bar's right edge: its name as a tab's, then the
+/// avatar near the bar's full height with the cards' light rim,
+/// `avatarInset` inside the capsule's round end (flush, focused it had no
+/// white round it); its edge on the cards' right edge. (A 42 pt avatar
+/// alone, 16 pt past the cards, read lost.)
+private struct ProfileItem: View {
+    let profile: UserProfile
+    var lit = false
+    var ghost = false
+
+    var body: some View {
+        let item = HStack(spacing: GlassSidebar.iconGap) {
+            Text(profile.name)
+                .font(.system(size: GlassSidebar.textSize, weight: .medium))
+                .lineLimit(1)
+            ProfileAvatarView(profile: profile,
+                              size: GlassSidebar.topBarItemHeight - 2 * GlassSidebar.avatarInset)
+                .overlay { Circle().strokeBorder(.white.opacity(0.25), lineWidth: 2) }
+                .opacity(ghost ? 0 : 1)
+        }
+        .padding(.leading, GlassSidebar.slotPadding)
+        .padding(.trailing, GlassSidebar.avatarInset)
+        .frame(height: GlassSidebar.topBarItemHeight)
+        if ghost {
+            item.foregroundStyle(.clear).contentShape(Capsule())
+        } else {
+            item.modifier(TopNavFocus(lit: lit, rest: CueInk.color(FixedFocusText.secondary)))
+        }
+    }
+}
+
+/// The top bar as seen: drawn in a UIKit view (`TopBarFollow.view`) the
+/// rows move with the billboard card in their own animation; no focus of
+/// its own (`GlassSidebar` holds it, at the same spots).
+struct TopBarFace: UIViewRepresentable {
+    let profiles: ProfileStore
+    let selected: Int
+    /// The focused item (a tab, or the profile, -1); nil: the page has focus.
+    let focused: Int?
+    let pressed: Int?
+    let hidden: Bool
+    let lifted: Bool
+
+    final class Coordinator {
+        var host: UIHostingController<Content>?
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.isUserInteractionEnabled = false
+        // Moved inside the view SwiftUI places (it sets that one's geometry).
+        let moved = UIView(frame: container.bounds)
+        moved.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(moved)
+        let host = UIHostingController(rootView: content)
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        host.view.isUserInteractionEnabled = false
+        host.view.frame = moved.bounds
+        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        moved.addSubview(host.view)
+        context.coordinator.host = host
+        TopBarFollow.shared.view = moved
+        TopBarFollow.shared.lifted = lifted
+        return container
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.host?.rootView = content
+        TopBarFollow.shared.lifted = lifted
+    }
+
+    private var content: Content {
+        Content(profiles: profiles, profile: profiles.active, selected: selected, focused: focused,
+                pressed: pressed, hidden: hidden)
+    }
+
+    struct Content: View {
+        let profiles: ProfileStore
+        let profile: UserProfile
+        let selected: Int
+        let focused: Int?
+        let pressed: Int?
+        let hidden: Bool
+
+        var body: some View {
+            let lit = focused ?? selected
+            GlassSidebar.layout(hidden: hidden) {
+                ForEach(AppTab.topBarOrder) { tab in
+                    TopNavLabel(tab: tab, current: selected == tab.rawValue,
+                                focused: focused != nil && lit == tab.rawValue)
+                        .cardPressDip(pressed == tab.rawValue)
+                }
+            } profile: {
+                ProfileItem(profile: profile, lit: focused == -1)
+                    .cardPressDip(pressed == -1)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .environmentObject(profiles)
+        }
     }
 }
 

@@ -1772,10 +1772,10 @@ enum FixedFocusMotion {
     /// its speed on instead of starting from rest. (Always UIView.animate:
     /// collection views only animate their cells' size changes inside it —
     /// under a property animator they jumped.)
-    static func run(duration: Double, delay: Double = 0,
+    static func run(duration: Double,
                     animations: @escaping () -> Void,
                     completion: @escaping (Bool) -> Void) {
-        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: delay,
+        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction],
                        animations: animations, completion: completion)
     }

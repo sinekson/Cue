@@ -364,13 +364,14 @@ struct RootView: View {
     /// stray Menu that otherwise opens the sidebar right after backing out.
     @State private var lastHomePopAt: Date?
     @FocusState private var sidebarFocus: Int?
+    /// The top bar's item held down (its face's press dip).
+    @State private var topBarPressed: Int?
     /// The rail is briefly non-focusable at launch so initial focus lands in
     /// the CONTENT (the app boots with the rail collapsed and a card focused).
     @State private var sidebarEnabled = false
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
     /// Home's page below its billboard: the top bar has gone up with it.
-    @ObservedObject private var topBarPlace = TopBarPlace.shared
     /// Into / out of Details in place: the top bar moves out with Home's parts.
     private var billboardOpening = BillboardOpening.shared
 
@@ -988,9 +989,16 @@ struct RootView: View {
 
             // Always there: hidden, it moves out the top (and back in) — one
             // motion app-wide (`GlassSidebar.hidden`); on Home, Movies and
-            // Series it goes up with the billboard (`TopBarPlace`).
+            // Series it goes up with the billboard (`TopBarFollow`, `TopBarFace`).
             do {
                 let barHidden = !showSidebar
+                // What's seen: drawn in UIKit, moved by Home's rows with the
+                // billboard card (`TopBarFollow`); the bar below holds focus.
+                TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
+                           pressed: topBarPressed, hidden: sidebarMovedOut,
+                           lifted: AppTab(rawValue: selectedTab)?.isHomeLike == true)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
                 // (Focus moving along it switches — `switchTab`.)
                 GlassSidebar(selected: Binding(get: { selectedTab },
                                                set: { switchTab(to: $0) }),
@@ -998,8 +1006,7 @@ struct RootView: View {
                              onProfileTap: { launch.showGate(.topBar) },
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: sidebarMovedOut,
-                             lifted: topBarPlace.pageDown && sidebarFocus == nil
-                                && AppTab(rawValue: selectedTab)?.isHomeLike == true)
+                             onPress: { topBarPressed = $0 })
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
@@ -1114,7 +1121,6 @@ struct RootView: View {
         .onChange(of: selectedTab) { _, tab in
             visitedTabs.insert(tab)
             // Home's pages say for themselves (`HomeUIKitView`).
-            if AppTab(rawValue: tab)?.isHomeLike != true { TopBarPlace.shared.pageDown = false }
         }
         .task { await buildTabsAhead() }
     }

@@ -252,8 +252,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   going, it only fades, not shrinking as the buttons' (`shrinks`); a plain fade with no growth coming in was tried; nothing travels: a capsule
   gliding along the bar was slow and odd to the avatar). Focus moving along it
   switches tab. Pages are laid out below it. On Home it
-  sits above the billboard card and goes up with it into the rows (same distance,
-  same move: `TopBarPlace`, `lifted`); off a tab's root, into Details or a
+  sits above the billboard card and goes up with it into the rows (its
+  place, not its growth: the bar stepped as focus came and went), focused
+  or not: drawn in UIKit
+  (`TopBarFace`), moved by the rows in the card's own animation
+  (`TopBarFollow`, set in `applyPinnedStage`; the paging dip not
+  followed); the SwiftUI bar (`GlassSidebar`) holds focus at the same
+  spots and draws nothing (SwiftUI's focus state runs Back and the tab
+  switches; a SwiftUI offset, even set frame by frame, lagged the card
+  whenever the main thread skipped frames); off a tab's root, into Details or a
   trailer it moves out the top (`hidden`), always in the view tree,
   disabled while hidden. (The floating glass pill, and auto-hiding it,
   were dropped, the setting with them.)
@@ -713,8 +720,9 @@ environment changes only reach it through its transition; a wholly covered page
 isn't drawn until revealed, so covers are 99.5 % opaque; text changed under an opacity
 animation hiding it may never be drawn (an empty badge plate): hide by the
 view's own alpha and a timer. A SwiftUI animation starts a frame after a UIKit one
-started in the same press: what must move together with UIKit (the top
-bar with the billboard) gets the UIKit move a frame late. Home's
+started in the same press, and one following a layer frame by frame lags
+whenever the main thread skips frames: what must move with UIKit is
+drawn in a UIKit view moved in the same animation (the top bar). Home's
 billboard follows the row under it by the layout's own tops
 (`FixedFocusRowsLayout.rowTop`): rows differ in height, a fixed pitch
 made the gap breathe; Up/Down into moving-focus rows runs through
