@@ -484,9 +484,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   have one (who's in it, your taste, what's new: "With Bryan Cranston"),
   else the row's name; never a fact badge (the line under the logo says
   those, Details too, so opening in place doesn't jump). Details' line
-  keeps its spot. The description between the tagline
-  and the buttons, 600 pt wide, 5 lines (3 were too few), in Apple TV's vibrancy with a 30 %
-  white over it (`VibrantSummary`; plain at body level was hard to read).
+  keeps its spot. The block sits on its buttons, growing up; two gaps
+  as seen: 34 pt between its parts (reason, logo, the lines under it,
+  the buttons), 19 between those lines (chips, facts, tagline; the
+  tagline falls back to the name, liked). The description is hidden
+  for now, billboard and Details (`showsSummary`, the billboard being
+  reworked; its fade to be tuned against Apple TV's weaker one); it was
+  600 pt, 5 lines, in Apple TV's vibrancy with a 30 % white over it
+  (`VibrantSummary`, kept for text on pictures).
 - **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
   content from `BillboardPicks`, buttons in their own host
   (`BillboardControls`), dots in UIKit on Left/Right's spring, the timer's

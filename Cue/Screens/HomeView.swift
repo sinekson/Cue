@@ -2062,9 +2062,12 @@ struct FixedFocusBillboardText: View {
     }
 
     /// THE BLOCK'S GAPS, as seen (between what's drawn, not the lines'
-    /// frames): one gap between its parts, a little more around the chips.
+    /// frames): `space` between its parts (reason, logo, the lines under
+    /// it, the buttons), `gap` between those lines (chips, facts,
+    /// tagline). (The chips were boxes once, with more room round them;
+    /// 19 above the logo read as part of its art.)
+    static let space: CGFloat = 34
     static let gap: CGFloat = 19
-    static let chipsSpace: CGFloat = 26
     /// Every logo covers about this much (pt²): e.g. 420 × 110 wide,
     /// 260 × 160 (its height cap) near square.
     static let logoArea: CGFloat = 46_000
@@ -2072,8 +2075,9 @@ struct FixedFocusBillboardText: View {
     /// The reason ⇄ Details' line (into Details in place).
     static let leadSwap = AnyTransition.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)),
                                                    removal: .opacity.combined(with: .offset(y: -6)))
-    /// The reason's line frame (30 pt) holds this much below its baseline.
-    static let reasonInset: CGFloat = 6.5
+    /// The reason's and chips' line frames (30 pt) hold this much above
+    /// their capitals and below their baseline.
+    static let labelInset: CGFloat = 6.5
     /// THE BLOCK'S TEXT (facts, tagline): one size, a little above the
     /// base; its line's frame and what that holds above its capitals /
     /// below its baseline.
@@ -2084,6 +2088,9 @@ struct FixedFocusBillboardText: View {
     static let ratingsShown = 3
     /// The description under the tagline (`VibrantSummary`): five lines'
     /// room, narrower than the block so it stays on the shade's dark side.
+    /// Hidden for now (billboard and Details), the billboard being
+    /// reworked; `VibrantSummary` kept for text on pictures elsewhere.
+    static let showsSummary = false
     static let summaryWidth: CGFloat = 600
     static let summaryLines = 5
     static let summarySpacing: CGFloat = 4
@@ -2116,7 +2123,7 @@ struct FixedFocusBillboardText: View {
     /// The block's BOTTOM (the tagline) stands here — it grows up with
     /// what it has, as the Apple TV app's text sits on its buttons. (On
     /// Details: room for the buttons right below.)
-    static var bottom: CGFloat { buttonsY - 30 }
+    static var bottom: CGFloat { buttonsY - (space - lineInset) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2129,9 +2136,11 @@ struct FixedFocusBillboardText: View {
             // reads on bright pictures and trailers too; no shadow (it
             // would flatten the effect). Up to three lines from the top of
             // a fixed room (every title's block the same height).
-            VibrantSummary(text: FixedFocusMetrics.descriptionText(item) ?? "")
-                .frame(width: Self.summaryWidth, height: Self.summaryHeight, alignment: .topLeading)
-                .padding(.top, Self.gap - Self.lineInset)
+            if Self.showsSummary {
+                VibrantSummary(text: FixedFocusMetrics.descriptionText(item) ?? "")
+                    .frame(width: Self.summaryWidth, height: Self.summaryHeight, alignment: .topLeading)
+                    .padding(.top, Self.gap - Self.lineInset)
+            }
         }
         .frame(width: Self.width, alignment: .leading)
     }
@@ -2150,13 +2159,13 @@ struct FixedFocusBillboardText: View {
                 }
             }
             .frame(height: 30, alignment: .leading)
-            .padding(.bottom, Self.gap - Self.reasonInset)
+            .padding(.bottom, Self.space - Self.labelInset)
             logoView
 
             VStack(alignment: .leading, spacing: 0) {
-                // The status badge and ratings (boxes: no inset).
+                // The status badge, a fact and the ratings.
                 chips
-                    .padding(.top, Self.chipsSpace)
+                    .padding(.top, Self.space - Self.labelInset)
                 // THE FACTS — what it is, quieter than the logo and the
                 // chips. (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
@@ -2164,7 +2173,7 @@ struct FixedFocusBillboardText: View {
                     .foregroundStyle(CueInk.body)
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
-                    .padding(.top, Self.chipsSpace - Self.lineInset)
+                    .padding(.top, Self.gap - Self.labelInset - Self.lineInset)
                 // The tagline — the mood, quiet and italic; no tagline: the
                 // name (ALWAYS a line here: every title's block has the same
                 // height, nothing moves).
