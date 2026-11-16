@@ -508,8 +508,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   cards' corners; its own shade, the cards' bottom fade starting higher
   (`StageArt.cardShade`; Details keeps the screen's left fade). No
   buttons: the card takes focus (the Featured row's hidden cells), grown
-  as every wide card (its dots too); Left/Right page, Select opens
-  Details, held the card's hold menu (Library, Rate… as every card). The
+  as every wide card (its dots too); Left/Right page: the next title
+  dissolves in over the old in place (0.25 s), the card dipping all the
+  way to its resting size, down in 0.12 s, up in 0.4 s; a press while it's
+  low or rising goes down from there and rises again: quick paging is one
+  dip; the text and dots dip with it (`dipBillboardCard`; the rows' dip,
+  down and up on one 0.35 s curve, was heavy, a third of it faint and
+  bobbing, half faint; the
+  picture alone under still text felt disconnected) (a slide fitted to the card, a deck of cards
+  and a carousel were tried: a quick turn back glitched, hurried or
+  retargeted); Select opens Details, held the card's hold menu (Library, Rate… as every card). The
   text bottom left, 63 pt from the card's side and foot (`cardMargin`);
   the dots bottom right, their foot on the tagline's line, no pill.
   (Full screen, edge to edge, was before, with a left fade, then tried:

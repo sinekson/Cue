@@ -224,6 +224,8 @@ final class StagePictureView: UIView {
         if page.layer.animationKeys()?.isEmpty ?? true { page.frame = pageFrame }
         blurred.frame = pageFrame
         dim.frame = picture
+        // A card: no black behind the pictures (unmasked, it covered the page).
+        clip.backgroundColor = cardFrame != nil ? .clear : .black
         for case let card as Page in zoom.subviews { card.inCard = cardFrame != nil }
         if let cardFrame {
             cardMask.frame = cardFrame
@@ -245,10 +247,45 @@ final class StagePictureView: UIView {
         if blursBelow { loadBlurred(url) }
         setNeedsLayout()
         guard animated else {
+            for case let card as Page in zoom.subviews where card !== page { card.removeFromSuperview() }
+            leaving = nil
             load(url, into: page.picture)
             page.setText(item.flatMap { text?($0) })
             page.itemID = item?.id
             page.url = url
+            return
+        }
+        // HOME'S CARD: the next title dissolves in over the old in place
+        // (0.25 s), the card dipping a little around it (the rows,
+        // `dipBillboardCard`). (Tried: the full screen's slide fitted to
+        // the card's edge, a deck of cards and a carousel — each glitched
+        // on a quick turn back, retargeted or hurried.)
+        if cardFrame != nil {
+            lastStartOffset = 0
+            lastCover = nil
+            let incoming = Page(frame: pageFrame)
+            incoming.itemID = item?.id
+            incoming.url = url
+            incoming.shade.alpha = shadeAlpha
+            incoming.inCard = true
+            load(url, into: incoming.picture)
+            incoming.setText(item.flatMap { text?($0) })
+            incoming.alpha = 0
+            zoom.insertSubview(incoming, belowSubview: blurred)
+            leaving = page
+            page = incoming
+            // Only the last one in, once it's whole, clears what's under
+            // it: a press mid-fade put a new one over a half-faded one, and
+            // the first one's end pruned the card still showing through it
+            // (a flicker).
+            UIView.animate(withDuration: Motion.fadeDuration, delay: 0,
+                           options: [.curveEaseInOut, .allowUserInteraction]) {
+                incoming.alpha = 1
+            } completion: { _ in
+                guard self.page === incoming else { return }
+                for case let card as Page in self.zoom.subviews where card !== incoming { card.removeFromSuperview() }
+                self.leaving = nil
+            }
             return
         }
         let width = Self.pictureSize.width

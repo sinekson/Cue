@@ -1124,6 +1124,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if featured {
             // The billboard's picture: the title's, drifting on Left/Right.
             rowCell.showStage(item, direction: direction, animated: !rowChanged)
+            if !rowChanged { dipBillboardCard() }
         }
         if billboardScroll, !featured, rigidRest == nil { sendRowsBelowAway() }
         // Up: the rows sink a whole scroll, with the picture.
@@ -1855,6 +1856,36 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var cardScale: CGFloat {
         guard billboardLit, let card = pinnedStage?.cardFrame else { return 1 }
         return 1 + FixedFocusMetrics.focusLift(card.size)
+    }
+
+    /// A page on Home's card: it dips to its resting size, its
+    /// text and dots with it (the picture alone, the text still, felt
+    /// disconnected) — down quickly (`dipDown`), up slowly (`dipUp`): the
+    /// drop reads as the press, the rise is calm. A press while it's low
+    /// or rising goes back down from where it is and rises again, so quick
+    /// paging is one dip, not a bounce a press. (All the way down and up on one
+    /// 0.35 s curve, as the large rows' box, was heavy on so large a card;
+    /// a third faint and bobbing; half too faint.) (Lit only on the billboard,
+    /// at its place: grown is a plain scale.)
+    static let dipDepth: CGFloat = 1
+    static let dipDown: Double = 0.12
+    static let dipUp: Double = 0.4
+    private func dipBillboardCard() {
+        guard billboardLit, let stage = pinnedStage, stage.cardFrame != nil else { return }
+        let grown = cardScale
+        let low = 1 + (grown - 1) * (1 - Self.dipDepth)
+        let now = stage.layer.presentation()?.transform.m11 ?? grown
+        // Down only as far as it still has to go.
+        let left = grown > low ? max(0, min(1, (now - low) / (grown - low))) : 1
+        let down = Self.dipDown * Double(left)
+        let dip = CAKeyframeAnimation(keyPath: "transform")
+        dip.values = [now, low, grown].map { CATransform3DMakeScale($0, $0, 1) }
+        dip.keyTimes = [0, NSNumber(value: down / (down + Self.dipUp)), 1]
+        dip.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        dip.duration = down + Self.dipUp
+        for layer in [stage.layer, overlayHost?.view.layer].compactMap({ $0 }) {
+            layer.add(dip, forKey: "dip")
+        }
     }
 
     private func setBillboardLit(_ lit: Bool) {
