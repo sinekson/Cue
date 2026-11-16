@@ -4,7 +4,6 @@ import SwiftUI
 /// log).
 struct PerformanceSettings: View {
     @ObservedObject private var store = PerformanceSettingsStore.shared
-    @State private var showWhy = false
 
     private var s: Binding<PerformanceSettingsStore.Settings> {
         Binding(get: { store.settings }, set: { store.settings = $0 })
@@ -16,24 +15,6 @@ struct PerformanceSettings: View {
                 title: "Developer",
                 subtitle: "Diagnostics — safe to leave off"
             ) {
-                PerfToggleRow(
-                    icon: "sparkles.rectangle.stack",
-                    title: "Cue's own rows",
-                    subtitle: "Home, Movies and Series rows made by Cue from TMDB and what you watch, instead of the add-ons' catalogs. Pictures and logos from TMDB.",
-                    isOn: s.cueRows
-                )
-
-                Button { showWhy = true } label: {
-                    PerfRowLabel(icon: "questionmark.text.page", title: "Why These Rows",
-                                 subtitle: "What Cue read from your watching, and why each row is on Home, Movies and Series today.") {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(CuePalette.textTertiary)
-                    }
-                }
-                .buttonStyle(PlainCardButtonStyle())
-                .sheet(isPresented: $showWhy) { CueRowsWhyView() }
-
                 PerfToggleRow(
                     icon: "waveform.path.ecg",
                     title: "Playback diagnostics HUD",
@@ -141,87 +122,5 @@ struct MeasureSettings: View {
                 )
             }
         }
-    }
-}
-
-/// Developer → Why These Rows: the taste Cue read and each row's reason,
-/// from the last saved build of this profile's rows.
-private struct CueRowsWhyView: View {
-    @State private var saved: CueRows.Saved?
-    @State private var loaded = false
-
-    private var lines: [(String, String)] {
-        guard let saved else { return [] }
-        var out: [(String, String)] = []
-        let built = saved.builtAt.formatted(date: .abbreviated, time: .shortened)
-        out.append(("Built \(built)", "Taste from \(saved.titles) titles you watched or saved; rows rotate daily (\(saved.day))."))
-        if !saved.taste.isEmpty {
-            out.append(("Your taste", saved.taste.map { "\($0.label) \(Int(($0.share * 100).rounded())) %" }
-                .joined(separator: " · ")))
-        }
-        let ratings = TitleRatings.shared.snapshot()
-        if !ratings.isEmpty {
-            let groups = TitleRatings.Rating.allCases.reversed().compactMap { rating -> String? in
-                let names = ratings.values.filter { $0.rating == rating }.sorted { $0.at > $1.at }.map(\.name)
-                return names.isEmpty ? nil : "\(rating.name): " + names.joined(separator: ", ")
-            }
-            out.append(("Your ratings", "Love counts twice, Like one and a half; Not for Me is out of every row "
-                        + "and takes its traits off a little. " + groups.joined(separator: " · ")))
-        }
-        if !saved.passedOver.isEmpty {
-            out.append(("Passed over", "Left out for 30 days after you looked and moved on three times: "
-                        + saved.passedOver.joined(separator: ", ")))
-        }
-        if let dropped = saved.dropped, !dropped.isEmpty {
-            out.append(("Dropped", "A film stopped before 20 % and left 14 days, a show left 30 days after one or two "
-                        + "episodes: out of the rows, half as much against its traits as Not for Me. "
-                        + dropped.joined(separator: ", ")))
-        }
-        for tab in ["home", "movie", "series"] {
-            let name = tab == "home" ? "Home" : tab == "movie" ? "Movies" : "Series"
-            for why in saved.why where why.tab == tab { out.append(("\(name) · \(why.title)", why.reason)) }
-        }
-        return out
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if loaded && saved == nil {
-                    Text("No rows built yet. Turn on Cue's own rows and open Home.")
-                        .font(.system(size: 24))
-                        .foregroundStyle(CuePalette.textSecondary)
-                }
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Button {} label: { WhyLine(title: line.0, text: line.1) }
-                        .buttonStyle(PlainCardButtonStyle())
-                }
-            }
-            .padding(.horizontal, 120)
-            .padding(.vertical, 60)
-        }
-        .task { saved = await CueRows.saved(); loaded = true }
-    }
-}
-
-private struct WhyLine: View {
-    @Environment(\.isFocused) private var isFocused
-    let title: String
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(CuePalette.textPrimary)
-            Text(text)
-                .font(.system(size: 24))
-                .foregroundStyle(CuePalette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, CueSpacing.md)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SettingsRowBackground(isFocused: isFocused))
     }
 }

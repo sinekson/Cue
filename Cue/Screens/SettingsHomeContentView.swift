@@ -13,16 +13,35 @@ struct HomeContentSettingsDetail: View {
     @AppStorage(BillboardAutoPage.key) private var billboardAutoPage = true
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
     @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
+    @AppStorage(HomeRowSource.key) private var rowSource = HomeRowSource.current.rawValue
 
     var body: some View {
         let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
         SettingsPage(title: SettingsCategory.homeContent.title) {
             SettingsSection {
-                SettingsLinkRow(
-                    title: "Home Rows",
-                    description: "Choose which rows show on Home, their order and their names.",
-                    value: "\(rows.filter { $0.isShown(settings: settings) }.count)"
-                ) { HomeRowsPage() }
+                SettingsOptionsRow(
+                    title: "Rows",
+                    pageDescription: "Choose where Home's rows come from. Made for You builds them from what "
+                        + "you watch and rate, new each day, with titles from TMDB. From Add-ons shows the "
+                        + "catalogs of your add-ons, arranged in Home Rows.",
+                    options: HomeRowSource.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
+                    selection: rowSource
+                ) { rowSource = $0 }
+
+                // The second row is about the rows you have: Made for You's
+                // reasons, or the add-ons' rows to arrange.
+                if rowSource == HomeRowSource.madeForYou.rawValue {
+                    SettingsLinkRow(
+                        title: "Why These Rows",
+                        description: "What Cue read from your watching, and why each row is on Home today."
+                    ) { WhyTheseRowsPage() }
+                } else {
+                    SettingsLinkRow(
+                        title: "Home Rows",
+                        description: "Choose which rows show on Home, their order and their names.",
+                        value: "\(rows.filter { $0.isShown(settings: settings) }.count)"
+                    ) { HomeRowsPage() }
+                }
 
                 SettingsOptionsRow(
                     title: "Continue Watching Order",
@@ -65,6 +84,476 @@ struct HomeContentSettingsDetail: View {
                     isOn: $hideSpoilers
                 )
             }
+        }
+    }
+}
+
+/// Home & Details → Why These Rows, from the last saved build of this
+/// profile's rows: what Cue read from your watching, then each tab's rows,
+/// each a tall row with a short preview; Select opens it in full in the
+/// About panel (`TextPanel`). When they were built, to read, last.
+private struct WhyTheseRowsPage: View {
+    @State private var saved: CueRows.Saved?
+    @State private var loaded = false
+
+    private static let tabs = [("home", "Home"), ("movie", "Movies"), ("series", "Series")]
+
+    var body: some View {
+        SettingsPage(title: "Why These Rows") {
+            if let saved {
+                SettingsSection(title: "Your Taste", spacing: SettingsMetrics.tallRowGap) {
+                    tasteRows(saved)
+                }
+                ForEach(Self.tabs, id: \.0) { tab, name in
+                    let rows = saved.why.filter { $0.tab == tab }
+                    if !rows.isEmpty {
+                        SettingsSection(title: name, spacing: SettingsMetrics.tallRowGap) {
+                            ForEach(Array(rows.enumerated()), id: \.offset) { index, why in
+                                SettingsTallRow(title: why.title, preview: why.reason, id: "why.\(tab).\(index)") {
+                                    let row = saved.rows.first { $0.title == why.title && ($0.tabs?.contains(tab) ?? true) }
+                                    TextPanel.present(title: why.title, subtitle: name,
+                                                      content: WhyRowPanel(reason: why.reason, row: row))
+                                }
+                            }
+                        }
+                    }
+                }
+                SettingsSection {
+                    SettingsInfoRow(title: "Built",
+                                    value: DateFormatter.settingsWhen.string(from: saved.builtAt))
+                }
+            } else if loaded {
+                SettingsSection {
+                    Text("Not built yet. Open Home and Cue builds its rows.")
+                        .font(.system(size: SettingsMetrics.descriptionTextSize))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .padding(.horizontal, SettingsMetrics.rowInset)
+                }
+                .background(alignment: .top) { SettingsFocusHolder() }
+            }
+        }
+        .task { saved = await CueRows.saved(); loaded = true }
+    }
+
+    @ViewBuilder
+    private func tasteRows(_ saved: CueRows.Saved) -> some View {
+        let taste = saved.taste
+        SettingsTallRow(title: "What You Watch",
+                        preview: taste.prefix(4).map(\.label).joined(separator: ", "),
+                        id: "why.taste") {
+            TextPanel.present(title: "What You Watch",
+                              subtitle: "From \(saved.titles) titles you watched or saved",
+                              content: WhyTastePanel(taste: taste))
+        }
+        let ratings = TitleRatings.shared.snapshot()
+        if !ratings.isEmpty {
+            let groups = TitleRatings.Rating.allCases.reversed().compactMap { rating -> (TitleRatings.Rating, [String])? in
+                let names = ratings.values.filter { $0.rating == rating }.sorted { $0.at > $1.at }.map(\.name)
+                return names.isEmpty ? nil : (rating, names)
+            }
+            SettingsTallRow(title: "Your Ratings",
+                            preview: groups.map { "\($0.0.name) \($0.1.count)" }.joined(separator: " · "),
+                            id: "why.ratings") {
+                TextPanel.present(title: "Your Ratings", content: WhyRatingsPanel(groups: groups))
+            }
+        }
+        if !saved.passedOver.isEmpty {
+            SettingsTallRow(title: "Passed Over", preview: saved.passedOver.joined(separator: ", "),
+                            id: "why.passed") {
+                TextPanel.present(title: "Passed Over", content: WhyTitlesPanel(
+                    intro: "Titles you rested on and moved past on three days are left out of the rows "
+                        + "for 30 days.",
+                    names: saved.passedOver))
+            }
+        }
+        if let dropped = saved.dropped, !dropped.isEmpty {
+            SettingsTallRow(title: "Dropped", preview: dropped.joined(separator: ", "), id: "why.dropped") {
+                TextPanel.present(title: "Dropped", content: WhyTitlesPanel(
+                    intro: "A film stopped before 20 % and left for 14 days, or a show left for 30 days "
+                        + "after one or two episodes, is left out of the rows and counts against its "
+                        + "traits half as much as Not for Me. Rating it changes that.",
+                    names: dropped))
+            }
+        }
+    }
+}
+
+// MARK: - Why These Rows' panels
+
+/// The panels' parts. One grid in every panel: three columns of 460, 60
+/// apart, across the panel's 1500; the intro two of them wide (980: lined
+/// up with the grid; the whole width ran past 120 characters a line).
+private enum WhyPanel {
+    static let textSize = FixedFocusMetrics.textSize
+    static let column: CGFloat = 460
+    static let gap: CGFloat = 60
+    static let introWidth = 2 * column + gap
+
+    static func intro(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: SettingsMetrics.descriptionTextSize))
+            .lineSpacing(8)
+            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .frame(maxWidth: introWidth, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Columns laid out at once, every line in place (a lazy grid laid its
+/// items out apart from the rest as the panel scrolled): the items in
+/// lines of `columns`, left to right; each line a place the scroll can
+/// stop (`anchors`: a section's start, or a line).
+private struct WhyColumns<Item, Cell: View>: View {
+    let items: [Item]
+    let columns: Int
+    let width: CGFloat
+    let spacing: CGFloat
+    let rowSpacing: CGFloat
+    var anchors: PanelAnchor.Kind = .line
+    @ViewBuilder let cell: (Item) -> Cell
+
+    init(_ items: [Item], columns: Int, width: CGFloat, spacing: CGFloat, rowSpacing: CGFloat,
+         anchors: PanelAnchor.Kind = .line, @ViewBuilder cell: @escaping (Item) -> Cell) {
+        self.items = items
+        self.columns = columns
+        self.width = width
+        self.spacing = spacing
+        self.rowSpacing = rowSpacing
+        self.anchors = anchors
+        self.cell = cell
+    }
+
+    var body: some View {
+        let lines = stride(from: 0, to: items.count, by: columns).map { Array(items[$0..<min($0 + columns, items.count)]) }
+        VStack(alignment: .leading, spacing: rowSpacing) {
+            ForEach(lines.indices, id: \.self) { index in
+                HStack(alignment: .top, spacing: spacing) {
+                    ForEach(lines[index].indices, id: \.self) { column in
+                        cell(lines[index][column]).frame(width: width, alignment: .topLeading)
+                    }
+                }
+                .panelAnchor(anchors)
+            }
+        }
+    }
+}
+
+/// A group's header: its icon and name in the section labels' capitals,
+/// a quiet count after it.
+private struct WhyHeader: View {
+    let icon: String
+    let title: String
+    var count: String? = nil
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 26, weight: .semibold))
+                .frame(width: 34)
+            Text(title.uppercased())
+                .font(.system(size: SettingsMetrics.sectionTextSize, weight: .semibold))
+            if let count {
+                Text(count)
+                    .font(.system(size: SettingsMetrics.sectionTextSize))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+            }
+        }
+        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+    }
+}
+
+/// What You Watch: your traits by kind, each a bar of its share of your
+/// watching (against the largest), the share, and how many times more it
+/// is in yours than in what's popular. Two columns of kinds.
+private struct WhyTastePanel: View {
+    let taste: [CueRows.TasteLine]
+
+    private static let kinds: [(key: String, name: String, icon: String)] = [
+        ("g", "Genres", "theatermasks"), ("k", "Themes", "tag"), ("l", "Languages", "character.bubble"),
+        ("o", "Countries", "globe"), ("d", "Decades", "calendar"), ("c", "Studios", "building.2"),
+        ("n", "Networks", "tv"), ("p", "People", "person.2"),
+    ]
+
+    /// Three columns across the panel; a group takes a column per 7 lines
+    /// (at most three), its lines split evenly between them (read down,
+    /// then across). Groups fill each line of the grid in order; one that
+    /// doesn't fit takes the columns left if that keeps it to 12 lines a
+    /// column (Themes beside Genres, not under it alone), else starts the
+    /// next line.
+    static let columns = 3
+    static let column = WhyPanel.column
+    static let gap = WhyPanel.gap
+
+    static func span(_ lines: Int) -> Int { min(columns, max(1, (lines + 6) / 7)) }
+    static func leastSpan(_ lines: Int) -> Int { min(columns, max(1, (lines + 11) / 12)) }
+
+    private typealias Group = (name: String, icon: String, lines: [CueRows.TasteLine])
+
+    /// The grid's lines, each group with the columns it takes.
+    private static func pack(_ groups: [Group]) -> [[(group: Group, span: Int)]] {
+        var out: [[(group: Group, span: Int)]] = []
+        var line: [(group: Group, span: Int)] = []
+        var used = 0
+        for group in groups {
+            var span = span(group.lines.count)
+            if used + span > columns {
+                if !line.isEmpty, columns - used >= leastSpan(group.lines.count) {
+                    span = columns - used
+                } else if !line.isEmpty {
+                    out.append(line)
+                    line = []
+                    used = 0
+                }
+            }
+            line.append((group, span))
+            used += span
+        }
+        if !line.isEmpty { out.append(line) }
+        return out
+    }
+
+    private var groups: [Group] {
+        // Saved before kinds were kept: one group.
+        guard taste.contains(where: { $0.kind != nil }) else {
+            return taste.isEmpty ? [] : [("Your Traits", "sparkles", taste)]
+        }
+        return Self.kinds.compactMap { kind in
+            let lines = taste.filter { $0.kind == kind.key }.sorted { $0.share > $1.share }
+            return lines.isEmpty ? nil : (kind.name, kind.icon, lines)
+        }
+    }
+
+    var body: some View {
+        let most = taste.map(\.share).max() ?? 1
+        VStack(alignment: .leading, spacing: 56) {
+            WhyPanel.intro("Cue reads a taste from the last titles you watched, started or saved, "
+                + "and scores every row against it, with a share of the day's chance so the rows "
+                + "change each day. A trait counts more where it's rarer in what's popular: "
+                + "the number after each share says how many times more it is in yours.")
+            VStack(alignment: .leading, spacing: 64) {
+                ForEach(Array(Self.pack(groups).enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: Self.gap) {
+                        ForEach(line, id: \.group.name) { entry in
+                            WhyTasteGroup(name: entry.group.name, icon: entry.group.icon, lines: entry.group.lines,
+                                          most: most, span: entry.span)
+                        }
+                    }
+                    .panelAnchor(.strong)
+                }
+            }
+        }
+    }
+}
+
+/// One kind of trait: its header, its lines in `span` columns.
+private struct WhyTasteGroup: View {
+    let name: String
+    let icon: String
+    let lines: [CueRows.TasteLine]
+    let most: Double
+    let span: Int
+
+    var body: some View {
+        let perColumn = Int((Double(lines.count) / Double(span)).rounded(.up))
+        let columns = stride(from: 0, to: lines.count, by: max(perColumn, 1))
+            .map { Array(lines[$0..<min($0 + perColumn, lines.count)]) }
+        VStack(alignment: .leading, spacing: 20) {
+            WhyHeader(icon: icon, title: name)
+            HStack(alignment: .top, spacing: WhyTastePanel.gap) {
+                ForEach(columns.indices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 20) {
+                        ForEach(columns[index], id: \.label) { line in
+                            WhyBar(line: line, most: most).panelAnchor(.line)
+                        }
+                    }
+                    .frame(width: WhyTastePanel.column, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
+/// A trait's line: its name, its bar, its share, its lift (the column's
+/// 460 pt: 180, 120, 64, 48 and three gaps of 16).
+private struct WhyBar: View {
+    let line: CueRows.TasteLine
+    let most: Double
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(line.label)
+                .font(.system(size: WhyPanel.textSize, weight: .medium))
+                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .lineLimit(1)
+                .frame(width: 180, alignment: .leading)
+            Capsule()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 120, height: 10)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(FixedFocusText.primary))
+                        .frame(width: max(10, 120 * line.share / max(most, 0.0001)))
+                }
+            Text("\(Int((line.share * 100).rounded())) %")
+                .font(.system(size: WhyPanel.textSize))
+                .monospacedDigit()
+                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                .frame(width: 64, alignment: .trailing)
+            Text(line.lift.map { $0 >= 1.5 ? String(format: "%.0f×", $0.rounded()) : "" } ?? "")
+                .font(.system(size: WhyPanel.textSize))
+                .monospacedDigit()
+                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                .frame(width: 48, alignment: .trailing)
+        }
+    }
+}
+
+/// Your Ratings: a column per rating, its thumbs, its count, its titles.
+private struct WhyRatingsPanel: View {
+    let groups: [(TitleRatings.Rating, [String])]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 56) {
+            WhyPanel.intro("Love This counts twice and I Like This one and a half times in your taste, "
+                + "and seeds Because You Watched more. Not for Me is left out of every row Cue makes, "
+                + "and takes its traits off a little.")
+            HStack(alignment: .top, spacing: WhyPanel.gap) {
+                ForEach(groups, id: \.0) { rating, names in
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 14) {
+                            WhyThumbs(rating: rating)
+                            Text(rating.name)
+                                .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                            Text("\(names.count)")
+                                .font(.system(size: SettingsMetrics.rowTextSize))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                        }
+                        .padding(.bottom, 6)
+                        ForEach(names, id: \.self) { name in
+                            Text(name)
+                                .font(.system(size: WhyPanel.textSize))
+                                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                                .lineLimit(1)
+                                .panelAnchor(.line)
+                        }
+                    }
+                    .frame(width: WhyPanel.column, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
+/// The rating's thumbs, as its tile's: down, up, two up.
+private struct WhyThumbs: View {
+    let rating: TitleRatings.Rating
+
+    var body: some View {
+        let font = Font.system(size: 30, weight: .semibold)
+        Group {
+            switch rating {
+            case .notForMe: Image(systemName: "hand.thumbsdown.fill").font(font)
+            case .like: Image(systemName: "hand.thumbsup.fill").font(font)
+            case .love:
+                HStack(spacing: -10) {
+                    Image(systemName: "hand.thumbsup.fill").font(font)
+                    Image(systemName: "hand.thumbsup.fill").font(font).offset(y: -3)
+                }
+            }
+        }
+        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+    }
+}
+
+/// Passed Over, Dropped: why, then the titles in three columns.
+private struct WhyTitlesPanel: View {
+    let intro: String
+    let names: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 56) {
+            WhyPanel.intro(intro)
+            VStack(alignment: .leading, spacing: 20) {
+                WhyHeader(icon: "eye.slash", title: "Left Out", count: "\(names.count)")
+                    .panelAnchor(.strong)
+                WhyColumns(names, columns: 3, width: WhyPanel.column, spacing: WhyPanel.gap, rowSpacing: 16) { name in
+                    Text(name)
+                        .font(.system(size: WhyPanel.textSize))
+                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+}
+
+/// A row's reason, then its titles as a table: poster, name, year and
+/// kind, the badge it was made with. Three columns.
+private struct WhyRowPanel: View {
+    let reason: String
+    let row: CueRows.Row?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 56) {
+            WhyPanel.intro(reason)
+            if let row, !row.items.isEmpty {
+                VStack(alignment: .leading, spacing: 24) {
+                    WhyHeader(icon: "rectangle.stack", title: "In This Row", count: "\(row.items.count)")
+                        .panelAnchor(.strong)
+                    WhyColumns(Array(row.items.enumerated()), columns: 3, width: WhyPanel.column,
+                               spacing: WhyPanel.gap, rowSpacing: 22) { entry in
+                        WhyTitleLine(rank: row.shape == .ranked ? entry.offset + 1 : nil, item: entry.element,
+                                     badge: row.badges?[entry.element.id])
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct WhyTitleLine: View {
+    let rank: Int?
+    let item: MetaItem
+    let badge: CardBadge?
+
+    private var facts: String {
+        let kind = item.isSeries ? "Series" : "Movie"
+        let year = item.releaseInfo.map { String($0.prefix(4)) } ?? ""
+        return year.isEmpty ? kind : "\(kind) · \(year)"
+    }
+
+    var body: some View {
+        HStack(spacing: 22) {
+            if let rank {
+                Text("\(rank)")
+                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .frame(width: 44, alignment: .trailing)
+            }
+            AsyncImage(url: item.poster.flatMap(URL.init(string:))) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                Color.white.opacity(0.08)
+            }
+            .frame(width: 64, height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.system(size: WhyPanel.textSize, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .lineLimit(1)
+                Text(facts)
+                    .font(.system(size: WhyPanel.textSize))
+                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                    .lineLimit(1)
+                if let badge {
+                    BadgeLabel(badge: .init(symbol: FixedFocusBadges.symbol(badge.kind), mark: nil, text: badge.text))
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 }

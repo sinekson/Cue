@@ -250,8 +250,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   again once an hour old — on coming back, a tab switch, and while Home sits
   open (checked every 5 min). A refresh's billboard picks swap in only while
   no billboard is on screen (`BillboardSight`).
-- **Cue's own rows** (experiment, branch `tmdb-catalogs`; Settings →
-  Developer): Home's, Movies' and Series' rows made by Cue from TMDB, no
+- **Rows: Made for You or From Add-ons** (Settings → Home & Details →
+  Rows, `HomeRowSource`, on the device; the default From Add-ons until
+  onboarding asks, later: a choice early, Made for You needing a key).
+  The row under it follows the choice, hidden, not greyed (tvOS can't
+  focus a greyed row): Why These Rows for Made for You, Home Rows (the
+  add-ons' rows to hide, order, rename) for From Add-ons. Hide Watched
+  Titles works on both; ranked grids keep their ten.
+  **Made for You** (Cue's own rows, branch `tmdb-catalogs`): Home's,
+  Movies' and Series' rows made by Cue from TMDB, no
   add-on catalogs (`CueRows` at the end of `BillboardPicks.swift`): titles
   only with a poster, a backdrop and an IMDb id (they play by it), TMDB's
   posters and logos (`TMDBService.traits`, 30 days on disk). A taste from
@@ -363,7 +370,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   before 20 % and left 14 days; a show left 30 days after one or two
   episodes, three or more is Pick Back Up) is out of those rows, not a
   Because You Watched seed, and counts against its traits at half Not for
-  Me's; a rating overrides it (Developer → Why These Rows lists them).
+  Me's; a rating overrides it (Why These Rows lists them).
   Opening Details, trailers and Search opens as signals, and runtime as a
   trait, were talked over: noise or said already. Some days (45 %) a
   rewatch row of what you finished 180 days ago or more: the season's
@@ -371,7 +378,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   else Watch Again (Comfort Shows needs rewatch data we don't have). Your
   own rows show at 5 and ignore the two-rows cap.
   Rebuilt on a new day, after 6 h or when the recent watches change, shown
-  on the next load, never mid-browse. Developer → Why These Rows: the taste
+  on the next load, never mid-browse. Why These Rows: the taste
   and each row's reason. Each row says which tabs show it (`HomeRow.tabs`).
   Passed over (`CueRows.Memory`, `Passes`): focus resting 1.5 s on a title
   of Cue's rows without opening it counts once a day; three days and it's

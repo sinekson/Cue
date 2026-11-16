@@ -842,6 +842,7 @@ struct HomeView: View {
     /// at) — left out of the rows with Hide watched titles.
     @State private var finishedShows: Set<String> = []
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
+    @AppStorage(HomeRowSource.key) private var rowSource = HomeRowSource.current.rawValue
     @ObservedObject private var stills = ContinueStills.shared
 
     /// False while Home is covered (player fullScreenCover, pushed screen,
@@ -921,8 +922,10 @@ struct HomeView: View {
     private func withoutWatched(_ rows: [HomeRow]) -> [HomeRow] {
         guard hideWatched else { return rows }
         return rows.compactMap { row in
+            // A ranked list keeps its ten: left out, the ranks would skip.
             if row.id == Spotlight.featuredRowID || row.id == Spotlight.continueRowID
-                || row.id == Self.libraryRowID || Self.isCollectionRow(row.id) { return row }
+                || row.id == Self.libraryRowID || Self.isCollectionRow(row.id)
+                || row.shape == .ranked { return row }
             let items = row.items.filter { item in
                 item.isSeries ? !finishedShows.contains(item.id) : !watched.isWatched(contentID: item.id)
             }
@@ -1106,9 +1109,7 @@ struct HomeView: View {
         // a cold start ran the whole catalog sweep two to four times over.
         .onChange(of: addonManager.addons) { _, _ in scheduleReload() }
         .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
-        .onReceive(PerformanceSettingsStore.shared.$settings.map(\.cueRows).removeDuplicates().dropFirst()) { _ in
-            scheduleReload()
-        }
+        .onChange(of: rowSource) { _, _ in scheduleReload() }
         .onChange(of: collections.collections) { _, _ in scheduleReload() }
         // Collection rows render regardless, but a provider change still
         // reloads Home so anything downstream of the connections is fresh.

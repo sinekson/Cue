@@ -306,6 +306,12 @@ struct DetailSummaryPanel<Facts: View>: View {
     let genres: String
     let summary: String
     let facts: Facts
+    /// The column's width: the summary's measure (Settings' panels, with
+    /// charts and tables, wider).
+    var width: CGFloat = SummaryPanelMetrics.columnWidth
+    /// The name and the line under it at the column's left (Settings'
+    /// panels), not centred (About).
+    var leadingTitle = false
     let onClose: () -> Void
     /// Focus comes to it when it opens (over the UIKit rows: Back must close
     /// it, not the page).
@@ -313,6 +319,8 @@ struct DetailSummaryPanel<Facts: View>: View {
     /// How far the column has scrolled, and its height.
     @State private var scrolled: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
+    /// Where the column can stop (`panelAnchor`): sections' starts, lines.
+    @State private var anchors: [PanelAnchor] = []
 
     private var maxScroll: CGFloat {
         max(0, contentHeight - (SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop) + SummaryPanelMetrics.fade)
@@ -324,7 +332,7 @@ struct DetailSummaryPanel<Facts: View>: View {
             Button(action: onClose) {
                 ZStack(alignment: .top) {
                     Color.clear
-                    VStack(spacing: 6) {
+                    VStack(alignment: leadingTitle ? .leading : .center, spacing: 6) {
                         Text(title)
                             .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
@@ -336,7 +344,7 @@ struct DetailSummaryPanel<Facts: View>: View {
                                 .lineLimit(1)
                         }
                     }
-                    .frame(width: 1400)
+                    .frame(width: leadingTitle ? width : 1400, alignment: leadingTitle ? .leading : .center)
                     .padding(.top, SummaryPanelMetrics.titleTop)
                     column
                         .padding(.top, SummaryPanelMetrics.columnTop)
@@ -350,27 +358,54 @@ struct DetailSummaryPanel<Facts: View>: View {
         .onAppear { focused = true }
         .onMoveCommand { direction in
             switch direction {
-            case .down: withAnimation(Motion.move) { scrolled = min(scrolled + SummaryPanelMetrics.step, maxScroll) }
-            case .up: withAnimation(Motion.move) { scrolled = max(scrolled - SummaryPanelMetrics.step, 0) }
+            case .down: withAnimation(Motion.move) { scrolled = stop(down: true) }
+            case .up: withAnimation(Motion.move) { scrolled = stop(down: false) }
             default: break
             }
         }
         .onExitCommand(perform: onClose)
     }
 
+    /// The next stop, each just under the top's fade: the next section's
+    /// start while it's on screen (all before it has been seen; never
+    /// passed), else the furthest whole line a step reaches, else the step.
+    /// Up the same way back. Plain text: the step.
+    private func stop(down: Bool) -> CGFloat {
+        let step = SummaryPanelMetrics.step
+        let seen = SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop - SummaryPanelMetrics.fade
+        let places = anchors.map { (y: max(0, $0.y - SummaryPanelMetrics.fade), strong: $0.kind == .strong) }
+        let sections = down ? places.filter { $0.strong && $0.y > scrolled + 1 && $0.y <= scrolled + seen }
+                            : places.filter { $0.strong && $0.y < scrolled - 1 && $0.y >= scrolled - seen }
+        let reach = down ? places.filter { $0.y > scrolled + 1 && $0.y <= scrolled + step }
+                         : places.filter { $0.y < scrolled - 1 && $0.y >= scrolled - step }
+        let target: CGFloat
+        if let section = (down ? sections.min { $0.y < $1.y } : sections.max { $0.y < $1.y }) {
+            target = section.y
+        } else if let line = (down ? reach.max { $0.y < $1.y } : reach.min { $0.y < $1.y }) {
+            target = line.y
+        } else {
+            target = down ? scrolled + step : scrolled - step
+        }
+        return min(max(target, 0), maxScroll)
+    }
+
     private var column: some View {
         Color.clear
-            .frame(width: SummaryPanelMetrics.columnWidth, height: SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop)
+            .frame(width: width, height: SummaryPanelMetrics.columnBottom - SummaryPanelMetrics.columnTop)
             .overlay(alignment: .top) {
                 VStack(alignment: .leading, spacing: 44) {
-                    Text(summary)
-                        .font(.system(size: SettingsMetrics.descriptionTextSize))
-                        .lineSpacing(9)
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !summary.isEmpty {
+                        Text(summary)
+                            .font(.system(size: SettingsMetrics.descriptionTextSize))
+                            .lineSpacing(9)
+                            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     facts
                 }
-                .frame(width: SummaryPanelMetrics.columnWidth, alignment: .leading)
+                .frame(width: width, alignment: .leading)
+                .coordinateSpace(name: PanelAnchor.space)
+                .onPreferenceChange(PanelAnchorsKey.self) { anchors = $0 }
                 .background { GeometryReader { geo in
                     Color.clear
                         .onAppear { contentHeight = geo.size.height }
@@ -389,6 +424,32 @@ struct DetailSummaryPanel<Facts: View>: View {
                         .frame(height: SummaryPanelMetrics.fade)
                 }
             }
+    }
+}
+
+/// A place the About panel's column can stop at: a section's start
+/// (`strong`, never scrolled past) or a line of a table.
+struct PanelAnchor: Equatable {
+    enum Kind { case strong, line }
+    let y: CGFloat
+    let kind: Kind
+    static let space = "panel.column"
+}
+
+struct PanelAnchorsKey: PreferenceKey {
+    static let defaultValue: [PanelAnchor] = []
+    static func reduce(value: inout [PanelAnchor], nextValue: () -> [PanelAnchor]) { value += nextValue() }
+}
+
+extension View {
+    /// Marks where the panel's column can stop (its top).
+    func panelAnchor(_ kind: PanelAnchor.Kind) -> some View {
+        background {
+            GeometryReader { geo in
+                Color.clear.preference(key: PanelAnchorsKey.self,
+                                       value: [PanelAnchor(y: geo.frame(in: .named(PanelAnchor.space)).minY, kind: kind)])
+            }
+        }
     }
 }
 
@@ -417,6 +478,85 @@ enum SummaryPanelMetrics {
 /// The panel draws itself: no focus chrome.
 private struct SummaryPanelStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
+}
+
+// MARK: - Text
+
+/// A full-screen page of information in the About panel (Why These Rows'
+/// entries: charts, tables), wider than About's column: presented over
+/// whatever is in front, fading in; Up / Down scroll, Select or Back close.
+@MainActor enum TextPanel {
+    static let width: CGFloat = 1500
+
+    static func present(title: String, subtitle: String = "", content: some View) {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        guard let top, !(top is TextPanelController) else { return }
+        top.present(TextPanelController(title: title, subtitle: subtitle, content: AnyView(content)), animated: false)
+    }
+}
+
+private final class TextPanelController: UIViewController {
+    private var host: UIHostingController<TextPanelScreen>!
+    private let fade = TextPanelFade()
+
+    init(title: String, subtitle: String, content: AnyView) {
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        host = UIHostingController(rootView: TextPanelScreen(
+            title: title, subtitle: subtitle, content: content, fade: fade,
+            onClose: { [weak self] in self?.close() }))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        addChild(host)
+        host.view.frame = view.bounds
+        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(host.view)
+        host.didMove(toParent: self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        withAnimation(Motion.fade) { fade.shown = true }
+    }
+
+    private var closing = false
+
+    private func close() {
+        guard !closing else { return }
+        closing = true
+        withAnimation(Motion.fade) { fade.shown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.fadeDuration) { [weak self] in
+            self?.dismiss(animated: false)
+        }
+    }
+}
+
+@Observable private final class TextPanelFade {
+    var shown = false
+}
+
+private struct TextPanelScreen: View {
+    let title: String
+    let subtitle: String
+    let content: AnyView
+    let fade: TextPanelFade
+    let onClose: () -> Void
+
+    var body: some View {
+        DetailSummaryPanel(title: title, genres: subtitle, summary: "", facts: content,
+                           width: TextPanel.width, leadingTitle: true, onClose: onClose)
+            .opacity(fade.shown ? 1 : 0)
+    }
 }
 
 // MARK: - Rate

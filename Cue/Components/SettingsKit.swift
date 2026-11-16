@@ -590,6 +590,67 @@ struct SettingsButtonRow: View {
     }
 }
 
+/// A tall row (Apple's Languages' height) with a line under its name: a
+/// short preview of what Select opens (Why These Rows: each reason, opened
+/// in full in the About panel, `TextPanel`).
+struct SettingsTallRow: View {
+    let title: String
+    let preview: String
+    let id: String
+    let action: () -> Void
+
+    @FocusState private var focused: Bool
+    @Environment(\.settingsFocusHidden) private var focusHidden
+    private var lit: Bool { focused && !focusHidden }
+
+    var body: some View {
+        Button(action: action) { face }
+            .buttonStyle(SettingsPress(lift: SettingsMetrics.focusScale))
+            .focused($focused)
+            .modifier(SettingsRowEntry(id: id))
+    }
+
+    private var face: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
+                    .foregroundStyle(lit ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
+                    .lineLimit(1)
+                if !preview.isEmpty {
+                    Text(preview)
+                        .font(.system(size: SettingsMetrics.descriptionTextSize))
+                        .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 24)
+            Image(systemName: "chevron.right")
+                .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
+                .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.45) : SettingsMetrics.secondaryText)
+                .padding(.leading, 14)
+                .padding(.trailing, SettingsMetrics.chevronInset)
+        }
+        // Both sides as the add-ons' rows (`SettingsReorderRow`): the
+        // chevron as far in from the end.
+        .padding(.horizontal, SettingsMetrics.rowInset)
+        .frame(height: SettingsMetrics.tallRowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
+            Group {
+                if lit { GlassHighlight(focused: true, shape: shape) }
+                else { shape.fill(SettingsMetrics.restingFill) }
+            }
+            .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
+                - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
+            .shadow(color: .black.opacity(lit ? 0.3 : 0), radius: 16, y: 8)
+        }
+        .scaleEffect(lit ? SettingsMetrics.focusScale : 1)
+        .animation(.smooth(duration: 0.18), value: lit)
+    }
+}
+
 // MARK: - Managed lists (Home's rows, the add-ons)
 
 /// While a list entry is being moved, the top bar can't take focus — Up at

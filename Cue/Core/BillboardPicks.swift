@@ -319,16 +319,45 @@ enum BillboardPicks {
     }
 }
 
+/// Settings → Home & Details → Rows: where Home's, Movies' and Series'
+/// rows come from. Made for You: Cue's own (`CueRows`); From Add-ons: the
+/// add-ons' catalogs, as Home Rows arranges them. On this device only.
+enum HomeRowSource: String, CaseIterable {
+    case madeForYou = "cue"
+    case addons
+
+    static let key = "cue.home.rowSource"
+
+    var label: String {
+        switch self {
+        case .madeForYou: "Made for You"
+        case .addons: "From Add-ons"
+        }
+    }
+
+    static var current: HomeRowSource {
+        UserDefaults.standard.string(forKey: key).flatMap(HomeRowSource.init(rawValue:)) ?? fromDeveloperSwitch
+    }
+
+    /// Before the setting: Developer's "Cue's own rows" switch, as it was left.
+    private static var fromDeveloperSwitch: HomeRowSource {
+        guard let data = UserDefaults.standard.data(forKey: "cue.performance.v1"),
+              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              saved["cueRows"] as? Bool == true else { return .addons }
+        return .madeForYou
+    }
+}
+
 /// CUE'S OWN ROWS — Home's, Movies' and Series' rows made by Cue from TMDB
-/// and what you watch, not the add-ons' catalogs (Developer → Cue's own
-/// rows). A taste is read from your watching (`Taste`); a catalogue of named
+/// and what you watch, not the add-ons' catalogs (Home & Details → Rows:
+/// Made for You, `HomeRowSource`). A taste is read from your watching (`Taste`); a catalogue of named
 /// rows (`catalogue`) is scored against it, with a daily seeded share of
 /// chance so rows rotate; each row's titles are ordered for you. Each tab
 /// has its own rows (`tabs`). Built on a new day, after `rebuildAge`, or when
 /// your last titles changed; saved per profile, so a launch paints the last
 /// ones at once and new ones show on the next load, never mid-browse.
 enum CueRows {
-    @MainActor static var isOn: Bool { PerformanceSettingsStore.shared.settings.cueRows }
+    @MainActor static var isOn: Bool { HomeRowSource.current == .madeForYou }
 
     typealias Title = TMDBService.CueTitle
     typealias Traits = TMDBService.TitleTraits
@@ -368,7 +397,7 @@ enum CueRows {
         let aired: Date?
     }
 
-    /// Why a row is there (Developer → Why These Rows).
+    /// Why a row is there (Home & Details → Why These Rows).
     struct Why: Codable, Sendable {
         let tab: String
         let title: String
@@ -378,6 +407,12 @@ enum CueRows {
     struct TasteLine: Codable, Sendable {
         let label: String
         let share: Double
+        /// The trait's kind, its feature's first letter: g genre, k theme,
+        /// l language, o country, d decade, c studio, n network, p person
+        /// (nil: saved before it was kept).
+        var kind: String? = nil
+        /// How many times more it is in yours than in what's popular.
+        var lift: Double? = nil
     }
 
     struct Saved: Codable, Sendable {
@@ -406,7 +441,7 @@ enum CueRows {
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 22
+    static let version = 24
     /// Today's Pick (the full-width card) doesn't show a title again for
     /// this long.
     static let spotlightRest: TimeInterval = 7 * 24 * 60 * 60
@@ -714,11 +749,17 @@ enum CueRows {
 
         func idf(_ feature: String) -> Double { Self.idf(feature, base: base, size: poolSize) }
 
+        /// How many times more a trait is in your watching than in what's
+        /// popular.
+        func lift(_ feature: String) -> Double {
+            (taste.shares[feature] ?? 0) / max(base[feature] ?? 0, 0.03)
+        }
+
         /// How much a trait is yours: its share, more where it's rarer than
         /// in what's popular (at most twice).
         func pull(_ feature: String) -> Double {
             let share = taste.shares[feature] ?? 0
-            let lift = share / max(base[feature] ?? 0, 0.03)
+            let lift = lift(feature)
             return share * min(lift, 4).squareRoot()
         }
 
@@ -2015,7 +2056,8 @@ enum CueRows {
         let tasteLines = taste.shares.keys
             .sorted { model.pull($0) > model.pull($1) }
             .prefix(30)
-            .map { TasteLine(label: label($0, taste), share: taste.shares[$0] ?? 0) }
+            .map { TasteLine(label: label($0, taste), share: taste.shares[$0] ?? 0,
+                             kind: $0.first.map(String.init), lift: model.lift($0)) }
         let layouts = [home, movies, shows]
         // The tall and ranked cards' pictures, chosen once the rows are
         // laid out, in the background (about 1 s for 40 titles); the build
@@ -2068,7 +2110,11 @@ enum CueRows {
                      picked: Array(Set(layouts.flatMap(\.themed))), previous: previous,
                      titles: known.count, taste: tasteLines, why: layouts.flatMap(\.why),
                      passedOver: passes.out(day: day).compactMap { id in pool.first { $0.item.id == id }?.item.name },
-                     dropped: watches.filter { dropped.contains($0.id) }.map { $0.name.isEmpty ? $0.id : $0.name },
+                     // By name: the watch's, else TMDB's (a watch saved without
+                     // one showed its IMDb id); none, left out.
+                     dropped: watches.filter { dropped.contains($0.id) }.compactMap { watch in
+                         watch.name.isEmpty ? known.first { $0.watch.id == watch.id }?.traits.name : watch.name
+                     },
                      version: version, spotlights: spotlights)
     }
 
