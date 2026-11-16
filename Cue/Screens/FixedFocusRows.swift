@@ -3962,9 +3962,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         guard let index = context.nextFocusedIndexPath?.item else {
             if let opening {
                 featureLayout.open = opening
+                rowMoves += 1
+                let move = rowMoves
                 FixedFocusMotion.run(duration: Motion.moveDuration) {
                     self.applyFeature(in: cv)
-                } completion: { _ in }
+                } completion: { _ in self.boxMoveEnded(move) }
             }
             return
         }
@@ -3975,11 +3977,13 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             featureLayout.focused = index
             if let opening { featureLayout.open = opening }
         }
+        rowMoves += 1
+        let move = rowMoves
         FixedFocusMotion.run(duration: Motion.moveDuration) {
             if relayout { self.applyFeature(in: cv) }
             if offset != cv.contentOffset.x { cv.contentOffset = CGPoint(x: offset, y: 0) }
             self.applyNameRoom(focusing: index)
-        } completion: { _ in }
+        } completion: { _ in self.boxMoveEnded(move) }
     }
 
     /// Focus is on one of `cv`'s cards.
@@ -4045,17 +4049,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let index = featureLayout.focused, item = row.items[index]
         let frame = boxFrame
         let posterFrame = CGRect(origin: frame.origin, size: FixedFocusFeatureLayout.poster)
-        let move = animated ? Motion.moveDuration : 0
         guard featureLayout.open else {
             // Closing: back into the poster under it, then gone.
             guard let closing = box else { return }
             box = nil
             boxItem = nil
-            grow(closing, to: posterFrame, animated: animated)
-            closing.setOpen(false, animated: animated)
             let under = underBox(index)
             under?.mirror = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + move) { [weak self] in
+            closing.setOpen(false, animated: animated)
+            grow(closing, to: posterFrame, animated: animated) { [weak self, weak under] in
                 closing.removeFromSuperview()
                 if self?.box == nil { under?.hiddenUnderBox = false }
             }
@@ -4083,19 +4085,21 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             // Only the picture and words fade in: the outline and its shadow
             // are there at once, the old one's gone in the same frame (both
             // drawn, the shadow doubled dark under the card, then dropped).
-            if animated { new.dissolveIn() }
+            // The old one goes when the new one has covered it.
+            if animated {
+                new.dissolveIn { old.removeFromSuperview() }
+            } else {
+                old.removeFromSuperview()
+            }
             if let cv = destinationStrip {
                 for case let cell as FixedFocusShowcaseCell in cv.visibleCells where cell.mirror === old {
                     cell.mirror = nil
                     cell.hiddenUnderBox = false
                 }
             }
-            // (The old one stays as it is, grown and outlined, until the new
-            // one covers it: easing it back drew its outline shrinking under.
-            // The card that was under it may have eased it back already,
-            // losing focus before this: undone.)
-            UIView.performWithoutAnimation { old.reflect(focused: true, pressed: false, held: false) }
-            old.settle()
+            // (The old one stays as it is, grown, until the new one covers it:
+            // easing it back drew its outline shrinking under. The card that
+            // was under it leaves it as it is: `passesFocusAlong`.)
             old.dropOutline()
             // The box itself back to its resting size and up again (a press
             // on a focused card's way), the old and the new as one: outline
@@ -4119,9 +4123,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                     view.layer.add(dip, forKey: "dip")
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? Motion.fadeDuration : 0)) {
-                old.removeFromSuperview()
-            }
             // Already grown and outlined, as the old one: only the picture
             // changes. Laid out whole here, the outline's shadow too: laid
             // out late, in the move's spring, it grew in from a stale size
@@ -4135,9 +4136,12 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 under?.mirror = new
                 new.layoutIfNeeded()
             }
-            // Hidden once it has slid in under the box (until then, it shows).
-            DispatchQueue.main.asyncAfter(deadline: .now() + move) { [weak self, weak under] in
-                if self?.box === new, under?.mirror === new { under?.hiddenUnderBox = true }
+            // Hidden once it has slid in under the box (until then, it
+            // shows): at the end of the row's move (`boxMoveEnded`).
+            if animated {
+                slidingUnder = (under, new)
+            } else {
+                under?.hiddenUnderBox = true
             }
         } else {
             // Into the row: out of the focused poster.
@@ -4160,18 +4164,34 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 
     /// The box to `frame`, everything in it laid out in the same spring.
-    private func grow(_ box: FixedFocusShowcaseCell, to frame: CGRect, animated: Bool) {
+    private func grow(_ box: FixedFocusShowcaseCell, to frame: CGRect, animated: Bool,
+                      then done: @escaping () -> Void = {}) {
         guard animated else {
             box.frame = frame
-            return box.layoutIfNeeded()
+            box.layoutIfNeeded()
+            return done()
         }
         FixedFocusMotion.run(duration: Motion.moveDuration) {
             box.frame = frame
             box.layoutIfNeeded()
-        } completion: { _ in }
+        } completion: { _ in done() }
+    }
+
+    /// The card sliding in under the box along the row, hidden once there.
+    private var slidingUnder: (cell: FixedFocusShowcaseCell?, box: FixedFocusShowcaseCell)?
+    /// Counts the row's moves: only the last one's end hides it (held, an
+    /// earlier move's end came while the next card was still sliding in).
+    private var rowMoves = 0
+
+    /// The row's move has ended (the last one, `move` its count).
+    private func boxMoveEnded(_ move: Int) {
+        guard move == rowMoves, let sliding = slidingUnder else { return }
+        slidingUnder = nil
+        if box === sliding.box, sliding.cell?.mirror === sliding.box { sliding.cell?.hiddenUnderBox = true }
     }
 
     private func dropBox() {
+        slidingUnder = nil
         box?.removeFromSuperview()
         box = nil
         boxItem = nil

@@ -612,6 +612,14 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         let focused = isFocused || (HoldMenu.shared.isOpen && context.previouslyFocusedView === self)
+        // Under the box, focus going to the next card in the row: the box
+        // stays as it is (the row hands it the next title); eased back here
+        // it shrank under the new one.
+        if mirror != nil, !focused, passesFocusAlong(context) {
+            focusedNow = false
+            pressed = false
+            return
+        }
         FixedFocusMotion.run(duration: Motion.moveDuration) {
             self.applyFocus(focused)
         } completion: { _ in }
@@ -659,9 +667,18 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     // MARK: Under the box
 
+    /// Focus going from this card to another of its row.
+    private func passesFocusAlong(_ context: UIFocusUpdateContext) -> Bool {
+        guard let next = context.nextFocusedView as? FixedFocusShowcaseCell else { return false }
+        return next.superview === superview
+    }
+
     /// The box's new title: its picture and words fading in over the old
     /// box, the outline and shadow there at once.
-    func dissolveIn() {
+    func dissolveIn(then done: @escaping () -> Void) {
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(done)
+        defer { CATransaction.commit() }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -679,15 +696,6 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// Showing focus (grown, outlined).
     var isFocusedLook: Bool { focusedNow }
 
-    /// Whatever it was animating, at its end now (the box going out under
-    /// the new one stays as it is).
-    func settle() {
-        func stop(_ layer: CALayer) {
-            layer.removeAllAnimations()
-            layer.sublayers?.forEach(stop)
-        }
-        stop(contentView.layer)
-    }
 
     /// A large row's card under the box (`FixedFocusRowCell`'s open card at
     /// the spot): it keeps focus, press and hold; the box shows them and
