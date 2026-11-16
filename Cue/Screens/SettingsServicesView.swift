@@ -180,16 +180,6 @@ struct MDBListServicePage: View {
             })) {
                 RatingOrderPage()
             }
-            // How many of them under Home's fixed box; only while Home shows them.
-            if mdblist.settings.place == .everywhere {
-                SettingsOptionsRow(
-                    title: "Ratings on Rows",
-                    pageDescription: "How many ratings the focused title shows on Home's rows. "
-                        + "They follow the order of Rating Providers.",
-                    options: (1...FixedFocusBillboardText.ratingsShown).map { SettingsOption(id: "\($0)", label: "\($0)") },
-                    selection: "\(mdblist.settings.rowCount)"
-                ) { mdblist.settings.rowCount = Int($0) ?? 1 }
-            }
         }
     }
 }

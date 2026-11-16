@@ -14,8 +14,6 @@ struct MDBListSettings: Codable, Equatable {
     var order: [String] = MDBListSettings.defaultOrder.map(\.rawValue)
     /// Where ratings show at all (the catalog's IMDb fallback too).
     var place: RatingsPlace = .everywhere
-    /// How many ratings Home's rows show (the fixed box), 1–3, in the order.
-    var rowCount = 1
 
     /// IMDb first; MyAnimeList second — only anime have one, so it shows for
     /// them and everything else falls through to the next.
@@ -26,7 +24,7 @@ struct MDBListSettings: Codable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, apiKey, order, place, rowCount
+        case enabled, apiKey, order, place
     }
 
     /// Tolerant per-field decode, exactly like `PlayerSettingsStore`: adding a
@@ -40,7 +38,6 @@ struct MDBListSettings: Codable, Equatable {
         apiKey = (try? c.decode(String.self, forKey: .apiKey)) ?? d.apiKey
         order = (try? c.decode([String].self, forKey: .order)) ?? d.order
         place = (try? c.decode(RatingsPlace.self, forKey: .place)) ?? d.place
-        rowCount = (try? c.decode(Int.self, forKey: .rowCount)) ?? d.rowCount
     }
 
     static let `default` = MDBListSettings()
