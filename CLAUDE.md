@@ -509,7 +509,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   cards' corners; its own shade, the cards' bottom fade starting higher
   (`StageArt.cardShade`; Details keeps the screen's left fade). No
   buttons: the card takes focus (the Featured row's hidden cells), grown
-  as every wide card (its dots too); Left/Right page: the next title
+  as every wide card (its dots too; between it and the rows grown in the
+  scroll's own move, its room for the growth kept: the 40 pt is to the
+  grown card; the scroll a row step's 0.5 s, 0.6 felt slow); Left/Right page: the next title
   dissolves in over the old in place (0.25 s), the card dipping all the
   way to its resting size, down in 0.12 s, up in 0.4 s; a press while it's
   low or rising goes down from there and rises again: quick paging is one
@@ -710,7 +712,13 @@ the screen mid-fade, so fade a plain view holding it; never draw text twice;
 environment changes only reach it through its transition; a wholly covered page
 isn't drawn until revealed, so covers are 99.5 % opaque; text changed under an opacity
 animation hiding it may never be drawn (an empty badge plate): hide by the
-view's own alpha and a timer.
+view's own alpha and a timer. A SwiftUI animation starts a frame after a UIKit one
+started in the same press: what must move together with UIKit (the top
+bar with the billboard) gets the UIKit move a frame late. Home's
+billboard follows the row under it by the layout's own tops
+(`FixedFocusRowsLayout.rowTop`): rows differ in height, a fixed pitch
+made the gap breathe; Up/Down into moving-focus rows runs through
+`enterRow`, not `didUpdateFocus`'s move.
 
 ## Removed / rejected (don't bring back)
 

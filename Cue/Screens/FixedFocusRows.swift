@@ -1044,10 +1044,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Home's billboard card: grown while focus is on it (its hidden
         // cards; a hold menu over it keeps it so).
         if !HoldMenu.shared.isOpen {
-            // (On the scroll's timing when the rows scroll was tried: back
-            // to focus's everywhere, the curves to be looked at as a whole.)
-            setBillboardLit(context.nextFocusedView.flatMap { Self.rowCell(containing: $0) }
-                .map { isFeatured($0.rowIndex) } ?? false)
+            let rows = [context.previouslyFocusedView, context.nextFocusedView]
+                .map { $0.flatMap { Self.rowCell(containing: $0) }?.rowIndex }
+            // Between the billboard and the rows, it grows (or shrinks) as
+            // part of the scroll — in its move, as a row's grown card is
+            // part of the rows' (on its own 0.3 s spring beside the scroll's
+            // 0.6 the gap closed on two clocks). To and from the top bar:
+            // focus's.
+            setBillboardLit(rows[1].map { isFeatured($0) } ?? false,
+                            inScroll: rows[0] != nil && rows[1] != nil && rows[0] != rows[1])
         }
         // Back in view after hiding, the system puts focus on the first
         // card on screen (without asking): on to `returnRow`'s instead,
@@ -1151,9 +1156,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             : rowChanged ? Motion.verticalDuration : Motion.moveDuration
         // Down from the billboard: the rows show at once (the move is the
         // scroll, not a fade); Up hides them as they sink back.
+        // The billboard's scroll a frame late: Home's top bar (SwiftUI)
+        // goes up with it on the same spring, and SwiftUI's animations
+        // start on the next frame (a frame behind at full speed, the gap
+        // between them closed up as they moved).
+        let delay = billboardScroll ? 1 / Double(max(UIScreen.main.maximumFramesPerSecond, 1)) : 0
         let move = {
             let id = self.beginMove()
-            FixedFocusMotion.run(duration: duration) {
+            FixedFocusMotion.run(duration: duration, delay: delay) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 rowCell.focus(index: itemIndex)
@@ -1162,6 +1172,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 self.outer.collectionViewLayout.invalidateLayout()
                 self.outer.layoutIfNeeded()
                 self.applyPageHeaderPosition()
+                // The billboard by the rows' new layout (`billboardUp`).
+                self.applyOverlayPosition()
             } completion: { _ in
                 if billboardScroll, featured, self.focusedRow == rowIndex {
                     // Back on the billboard: the rows (off the screen) return to
@@ -1376,14 +1388,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
         focusedRow = rowIndex
         let duration = fromBillboard ? FixedFocusMotion.billboardScroll : Motion.verticalDuration
+        // (A frame late from the billboard: the top bar's SwiftUI move, as
+        // in `didUpdateFocus`.)
+        let delay = fromBillboard ? 1 / Double(max(UIScreen.main.maximumFramesPerSecond, 1)) : 0
         let move = {
             let id = self.beginMove()
-            FixedFocusMotion.run(duration: duration) {
+            FixedFocusMotion.run(duration: duration, delay: delay) {
                 self.applyDimming()
                 oldRowCell?.relayout()
                 self.outer.collectionViewLayout.invalidateLayout()
                 self.outer.layoutIfNeeded()
                 self.applyPageHeaderPosition()
+                // The billboard by the rows' new layout (`billboardUp`).
+                self.applyOverlayPosition()
             } completion: { _ in
                 guard self.endMove(id) else { return }
                 if !self.isMoving { self.landBack() }
@@ -1655,6 +1672,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func billboardUp(depth: Int) -> CGFloat {
         guard depth > 0 else { return 0 }
         if let travel = centredBillboardTravel ?? rigidBillboardTravel {
+            // Deeper: as far again as the row under it has gone up since
+            // (rows differ in height: by one pitch a row, the billboard and
+            // the rows travelled different distances, the gap between them
+            // breathing mid-move — printed on one sheet, they don't).
+            if depth > 1, let featured = featuredIndex,
+               let layout = outer.collectionViewLayout as? FixedFocusRowsLayout,
+               let rest = layout.rowTop(featured + 1, focus: featured + 1),
+               let top = layout.rowTop(featured + 1, focus: featured + depth) {
+                return travel + rest - top
+            }
             return travel + CGFloat(depth - 1) * FixedFocusMetrics.rowPitch
         }
         return rigidRest.map {
@@ -1911,9 +1938,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-    private func setBillboardLit(_ lit: Bool) {
+    private func setBillboardLit(_ lit: Bool, inScroll: Bool = false) {
         guard lit != billboardLit, pinnedStage?.cardFrame != nil else { return }
         billboardLit = lit
+        // The scroll's move places it (`applyOverlayPosition`), grown or not.
+        if inScroll { return }
         UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.applyOverlayPosition()

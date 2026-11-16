@@ -1368,6 +1368,13 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     var rigidRest: () -> CGFloat? = { nil }
     /// The billboard's own distance up at a depth, if it has one.
     var billboardUp: (Int) -> CGFloat? = { _ in nil }
+    /// Every row's top with row `f` focused, as the last `prepare` laid
+    /// them out (the billboard follows the row under it: `rowTop(_:focus:)`).
+    private var topsFor: ((Int) -> [CGFloat])?
+    func rowTop(_ r: Int, focus f: Int) -> CGFloat? {
+        guard let tops = topsFor?(f), tops.indices.contains(r) else { return nil }
+        return tops[r]
+    }
     /// A row's cards' height (one size, but for a side-info row).
     var cardHeight: (Int) -> CGFloat = { _ in FixedFocusMetrics.height }
     /// A row's cards this much lower under its name (a line under it).
@@ -1507,6 +1514,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
             }
             return y
         }
+        topsFor = tops
         let focusedTops = tops(f)
         func normal(_ r: Int, _ f: Int) -> CGFloat {
             f == self.focusedRow() ? focusedTops[r] : tops(f)[r]
@@ -1764,10 +1772,10 @@ enum FixedFocusMotion {
     /// its speed on instead of starting from rest. (Always UIView.animate:
     /// collection views only animate their cells' size changes inside it —
     /// under a property animator they jumped.)
-    static func run(duration: Double,
+    static func run(duration: Double, delay: Double = 0,
                     animations: @escaping () -> Void,
                     completion: @escaping (Bool) -> Void) {
-        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: delay,
                        options: [.beginFromCurrentState, .allowUserInteraction],
                        animations: animations, completion: completion)
     }
@@ -1789,9 +1797,10 @@ enum FixedFocusMotion {
         return low
     }
 
-    /// Between the billboard and the rows: a little longer than a row step
-    /// (it moves further).
-    static let billboardScroll: Double = 0.6
+    /// Between the billboard and the rows: a row step's own length (Home's
+    /// card scrolls as a row; 0.6, a little longer for the longer way,
+    /// felt slow).
+    static let billboardScroll: Double = Motion.verticalDuration
 
     /// `run`'s move for SwiftUI views moving with it (the billboard's text
     /// and dots): SwiftUI's spring is UIKit's system spring.

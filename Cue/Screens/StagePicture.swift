@@ -26,11 +26,17 @@ final class StagePictureView: UIView {
     /// above the next row's name, the cards' corners. (Full screen, edge
     /// to edge, was before.)
     static let cardGap: CGFloat = 40
+    /// The `cardGap` above the next row's name is to the card GROWN (focus
+    /// grows it round its middle): its room for the growth reserved, as a
+    /// row's grown card's.
     static var homeCard: CGRect {
         let top = GlassSidebar.topBarTop + GlassSidebar.topBarItemHeight + cardGap
         let bottom = FixedFocusRowsLayout.nextNameY - cardGap
+        let width = 1920 - 2 * Spotlight.screenInset
+        // Its growth's share (by its width, the longer side).
+        let growth = FixedFocusMetrics.focusLift(CGSize(width: width, height: 1))
         return CGRect(x: Spotlight.screenInset, y: top,
-                      width: 1920 - 2 * Spotlight.screenInset, height: bottom - top)
+                      width: width, height: ((bottom - top) / (1 + growth / 2)).rounded())
     }
     /// What's in it this far in from its sides and foot: the text bottom
     /// left, the dots bottom right on its last baseline. No buttons: the

@@ -170,7 +170,10 @@ struct GlassSidebar: View {
         .frame(maxWidth: .infinity)
         .offset(y: hidden ? -Self.hideTravel : lifted ? -TopBarPlace.shared.lift : 0)
         .animation(Motion.move, value: hidden)
-        .animation(Motion.move, value: lifted)
+        // On the billboard's scroll, the same spring and length: it reads as
+        // fixed on the card, scrolled out of view with it (on `Motion.move`,
+        // 0.35 s against the scroll's 0.6, it moved on its own).
+        .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll), value: lifted)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
