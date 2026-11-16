@@ -251,9 +251,11 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private let facts = UILabel()
     /// Today's Pick's description under the facts (the billboard's order),
     /// as many lines as the billboard's at most, the body level on the shade.
-    private let summary = UILabel()
-    private static let summaryWidth: CGFloat = 640
-    private static let summaryGap: CGFloat = 10
+    /// Today's Pick: the tagline under the facts, as the billboard's (the
+    /// name where there's none; the description was before).
+    private let tagline = UILabel()
+    /// The billboard's gap between its lines, frame to frame.
+    private static let taglineGap: CGFloat = 5
     private let loadingCard = FixedFocusPlaceholder()
     /// A Top 10's place (nil elsewhere), and the shade behind it.
     private(set) var rank: Int?
@@ -332,11 +334,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         place.font = .systemFont(ofSize: 44, weight: .bold)
         place.textColor = CueInk.ui(FixedFocusText.primary)
         corner.contentMode = .topLeft
-        summary.font = .systemFont(ofSize: FixedFocusMetrics.textSize)
-        summary.textColor = CueInk.ui(FixedFocusText.body)
-        summary.numberOfLines = FixedFocusBillboardText.summaryLines
-        summary.lineBreakMode = .byTruncatingTail
-        for view: UIView in [corner, place, badges, logo, name, facts, summary] { words.addSubview(view) }
+        tagline.font = UIFont.italicSystemFont(ofSize: FixedFocusMetrics.captionSize)
+        tagline.textColor = CueInk.ui(FixedFocusText.secondary)
+        tagline.lineBreakMode = .byTruncatingTail
+        for view: UIView in [corner, place, badges, logo, name, facts, tagline] { words.addSubview(view) }
         logo.isHidden = true
         edge.isUserInteractionEnabled = false
         card.addSubview(edge)
@@ -369,8 +370,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         shownBadges = shown
         showBadges(item)
         name.text = item.name
-        summary.text = spotlight ? FixedFocusMetrics.descriptionText(item) : nil
-        summary.isHidden = !spotlight
+        tagline.text = spotlight ? TitleRecords.shared.tagline(item) ?? item.name : nil
+        tagline.isHidden = !spotlight
         if changed {
             let art = spotlight ? poster ?? item.background ?? item.poster
                 : poster ?? item.poster ?? item.background
@@ -438,7 +439,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// The badges' line: a series' status first (not on a Top 10's card).
     private func showBadges(_ item: MetaItem) {
         badges.show(status: rank == nil ? FixedFocusShowInfo.status(item) : nil, shownBadges,
-                    rating: rank == nil ? FixedFocusBadges.rating(item) : nil)
+                    rating: rank == nil ? FixedFocusBadges.rating(item, sources: spotlight ? 3 : 1) : nil)
     }
 
     /// A large row's backdrop, loaded once it's near the spot (the open
@@ -577,11 +578,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         badges.frame = CGRect(x: plateInset, y: plateInset, width: face.width - 2 * plateInset,
                               height: FixedFocusBadges.wrappedHeight)
         var foot = face.height - footPad
-        if spotlight, summary.text?.isEmpty == false {
-            let fitted = summary.sizeThatFits(CGSize(width: Self.summaryWidth, height: .greatestFiniteMagnitude)).height
-            let height = min(fitted, ceil(summary.font.lineHeight * CGFloat(FixedFocusBillboardText.summaryLines)))
-            summary.frame = CGRect(x: sideInset, y: foot - height, width: Self.summaryWidth, height: height)
-            foot = summary.frame.minY - Self.summaryGap
+        if spotlight {
+            tagline.frame = CGRect(x: sideInset, y: foot - Self.lineHeight, width: width, height: Self.lineHeight)
+            foot = tagline.frame.minY - Self.taglineGap
         }
         let y = foot - Self.lineHeight
         facts.frame = CGRect(x: sideInset, y: y, width: width, height: Self.lineHeight)
@@ -1833,20 +1832,26 @@ final class FixedFocusBadges: UIView {
         var symbol: Symbol?
         var mark: UIImage?
         let text: String
+        /// More ratings on the same plate, each its mark and score
+        /// (Today's Pick: the billboard's three).
+        var more: [Badge] = []
     }
 
     /// The card's rating, top right: the first source in Settings' order
     /// that has one (MDBList's, from the title's record), else IMDb's (the
-    /// catalog's, else IMDb's own file). None where ratings are off here.
-    static func rating(_ item: MetaItem) -> Badge? {
+    /// catalog's, else IMDb's own file); `sources` of them on one plate
+    /// (Today's Pick three, as the billboard). None where ratings are off.
+    static func rating(_ item: MetaItem, sources: Int = 1) -> Badge? {
         let settings = MDBListSettingsStore.current
         guard settings.showsRatings(onDetails: false) else { return nil }
         let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
         let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
         let known = TitleRecords.shared.ratings(item) ?? nil
-        guard let entry = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb,
-                                                    onDetails: false).first else { return nil }
-        return Badge(mark: mark(entry.provider), text: entry.text)
+        let entries = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: false)
+            .prefix(sources).map { Badge(mark: mark($0.provider), text: $0.text) }
+        guard var first = entries.first else { return nil }
+        first.more = Array(entries.dropFirst())
+        return first
     }
 
     /// A source's mark (`RatingMark`, Details' and the billboard's) as a
@@ -2006,6 +2011,13 @@ final class FixedFocusBadges: UIView {
         static let symbolGap: CGFloat = 9
         private let symbol = UIImageView()
         private let label = UILabel()
+        /// More ratings (`Badge.more`): each its own mark and score, laid
+        /// out as the first (attached to the words, the line grew and the
+        /// scores sank).
+        private var extras: [(mark: UIImageView, label: UILabel)] = []
+        /// Between one rating's score and the next one's mark: the
+        /// billboard's.
+        static let ratingGap: CGFloat = 20
         private var badge: Badge?
         private var tinted: UIColor?
 
@@ -2056,23 +2068,64 @@ final class FixedFocusBadges: UIView {
                     UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
                         .applying(UIImage.SymbolConfiguration(paletteColors: colours)))
             } else { symbol.image = nil }
-            label.attributedText = NSAttributedString(
-                string: badge.text,
-                attributes: [.font: FixedFocusBadges.font, .foregroundColor: ink(FixedFocusText.primary)])
+            let words: [NSAttributedString.Key: Any] = [.font: FixedFocusBadges.font,
+                                                         .foregroundColor: ink(FixedFocusText.primary)]
+            label.attributedText = NSAttributedString(string: badge.text, attributes: words)
+            while extras.count < badge.more.count {
+                let mark = UIImageView(), score = UILabel()
+                mark.contentMode = .center
+                addSubview(mark)
+                addSubview(score)
+                extras.append((mark, score))
+            }
+            for (index, extra) in extras.enumerated() {
+                let more = index < badge.more.count ? badge.more[index] : nil
+                extra.mark.isHidden = more == nil
+                extra.label.isHidden = more == nil
+                extra.mark.image = more?.mark
+                extra.label.attributedText = more.map { NSAttributedString(string: $0.text, attributes: words) }
+            }
         }
 
         private var symbolWidth: CGFloat { symbol.image?.size.width.rounded(.up) ?? 0 }
         private var symbolRoom: CGFloat { symbol.image == nil ? 0 : symbolWidth + Self.symbolGap }
+        private var shownExtras: [(mark: UIImageView, label: UILabel)] {
+            extras.filter { !$0.label.isHidden }
+        }
+        private var extrasWidth: CGFloat {
+            shownExtras.reduce(0) { sum, extra in
+                sum + Self.ratingGap + (extra.mark.image.map { $0.size.width.rounded(.up) + Self.symbolGap } ?? 0)
+                    + extra.label.intrinsicContentSize.width.rounded(.up)
+            }
+        }
         var width: CGFloat {
-            (2 * FixedFocusBadges.padding + symbolRoom + label.intrinsicContentSize.width).rounded(.up)
+            (2 * FixedFocusBadges.padding + symbolRoom + label.intrinsicContentSize.width + extrasWidth).rounded(.up)
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
             let pad = FixedFocusBadges.padding
             symbol.frame = CGRect(x: pad, y: 0, width: symbolWidth, height: bounds.height)
-            let x = pad + symbolRoom
-            label.frame = CGRect(x: x, y: 0, width: bounds.width - x - pad, height: bounds.height)
+            var x = pad + symbolRoom
+            let extras = shownExtras
+            guard !extras.isEmpty else {
+                label.frame = CGRect(x: x, y: 0, width: bounds.width - x - pad, height: bounds.height)
+                return
+            }
+            // Each mark and score centred on the plate, as the first.
+            label.frame = CGRect(x: x, y: 0, width: label.intrinsicContentSize.width.rounded(.up), height: bounds.height)
+            x = label.frame.maxX
+            for extra in extras {
+                x += Self.ratingGap
+                if let image = extra.mark.image {
+                    let w = image.size.width.rounded(.up)
+                    extra.mark.frame = CGRect(x: x, y: 0, width: w, height: bounds.height)
+                    x += w + Self.symbolGap
+                }
+                let w = extra.label.intrinsicContentSize.width.rounded(.up)
+                extra.label.frame = CGRect(x: x, y: 0, width: w, height: bounds.height)
+                x += w
+            }
         }
     }
 }

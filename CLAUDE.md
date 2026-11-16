@@ -357,8 +357,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   slot was before). Today's Pick for You (`spotlight`, the full-width
   card): one showcase card the content's width, as tall as the tall
   cards (600 pt looked short), on the
-  backdrop, grown as every card (not grown at all was hard to see), its description
-  under the facts (640 pt, 5 lines as the billboard's, body level), badges (the reason as Top Picks') top left, rating top right,
+  backdrop, grown as every card (not grown at all was hard to see), the tagline
+  under the facts as the billboard's (the name where there's none; its
+  description was before), badges (the reason as Top Picks') top left, rating top right,
   logo and facts at its foot, its trailer after the rest; your best
   match of the day (Top Picks' first), the same all day, not again
   within a week (`spotlightRest`, `Saved.spotlights`), on Home nowhere
