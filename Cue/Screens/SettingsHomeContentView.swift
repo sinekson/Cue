@@ -126,7 +126,7 @@ private struct WhyTheseRowsPage: View {
                 SettingsSection {
                     Text("Not built yet. Open Home and Cue builds its rows.")
                         .font(.system(size: SettingsMetrics.descriptionTextSize))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .foregroundStyle(CueInk.body)
                         .padding(.horizontal, SettingsMetrics.rowInset)
                 }
                 .background(alignment: .top) { SettingsFocusHolder() }
@@ -193,7 +193,7 @@ private enum WhyPanel {
         Text(text)
             .font(.system(size: SettingsMetrics.descriptionTextSize))
             .lineSpacing(8)
-            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .foregroundStyle(CueInk.body)
             .frame(maxWidth: introWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -255,10 +255,10 @@ private struct WhyHeader: View {
             if let count {
                 Text(count)
                     .font(.system(size: SettingsMetrics.sectionTextSize))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                    .foregroundStyle(CueInk.tertiary)
             }
         }
-        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+        .foregroundStyle(CueInk.secondary)
     }
 }
 
@@ -383,7 +383,7 @@ private struct WhyBar: View {
         HStack(spacing: 16) {
             Text(line.label)
                 .font(.system(size: WhyPanel.textSize, weight: .medium))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
                 .lineLimit(1)
                 .frame(width: 180, alignment: .leading)
             Capsule()
@@ -391,18 +391,18 @@ private struct WhyBar: View {
                 .frame(width: 120, height: 10)
                 .overlay(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(FixedFocusText.primary))
+                        .fill(CueInk.primary)
                         .frame(width: max(10, 120 * line.share / max(most, 0.0001)))
                 }
             Text("\(Int((line.share * 100).rounded())) %")
                 .font(.system(size: WhyPanel.textSize))
                 .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                .foregroundStyle(CueInk.body)
                 .frame(width: 64, alignment: .trailing)
             Text(line.lift.map { $0 >= 1.5 ? String(format: "%.0f×", $0.rounded()) : "" } ?? "")
                 .font(.system(size: WhyPanel.textSize))
                 .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                .foregroundStyle(CueInk.tertiary)
                 .frame(width: 48, alignment: .trailing)
         }
     }
@@ -424,16 +424,16 @@ private struct WhyRatingsPanel: View {
                             WhyThumbs(rating: rating)
                             Text(rating.name)
                                 .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                                .foregroundStyle(CueInk.primary)
                             Text("\(names.count)")
                                 .font(.system(size: SettingsMetrics.rowTextSize))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                                .foregroundStyle(CueInk.tertiary)
                         }
                         .padding(.bottom, 6)
                         ForEach(names, id: \.self) { name in
                             Text(name)
                                 .font(.system(size: WhyPanel.textSize))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                                .foregroundStyle(CueInk.body)
                                 .lineLimit(1)
                                 .panelAnchor(.line)
                         }
@@ -462,7 +462,7 @@ private struct WhyThumbs: View {
                 }
             }
         }
-        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+        .foregroundStyle(CueInk.primary)
     }
 }
 
@@ -480,7 +480,7 @@ private struct WhyTitlesPanel: View {
                 WhyColumns(names, columns: 3, width: WhyPanel.column, spacing: WhyPanel.gap, rowSpacing: 16) { name in
                     Text(name)
                         .font(.system(size: WhyPanel.textSize))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .foregroundStyle(CueInk.body)
                         .lineLimit(1)
                 }
             }
@@ -529,7 +529,7 @@ private struct WhyTitleLine: View {
                 Text("\(rank)")
                     .font(.system(size: SettingsMetrics.rowTextSize, weight: .bold))
                     .monospacedDigit()
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.secondary)
                     .frame(width: 44, alignment: .trailing)
             }
             AsyncImage(url: item.poster.flatMap(URL.init(string:))) { image in
@@ -542,11 +542,11 @@ private struct WhyTitleLine: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
                     .font(.system(size: WhyPanel.textSize, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .foregroundStyle(CueInk.primary)
                     .lineLimit(1)
                 Text(facts)
                     .font(.system(size: WhyPanel.textSize))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                    .foregroundStyle(CueInk.body)
                     .lineLimit(1)
                 if let badge {
                     BadgeLabel(badge: .init(symbol: FixedFocusBadges.symbol(badge.kind), mark: nil, text: badge.text))

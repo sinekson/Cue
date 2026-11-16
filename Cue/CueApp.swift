@@ -196,7 +196,6 @@ struct CueApp: App {
                 .environmentObject(tmdbSettings)
                 .environmentObject(mdblistSettings)
                 .environmentObject(playerSettings)
-                .preferredColorScheme(.dark)
         }
     }
 }
@@ -1000,7 +999,8 @@ struct RootView: View {
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: sidebarMovedOut,
                              lifted: topBarPlace.pageDown && sidebarFocus == nil
-                                && AppTab(rawValue: selectedTab)?.isHomeLike == true)
+                                && AppTab(rawValue: selectedTab)?.isHomeLike == true,
+                             onPicture: AppTab(rawValue: selectedTab)?.isHomeLike == true)
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead

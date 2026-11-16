@@ -80,7 +80,7 @@ private final class PlayerButton: UIButton {
         let symbol = UIImage.SymbolConfiguration(pointSize: 28, weight: .medium)
         setImage(UIImage(systemName: icon, withConfiguration: symbol)?.withRenderingMode(.alwaysTemplate), for: .normal)
         adjustsImageWhenHighlighted = false
-        tintColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        tintColor = CueInk.ui(FixedFocusText.primary)
         platter.backgroundColor = .white
         platter.alpha = 0
         platter.isUserInteractionEnabled = false
@@ -115,7 +115,7 @@ private final class PlayerButton: UIButton {
     private func paint() {
         platter.alpha = isFocused ? 1 : 0
         tintColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
-                              : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+                              : CueInk.ui(FixedFocusText.primary)
         let scale: CGFloat = isFocused && !isHighlighted ? 1.05 : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
     }
@@ -327,7 +327,7 @@ class PlayerSheet: UIView {
     fileprivate static func foundLabel() -> UILabel {
         let found = UILabel()
         found.font = .systemFont(ofSize: 24, weight: .medium)
-        found.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        found.textColor = CueInk.ui(FixedFocusText.body)
         found.layer.shadowColor = UIColor.black.cgColor
         found.layer.shadowOffset = .zero
         found.layer.shadowRadius = 8
@@ -870,8 +870,8 @@ private final class DetailsPage: UIView {
         override init(frame: CGRect) {
             super.init(frame: frame)
             name.font = Self.font
-            name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
-            value.color = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            name.textColor = CueInk.ui(FixedFocusText.secondary)
+            value.color = CueInk.ui(FixedFocusText.primary)
             addSubview(name)
             addSubview(value)
         }
@@ -2490,11 +2490,11 @@ final class PlayerOverlay: UIView {
 
 
         episode.font = .systemFont(ofSize: 26, weight: .medium)
-        episode.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        episode.textColor = CueInk.ui(FixedFocusText.body)
         title.text = text
         episode.text = line
         title.font = .systemFont(ofSize: 32, weight: .medium)
-        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        title.textColor = CueInk.ui(FixedFocusText.primary)
         for label in [title, episode] {
             label.layer.shadowColor = UIColor.black.cgColor
             label.layer.shadowOffset = .zero
@@ -2503,13 +2503,13 @@ final class PlayerOverlay: UIView {
         }
         for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: 24, weight: .regular)
-            label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            label.textColor = CueInk.ui(FixedFocusText.primary)
         }
         remaining.textAlignment = .right
-        markIcon.tintColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        markIcon.tintColor = CueInk.ui(FixedFocusText.primary)
         markIcon.isHidden = true
         markNumber.font = .monospacedDigitSystemFont(ofSize: 24, weight: .medium)
-        markNumber.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        markNumber.textColor = CueInk.ui(FixedFocusText.primary)
         bar.backgroundColor = UIColor.white.withAlphaComponent(0.25)
         bar.layer.cornerRadius = Self.barHeight / 2
         bar.clipsToBounds = true
@@ -2933,9 +2933,9 @@ private final class PlayerPrompt: UIView {
 
     private func restyle() {
         heading.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
-                                      : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+                                      : CueInk.ui(FixedFocusText.primary)
         detail.textColor = isFocused ? UIColor.black.withAlphaComponent(0.65)
-                                     : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+                                     : CueInk.ui(FixedFocusText.secondary)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -3511,6 +3511,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // On pictures or glass: dark in both appearances (`CueInk`).
+        overrideUserInterfaceStyle = .dark
         surface.alpha = 0
         for sub in [focusView, surface, subtitles, fixedSubtitles, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,

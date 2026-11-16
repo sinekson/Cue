@@ -297,7 +297,7 @@ struct BadgeLabel: View {
             }
             Text(badge.text)
                 .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
         }
         .frame(height: 30)
     }

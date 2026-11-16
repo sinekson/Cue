@@ -241,6 +241,8 @@ private final class HoldMenuController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // On pictures or glass: dark in both appearances (`CueInk`).
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
         dim.backgroundColor = .black
         dim.alpha = 0
@@ -467,7 +469,7 @@ private final class MenuPanelRow: UICollectionViewCell {
         chevron.contentMode = .center
         separator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
         header.font = MenuPanel.headingFont
-        header.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        header.textColor = CueInk.ui(FixedFocusText.secondary)
         for sub in [separator, header, face] as [UIView] { contentView.addSubview(sub) }
         for sub in [platter, check, icon, title, detail, chevron] as [UIView] { face.addSubview(sub) }
         paint()
@@ -528,12 +530,12 @@ private final class MenuPanelRow: UICollectionViewCell {
     private func paint() {
         let focused = isFocused
         let color = isDestructive ? Self.destructive
-            : focused ? UIColor.black.withAlphaComponent(0.85) : UIColor.white.withAlphaComponent(FixedFocusText.primary)
+            : focused ? UIColor.black.withAlphaComponent(0.85) : CueInk.ui(FixedFocusText.primary)
         title.color = color
         check.tintColor = color
         icon.tintColor = color
         chevron.tintColor = color
-        detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        detail.color = focused ? UIColor.black.withAlphaComponent(0.6) : CueInk.ui(FixedFocusText.secondary)
         platter.alpha = focused ? 1 : 0
         let scale: CGFloat = focused && !isHighlighted ? 1.02 : 1
         face.transform = CGAffineTransform(scaleX: scale, y: scale)
@@ -612,7 +614,7 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
         super.init(frame: frame)
         addSubview(glass)
         heading.font = Self.headingFont
-        heading.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        heading.textColor = CueInk.ui(FixedFocusText.secondary)
         addSubview(heading)
         list.backgroundColor = .clear
         list.contentInsetAdjustmentBehavior = .never

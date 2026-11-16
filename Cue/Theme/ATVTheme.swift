@@ -86,10 +86,22 @@ enum BandsPicture {
                             .workingFormat: CIFormat.RGBAh])
     }
 
-    /// The grey picture (nothing picked yet: a first launch).
-    static func render() -> CGImage? {
+    /// The grey picture (nothing picked yet: a first launch), in the
+    /// system's mode (`lifted` for light).
+    static func render(light: Bool) -> CGImage? {
         let grey = Pool(color: base, x: 0, y: 0, rx: 0, ry: 0)
-        return render(base: (grey.r, grey.g, grey.b), pools: pools)
+        guard light else { return render(base: (grey.r, grey.g, grey.b), pools: pools) }
+        // Its bands' contrast doubled first: lifted, the greys sit close.
+        func up(_ v: CGFloat) -> CGFloat { lifted(Double(min(1, max(0, (v - grey.r) * 2 + grey.r)))) }
+        return render(base: (up(grey.r), up(grey.g), up(grey.b)),
+                      pools: pools.map { Pool(r: up($0.r), g: up($0.g), b: up($0.b), x: $0.x, y: $0.y, rx: $0.rx, ry: $0.ry) })
+    }
+
+    /// A colour's channel for light mode: toward tvOS's light grey (its
+    /// Settings', about 70 %), the picture's colour a soft tint over it —
+    /// 0 lands at 62 %, 1 at 90 %.
+    static func lifted(_ v: Double, darker: Double = 1) -> CGFloat {
+        CGFloat((0.62 + 0.28 * v) * (1 - (1 - darker) * 0.4))
     }
 
     /// Draws pools of colour on a base (Core Image on the GPU, the grain on
@@ -167,12 +179,15 @@ enum BandsPicture {
 
     /// A picture's colours as pools in a layout of their own (tvOS's way):
     /// the darkest the base, the rest spread across the screen at random
-    /// (`seed`: the same picture, the same layout), each colour by its share,
-    /// dimmed by `dim` and never brighter than `brightest`.
+    /// (`seed`: the same picture, the same layout), each colour by its share.
+    /// Dark: dimmed by `dim` and never brighter than `brightest`. Light:
+    /// lifted to tvOS's light grey, the colours a tint (`lifted`).
     static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)], dim: Double,
-                      brightest: Double, seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
+                      brightest: Double, light: Bool = false,
+                      seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard let darkest = palette.first else { return nil }
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
+            if light { return (lifted(c.r, darker: extra), lifted(c.g, darker: extra), lifted(c.b, darker: extra)) }
             var (r, g, b) = (c.r * (1 - dim) * extra, c.g * (1 - dim) * extra, c.b * (1 - dim) * extra)
             let light = 0.2126 * r + 0.7152 * g + 0.0722 * b
             if light > brightest { let k = brightest / light; (r, g, b) = (r * k, g * k, b * k) }
@@ -218,10 +233,11 @@ struct SeededRandom: RandomNumberGenerator {
 }
 
 /// THE BACKGROUND, one still picture behind every page: a title's
-/// picture's colours as soft pools in a layout of their own, picked by the
-/// time of day (`BackgroundPicks`) — lighter by day, darkest at night.
-/// It changes only where it can't be seen changing: at launch, and coming
-/// back to the app once the time of day has moved on or 4 h have passed.
+/// picture's colours as soft pools in a layout of their own, in tvOS's
+/// mode (`BackgroundPicks`): light, a light picture's colours lifted to
+/// tvOS's light grey; dark, a dark one's, dimmed. It changes where it
+/// can't be seen changing — at launch, coming back once 4 h have passed —
+/// and with the mode (Automatic at sunset: the page changes anyway).
 /// Grey pools are the fallback (nothing picked yet: a first launch).
 /// (Tried: the title's picture blurred as Details' — too busy at times;
 /// grey alone; following the focused title — its colours, then its
@@ -247,6 +263,17 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
+    /// tvOS's mode changed: the mode's picture (the page's text turns with
+    /// it), faded in.
+    func modeChanged() {
+        guard image != nil, !loading else { return }
+        Task {
+            guard BackgroundPicks.shared.due else { return }
+            let pick = await BackgroundPicks.shared.pick(force: false)
+            await show(pick, fade: true)
+        }
+    }
+
     /// Back in the app: a new picture if it's due (shown at once — the
     /// system's own move covers it).
     func cameBack() {
@@ -258,7 +285,7 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
-    /// Settings' Pick Another: the time of day's next picture now.
+    /// Settings' Pick Another: the mode's next picture now.
     func another() {
         Task {
             let pick = await BackgroundPicks.shared.pick(force: true)
@@ -275,11 +302,12 @@ final class BackgroundStore: ObservableObject {
     }
 
     private func show(_ pick: (scored: BackgroundPicks.Scored, file: URL)?, fade: Bool) async {
+        let light = BackgroundPicks.Mode.now == .light
         let loaded = await Task.detached(priority: .userInitiated) { () -> (UIImage, Bool)? in
             if let pick, let image = UIImage(contentsOfFile: pick.file.path)?.preparingForDisplay() {
                 return (image, true)
             }
-            return Self.bands().map { ($0, false) }
+            return Self.bands(light: light).map { ($0, false) }
         }.value
         guard let (picture, picked) = loaded else { return }
         var transaction = Transaction()
@@ -291,19 +319,20 @@ final class BackgroundStore: ObservableObject {
 
     /// The Bands picture (~8 MB), from its copy on disk once drawn (a first
     /// draw took longer than the launch's play).
-    nonisolated private static func bands() -> UIImage? {
+    nonisolated private static func bands(light: Bool) -> UIImage? {
         let built = (try? Bundle.main.executableURL?.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate)?.map { Int($0.timeIntervalSince1970) } ?? 0
         let file = BackgroundPicks.folder.deletingLastPathComponent()
-            .appendingPathComponent("background-\(built).png")
+            .appendingPathComponent("background-\(built)\(light ? "-light" : "").png")
         if let picture = UIImage(contentsOfFile: file.path)?.preparingForDisplay() { return picture }
-        guard let cg = BandsPicture.render() else { return nil }
+        guard let cg = BandsPicture.render(light: light) else { return nil }
         let drawn = UIImage(cgImage: cg)
         let folder = file.deletingLastPathComponent()
         let files = FileManager.default
         try? files.createDirectory(at: folder, withIntermediateDirectories: true)
         // Earlier builds' copies go.
-        for old in (try? files.contentsOfDirectory(atPath: folder.path)) ?? [] where old.hasPrefix("background-") {
+        for old in (try? files.contentsOfDirectory(atPath: folder.path)) ?? []
+        where old.hasPrefix("background-") && !old.hasPrefix("background-\(built)") {
             try? files.removeItem(at: folder.appendingPathComponent(old))
         }
         try? drawn.pngData()?.write(to: file, options: .atomic)
@@ -316,9 +345,11 @@ final class BackgroundStore: ObservableObject {
 /// once from TMDB's backdrop — Details' picture — in the loading queue's
 /// deep band. A picture passes when, dimmed as Details does, it isn't near
 /// black. Shown as its colours in bands (`BandsPicture.pools`). The passes,
-/// darkest first, split in three: night, evening, day.
-/// One is drawn ahead for each (grained, at 1080p, on disk), so a change
-/// is instant; the last 7 shown aren't picked again.
+/// darkest first, split in two by tvOS's mode: dark the darker half, light
+/// the lighter (by the clock — day, evening, night thirds — was before:
+/// dimmed to dark either way, day read dark). One is drawn ahead for each
+/// mode (grained, at 1080p, on disk), so a change is instant; the last 7
+/// shown aren't picked again.
 @MainActor
 final class BackgroundPicks {
     static let shared = BackgroundPicks()
@@ -334,14 +365,15 @@ final class BackgroundPicks {
         let why: String
     }
 
-    enum TimeOfDay: Int, CaseIterable, Codable {
-        case night, evening, day
-        /// Day 7–17, evening 17–21, night 21–7.
-        static var now: TimeOfDay {
-            let hour = Calendar.current.component(.hour, from: Date())
-            return (7..<17).contains(hour) ? .day : (17..<21).contains(hour) ? .evening : .night
+    /// tvOS's appearance (Settings → Appearance; Automatic turns it at
+    /// sunset).
+    enum Mode: Int, CaseIterable, Codable {
+        case dark, light
+        static var now: Mode {
+            let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+            return (window?.traitCollection ?? UITraitCollection.current).userInterfaceStyle == .light ? .light : .dark
         }
-        var name: String { ["Night", "Evening", "Day"][rawValue] }
+        var name: String { ["Dark", "Light"][rawValue] }
     }
 
     private struct State: Codable {
@@ -350,11 +382,11 @@ final class BackgroundPicks {
         var none: [String: Date] = [:]
         var shown: String?
         var shownAt: Date?
-        var shownTime: TimeOfDay?
+        var shownMode: Mode?
         /// The one up was chosen from a card's menu.
         var chosen: Bool?
         var recent: [String] = []
-        /// Drawn ahead: a picture's URL per time of day.
+        /// Drawn ahead: a picture's URL per mode.
         var ready: [Int: String] = [:]
     }
 
@@ -399,38 +431,45 @@ final class BackgroundPicks {
     }
 
     /// (The drawing's version in the name: older drawings go.)
-    nonisolated static func file(for url: String) -> URL {
-        folder.appendingPathComponent("bands-" + String(seed(url), radix: 36) + ".png")
+    nonisolated static func file(for url: String, mode: Mode) -> URL {
+        folder.appendingPathComponent("bands-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
-    /// A new picture is due (coming back): the time of day moved on, or
-    /// it's been up 4 h.
+    /// A new picture is due: the mode changed, or it's been up 4 h (coming
+    /// back).
     var due: Bool {
         guard let at = state.shownAt else { return true }
-        return state.shownTime != TimeOfDay.now || Date().timeIntervalSince(at) >= Self.keep
+        return state.shownMode != Mode.now || Date().timeIntervalSince(at) >= Self.keep
     }
 
     /// The picture to show: the one up while it isn't due (`force`: never),
-    /// else the time of day's drawn ahead; nil: none ready (Bands).
+    /// else the mode's drawn ahead; nil: none ready (Bands).
     func pick(force: Bool) async -> (scored: Scored, file: URL)? {
         let files = FileManager.default
+        let mode = Mode.now
         func ready(_ url: String?) -> (Scored, URL)? {
             guard let url, let scored = state.scored.values.first(where: { $0.url == url }) else { return nil }
-            let file = Self.file(for: url)
+            let file = Self.file(for: url, mode: mode)
             return files.fileExists(atPath: file.path) ? (scored, file) : nil
         }
         if !force, !due, let current = ready(state.shown) { return current }
-        let time = TimeOfDay.now
         if force {
             // Pick Another: drawn now, whatever's ready.
-            state.ready[time.rawValue] = nil
-            await prepare(only: time)
+            state.ready[mode.rawValue] = nil
+            await prepare(only: mode)
         }
-        guard let next = ready(state.ready[time.rawValue]) else {
-            // Nothing ready for now: the one up stays.
-            return ready(state.shown)
+        guard let next = ready(state.ready[mode.rawValue]) else {
+            // Nothing ready for this mode: the one up, drawn for it (a
+            // chosen one, or the mode just turned), else Bands.
+            if let shown = state.shown, let scored = state.scored.values.first(where: { $0.url == shown }),
+               await draw(shown, dim: scored.dim, mode: mode) {
+                state.shownMode = mode
+                save()
+                return ready(shown)
+            }
+            return nil
         }
-        state.ready[time.rawValue] = nil
+        state.ready[mode.rawValue] = nil
         up(next.0.url, chosen: false)
         return next
     }
@@ -450,16 +489,17 @@ final class BackgroundPicks {
             scored = measured
         }
         guard let scored else { return nil }
-        guard await draw(scored.url, dim: scored.dim) else { return nil }
-        for (time, url) in state.ready where url == scored.url { state.ready[time] = nil }
+        let mode = Mode.now
+        guard await draw(scored.url, dim: scored.dim, mode: mode) else { return nil }
+        for (key, url) in state.ready where url == scored.url { state.ready[key] = nil }
         up(scored.url, chosen: true)
-        return (scored, Self.file(for: scored.url))
+        return (scored, Self.file(for: scored.url, mode: mode))
     }
 
     private func up(_ url: String, chosen: Bool) {
         state.shown = url
         state.shownAt = Date()
-        state.shownTime = TimeOfDay.now
+        state.shownMode = Mode.now
         state.chosen = chosen
         state.recent = Array(([url] + state.recent.filter { $0 != url }).prefix(Self.recentCount))
         save()
@@ -467,12 +507,13 @@ final class BackgroundPicks {
     }
 
     /// The picture drawn to its file (`draw(_:dim:)`, off the main thread).
-    private func draw(_ url: String, dim: Double) async -> Bool {
+    private func draw(_ url: String, dim: Double, mode: Mode) async -> Bool {
+        let file = Self.file(for: url, mode: mode)
+        if FileManager.default.fileExists(atPath: file.path) { return true }
         guard let blurred = await BlurredBackdrop.image(for: url), let cg = blurred.cgImage else { return false }
-        let file = Self.file(for: url)
         let seed = Self.seed(url)
         return await Task.detached(priority: .utility) { () -> Bool in
-            guard let picture = Self.draw(cg, dim: dim, seed: seed),
+            guard let picture = Self.draw(cg, dim: dim, light: mode == .light, seed: seed),
                   let png = UIImage(cgImage: picture).pngData() else { return false }
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
@@ -481,7 +522,7 @@ final class BackgroundPicks {
     }
 
     /// The deep band: Home's titles not yet scored, then a picture drawn
-    /// ahead for each time of day.
+    /// ahead for each mode.
     func score(_ items: [MetaItem]) async {
         guard !scoring else { return }
         scoring = true
@@ -504,34 +545,38 @@ final class BackgroundPicks {
         await prepare()
     }
 
-    /// The passes for a time of day: darkest first, in thirds.
-    private func candidates(_ time: TimeOfDay) -> [Scored] {
+    /// The passes for a mode: darkest first, dark the darker half, light
+    /// the lighter.
+    private func candidates(_ mode: Mode) -> [Scored] {
         var byURL: [String: Scored] = [:]
         for scored in state.scored.values where scored.light >= Self.darkest { byURL[scored.url] = scored }
         let passes = byURL.values.sorted { $0.light < $1.light }
         guard !passes.isEmpty else { return [] }
-        let third = Double(passes.count) / 3
-        let from = Int((Double(time.rawValue) * third).rounded())
-        let to = max(from + 1, Int((Double(time.rawValue + 1) * third).rounded()))
-        return Array(passes[min(from, passes.count - 1)..<min(to, passes.count)])
+        let half = max(1, passes.count / 2)
+        return mode == .dark ? Array(passes.prefix(half)) : Array(passes.suffix(max(1, passes.count - half)))
     }
 
-    /// A picture drawn ahead for each time of day without one.
-    private func prepare(only: TimeOfDay? = nil) async {
+    /// A picture drawn ahead for each mode without one.
+    private func prepare(only: Mode? = nil) async {
         guard !preparing else { return }
         preparing = true
         defer { preparing = false }
         let files = FileManager.default
-        for time in only.map({ [$0] }) ?? TimeOfDay.allCases {
-            if let url = state.ready[time.rawValue], files.fileExists(atPath: Self.file(for: url).path) { continue }
+        for mode in only.map({ [$0] }) ?? Mode.allCases {
+            if let url = state.ready[mode.rawValue],
+               files.fileExists(atPath: Self.file(for: url, mode: mode).path) { continue }
             let taken = Set(state.recent + [state.shown].compactMap { $0 } + state.ready.values)
-            let options = candidates(time)
+            let options = candidates(mode)
             guard let choice = options.filter({ !taken.contains($0.url) }).randomElement()
                     ?? options.filter({ $0.url != state.shown }).randomElement() else { continue }
-            if await draw(choice.url, dim: choice.dim) { state.ready[time.rawValue] = choice.url }
+            if await draw(choice.url, dim: choice.dim, mode: mode) { state.ready[mode.rawValue] = choice.url }
         }
-        // Only what's up or ready stays on disk.
-        let keep = Set(([state.shown].compactMap { $0 } + state.ready.values).map { Self.file(for: $0).lastPathComponent })
+        // Only what's up (in either mode) or ready stays on disk.
+        var keep = Set<String>()
+        if let shown = state.shown { for mode in Mode.allCases { keep.insert(Self.file(for: shown, mode: mode).lastPathComponent) } }
+        for (key, url) in state.ready {
+            keep.insert(Self.file(for: url, mode: Mode(rawValue: key) ?? .dark).lastPathComponent)
+        }
         for name in (try? files.contentsOfDirectory(atPath: Self.folder.path)) ?? []
         where name.hasSuffix(".png") && !keep.contains(name) {
             try? files.removeItem(at: Self.folder.appendingPathComponent(name))
@@ -541,9 +586,9 @@ final class BackgroundPicks {
 
     /// The picture's colours as bands (`BandsPicture.pools`): no shapes of
     /// its own (the blurred picture was too busy at times), its mood only.
-    nonisolated private static func draw(_ blurred: CGImage, dim: Double, seed: UInt64) -> CGImage? {
+    nonisolated private static func draw(_ blurred: CGImage, dim: Double, light: Bool, seed: UInt64) -> CGImage? {
         guard let bands = BandsPicture.pools(from: BandsPicture.palette(blurred), dim: dim,
-                                             brightest: brightestSpot, seed: seed) else { return nil }
+                                             brightest: brightestSpot, light: light, seed: seed) else { return nil }
         return BandsPicture.render(base: bands.base, pools: bands.pools)
     }
 
@@ -589,10 +634,12 @@ final class BackgroundPicks {
 /// The app's background, behind every screen (`BackgroundStore`).
 struct ATVBackground: View {
     @ObservedObject private var picture = BackgroundStore.shared
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         ZStack {
-            Color("AppBackground")   // also the launch screen's
+            // Also the launch screen's; light: tvOS's light grey.
+            scheme == .light ? Color(white: 0.68) : Color("AppBackground")
             if let image = picture.image {
                 Image(uiImage: image)
                     .resizable()
@@ -602,5 +649,6 @@ struct ATVBackground: View {
         .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
         .onAppear { picture.load() }
+        .onChange(of: scheme) { _, _ in picture.modeChanged() }
     }
 }

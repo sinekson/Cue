@@ -95,7 +95,7 @@ struct DetailAbout: View {
                     Text(text)
                         .font(.system(size: 24))
                         .lineSpacing(5)
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .foregroundStyle(CueInk.body)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -169,7 +169,7 @@ struct DetailAbout: View {
             Self.label(label)
             Text(value)
                 .font(.system(size: 24))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                .foregroundStyle(CueInk.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -178,7 +178,7 @@ struct DetailAbout: View {
         Text(text.uppercased())
             .font(.system(size: 17, weight: .semibold))
             .tracking(1)
-            .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+            .foregroundStyle(CueInk.tertiary)
     }
 
     // MARK: Facts
@@ -282,7 +282,7 @@ private struct AboutChipStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : Color.white.opacity(FixedFocusText.body))
+                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : CueInk.body)
                 .lineLimit(1)
                 .frame(height: 21)
                 .padding(.horizontal, 10)
@@ -335,12 +335,12 @@ struct DetailSummaryPanel<Facts: View>: View {
                     VStack(alignment: leadingTitle ? .leading : .center, spacing: 6) {
                         Text(title)
                             .font(.system(size: SettingsMetrics.titleTextSize, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                            .foregroundStyle(CueInk.primary)
                             .lineLimit(1)
                         if !genres.isEmpty {
                             Text(genres)
                                 .font(.system(size: FixedFocusMetrics.textSize))
-                                .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                                .foregroundStyle(CueInk.body)
                                 .lineLimit(1)
                         }
                     }
@@ -398,7 +398,7 @@ struct DetailSummaryPanel<Facts: View>: View {
                         Text(summary)
                             .font(.system(size: SettingsMetrics.descriptionTextSize))
                             .lineSpacing(9)
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                            .foregroundStyle(CueInk.body)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     facts
@@ -514,6 +514,8 @@ private final class TextPanelController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // On pictures or glass: dark in both appearances (`CueInk`).
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
         host.view.backgroundColor = .clear
         host.safeAreaRegions = []
@@ -596,6 +598,8 @@ private final class RatingController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // On pictures or glass: dark in both appearances (`CueInk`).
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
         host.view.backgroundColor = .clear
         host.safeAreaRegions = []
@@ -655,7 +659,7 @@ private struct RatingScreen: View {
                     }
                 Text(watched ? "How was \(item.name)?" : "What do you think of \(item.name)?")
                     .font(.system(size: 57, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .foregroundStyle(CueInk.primary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .frame(maxWidth: 1400)
@@ -675,7 +679,7 @@ private struct RatingScreen: View {
                 .padding(.top, 64)
                 Text(focus?.effect ?? " ")
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.secondary)
                     .padding(.top, 44)
                     .animation(nil, value: focus)
             }

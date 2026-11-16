@@ -33,7 +33,12 @@ struct PlayStageView<Sources: View>: View {
         return nil
     }
 
+    /// Over its picture: dark in both appearances (`CueInk`).
     var body: some View {
+        stageBody.environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder private var stageBody: some View {
         ZStack(alignment: .top) {
             // The picture sharp, evenly dimmed so the centred text reads
             // anywhere on it: more than under Details' rows, more again for a
@@ -88,11 +93,11 @@ struct PlayStageView<Sources: View>: View {
             Text(scene.episodeNumber?.uppercased() ?? " ")
                 .font(.system(size: 23, weight: SectionHint.weight))
                 .tracking(SectionHint.tracking)
-                .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                .foregroundStyle(CueInk.secondary)
                 .padding(.top, 28)
             Text(scene.episodeName ?? " ")
                 .font(.system(size: 32, weight: .medium))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
                 .padding(.top, 6)
             work
                 .padding(.top, 28)
@@ -132,7 +137,7 @@ struct PlayStageView<Sources: View>: View {
     private var name: some View {
         Text(scene.title)
             .font(.system(size: 48, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+            .foregroundStyle(CueInk.primary)
     }
 
     private static var logoSize: CGSize { CGSize(width: 728, height: 160) }

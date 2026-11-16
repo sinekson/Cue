@@ -489,7 +489,7 @@ private struct AboutText: View {
     var body: some View {
         Text(text)
             .font(.system(size: SettingsMetrics.descriptionTextSize))
-            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .foregroundStyle(CueInk.body)
             .lineSpacing(6)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, SettingsMetrics.rowInset)

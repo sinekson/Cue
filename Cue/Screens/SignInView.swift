@@ -58,7 +58,7 @@ struct NuvioSignInView: View {
         VStack(spacing: 0) {
             Text(title)
                 .font(.system(size: 48, weight: .bold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
 
             Group {
                 if let qr = account.qrLogin {
@@ -71,16 +71,16 @@ struct NuvioSignInView: View {
                         // code shown separately (the QR's URL embeds it).
                         Text("Scan with your phone, or go to \(Self.displayHost) and enter")
                             .font(.system(size: FixedFocusMetrics.textSize))
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                            .foregroundStyle(CueInk.body)
                         Text(qr.code)
                             .font(.system(size: 36, weight: .semibold, design: .monospaced))
                             .tracking(4)
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                            .foregroundStyle(CueInk.primary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
                         Text(account.errorMessage ?? qr.statusText)
                             .font(.system(size: 21))
-                            .foregroundStyle(account.errorMessage == nil ? Color.white.opacity(FixedFocusText.secondary)
+                            .foregroundStyle(account.errorMessage == nil ? CueInk.secondary
                                                                          : CuePrimitives.red300)
                     }
                 } else if NuvioConfig.isConfigured {
@@ -90,7 +90,7 @@ struct NuvioSignInView: View {
                     // can never complete.
                     Text("Accounts aren't configured in this build.")
                         .font(.system(size: FixedFocusMetrics.textSize))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                        .foregroundStyle(CueInk.body)
                         .frame(height: 340)
                 }
             }
@@ -125,7 +125,7 @@ struct NuvioSignInView: View {
         VStack(spacing: 24) {
             Text("Sign in with email")
                 .font(.system(size: 48, weight: .bold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
                 .padding(.bottom, 20)
 
             TextField("Email", text: $email)

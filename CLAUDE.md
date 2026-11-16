@@ -81,6 +81,20 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Direction:** flat artwork, glass controls, one outline for focus. Calm,
   quick motion; a stable 60 fps beats fancy. No accent colours: colour only
   for information (rating sources) and Cue's red on the card badges' symbols.
+- **Light and dark** follow tvOS's setting (no `UIUserInterfaceStyle` in
+  Info.plist). Text and page fills go through `CueInk` (end of the
+  `FixedFocusText` part of `HomeView.swift`): dark, white at the level;
+  light, black at tvOS's text grey (primary 58 %, then 52, 46, 40; the
+  controls' words to full black; 85 % read near-black, tvOS's 38 % title
+  grey too light). Dark always, whatever the setting: everything on a
+  picture (billboard text and buttons, Details, the stage, player,
+  trailers, cards' contents, menus and panels, glass); the top bar on a
+  billboard tab (`GlassSidebar.onPicture`); the next row's name while it
+  peeks on the billboard, turning to the page's ink where it crosses the
+  picture's edge, about half way, in 0.12 s (`flipName`; a fade over the
+  whole move left it unseen mid-way). Never `.white` for page text.
+  (Keeping Cue dark-only, as Apple's TV app, was talked over: tvOS's
+  own Home goes light too.)
 - **Glass only for what floats above the page** (hold menus, source
   picker, dropdowns, toasts): `liquidGlass(in:)`, always as a background, one
   glass everywhere (`AppGlass`). Everything in the page is flat
@@ -410,7 +424,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   inside the box's caption before, back under the card 2026-11-15):
   tall cards and the open large card carry
   at their foot, left, the badges over the logo over the facts line,
-  over a bottom fade (`FixedFocusShade`); Continue
+  over a bottom fade (`FixedFocusShade`: clear to the middle, then eased
+  to 85 % black at the foot, Apple TV's; from the upper third dimmed the
+  whole card); Continue
   Watching "S1:E5" over its bar.
   **Large rows** (Home's browsing rows, `FixedFocusFeatureLayout` at the
   end of `FixedFocusRows.swift`, `featureRows`): posters (`featurePoster`,
@@ -621,11 +637,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
   too busy at times, and with it the hue-runs rule went).
   Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
-  picture's mean light ≥ 0.14. Passing
-  pictures split into thirds by light: day (7–17) the light third, evening
-  (17–21) the middle, night (21–7) the dark. Changed only at launch, or on
-  coming back when the time of day changed or 4 h passed; never one of the
-  last 7; drawn ahead, one per time of day. Grey pools (`BandsPicture`) only
+  picture's mean light ≥ 0.14. By appearance (`BackgroundPicks.Mode`):
+  dark takes the darker half, light the lighter, drawn bright (colours
+  lifted to 0.62–0.90, base `Color(white: 0.68)`, files "-light"); the
+  time-of-day thirds went with light mode ("dark should mean dark").
+  Changed only at launch, or on coming back when the appearance changed or
+  4 h passed; never one of the last 7; drawn ahead, one per appearance. Grey pools (`BandsPicture`) only
   until the first scoring. Settings → Appearance → Background: what's up
   and why, Pick Another. A card's hold menu has Use as Background: that
   title's colours (any title) until the next change.

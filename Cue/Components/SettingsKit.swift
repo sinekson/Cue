@@ -84,9 +84,9 @@ enum SettingsMetrics {
     static let focusedText = Color.black
     /// The app's text levels (`FixedFocusText`): names and titles, values
     /// and descriptions, section labels.
-    static let primaryText = Color.white.opacity(FixedFocusText.primary)
-    static let secondaryText = Color.white.opacity(FixedFocusText.secondary)
-    static let labelText = Color.white.opacity(FixedFocusText.tertiary)
+    static let primaryText = CueInk.primary
+    static let secondaryText = CueInk.secondary
+    static let labelText = CueInk.tertiary
 }
 
 /// The right column's pages: a category's own, or what one of its rows
@@ -724,7 +724,7 @@ struct SettingsDescriptionText: View {
     var body: some View {
         Text(shown)
             .font(.system(size: SettingsMetrics.descriptionTextSize))
-            .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+            .foregroundStyle(CueInk.body)
             .lineSpacing(2)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)

@@ -46,6 +46,8 @@ final class StagePictureView: UIView {
                 return
             }
             let host = UIHostingController(rootView: AnyView(screen))
+            // On the picture: dark in both appearances (`CueInk`).
+            host.overrideUserInterfaceStyle = .dark
             host.view.backgroundColor = .clear
             host.view.isUserInteractionEnabled = false
             host.safeAreaRegions = []

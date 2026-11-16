@@ -85,6 +85,10 @@ struct GlassSidebar: View {
     /// Home's page below its billboard: up with the billboard, as far and
     /// on the same move, so it reads as the page's own top.
     var lifted = false
+    /// On a billboard's picture (Home, Movies, Series): dark in both
+    /// appearances; elsewhere on the page, tvOS's (`CueInk`).
+    var onPicture = false
+    @Environment(\.colorScheme) private var scheme
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
@@ -145,6 +149,7 @@ struct GlassSidebar: View {
         .animation(Motion.move, value: lifted)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
+        .environment(\.colorScheme, onPicture ? .dark : scheme)
         // Placed against the real screen edges (the inset above is ours).
         .ignoresSafeArea()
         .onChange(of: expanded) { _, isExpanded in
@@ -229,7 +234,7 @@ private struct TopNavLabel: View {
         }
         .frame(height: GlassSidebar.topBarItemHeight)
         .modifier(TopNavFocus(lit: focused,
-                              rest: .white.opacity(current ? FixedFocusText.primary : FixedFocusText.secondary),
+                              rest: CueInk.color(current ? FixedFocusText.primary : FixedFocusText.secondary),
                               pill: current))
         .animation(.easeOut(duration: 0.18), value: current)
     }

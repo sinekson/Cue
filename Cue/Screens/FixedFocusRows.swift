@@ -448,7 +448,7 @@ enum FixedFocusMetrics {
     }
     static func styleFacts(_ label: UILabel) {
         label.font = FixedFocusText.infoFont(textSize)
-        label.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        label.textColor = CueInk.ui(FixedFocusText.body)
         label.lineBreakMode = .byTruncatingTail
     }
     /// The logo's room, over the facts.
@@ -1014,6 +1014,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         cell.concealed = rowConcealed(indexPath.item)
         cell.drop = peekDrop(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
+        UIView.performWithoutAnimation { cell.nameOnPicture = nameOnPicture(indexPath.item) }
         cell.titleLift = peekNameLift(indexPath.item)
         cell.titleScale = 1
         return cell
@@ -1033,6 +1034,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         (cell as? FixedFocusRowCell)?.concealed = rowConcealed(indexPath.item)
         (cell as? FixedFocusRowCell)?.drop = peekDrop(indexPath.item)
         (cell as? FixedFocusRowCell)?.titleAlpha = titleAlpha(indexPath.item)
+        UIView.performWithoutAnimation { (cell as? FixedFocusRowCell)?.nameOnPicture = nameOnPicture(indexPath.item) }
     }
 
     /// Focus moved (natively). Left/Right: the box stays, its content
@@ -1770,6 +1772,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         let host = UIHostingController(rootView: environment(content))
+        // On the billboard's picture: dark in both appearances (`CueInk`).
+        host.overrideUserInterfaceStyle = .dark
         host.view.backgroundColor = .clear
         // (Its own safe area off: it's laid out in screen points, as the rows.)
         host.safeAreaRegions = []
@@ -1810,6 +1814,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             return
         }
         let host = UIHostingController(rootView: environment(content))
+        host.overrideUserInterfaceStyle = .dark
         host.view.backgroundColor = .clear
         host.safeAreaRegions = []
         addChild(host)
@@ -2302,6 +2307,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             cell.concealed = rowConcealed(cell.rowIndex)
             cell.drop = peekDrop(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
+            cell.nameOnPicture = nameOnPicture(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
             UIView.performWithoutAnimation { cell.titleLift = peekNameLift(cell.rowIndex); cell.titleScale = 1 }
             cell.applyAccessory()
@@ -2342,6 +2348,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// billboard (bottom left, in line with the dots), dimmed like a row
     /// out of focus. The other waiting rows' names are hidden; that one too
     /// while the billboard steps into Details.
+    /// The next row's name on the billboard's picture: in white, as the
+    /// billboard's text, whatever the appearance; on the page again (the
+    /// billboard up), the page's ink — crossfaded over the move.
+    private func nameOnPicture(_ rowIndex: Int) -> Bool {
+        isFeatured(focusedRow) && isNext(rowIndex)
+    }
+
     private func titleAlpha(_ rowIndex: Int) -> CGFloat {
         if rows.indices.contains(rowIndex), hiddenTitleRowIDs.contains(rows[rowIndex].id) { return 0 }
         guard isFeatured(focusedRow) else { return 1 }
@@ -2394,6 +2407,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let rowMove = cell.layer.animationKeys()?
             .compactMap { cell.layer.animation(forKey: $0) as? CABasicAnimation }
             .first { $0.keyPath == "position" }
+        // The name's ink: it crosses the picture's edge about half way.
+        if let spring = rowMove as? CASpringAnimation {
+            let progress = Self.springProgress(spring)
+            let half = progress.values.firstIndex { $0 >= 0.5 } ?? progress.values.count / 2
+            cell.flipName(after: progress.duration * Double(half) / Double(progress.values.count - 1))
+        } else {
+            cell.flipName(after: (rowMove?.duration ?? FixedFocusMotion.billboardScroll) / 2)
+        }
         let timing = rowMove?.timingFunction ?? CAMediaTimingFunction(name: .easeInEaseOut)
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
@@ -3005,11 +3026,13 @@ final class FixedFocusShade: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
-        // A bottom fade under the words (the box's, a tall card's): dark at
-        // the foot, eased, clear by the card's upper third.
+        // A bottom fade under the words (the box's, a tall card's), Apple
+        // TV's: the picture undimmed down to its middle, then eased dark
+        // into the foot (from the upper third, half dark by the middle,
+        // dimmed the whole card).
         let gradient = layer as! CAGradientLayer
-        gradient.colors = [0, 0.5, 0.8, 0.9].map { UIColor.black.withAlphaComponent($0).cgColor }
-        gradient.locations = [0.3, 0.55, 0.8, 1]
+        gradient.colors = [0, 0.3, 0.65, 0.85].map { UIColor.black.withAlphaComponent($0).cgColor }
+        gradient.locations = [0.45, 0.65, 0.85, 1]
         gradient.startPoint = CGPoint(x: 0.5, y: 0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1)
     }
@@ -3028,7 +3051,7 @@ final class FixedFocusLogo: UIImageView {
     override var image: UIImage? {
         didSet {
             if let image, image.renderingMode != .alwaysTemplate, Self.isDark(image) {
-                tintColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+                tintColor = CueInk.ui(FixedFocusText.primary)
                 self.image = image.withRenderingMode(.alwaysTemplate)
                 return
             }
@@ -3210,6 +3233,33 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// The name's brightness (see the controller's `titleAlpha`).
     var titleAlpha: CGFloat = 1 {
         didSet { applyHeader() }
+    }
+    /// On the billboard's picture (`nameOnPicture`): the name in dark
+    /// mode's white. Set at once; a move between billboard and rows keeps
+    /// the old ink until the name crosses the picture's edge (`flipName`).
+    var nameOnPicture = false {
+        didSet {
+            guard nameOnPicture != oldValue else { return }
+            nameFlip += 1
+            title.overrideUserInterfaceStyle = nameOnPicture ? .dark : .unspecified
+        }
+    }
+    private var nameFlip = 0
+
+    /// The name's ink changing where it crosses the picture's edge, `after`
+    /// seconds into the move (a fade across the whole move left it, half
+    /// white, unseen on the light page mid-way).
+    func flipName(after delay: Double) {
+        nameFlip += 1
+        let flip = nameFlip
+        let style: UIUserInterfaceStyle = nameOnPicture ? .dark : .unspecified
+        title.overrideUserInterfaceStyle = nameOnPicture ? .unspecified : .dark
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.nameFlip == flip else { return }
+            UIView.transition(with: self.title, duration: 0.12, options: .transitionCrossDissolve) {
+                self.title.overrideUserInterfaceStyle = style
+            }
+        }
     }
     /// How far the name sits above its usual place over the cards (the next
     /// row's, waiting under the billboard: up on the billboard).
@@ -3508,7 +3558,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         clipsToBounds = false
         contentView.clipsToBounds = false
         title.font = Self.titleFont
-        title.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        title.textColor = CueInk.ui(FixedFocusText.primary)
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)

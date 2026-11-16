@@ -260,7 +260,7 @@ struct ProfileGate: View {
         VStack(spacing: 72) {
             Text("Who's watching?")
                 .font(.system(size: 57, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
             HStack(alignment: .top, spacing: 40) {
                 ForEach(profiles.profiles) { profile in
                     Button { select(profile) } label: {
@@ -289,7 +289,7 @@ struct ProfileGate: View {
             // Room kept, so nothing moves as it shows.
             Text("Continuing as \(continuing?.name ?? " ")")
                 .font(.system(size: 24))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                .foregroundStyle(CueInk.tertiary)
                 .opacity(continuing == nil ? 0 : 1)
                 .animation(Motion.fade, value: continuing == nil)
                 .padding(.top, -24)
@@ -431,7 +431,7 @@ private struct GateTile: View {
                 if profile.pinEnabled {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                        .foregroundStyle(CueInk.primary)
                         .padding(10)
                         .background(Circle().fill(.black.opacity(0.65)))
                 }
@@ -446,13 +446,13 @@ private struct GateTile: View {
             VStack(spacing: 14) {
                 Text(profile.name)
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.color(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
                     .lineLimit(1)
                 // The section hints' look (`SectionHint`).
                 Text("HOLD TO EDIT")
                     .font(.system(size: SectionHint.size, weight: SectionHint.weight))
                     .tracking(SectionHint.tracking)
-                    .foregroundStyle(Color.white.opacity(SectionHint.opacity))
+                    .foregroundStyle(CueInk.color(SectionHint.opacity))
                     .lineLimit(1)
                     .fixedSize()
                     .opacity(hint ? 1 : 0)
@@ -493,7 +493,7 @@ private struct GateAddTile: View {
                 .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
             Text("Add Profile")
                 .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(Color.white.opacity(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
+                .foregroundStyle(CueInk.color(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
                 .lineLimit(1)
                 .offset(y: isFocused ? GateSlot.step(size) : 0)
                 .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
@@ -545,17 +545,17 @@ struct PinEntryView: View {
             VStack(spacing: CueSpacing.xl) {
                 Text(title)
                     .font(.system(size: 57, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .foregroundStyle(CueInk.primary)
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                        .foregroundStyle(CueInk.secondary)
                 }
 
                 HStack(spacing: CueSpacing.lg) {
                     ForEach(0..<pinLength, id: \.self) { i in
                         Circle()
-                            .fill(Color.white.opacity(i < digits.count ? FixedFocusText.primary : 0.2))
+                            .fill(CueInk.color(i < digits.count ? FixedFocusText.primary : 0.2))
                             .frame(width: 28, height: 28)
                     }
                 }
@@ -566,7 +566,7 @@ struct PinEntryView: View {
                 // Its room kept: the keys don't move as it comes and goes.
                 Text(error ?? " ")
                     .font(.system(size: 24))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.secondary)
 
                 VStack(spacing: CueSpacing.md) {
                     ForEach(0..<3, id: \.self) { row in
@@ -772,11 +772,11 @@ struct ProfileSetup: View {
         VStack(spacing: 16) {
             Text(title)
                 .font(.system(size: 57, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                .foregroundStyle(CueInk.primary)
             if let subtitle {
                 Text(subtitle)
                     .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.secondary)
             }
         }
         .multilineTextAlignment(.center)
@@ -787,7 +787,7 @@ struct ProfileSetup: View {
         HStack(spacing: 14) {
             ForEach(steps, id: \.self) { s in
                 Circle()
-                    .fill(Color.white.opacity(s == step ? FixedFocusText.primary : 0.2))
+                    .fill(CueInk.color(s == step ? FixedFocusText.primary : 0.2))
                     .frame(width: 12, height: 12)
             }
         }
@@ -931,7 +931,7 @@ private struct SetupAvatars: View {
                     VStack(alignment: .leading, spacing: 20) {
                         Text(group.name.uppercased())
                             .font(.system(size: SettingsMetrics.sectionTextSize, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(FixedFocusText.tertiary))
+                            .foregroundStyle(CueInk.tertiary)
                             .padding(.leading, GateSlot.sideRoom / 2)
                         LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.slot), spacing: Self.gap), count: Self.across),
                                   alignment: .leading, spacing: 28) {
@@ -988,7 +988,7 @@ private struct SetupAvatars: View {
                     if chosen { Image(systemName: "checkmark").font(.system(size: 20, weight: .semibold)) }
                 }
                 .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(Color.white.opacity(isFocused || chosen ? FixedFocusText.primary : FixedFocusText.secondary))
+                .foregroundStyle(CueInk.color(isFocused || chosen ? FixedFocusText.primary : FixedFocusText.secondary))
                 .offset(y: isFocused ? GateSlot.step(size) : 0)
                 .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
             }

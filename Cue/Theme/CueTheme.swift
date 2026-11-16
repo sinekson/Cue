@@ -43,9 +43,9 @@ enum CuePalette {
     static let background = CuePrimitives.neutral950
     static let backgroundCard = CuePrimitives.neutral850
     /// The app's text levels (`FixedFocusText`).
-    static let textPrimary = Color.white.opacity(FixedFocusText.primary)
-    static let textSecondary = Color.white.opacity(FixedFocusText.secondary)
-    static let textTertiary = Color.white.opacity(FixedFocusText.tertiary)
+    static let textPrimary = CueInk.primary
+    static let textSecondary = CueInk.secondary
+    static let textTertiary = CueInk.tertiary
 }
 
 /// The synced slice of the old theme settings. Fixed now, but still written so

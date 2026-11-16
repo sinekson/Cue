@@ -58,6 +58,6 @@ private struct BackgroundPage: View {
 
     private var reason: String {
         guard background.shown != nil else { return "Until titles are picked" }
-        return background.chosen ? "Chosen by you" : BackgroundPicks.TimeOfDay.now.name
+        return background.chosen ? "Chosen by you" : BackgroundPicks.Mode.now.name
     }
 }

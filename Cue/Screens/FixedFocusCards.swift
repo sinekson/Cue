@@ -58,6 +58,8 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         card.layer.cornerCurve = .continuous
         card.backgroundColor = Self.empty
         contentView.addSubview(card)
+        // The art and what's on it: dark in both appearances (`CueInk`).
+        card.overrideUserInterfaceStyle = .dark
         backdrop.contentMode = .scaleAspectFill
         backdrop.clipsToBounds = true
         card.addSubview(backdrop)
@@ -71,15 +73,15 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
         fade.locations = [0, 0.3, 0.5, 0.75]
         card.layer.addSublayer(fade)
         name.font = .systemFont(ofSize: 52, weight: .bold)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        name.textColor = CueInk.ui(FixedFocusText.primary)
         name.numberOfLines = 2
         // As on the billboard: the facts bright, the tagline quiet and italic.
         facts.font = .systemFont(ofSize: FixedFocusMetrics.textSize, weight: .medium)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        facts.textColor = CueInk.ui(FixedFocusText.body)
         tagline.font = UIFont(descriptor: UIFont.systemFont(ofSize: FixedFocusMetrics.textSize)
             .fontDescriptor.withSymbolicTraits(.traitItalic) ?? UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).fontDescriptor,
                               size: FixedFocusMetrics.textSize)
-        tagline.textColor = UIColor.white.withAlphaComponent(FixedFocusText.secondary)
+        tagline.textColor = CueInk.ui(FixedFocusText.secondary)
         chips.view.backgroundColor = .clear
         chips.safeAreaRegions = []
         for view: UIView in [logo, name, chips.view, facts, tagline] { card.addSubview(view) }
@@ -304,6 +306,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         card.layer.cornerCurve = .continuous
         card.backgroundColor = UIColor(white: 0.12, alpha: 1)
         contentView.addSubview(card)
+        // All of it on the art (no caption): dark in both appearances.
+        contentView.overrideUserInterfaceStyle = .dark
         card.addSubview(stage)
         // A large row's backdrop under the poster: opening, the poster fades
         // off it (the backdrop fading in over the card's grey left the grey
@@ -321,16 +325,16 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         logo.contentMode = .scaleAspectFit
         logo.areaShare = 0.55
         name.font = .systemFont(ofSize: 40, weight: .semibold)
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        name.textColor = CueInk.ui(FixedFocusText.primary)
         name.numberOfLines = 2
         facts.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
-        facts.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        facts.textColor = CueInk.ui(FixedFocusText.body)
         facts.lineBreakMode = .byTruncatingTail
         place.font = .systemFont(ofSize: 44, weight: .bold)
-        place.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        place.textColor = CueInk.ui(FixedFocusText.primary)
         corner.contentMode = .topLeft
         summary.font = .systemFont(ofSize: FixedFocusMetrics.textSize)
-        summary.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        summary.textColor = CueInk.ui(FixedFocusText.body)
         summary.numberOfLines = FixedFocusBillboardText.summaryLines
         summary.lineBreakMode = .byTruncatingTail
         for view: UIView in [corner, place, badges, logo, name, facts, summary] { words.addSubview(view) }
@@ -984,6 +988,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             picture.layer.cornerCurve = .continuous
         }
         contentView.addSubview(picture)
+        // The art and its plates dark in both appearances; the caption
+        // under it follows tvOS's (`CueInk`).
+        picture.overrideUserInterfaceStyle = .dark
         placeholderCard.isHidden = true
         contentView.addSubview(placeholderCard)
         loadingCard.isHidden = true
@@ -1015,7 +1022,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         name.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
         name.lineBreakMode = .byTruncatingTail
         detail.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
-        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: false))
+        detail.textColor = CueInk.ui(FixedFocusText.infoLevel(focused: false))
         for label in [name, detail] {
             label.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(label)
@@ -1258,8 +1265,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
         // Out of focus one level down: the name secondary, the line tertiary.
-        name.textColor = UIColor.white.withAlphaComponent(FixedFocusText.titleLevel(focused: focused))
-        detail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.infoLevel(focused: focused))
+        name.textColor = CueInk.ui(FixedFocusText.titleLevel(focused: focused))
+        detail.textColor = CueInk.ui(FixedFocusText.infoLevel(focused: focused))
         guard !Self.lift else { return }
         // Grown and outlined — the captions step down with it.
         let size = cardFrame.size
@@ -1822,7 +1829,7 @@ final class FixedFocusBadges: UIView {
     /// The symbols, Netflix's way: grey, some with one part in Cue's colour, the
     /// app icon's red (its top, Display P3; `Tools/AppIcon/render.swift`).
     static let cue = UIColor(displayP3Red: 1, green: 0x38 / 255, blue: 0x73 / 255, alpha: 1)
-    static let symbolGrey = UIColor.white.withAlphaComponent(FixedFocusText.body)
+    static let symbolGrey = CueInk.ui(FixedFocusText.body)
 
     /// What a plate shows: a symbol and words, or a rating's mark (in its
     /// own colours) and score.

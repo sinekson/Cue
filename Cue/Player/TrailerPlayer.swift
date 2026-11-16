@@ -1204,6 +1204,8 @@ final class TrailerController: UIViewController, UIGestureRecognizerDelegate, Tr
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // On pictures or glass: dark in both appearances (`CueInk`).
+        overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
         for sub in [focusView, overlay, hint] as [UIView] { view.addSubview(sub) }
         transport.media = self
@@ -1375,7 +1377,7 @@ private final class TrailerDownHint: UIView {
         isUserInteractionEnabled = false
         alpha = 0
         transform = CGAffineTransform(translationX: 0, y: Self.drop)
-        let color = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        let color = CueInk.ui(FixedFocusText.body)
         chevron.image = UIImage(systemName: "chevron.down",
                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
         chevron.tintColor = color

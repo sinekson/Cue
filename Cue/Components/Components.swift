@@ -1018,8 +1018,8 @@ enum AppGlass {
     static let focusTint = Color.white.opacity(0.92)
     static let currentTint = Color.white.opacity(0.18)
     /// (Nothing in the UI is pure white — `FixedFocusText.primary`.)
-    static let text = Color.white.opacity(FixedFocusText.primary)
-    static let textMuted = Color.white.opacity(FixedFocusText.secondary)
+    static let text = CueInk.primary
+    static let textMuted = CueInk.secondary
     static let textOnFocus = Color.black.opacity(0.85)
     /// THE glass: every Liquid Glass surface in the app is this one —
     /// `.regular`, darkened by this tint (text stays crisp over bright art;
@@ -1041,13 +1041,14 @@ enum AppGlass {
 /// with dark content when focused. Each control keeps its own shape and
 /// size; these are its colours (docs/UI-DESIGN.md §1).
 enum FlatControl {
-    static let rest = Color.white.opacity(0.13)
+    /// (Light: white over the grey, as tvOS's light rows.)
+    static let rest = CueInk.fill(dark: 0.13, light: 0.32)
     /// Lists of many (Settings rows): fainter, or the page turns grey.
-    static let restSubtle = Color.white.opacity(0.07)
+    static let restSubtle = CueInk.fill(dark: 0.07, light: 0.24)
     /// The current one of a set (a selected pill or tab).
-    static let selected = Color.white.opacity(0.28)
+    static let selected = CueInk.fill(dark: 0.28, light: 0.55)
     static let focus = Color.white
-    static let content = Color.white
+    static let content = CueInk.color(1)
     static let contentMuted = AppGlass.textMuted
     static let contentOnFocus = Color.black
     static let focusChange: Animation = .easeOut(duration: 0.18)
@@ -1176,7 +1177,7 @@ final class LoadingSymbol: UIView {
     private var dots: [CALayer] = []
     private(set) var isAnimating = false
 
-    var color: UIColor = UIColor.white.withAlphaComponent(FixedFocusText.primary) {
+    var color: UIColor = CueInk.ui(FixedFocusText.primary) {
         didSet { paint() }
     }
 
@@ -1281,6 +1282,8 @@ struct LoadingSpinner: View {
 private struct GlassSurface<S: Shape>: ViewModifier {
     let shape: S
 
+    /// Glass is dark in both appearances, its text white: it floats over
+    /// pictures as much as over the page.
     func body(content: Content) -> some View {
         // `atvGlass` has had a solid fallback for the slower boxes for a while;
         // this one — which is what the rail, the filter pills, the search bar,
@@ -1290,10 +1293,13 @@ private struct GlassSurface<S: Shape>: ViewModifier {
         // re-composited through its own expand/collapse animation.
         if PerformanceProfile.isLowPower || PerformanceProfile.isMidPower {
             content.background(FusionMaterials.dialog, in: shape)
+                .environment(\.colorScheme, .dark)
         } else if #available(tvOS 26.0, *) {
             content.glassEffect(.regular.tint(AppGlass.surfaceTint), in: shape)
+                .environment(\.colorScheme, .dark)
         } else {
             content.background(.ultraThinMaterial, in: shape)
+                .environment(\.colorScheme, .dark)
         }
     }
 }
@@ -1655,7 +1661,7 @@ struct RatingChip: View {
             if let score {
                 Text(score)
                     .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                    .foregroundStyle(CueInk.primary)
             }
         }
         .frame(height: 30)
@@ -1903,7 +1909,7 @@ struct FusionToastHost: View {
                     }
                     Text(message)
                         .font(FusionType.button)
-                        .foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+                        .foregroundStyle(CueInk.primary)
                 }
                 .padding(.horizontal, CueSpacing.xl)
                 .padding(.vertical, CueSpacing.md)

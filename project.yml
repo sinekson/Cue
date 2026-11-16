@@ -68,7 +68,8 @@ targets:
         # Same place the (disabled) Top Shelf target sets its version.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        UIUserInterfaceStyle: Dark
+        # No UIUserInterfaceStyle: Cue follows tvOS's appearance (CueInk);
+        # what sits on pictures keeps itself dark.
         # The launch screen: the app's background colour, full-screen, nothing
         # on it (Tools/AppIcon/render.swift — tvOS ignored UIColorName); the
         # launch curtain ("Who's watching?") takes over from it in place.

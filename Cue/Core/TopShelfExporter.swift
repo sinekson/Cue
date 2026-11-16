@@ -337,7 +337,7 @@ enum TopShelfCardRenderer {
             let plateH = FixedFocusBadges.height * k
             let font = UIFont.systemFont(ofSize: FixedFocusBadges.font.pointSize * k, weight: .semibold)
             let ink = tint.map { SourceTint.ink($0, FixedFocusText.primary) }
-                ?? UIColor.white.withAlphaComponent(FixedFocusText.primary)
+                ?? CueInk.ui(FixedFocusText.primary)
             func plate(_ text: String, leading: Bool) {
                 let words = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: ink])
                 let width = ceil(words.size().width) + 2 * pad

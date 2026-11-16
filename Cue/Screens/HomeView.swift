@@ -2161,7 +2161,7 @@ struct FixedFocusBillboardText: View {
                 // chips. (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
                     .font(.system(size: Self.textSize, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.body))
+                    .foregroundStyle(CueInk.body)
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
                     .padding(.top, Self.chipsSpace - Self.lineInset)
@@ -2170,7 +2170,7 @@ struct FixedFocusBillboardText: View {
                 // height, nothing moves).
                 Text(tagline ?? item.name)
                     .font(.system(size: Self.textSize, weight: .regular).italic())
-                    .foregroundStyle(Color.white.opacity(FixedFocusText.secondary))
+                    .foregroundStyle(CueInk.secondary)
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
                     .padding(.top, Self.gap - 2 * Self.lineInset)
@@ -2210,9 +2210,9 @@ private struct BillboardReasonLabel: View {
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(colours[0], colours.count > 1 ? colours[1] : colours[0])
             }
-            (Text(reason.lead).foregroundStyle(Color.white.opacity(FixedFocusText.primary))
+            (Text(reason.lead).foregroundStyle(CueInk.primary)
              + Text(detail.map { separator + $0 } ?? "")
-                .foregroundStyle(Color.white.opacity(FixedFocusText.body)))
+                .foregroundStyle(CueInk.body))
                 .font(Font(FixedFocusText.infoFont(FixedFocusMetrics.textSize)))
         }
         .lineLimit(1)
@@ -2366,6 +2366,51 @@ enum FixedFocusText {
     static func infoFont(_ size: CGFloat) -> UIFont { .systemFont(ofSize: size, weight: .regular) }
     static func titleLevel(focused: Bool) -> CGFloat { focused ? primary : secondary }
     static func infoLevel(focused: Bool) -> CGFloat { focused ? body : tertiary }
+}
+
+/// The text's colour at a level (`FixedFocusText`), in tvOS's appearance:
+/// dark, white at the level; light, near-black (tvOS's own light grey
+/// text) at 85, 70, 55, 42 % for the four levels. What sits on a picture
+/// (Details, the billboard, a card's art, the player, glass) is kept dark
+/// (`overrideUserInterfaceStyle`, `colorScheme`), so it stays white there.
+enum CueInk {
+    static func ui(_ level: CGFloat) -> UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .light
+                ? UIColor.black.withAlphaComponent(onLight(level))
+                : UIColor.white.withAlphaComponent(level)
+        }
+    }
+
+    static func color(_ level: CGFloat) -> Color { Color(uiColor: ui(level)) }
+
+    static let primary = color(FixedFocusText.primary)
+    static let body = color(FixedFocusText.body)
+    static let secondary = color(FixedFocusText.secondary)
+    static let tertiary = color(FixedFocusText.tertiary)
+
+    /// A level on light: tvOS's text grey (~58 % black: 0.32 on its 0.75)
+    /// for primary, the rest a step dimmer each; between them in
+    /// step (dimmer on dark is dimmer on light too).
+    static func onLight(_ level: CGFloat) -> CGFloat {
+        let dark: [CGFloat] = [FixedFocusText.tertiary, FixedFocusText.secondary, FixedFocusText.body, FixedFocusText.primary]
+        let light: [CGFloat] = [0.40, 0.46, 0.52, 0.58]
+        if level <= dark[0] { return light[0] * level / dark[0] }
+        for i in 1..<dark.count where level <= dark[i] {
+            let t = (level - dark[i - 1]) / (dark[i] - dark[i - 1])
+            return light[i - 1] + t * (light[i] - light[i - 1])
+        }
+        // (Past primary, to black: the controls' words, as tvOS's rows.)
+        return min(1, light[3] + (level - dark[3]) / (1 - dark[3]) * (1 - light[3]))
+    }
+
+    /// A fill in the page (flat controls at rest, rows): white at `dark` on
+    /// dark; on light, white at `light` (tvOS's light rows are lighter than
+    /// the grey, not darker).
+    static func fill(dark: CGFloat, light: CGFloat) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .light
+            ? UIColor.white.withAlphaComponent(light) : UIColor.white.withAlphaComponent(dark) })
+    }
 }
 
 /// The focused card's look: the unfocused cards' edge, bright (no ring

@@ -634,7 +634,12 @@ struct DetailView: View {
         self.onSelectKeyword = onSelectKeyword
     }
 
+    /// Over its picture: dark in both appearances (`CueInk`).
     var body: some View {
+        page.environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder private var page: some View {
         let _ = DetailOpenProbe.note("body")
         ZStack {
             ATVBackground()
@@ -1665,7 +1670,7 @@ struct DetailActionButton: View {
     /// black with a light edge; nothing at rest.)
     static let height: CGFloat = 64
     static let focusFill = Color.white
-    static let restContent = Color.white.opacity(FixedFocusText.primary)
+    static let restContent = CueInk.primary
     /// Inside the capsule, either side (the season buttons).
     static let textPadding: CGFloat = 22
     /// A labelled button's name alone, either side.
