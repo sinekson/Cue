@@ -2090,6 +2090,12 @@ enum CueRows {
             for item in rows[index].items { if let scene = scenes[item.id] { art[item.id] = scene } }
             rows[index].art = art
         }
+        // Today's Pick: the billboard's picture (`TMDBService.wideScene`),
+        // asked here, so the card is drawn on it.
+        if let spotlight, let index = rows.firstIndex(where: { $0.shape == .spotlight }),
+           let scene = await TMDBService.wideScene(tmdbID: spotlight.tmdbID, isMovie: spotlight.isMovie) {
+            rows[index].art = [spotlight.item.id: scene]
+        }
         // The episode rows' episodes (each show's newest, TMDB's); a show
         // whose episode isn't found leaves the row.
         let episodeShows = Array(Set(rows.filter { $0.shape == .episode }.flatMap { $0.items.map(\.id) }))

@@ -642,13 +642,16 @@ enum TMDBService {
         }
     }
 
-    /// A title's picture for the billboard and Details: TMDB's main backdrop
-    /// (TMDB's own choice, by votes), the original file. (Tried: one of
-    /// several at random each time — the others too often looked bad, by
-    /// whatever rule: the best by average, by votes, bars on both.) nil:
-    /// none, or not asked (no key, an id TMDB can't map, the request failed).
+    /// A title's picture for the billboard and Details: the best of TMDB's
+    /// main backdrop and its two best-voted text-free ones for the
+    /// billboard's wide cut (`wideScene`), the main one favoured; else the
+    /// main one. The original file. (Tried: one of several at random each
+    /// time — the others too often looked bad, by whatever rule: the best
+    /// by average, by votes, bars on both.) nil: none, or not asked (no
+    /// key, an id TMDB can't map, the request failed).
     static func backdrop(id: String, type: String) async -> String? {
         guard hasAPIKey, let (tmdbID, isMovie) = await resolveTMDBID(from: id, type: type) else { return nil }
+        if let scene = await wideScene(tmdbID: tmdbID, isMovie: isMovie) { return scene }
         struct Response: Decodable { let backdrop_path: String? }
         let path = (isMovie ? "/movie/" : "/tv/") + "\(tmdbID)"
         guard let body: Response = try? await cachedGet(path, query: [:], fresh: { _ in 7 * day }, keep: 60 * day),
@@ -2655,24 +2658,82 @@ extension TMDBService {
         return chosen
     }
 
-    /// How well a backdrop cut to a square around its faces (as the card
-    /// cuts it) reads: a face, a middling light, little pure black.
-    private static func sceneScore(_ image: CGImage) -> Double {
+    /// The billboard's and Today's Pick's picture: TMDB's main backdrop or
+    /// one of its two best-voted text-free ones, whichever reads best cut
+    /// to the billboard's band around its faces (`sceneScore`); the main
+    /// one wins unless another is clearly better (others chosen by votes
+    /// looked bad). Kept 30 days.
+    private static let wideCache = DiskCache<String>(name: "tmdb-wide-pictures")
+    /// The billboard card's shape, about (a band across a 16:9 backdrop).
+    static let wideAspect: CGFloat = 2.2
+
+    static func wideScene(tmdbID: Int, isMovie: Bool, cachedOnly: Bool = false) async -> String? {
+        let key = "\(isMovie ? "m" : "t"):\(tmdbID)"
+        if let hit = await wideCache.value(for: key, ttl: 30 * 24 * 60 * 60) { return hit.isEmpty ? nil : hit }
+        if cachedOnly { return nil }
+        struct Body: Decodable {
+            struct Backdrop: Decodable { let file_path: String; let vote_average: Double? }
+            struct Images: Decodable { let backdrops: [Backdrop]? }
+            let backdrop_path: String?
+            let images: Images?
+        }
+        guard let body: Body = try? await get(isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)", query: [
+            "append_to_response": "images", "include_image_language": "null",
+        ]) else { return nil }
+        var paths = (body.images?.backdrops ?? []).filter { !$0.file_path.hasSuffix(".svg") }
+            .sorted { ($0.vote_average ?? 0) > ($1.vote_average ?? 0) }.map(\.file_path)
+        if let main = body.backdrop_path { paths.insert(main, at: 0) }
+        var unique = Set<String>()
+        paths = Array(paths.filter { unique.insert($0).inserted }.prefix(3))
+        let scored = await boundedConcurrentMap(paths, limit: 3) { path -> (String, Double) in
+            guard let url = imageURL(path, size: "w300").flatMap(URL.init),
+                  let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = UIImage(data: data)?.cgImage else { return (path, -.infinity) }
+            return (path, await withCheckedContinuation { done in
+                sceneQueue.async { done.resume(returning: sceneScore(image, aspect: wideAspect)) }
+            })
+        }
+        let best = scored.enumerated().max { a, b in
+            a.element.1 + (a.offset == 0 ? 0.15 : 0) < b.element.1 + (b.offset == 0 ? 0.15 : 0)
+        }?.element
+        let chosen = best.flatMap { $0.1 > -.infinity ? imageURL($0.0, size: "original") : nil }
+            ?? body.backdrop_path.flatMap { imageURL($0, size: "original") }
+        await wideCache.store(chosen ?? "", for: key)
+        return chosen
+    }
+
+    /// Where a picture's faces are, along the cut that fits it to a shape
+    /// of `aspect` (0 top / left, 1 bottom / right): across a picture
+    /// wider than the shape, down one narrower. Nil: no face.
+    static func faceCentre(_ image: CGImage, aspect: CGFloat) -> CGFloat? {
         let request = VNDetectFaceRectanglesRequest()
         try? VNImageRequestHandler(cgImage: image).perform([request])
         let found = (request.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+        // The largest faces (half the largest's size or more) together.
         let large = found.filter { $0.boundingBox.width >= (found.first?.boundingBox.width ?? 0) / 2 }
+        guard !large.isEmpty else { return nil }
+        let across = CGFloat(image.width) / CGFloat(image.height) > aspect
+        // Vision's y is from the foot.
+        return across ? large.reduce(0) { $0 + $1.boundingBox.midX } / CGFloat(large.count)
+            : 1 - large.reduce(0) { $0 + $1.boundingBox.midY } / CGFloat(large.count)
+    }
+
+    /// How well a picture cut to `aspect` around its faces (as the card
+    /// cuts it) reads: a face, a middling light, little pure black.
+    private static func sceneScore(_ image: CGImage, aspect: CGFloat = 1) -> Double {
         let width = CGFloat(image.width), height = CGFloat(image.height)
+        let faces = faceCentre(image, aspect: aspect)
         let cut: CGRect
-        if height > width {
-            // A poster: a square down it, around the faces (Vision's y is
-            // from the foot).
-            let centre = large.isEmpty ? 0.4 : 1 - large.reduce(0) { $0 + $1.boundingBox.midY } / CGFloat(large.count)
-            cut = CGRect(x: 0, y: min(max(0, centre * height - width / 2), height - width), width: width, height: width)
+        if width / height <= aspect {
+            // Down it (a poster in a square, a backdrop in the band).
+            let centre = faces ?? (height > width ? 0.4 : 0.5)
+            let side = width / aspect
+            cut = CGRect(x: 0, y: min(max(0, centre * height - side / 2), height - side), width: width, height: side)
         } else {
-            let centre = large.isEmpty ? 0.5 : large.reduce(0) { $0 + $1.boundingBox.midX } / CGFloat(large.count)
-            cut = CGRect(x: min(max(0, centre * width - height / 2), max(0, width - height)), y: 0,
-                         width: min(height, width), height: height)
+            let centre = faces ?? 0.5
+            let side = height * aspect
+            cut = CGRect(x: min(max(0, centre * width - side / 2), max(0, width - side)), y: 0,
+                         width: min(side, width), height: height)
         }
         guard let square = image.cropping(to: cut) else { return -.infinity }
         let side = 48
@@ -2690,7 +2751,7 @@ extension TMDBService {
         }
         let count = Double(side * side)
         let mean = total / count
-        let face = large.isEmpty ? 0 : 0.4
+        let face = faces == nil ? 0 : 0.4
         let light = 1 - min(1, abs(mean - 0.35) / 0.35)
         return face + 0.3 * light - 1.0 * (black / count)
     }

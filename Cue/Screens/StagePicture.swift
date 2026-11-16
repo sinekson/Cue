@@ -58,6 +58,12 @@ final class StagePictureView: UIView {
         /// Home's card: its bottom fade (`StageArt.cardShade`), not the
         /// screen's left one.
         var inCard = false { didSet { if inCard != oldValue { setNeedsLayout() } } }
+        /// Home's card, in its points: the picture moved up or down so its
+        /// faces sit in the card (`faces`), never uncovering it.
+        var band: CGRect? { didSet { if band != oldValue { setNeedsLayout() } } }
+        /// Where its faces are, down the picture (0 top, 1 foot; nil: none
+        /// found, it stays centred).
+        var faces: CGFloat? { didSet { if faces != oldValue { setNeedsLayout() } } }
         /// Copies riding on it (the buttons going out with it).
         var carried: [UIView] = []
         private var textHost: UIHostingController<AnyView>?
@@ -97,6 +103,10 @@ final class StagePictureView: UIView {
             // (Its place, not its frame: it may lean in — `lean`.)
             picture.bounds = CGRect(origin: .zero, size: bounds.size)
             picture.center = CGPoint(x: bounds.midX, y: bounds.midY)
+            if inCard, let band, let faces {
+                let shift = min(band.minY, max(band.maxY - bounds.height, band.midY - faces * bounds.height))
+                picture.center.y += shift
+            }
             shade.image = inCard ? StageArt.cardShade : StageArt.shade
             // The whole picture, edge to edge (on the screen's part only,
             // the strip past it showed as a bright line on a sliding edge).
@@ -226,7 +236,10 @@ final class StagePictureView: UIView {
         dim.frame = picture
         // A card: no black behind the pictures (unmasked, it covered the page).
         clip.backgroundColor = cardFrame != nil ? .clear : .black
-        for case let card as Page in zoom.subviews { card.inCard = cardFrame != nil }
+        for case let card as Page in zoom.subviews {
+            card.inCard = cardFrame != nil
+            card.band = cardFrame?.offsetBy(dx: Self.drift, dy: 0)
+        }
         if let cardFrame {
             cardMask.frame = cardFrame
             cardMask.backgroundColor = .black
@@ -249,10 +262,11 @@ final class StagePictureView: UIView {
         guard animated else {
             for case let card as Page in zoom.subviews where card !== page { card.removeFromSuperview() }
             leaving = nil
-            load(url, into: page.picture)
-            page.setText(item.flatMap { text?($0) })
             page.itemID = item?.id
             page.url = url
+            page.faces = nil
+            load(url, into: page.picture)
+            page.setText(item.flatMap { text?($0) })
             return
         }
         // HOME'S CARD: the next title dissolves in over the old in place
@@ -386,7 +400,35 @@ final class StagePictureView: UIView {
     }
 
     private func load(_ url: String?, into view: UIImageView) {
-        FixedFocusImages.load(url, into: view, maxDimension: PictureSize.screen)
+        FixedFocusImages.load(url, into: view, maxDimension: PictureSize.screen) { [weak view] waiting in
+            guard !waiting, let url, let view, let image = view.image?.cgImage else { return }
+            Self.findFaces(url, in: image) { faces in
+                guard let page = view.superview as? Page, page.url == url else { return }
+                page.faces = faces
+            }
+        }
+    }
+
+    /// Home's card: where a picture's faces are, down it (the cards' rule,
+    /// `TMDBService.faceCentre`), once per picture, from a small copy.
+    private static var faces: [String: CGFloat?] = [:]
+    private static let faceQueue = DispatchQueue(label: "cue.stage-faces", qos: .utility)
+    private static func findFaces(_ url: String, in image: CGImage, done: @escaping (CGFloat?) -> Void) {
+        if let known = faces[url] { done(known); return }
+        faceQueue.async {
+            let width = 480, height = max(1, Int(480 * CGFloat(image.height) / CGFloat(max(image.width, 1))))
+            var found: CGFloat?
+            if let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpaceCreateDeviceRGB(),
+                                       bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                found = context.makeImage().flatMap { TMDBService.faceCentre($0, aspect: TMDBService.wideAspect) }
+            }
+            DispatchQueue.main.async {
+                faces[url] = .some(found)
+                done(found)
+            }
+        }
     }
 }
 

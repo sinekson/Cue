@@ -1,5 +1,4 @@
 import SwiftUI
-import Vision
 
 /// A card in a destination row, as the controller sees it: its row and
 /// its place in it.
@@ -373,7 +372,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         summary.text = spotlight ? FixedFocusMetrics.descriptionText(item) : nil
         summary.isHidden = !spotlight
         if changed {
-            let art = spotlight ? item.background ?? item.poster : poster ?? item.poster ?? item.background
+            let art = spotlight ? poster ?? item.background ?? item.poster
+                : poster ?? item.poster ?? item.background
             self.art = art
             backdrop.image = nil
             backdropArt = feature ? item.background ?? art : nil
@@ -494,19 +494,15 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     private func findFaces() {
         guard let art, Self.faces[art] == nil, let image = picture.image?.cgImage else { return }
+        // Along the cut that fits it to the card: across a picture wider
+        // than the card, down one narrower (Today's Pick's backdrop in its
+        // wide card is cut down: it was cut across, by its faces' x).
+        let size = feature ? FixedFocusFeatureLayout.poster : card.bounds.size
+        let aspect = size.height > 0 ? size.width / size.height : 1
         // Vision blocks its thread: a queue of its own, not Swift's pool.
         Self.faceQueue.async {
-            let request = VNDetectFaceRectanglesRequest()
-            try? VNImageRequestHandler(cgImage: image).perform([request])
-            let found = (request.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
-            // The largest faces (half the largest's size or more) together.
-            let large = found.filter { $0.boundingBox.width >= (found.first?.boundingBox.width ?? 0) / 2 }
-            // Along the cut: across a backdrop, down a poster (Vision's y
-            // is from the foot; no faces: a poster's upper middle).
-            let tall = image.height > image.width
-            let centre = large.isEmpty ? (tall ? 0.4 : 0.5)
-                : tall ? 1 - large.reduce(0) { $0 + $1.boundingBox.midY } / CGFloat(large.count)
-                : large.reduce(0) { $0 + $1.boundingBox.midX } / CGFloat(large.count)
+            // No faces: a poster's upper middle, else the middle.
+            let centre = TMDBService.faceCentre(image, aspect: aspect) ?? (image.height > image.width ? 0.4 : 0.5)
             DispatchQueue.main.async { [weak self] in
                 Self.faces[art] = centre
                 guard let self, self.art == art else { return }

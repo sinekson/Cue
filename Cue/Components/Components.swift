@@ -742,8 +742,14 @@ struct RemoteImage: View {
             if let image, let key = shownKey {
                 let logo = LogoFit.trimmed(image, key: key)
                 let size = fit.size(for: logo.size)
+                // A dark logo (made for a bright poster: The Ancient Magus'
+                // Bride's black lettering) drawn white at primary, as the
+                // cards' (`FixedFocusLogo.isDark`): on the picture it
+                // didn't read.
                 Image(uiImage: logo)
+                    .renderingMode(FixedFocusLogo.isDark(logo) ? .template : .original)
                     .resizable()
+                    .foregroundStyle(CueInk.primary)
                     .frame(width: size.width, height: size.height)
                     .id(shownKey)
                     .transition(.opacity)
