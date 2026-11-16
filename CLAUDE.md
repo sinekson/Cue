@@ -747,6 +747,9 @@ view's own alpha and a timer.
 - Presses mid-animation (the rule under Design rules): rows, pages,
   Settings' sidebar done; the rest as glitches are found. Flat vs glass
   consistency pass.
+- Home's animation curves as a whole (timings and springs: the scroll,
+  focus growth, the billboard card's dip and growth; growing the card on
+  the scroll's 0.6 s when the rows scroll was tried, back to focus's 0.3).
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).

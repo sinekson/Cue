@@ -1044,15 +1044,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Home's billboard card: grown while focus is on it (its hidden
         // cards; a hold menu over it keeps it so).
         if !HoldMenu.shared.isOpen {
-            let rows = [context.previouslyFocusedView, context.nextFocusedView]
-                .map { $0.flatMap { Self.rowCell(containing: $0) }?.rowIndex }
-            // Coming from (or going to) another row, the rows scroll: it
-            // grows on the scroll's timing, not focus's (grown at once, the
-            // scroll still bringing it in, felt off). To and from the top
-            // bar nothing moves but the card: focus's.
-            setBillboardLit(rows[1].map { isFeatured($0) } ?? false,
-                            duration: rows[0] != nil && rows[1] != nil && rows[0] != rows[1]
-                                ? FixedFocusMotion.billboardScroll : Motion.focusDuration)
+            // (On the scroll's timing when the rows scroll was tried: back
+            // to focus's everywhere, the curves to be looked at as a whole.)
+            setBillboardLit(context.nextFocusedView.flatMap { Self.rowCell(containing: $0) }
+                .map { isFeatured($0.rowIndex) } ?? false)
         }
         // Back in view after hiding, the system puts focus on the first
         // card on screen (without asking): on to `returnRow`'s instead,
@@ -1916,10 +1911,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-    private func setBillboardLit(_ lit: Bool, duration: Double = Motion.focusDuration) {
+    private func setBillboardLit(_ lit: Bool) {
         guard lit != billboardLit, pinnedStage?.cardFrame != nil else { return }
         billboardLit = lit
-        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+        UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.applyOverlayPosition()
         }
