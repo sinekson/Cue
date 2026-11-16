@@ -225,6 +225,23 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private let shade = FixedFocusShade()
     private let edge = UIImageView()
     private let outline = UIView()
+    /// The outline's shadow, sized with it in `sizeOutline` (in the same
+    /// animation): following by autoresizing it was laid out later, in
+    /// another spring, and the box's showed as a pale larger box shrinking.
+    /// A plain layer's stretched contents, not an image view: the image
+    /// view's own late layout animated its stretch in the next spring
+    /// (200 pt too large, shrinking).
+    private let outlineShadow: UIView = {
+        let view = UIView()
+        let image = FixedFocusCardEdge.shadowImage
+        let caps = image.capInsets, size = image.size
+        view.layer.contents = image.cgImage
+        view.layer.contentsScale = image.scale
+        view.layer.contentsCenter = CGRect(x: caps.left / size.width, y: caps.top / size.height,
+                                           width: max(0, size.width - caps.left - caps.right) / size.width,
+                                           height: max(0, size.height - caps.top - caps.bottom) / size.height)
+        return view
+    }()
     /// The words: they go while a trailer plays.
     private let words = UIView()
     private let badges = FixedFocusBadges()
@@ -325,7 +342,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         outline.layer.cornerCurve = .continuous
         outline.alpha = 0
         contentView.addSubview(outline)
-        FixedFocusRing.attachShadow(to: outline)
+        outlineShadow.isUserInteractionEnabled = false
+        outline.addSubview(outlineShadow)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -512,7 +530,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     /// The card on screen as it looks now (grown): where a trailer handed
     /// into Details grows from.
-    var screenCard: CGRect { card.convert(card.bounds, to: nil) }
+    var screenCard: CGRect { mirror?.screenCard ?? card.convert(card.bounds, to: nil) }
 
     private func layoutPicture() {
         if feature {
@@ -583,6 +601,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     // MARK: The trailer
 
     func attachTrailer(_ surface: TrailerSurface) {
+        if let mirror { return mirror.attachTrailer(surface) }
         trailerSurface = surface
         guard surface.superview !== stage else { return }
         stage.insertSubview(surface, aboveSubview: picture)
@@ -619,15 +638,76 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         let scale = scale
         outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: bounds.height * scale))
         outline.layer.cornerRadius = Spotlight.cornerRadius * scale
+        let pad = FixedFocusCardEdge.shadowPad
+        outlineShadow.frame = outline.bounds.insetBy(dx: -pad, dy: -pad)
     }
 
     private func applyFocus(_ focused: Bool) {
         focusedNow = focused
         if !focused, !held { pressed = false }
+        if let mirror {
+            card.transform = .identity
+            outline.alpha = 0
+            mirror.reflect(focused: focused, pressed: pressed, held: held)
+            return
+        }
         card.transform = CGAffineTransform(scaleX: scale, y: scale)
         sizeOutline()
         outline.alpha = focused ? 1 : 0
         if focused { superview?.bringSubviewToFront(self) }
+    }
+
+    // MARK: Under the box
+
+    /// The box's new title: its picture and words fading in over the old
+    /// box, the outline and shadow there at once.
+    func dissolveIn() {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = Motion.fadeDuration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        card.layer.add(fade, forKey: "dissolve")
+    }
+
+    /// The box going out under a new one: its outline and shadow gone at
+    /// once (the new one's are there).
+    func dropOutline() {
+        UIView.performWithoutAnimation { outline.alpha = 0 }
+    }
+
+    /// Showing focus (grown, outlined).
+    var isFocusedLook: Bool { focusedNow }
+
+    /// Whatever it was animating, at its end now (the box going out under
+    /// the new one stays as it is).
+    func settle() {
+        func stop(_ layer: CALayer) {
+            layer.removeAllAnimations()
+            layer.sublayers?.forEach(stop)
+        }
+        stop(contentView.layer)
+    }
+
+    /// A large row's card under the box (`FixedFocusRowCell`'s open card at
+    /// the spot): it keeps focus, press and hold; the box shows them and
+    /// plays its trailer.
+    weak var mirror: FixedFocusShowcaseCell? {
+        didSet { if mirror !== oldValue { applyFocus(focusedNow) } }
+    }
+    /// Its picture hidden once it's under the box (sliding in, it shows).
+    var hiddenUnderBox = false {
+        didSet { card.isHidden = hiddenUnderBox }
+    }
+
+    /// The box showing the focus, press and hold of the card under it.
+    func reflect(focused: Bool, pressed: Bool, held: Bool) {
+        // Nothing new (the card under it taking focus as the box arrives):
+        // applied again in its spring, the outline would move.
+        guard focused != focusedNow || pressed != self.pressed || held != self.held else { return }
+        self.pressed = pressed
+        self.held = held
+        applyFocus(focused)
     }
 
     func setHeld(_ held: Bool) {
@@ -719,6 +799,11 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
 
     /// Its hold menu (`HoldMenu`): beside the card at its held size.
     func holdMenu(_ entries: [MenuEntry]) -> HoldMenuRequest {
+        if let mirror {
+            var request = mirror.holdMenu(entries)
+            request.onHeld = { [weak self] in self?.setHeld($0) }
+            return request
+        }
         let lift = self.lift
         func sized(_ scale: CGFloat) -> CGRect {
             convert(bounds.insetBy(dx: -bounds.width * (scale - 1) / 2, dy: -bounds.height * (scale - 1) / 2), to: nil)

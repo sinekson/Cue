@@ -134,7 +134,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   for "picking something now" rows, were removed 2026-11-15: the large
   rows made them pointless.) Saved for Later plain posters with moving focus, Top 10's grid. (The
   fixed focus box was retired 2026-11-13: too many hacks for what it gave;
-  in git history if wanted back.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
+  back 2026-11-15 narrower, only showing: the large rows' box.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides, alone at the
@@ -408,25 +408,28 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   **Large rows** (Home's browsing rows, `FixedFocusFeatureLayout` at the
   end of `FixedFocusRows.swift`, `featureRows`): posters (`featurePoster`,
   330 × 495), focus held at the first card's spot; in the focused row the
-  focused card open there as a wide card as tall as a poster
+  focused title open there as a wide card as tall as a poster
   (`featureCard`, 880 × 495, its right edge near the screen's middle;
   badges, logo, facts on it; grown as every card (level with the posters, only outline and shadow, was hard to see), pressed and held as every card; the row's name
   steps up by the growth, as over every grown card: `focusLift`), the posters after it beside it, the ones
-  before gone out at the left (a sliver peeks) (moving focus, the card
-  opening where it is from its middle, was tried 2026-11-15: too much
-  movement; opening from its middle at the spot left rows out of focus
-  starting 275 pt in: worse); rows out of focus all posters, their card still at the spot. A card's frame follows only
-  from the focused index and whether the row has focus: Left/Right
-  changes one, Up/Down the other, every card to its new frame on one
-  spring; the row's height never changes (no box, no hand-over, no masks,
-  no stretch). Opening: one cell holding
-  poster and backdrop, each pinned left at its own size, only the card's
-  width clipping (`stage`); the backdrop
-  there at once under the poster, the poster (once the backdrop is in; growing 3 % as it goes, back as it returns; lifted above the card's clip, growing 5 % past its edges, and a taller open card were tried),
-  shade and words fading over the first 0.25 s (the shade kept on the
-  posters, full or at 35 %, was too strong); closing, the words at once, the poster back over the last part, the backdrop gone after it:
-  the edges only ever uncover a picture (the backdrop fading in over the
-  card's grey showed a dark card widening ahead of it) (`setOpen`, Core Animation fades).
+  before gone out at the left (a sliver peeks). The open card is the
+  row's box, Netflix's (`FixedFocusRowCell.syncBox`): one card above the
+  posters that stands still; Left/Right: the box dips to its resting
+  size and up again (0.35 s, the old and new as one), the next title dissolves in
+  over it (the new over the old, 0.25 s), the posters sliding one step
+  under it, the old title's poster coming out at its left; Up/Down: it
+  opens out of the focused poster (the backdrop there at once under
+  the poster, the poster fading off it growing 3 %, shade and words
+  over the first 0.25 s) and closes back into it. Every card in the row
+  a poster; the one under the box keeps focus, press and hold, the box
+  shows them and plays its trailer (`FixedFocusShowcaseCell.mirror`;
+  the old fixed focus box mirrored moves and masks too, hence retired).
+  (Tried 2026-11-15: each card opening itself, the old shrinking as the
+  new grew: two shapes changing; moving focus with the card opening
+  where it is, from its middle: too much movement; opening from its
+  middle at the spot left rows out of focus starting 275 pt in; a
+  taller open card; the poster lifted above the card's clip; the shade
+  kept on the posters, full or at 35 %.) Rows out of focus all posters.
   After the trailers' 2 s rest the open card plays its trailer, as the
   showcase cards (the billboard's trailer settings).
   Backdrops load for the focused card and the next two only. Focus
