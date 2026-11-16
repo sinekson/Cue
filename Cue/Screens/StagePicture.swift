@@ -21,6 +21,31 @@ final class StagePictureView: UIView {
     /// the width — text and shade on it.
     static let slideDuration: Double = 0.7
     static let outgoingShare: CGFloat = 0.5
+    /// HOME'S BILLBOARD AS A CARD (trying): the picture in a large card
+    /// on the page — the rows' edges, `cardGap` under the top bar and
+    /// above the next row's name, the cards' corners. (Full screen, edge
+    /// to edge, was before.)
+    static let cardGap: CGFloat = 40
+    static var homeCard: CGRect {
+        let top = GlassSidebar.topBarTop + GlassSidebar.topBarItemHeight + cardGap
+        let bottom = FixedFocusRowsLayout.nextNameY - cardGap
+        return CGRect(x: Spotlight.screenInset, y: top,
+                      width: 1920 - 2 * Spotlight.screenInset, height: bottom - top)
+    }
+    /// What's in it this far in from its sides and foot: the text bottom
+    /// left, the dots bottom right on its last baseline. No buttons: the
+    /// card takes focus (its buttons, as Details', bottom left, then right
+    /// over the dots, were before).
+    static let cardMargin: CGFloat = 63
+    static var dotsY: CGFloat { homeCard.maxY - cardMargin - BillboardDots.dot }
+    /// Home's text block, its bottom (the tagline's line) at the margin.
+    static var homeTextBottom: CGFloat { homeCard.maxY - cardMargin + FixedFocusBillboardText.lineInset }
+    /// The text's and buttons' shift in (they stood at the rows' text edge).
+    static var textIn: CGFloat { homeCard.minX + cardMargin - FixedFocusMetrics.titleInset }
+    /// Clipped to this (screen points, before the billboard's travel),
+    /// nil: the whole picture.
+    var cardFrame: CGRect? { didSet { setNeedsLayout() } }
+    private let cardMask = UIView()
 
     /// One title's picture with its own shade — and, on Home's billboard,
     /// its own text — on it: one card.
@@ -30,6 +55,9 @@ final class StagePictureView: UIView {
         /// Whose picture.
         var itemID: String?
         var url: String?
+        /// Home's card: its bottom fade (`StageArt.cardShade`), not the
+        /// screen's left one.
+        var inCard = false { didSet { if inCard != oldValue { setNeedsLayout() } } }
         /// Copies riding on it (the buttons going out with it).
         var carried: [UIView] = []
         private var textHost: UIHostingController<AnyView>?
@@ -69,7 +97,7 @@ final class StagePictureView: UIView {
             // (Its place, not its frame: it may lean in — `lean`.)
             picture.bounds = CGRect(origin: .zero, size: bounds.size)
             picture.center = CGPoint(x: bounds.midX, y: bounds.midY)
-            shade.image = StageArt.shade
+            shade.image = inCard ? StageArt.cardShade : StageArt.shade
             // The whole picture, edge to edge (on the screen's part only,
             // the strip past it showed as a bright line on a sliding edge).
             shade.frame = bounds
@@ -196,6 +224,16 @@ final class StagePictureView: UIView {
         if page.layer.animationKeys()?.isEmpty ?? true { page.frame = pageFrame }
         blurred.frame = pageFrame
         dim.frame = picture
+        for case let card as Page in zoom.subviews { card.inCard = cardFrame != nil }
+        if let cardFrame {
+            cardMask.frame = cardFrame
+            cardMask.backgroundColor = .black
+            cardMask.layer.cornerRadius = Spotlight.cornerRadius
+            cardMask.layer.cornerCurve = .continuous
+            if mask !== cardMask { mask = cardMask }
+        } else if mask != nil {
+            mask = nil
+        }
     }
 
     /// `direction`: +1 paging right (the new one comes from the right).
@@ -257,6 +295,7 @@ final class StagePictureView: UIView {
         incoming.itemID = item?.id
         incoming.url = url
         incoming.shade.alpha = shadeAlpha
+        incoming.inCard = cardFrame != nil
         load(url, into: incoming.picture)
         incoming.setText(item.flatMap { text?($0) })
         zoom.insertSubview(incoming, belowSubview: blurred)
@@ -319,6 +358,34 @@ final class StagePictureView: UIView {
 /// the transition's alike.
 @MainActor
 enum StageArt {
+    /// HOME'S CARD's shade: the cards' bottom fade (`FixedFocusShade`'s
+    /// curve, starting higher: the billboard's text is taller than a
+    /// card's), over the card's height; no left fade. A column of the
+    /// screen's height, stretched across.
+    static let cardShade: UIImage = {
+        let card = StagePictureView.homeCard
+        let h = Int(StagePictureView.pictureSize.height)
+        let stops: [(at: CGFloat, dark: CGFloat)] = [(0.3, 0), (0.55, 0.3), (0.8, 0.65), (1, 0.85)]
+        func dark(_ share: CGFloat) -> CGFloat {
+            guard share > stops[0].at else { return stops[0].dark }
+            for (a, b) in zip(stops, stops.dropFirst()) where share <= b.at {
+                let t = (share - a.at) / (b.at - a.at)
+                let eased = t * t * (3 - 2 * t)
+                return a.dark + (b.dark - a.dark) * eased
+            }
+            return stops[stops.count - 1].dark
+        }
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: h),
+                                               format: { let f = UIGraphicsImageRendererFormat(); f.scale = 1; return f }())
+        return renderer.image { context in
+            for y in 0..<h {
+                let share = (CGFloat(y) + 0.5 - card.minY) / card.height
+                UIColor.black.withAlphaComponent(dark(min(max(share, 0), 1))).setFill()
+                context.fill(CGRect(x: 0, y: y, width: 1, height: 1))
+            }
+        }
+    }()
+
     static let shade: UIImage? = {
         let renderer = ImageRenderer(content: BillboardShade()
             .frame(width: StagePictureView.pictureSize.width,

@@ -1787,7 +1787,6 @@ struct HomeUIKitView: View {
     /// The dots' last state (so they fade out unchanged).
     @State private var lastBillboard: FixedFocusBillboardPosition?
     /// The billboard's buttons' focus.
-    @State private var billboardBridge = FocusBridge<BillboardControl>()
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1872,8 +1871,11 @@ struct HomeUIKitView: View {
                                    TopBarPlace.shared.pageDown = $0 > 0
                                }
                            },
-                           // The billboard's focus: its buttons (as Details').
-                           externalBillboard: true,
+                           // The billboard's focus: the card itself (its
+                           // hidden cards: Left/Right page, Select opens,
+                           // hold: the card's menu). (Its buttons, as
+                           // Details', were before.)
+                           externalBillboard: false,
                            cardStates: HomeRow.episodeStates(rows),
                            // The billboard paging (its buttons, and by itself
                            // — Settings → Appearance → Billboard pages by itself).
@@ -1893,21 +1895,8 @@ struct HomeUIKitView: View {
                            onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
-                           billboardOverlayShift: Self.rigidDotsMid - Self.peekDotsMid,
-                           billboardControls: billboardControls,
-                           billboardControlsHeight: FixedFocusBillboardText.buttonsY + 130,
                            // Its text on its pictures: each title one card.
                            billboardPageText: { AnyView(BillboardPageText(item: $0, make: billboardText)) },
-                           // Paging mid-slide: focus to the side it went —
-                           // Next going right, Play going left.
-                           onBillboardStep: { billboardBridge.request($0 > 0 ? .next : .details) },
-                           billboardEdge: { [billboardBridge] in
-                               switch billboardBridge.current {
-                               case .next: 1
-                               case .details: -1
-                               default: 0
-                               }
-                           },
                            // The picture under the text: the controller's own,
                            // moved with the billboard's distance.
                            pinnedBillboardPicture: true,
@@ -2537,15 +2526,6 @@ extension HomeUIKitView {
     static var rigidBillboardTravel: CGFloat { 1080 - FixedFocusMetrics.aboveVisible }
     /// The first row's peek: how much of its cards shows.
     static let firstRowPeek: CGFloat = 60
-    /// The dots' centre on the billboard: in the middle of its peek once
-    /// it's up.
-    static var rigidDotsMid: CGFloat { 1080 - FixedFocusMetrics.aboveVisible / 2 }
-    /// Peeking: about the line of the first row's name, a little above it
-    /// — clear of its cards.
-    static var peekDotsMid: CGFloat {
-        1080 - firstRowPeek - FixedFocusMetrics.titleHeight + FixedFocusMetrics.titleLine / 2 - peekDotsLift
-    }
-    static let peekDotsLift: CGFloat = 16
 
     /// The billboard's text and dots for the rows to host (a change of
     /// title: on the pictures — `billboardPageText`).
@@ -2641,45 +2621,21 @@ extension HomeUIKitView {
                         }
                     }
             }
-            // The position, bottom centre (Left/Right): it stays in the strip
-            // with the text.
+            // The position, under the buttons at the card's foot, right
+            // (`StagePictureView.dotsY`); up with the card.
             if let shown = billboard ?? lastBillboard {
+                let card = StagePictureView.homeCard
                 BillboardDots(count: shown.count, current: shown.index, focused: true,
                               timer: autoPageRunning ? BillboardAutoPage.interval : nil,
                               cycle: autoPageVisit)
-                    .frame(height: SectionHint.size * 1.3)
-                    .frame(width: 1920 - 2 * Spotlight.screenInset, alignment: .center)
-                    // In the peek; once the billboard is up, in its strip's
-                    // middle — moved there by the rows with their scroll
-                    // (`billboardOverlayShift`: on SwiftUI's clock it ran
-                    // apart from them), and with the peek (`movePeek`).
-                    .offset(x: Spotlight.screenInset, y: Self.peekDotsMid - SectionHint.size * 1.3 / 2)
+                    .frame(width: card.width - 2 * StagePictureView.cardMargin,
+                           height: BillboardDots.dot, alignment: .trailing)
+                    .offset(x: card.minX + StagePictureView.cardMargin, y: StagePictureView.dotsY)
             }
         }
         // (Top-left: without the picture the layer is only as large as its
         // text — centred, it all moved down.)
         .frame(width: 1920, height: 1080, alignment: .topLeading)
-    }
-
-    /// THE BILLBOARD'S BUTTONS (Details' look): Details, Library, Next.
-    /// Left from Details: the title before; Right from Next (or Select
-    /// on it): the next one — focus stays where it is, so Right again
-    /// browses on. Down: the first row.
-    var billboardControls: AnyView {
-        AnyView(BillboardControls(
-            item: billboardTitle,
-            bridge: billboardBridge,
-            onPage: pageBillboard,
-            onDetails: { if let item = billboardTitle { openBillboardTitle(item) } },
-            // Moving between the buttons: the paging by itself stops (the
-            // title would change under the button you're about to press);
-            // the trailer plays on.
-            onMove: { autoPageDone = true })
-            .environmentObject(library)
-            .frame(height: DetailActionButton.height)
-            .padding(.leading, FixedFocusMetrics.titleInset)
-            .padding(.top, FixedFocusBillboardText.buttonsY)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
     }
 
     /// The billboard's title now (its text may still be crossfading to it).
@@ -2688,11 +2644,6 @@ extension HomeUIKitView {
               let row = rows.first(where: { $0.id == featuredRowID }),
               row.items.indices.contains(position.index) else { return billboardItem }
         return row.items[position.index]
-    }
-
-    /// One title along (−1: back), focus staying on the button.
-    private func pageBillboard(_ step: Int) {
-        billboardCommand = FixedFocusRowsCommand(action: .step(rowID: featuredRowID, by: step))
     }
 
     /// Details' button: into Details — in place (`DetailTransition.openInPlace`):
@@ -2751,8 +2702,9 @@ extension HomeUIKitView {
                                 reason: opened ? nil : billboardReasons[item.id],
                                 ratings: billboardRatingsRow(item),
                                 tagline: records.tagline(item))
-            .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
-            .padding(.leading, FixedFocusMetrics.titleInset)
+            .frame(height: opened ? FixedFocusBillboardText.bottom : StagePictureView.homeTextBottom,
+                   alignment: .bottomLeading)
+            .padding(.leading, FixedFocusMetrics.titleInset + (opened ? 0 : StagePictureView.textIn))
     }
 
     /// The ratings chips (nil: none at all) — the catalog's IMDb score until
@@ -2762,8 +2714,6 @@ extension HomeUIKitView {
                                              settings: mdblist.settings, item: item)
     }
 }
-
-enum BillboardControl: Hashable { case details, library, next }
 
 /// A billboard card's text, following `BillboardOpening` (each card's own
 /// host: a new root view wouldn't animate).
@@ -2792,54 +2742,6 @@ struct BillboardPageText<Content: View>: View {
                     withTransaction(instant) { shown = opened }
                 }
             }
-    }
-}
-
-/// Home's billboard buttons — Details' look (`DetailActionButton`):
-/// Details (labelled, first — playing is a heavy step, it's behind
-/// Details), Library, Next. ONE view
-/// for every title: focus stays put as the billboard pages.
-struct BillboardControls: View {
-    let item: MetaItem?
-    let bridge: FocusBridge<BillboardControl>
-    let onPage: (Int) -> Void
-    let onDetails: () -> Void
-    let onMove: () -> Void
-    @EnvironmentObject private var library: LibraryStore
-
-    var body: some View {
-        // (Into Details in place they stay as they are: Details' own
-        // buttons wear them, becoming Play / About as Details arrives; on
-        // Back these wear Details', becoming Home's with its parts —
-        // `DetailActionButton.other`.)
-        FocusBridgeHost(bridge: bridge, defaultValue: .details, onChange: { old, new in
-            if old != nil, let new, new != .next { onMove() }
-        }) { focus in
-            HStack(spacing: CueSpacing.md) {
-                DetailActionButton(
-                    icon: "info.circle", title: "Details", isPrimary: true, lit: false,
-                    billboard: true, action: onDetails,
-                    other: .init(title: "Play", icon: "play.fill"))
-                    .focused(focus, equals: .details)
-                    .onMoveCommand { if $0 == .left { onPage(-1) } }
-                // (One focus section, as on Details: a move into the row
-                // resolves against them as a unit.)
-                HStack(spacing: CueSpacing.md) {
-                    let saved = item.map(library.contains) ?? false
-                    DetailActionButton(
-                        icon: saved ? "checkmark" : "plus", title: saved ? "In Library" : "Library",
-                        isPrimary: false, lit: false, bare: true, billboard: true,
-                        action: { if let item { library.toggle(item) } })
-                        .focused(focus, equals: .library)
-                    DetailActionButton(icon: "chevron.right", title: "Next", isPrimary: false, lit: false,
-                                       bare: true, plain: true, billboard: true, action: { onPage(1) },
-                                       other: .init(title: "About", icon: "text.alignleft"))
-                        .focused(focus, equals: .next)
-                        .onMoveCommand { if $0 == .right { onPage(1) } }
-                }
-                .focusSection()
-            }
-        }
     }
 }
 

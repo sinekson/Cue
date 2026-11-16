@@ -87,12 +87,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   light, black at tvOS's text grey (primary 58 %, then 52, 46, 40; the
   controls' words to full black; 85 % read near-black, tvOS's 38 % title
   grey too light). Dark always, whatever the setting: everything on a
-  picture (billboard text and buttons, Details, the stage, player,
-  trailers, cards' contents, menus and panels, glass); the top bar on a
-  billboard tab (`GlassSidebar.onPicture`); the next row's name while it
-  peeks on the billboard, turning to the page's ink where it crosses the
-  picture's edge, about half way, in 0.12 s (`flipName`; a fade over the
-  whole move left it unseen mid-way). Never `.white` for page text.
+  picture (the billboard card's text and dots, Details, the stage, player,
+  trailers, cards' contents, menus and panels, glass). The top bar and
+  the next row's name are on the page now (the billboard a card): page
+  ink. (`GlassSidebar.onPicture` and the name's ink flip, `flipName`,
+  from the full-screen billboard, are unused: to remove with the top
+  bar's changes.) Never `.white` for page text.
   (Keeping Cue dark-only, as Apple's TV app, was talked over: tvOS's
   own Home goes light too.)
 - **Glass only for what floats above the page** (hold menus, source
@@ -484,21 +484,35 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   have one (who's in it, your taste, what's new: "With Bryan Cranston"),
   else the row's name; never a fact badge (the line under the logo says
   those, Details too, so opening in place doesn't jump). Details' line
-  keeps its spot. The block sits on its buttons, growing up; two gaps
+  keeps its spot. The block grows up from its bottom; two gaps
   as seen: 34 pt between its parts (reason, logo, the lines under it,
-  the buttons), 19 between those lines (chips, facts, tagline; the
+  Details' buttons), 19 between those lines (chips, facts, tagline; the
   tagline falls back to the name, liked). The description is hidden
   for now, billboard and Details (`showsSummary`, the billboard being
   reworked; its fade to be tuned against Apple TV's weaker one); it was
   600 pt, 5 lines, in Apple TV's vibrancy with a 30 % white over it
   (`VibrantSummary`, kept for text on pictures).
-- **Billboard**: picture in UIKit (`StagePictureView`), text in SwiftUI,
-  content from `BillboardPicks`, buttons in their own host
-  (`BillboardControls`), dots in UIKit on Left/Right's spring, the timer's
-  fill a linear UIView animation (`BillboardDotsView`: in SwiftUI the main
-  thread's paging work made them stutter and flicker); moved up
-  with the billboard by the rows (`billboardOverlayShift`). No Play button:
-  Details is the way to play.
+- **Billboard: a card** (Home; in progress, 2026-11-16): the picture in
+  a large card on the page (`StagePictureView.homeCard`): the rows'
+  edges, 40 pt under the top bar and above the next row's name, the
+  cards' corners; its own shade, the cards' bottom fade starting higher
+  (`StageArt.cardShade`; Details keeps the screen's left fade). No
+  buttons: the card takes focus (the Featured row's hidden cells), grown
+  as every wide card (its dots too); Left/Right page, Select opens
+  Details, held the card's hold menu (Library, Rate… as every card). The
+  text bottom left, 63 pt from the card's side and foot (`cardMargin`);
+  the dots bottom right, their foot on the tagline's line, no pill.
+  (Full screen, edge to edge, was before, with a left fade, then tried:
+  a bottom fade, no fade, a uniform dim; the buttons under the text,
+  then bottom right over the dots, the dots right of the buttons: none
+  sat right.) Still to do: opening Details jumps (the card should grow
+  into it, as the cards' trailers do, `DetailTransitionOverlay.grow`);
+  the buttons' host in `FixedFocusRows` (`billboardControls`) is unused.
+  Picture in UIKit, text in SwiftUI, content from `BillboardPicks`, dots
+  in UIKit on Left/Right's spring, the timer's fill a linear UIView
+  animation (`BillboardDotsView`: in SwiftUI the main thread's paging
+  work made them stutter and flicker). No Play: Details is the way to
+  play.
 - **Details** shares the billboard's text and shade. Into Details is
   `DetailTransition`, all Core Animation; from the billboard in place
   (`openInPlace`). From Home, Movies and Series it's a layer over the page

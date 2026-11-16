@@ -92,8 +92,6 @@ struct BillboardDots: View {
     static let dot: CGFloat = 12
     static let pill: CGFloat = 36
     static let gap: CGFloat = 12
-    /// Around the dots inside their glass capsule.
-    static let capsulePadding: CGFloat = 16
 
     /// The row's width: one pill, the rest dots — the same at every title.
     static func width(count: Int) -> CGFloat {
@@ -109,9 +107,9 @@ struct BillboardDots: View {
         BillboardDotsRepresentable(count: count, current: current, focused: focused,
                                    timer: timer, cycle: cycle)
             .frame(width: Self.width(count: count), height: Self.dot)
-            .padding(.horizontal, Self.capsulePadding)
-            .padding(.vertical, Self.capsulePadding * 0.75)
-            .background { Color.clear.liquidGlass(in: Capsule()) }
+            // On the card's picture, no pill (it was there for the open
+            // picture): the text's shadow.
+            .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
             .opacity(count > 1 ? 1 : 0)
             .allowsHitTesting(false)
     }

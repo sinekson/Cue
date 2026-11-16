@@ -143,9 +143,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// row's peek — over the rows it would hide it from focus; its buttons
     /// go over them, `billboardControls`).
     var billboardOverlayBelowRows = false
-    /// Moved by this much more once the billboard is up (Home's dots: from
-    /// the peek to the strip's middle), in the same animation.
-    var billboardOverlayShift: CGFloat = 0
     /// The billboard's buttons, over the rows when the text is under them
     /// (Home), from the screen's top, `billboardControlsHeight` tall.
     var billboardControls: AnyView? = nil
@@ -270,7 +267,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         if let command { controller.run(command) }
         controller.billboardOverlayHeight = billboardOverlayHeight
         controller.billboardOverlayBelowRows = billboardOverlayBelowRows
-        controller.billboardOverlayShift = billboardOverlayShift
         controller.rigidBillboardTravel = rigidBillboardTravel
         controller.pinnedBillboardPicture = pinnedBillboardPicture
         billboardTrailer?.stage = controller.pinnedStage
@@ -1045,6 +1041,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                                  with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         if heldRows != nil { DispatchQueue.main.async { self.applyHeldRows() } }
+        // Home's billboard card: grown while focus is on it (its hidden
+        // cards; a hold menu over it keeps it so).
+        if !HoldMenu.shared.isOpen {
+            setBillboardLit(context.nextFocusedView.flatMap { Self.rowCell(containing: $0) }
+                .map { isFeatured($0.rowIndex) } ?? false)
+        }
         // Back in view after hiding, the system puts focus on the first
         // card on screen (without asking): on to `returnRow`'s instead,
         // nothing moving meanwhile.
@@ -1425,8 +1427,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 }
             })
         }
-        // Not the billboards (Home's, Search's Top Result) or folders.
-        guard let titleMenu, !isFeatured(rowIndex), !isBanner(rowIndex), !isPanel(rowIndex),
+        // Not the billboards (Search's Top Result; Home's as a card has
+        // one, as every card) or folders.
+        guard let titleMenu, !isFeatured(rowIndex) || pinnedStage?.cardFrame != nil,
+              !isBanner(rowIndex), !isPanel(rowIndex),
               item.type != "collection" else { return nil }
         return (item.name, titleMenu(item, row.id))
     }
@@ -1622,7 +1626,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var billboardControlsHeight: CGFloat = 1080
     var billboardOverlayHeight: CGFloat = 1080
     var billboardOverlayBelowRows = false
-    var billboardOverlayShift: CGFloat = 0
     var rigidBillboardTravel: CGFloat?
     var anchoredRowIDs: Set<String> = []
     var customRows: [String: FixedFocusCustomRow] = [:] {
@@ -1681,6 +1684,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard pinnedStage == nil else { return }
         let stage = StagePictureView()
         stage.blursBelow = rigidBillboardTravel == nil
+        if rigidBillboardTravel != nil { stage.cardFrame = StagePictureView.homeCard }
         stage.text = billboardPageText.map { text in { [weak self] in self?.environment(text($0)) ?? text($0) } }
         view.insertSubview(stage, at: 0)
         stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
@@ -1698,6 +1702,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // under the rows.
         if rigidBillboardTravel != nil {
             stage.transform = CGAffineTransform(translationX: 0, y: -billboardUp(depth: depth))
+                .scaledBy(x: cardScale, y: cardScale)
             return
         }
         stage.setBelow(depth > 0)
@@ -1844,6 +1849,23 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
+    /// HOME'S BILLBOARD CARD focused: grown as every card (the wide ones'
+    /// growth on its width), its dots with it.
+    private var billboardLit = false
+    private var cardScale: CGFloat {
+        guard billboardLit, let card = pinnedStage?.cardFrame else { return 1 }
+        return 1 + FixedFocusMetrics.focusLift(card.size)
+    }
+
+    private func setBillboardLit(_ lit: Bool) {
+        guard lit != billboardLit, pinnedStage?.cardFrame != nil else { return }
+        billboardLit = lit
+        UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.applyOverlayPosition()
+        }
+    }
+
     /// The overlay where the billboard is: scrolled up with it, and above
     /// the rows. Inside a move: on its animation.
     private func applyOverlayPosition() {
@@ -1852,8 +1874,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
         for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {
-            let shift = moved === overlayHost?.view && depth > 0 ? billboardOverlayShift : 0
-            moved.transform = CGAffineTransform(translationX: 0, y: shift - scroll)
+            moved.transform = CGAffineTransform(translationX: 0, y: -scroll)
+                .scaledBy(x: moved === overlayHost?.view ? cardScale : 1, y: moved === overlayHost?.view ? cardScale : 1)
             moved.alpha = 1
         }
     }
@@ -2352,7 +2374,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// billboard's text, whatever the appearance; on the page again (the
     /// billboard up), the page's ink — crossfaded over the move.
     private func nameOnPicture(_ rowIndex: Int) -> Bool {
-        isFeatured(focusedRow) && isNext(rowIndex)
+        // (The billboard as a card: the name is under it, on the page.)
+        if pinnedStage?.cardFrame != nil { return false }
+        return isFeatured(focusedRow) && isNext(rowIndex)
     }
 
     private func titleAlpha(_ rowIndex: Int) -> CGFloat {

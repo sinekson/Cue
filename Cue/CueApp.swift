@@ -1000,7 +1000,8 @@ struct RootView: View {
                              hidden: sidebarMovedOut,
                              lifted: topBarPlace.pageDown && sidebarFocus == nil
                                 && AppTab(rawValue: selectedTab)?.isHomeLike == true,
-                             onPicture: AppTab(rawValue: selectedTab)?.isHomeLike == true)
+                             // (The billboard as a card: the bar is on the page.)
+                             onPicture: false)
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
