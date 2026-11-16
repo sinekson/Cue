@@ -3,13 +3,14 @@ import SwiftUI
 /// The primary navigation destinations. The app keys tab state off these raw
 /// ints in many places, so don't renumber them.
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, search, library, settings, movies, series
+    case home, search, library, settings, movies, series, discover, placeholder
     var id: Int { rawValue }
 
-    /// The top navigation: the search icon first, left of Home. Movies and
-    /// Series are Home filtered to one type; the library is a row on Home
-    /// ("My List") — its old tab stays reachable only from within the app.
-    static let topBarOrder: [AppTab] = [.search, .home, .movies, .series, .settings]
+    /// The top navigation: Search first, left of Home. Movies and Series
+    /// (Home filtered to one type) are off the bar, going away; Discover
+    /// and the placeholder are empty pages for now. The library is a row
+    /// on Home — its old tab stays reachable only from within the app.
+    static let topBarOrder: [AppTab] = [.search, .home, .discover, .placeholder, .settings]
 
     /// Home and its filtered twins: the same page (see `HomeView.typeFilter`).
     var isHomeLike: Bool { self == .home || self == .movies || self == .series }
@@ -31,6 +32,8 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "Settings"
         case .movies: return "Movies"
         case .series: return "Series"
+        case .discover: return "Discover"
+        case .placeholder: return "Placeholder"
         }
     }
 
@@ -42,6 +45,8 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "gearshape.fill"
         case .movies: return "film.fill"
         case .series: return "tv.fill"
+        case .discover: return "safari.fill"
+        case .placeholder: return "square.dashed"
         }
     }
 }
@@ -85,10 +90,6 @@ struct GlassSidebar: View {
     /// Home's page below its billboard: up with the billboard, as far and
     /// on the same move, so it reads as the page's own top.
     var lifted = false
-    /// On a billboard's picture (Home, Movies, Series): dark in both
-    /// appearances; elsewhere on the page, tvOS's (`CueInk`).
-    var onPicture = false
-    @Environment(\.colorScheme) private var scheme
 
     var expanded: Bool { focusBinding.wrappedValue != nil }
 
@@ -108,6 +109,12 @@ struct GlassSidebar: View {
         // while the navigation has focus, else the current tab.
         let lit = focusBinding.wrappedValue ?? selected
         return HStack(alignment: .center, spacing: Self.itemSpacing) {
+            if Self.centred {
+                // The avatar's room mirrored, so the tabs sit on the
+                // screen's middle.
+                Color.clear.frame(width: Self.topBarItemHeight, height: 1)
+                Spacer(minLength: 0)
+            }
             ForEach(tabs) { tab in
                 Button {
                     onTabSelected(tab.rawValue)
@@ -140,16 +147,18 @@ struct GlassSidebar: View {
             .disabled(!navFocused)
         }
         .defaultFocus(focusBinding, selected)
-        // The words start on the page's left edge (the first item's padding
-        // is the capsule's room, so the edge is the slot's).
-        .padding(.horizontal, Spotlight.screenInset - Self.slotPadding)
+        // The first icon starts on the rows' text edge, as their names (on
+        // the cards' edge it read 4 pt left of them; the first item's
+        // padding is the capsule's room, so the edge is the slot's).
+        .padding(.leading, Self.centred ? Spotlight.screenInset - Self.slotPadding
+                                        : FixedFocusMetrics.titleInset - Self.slotPadding)
+        .padding(.trailing, Spotlight.screenInset - Self.slotPadding)
         .frame(maxWidth: .infinity)
         .offset(y: hidden ? -Self.hideTravel : lifted ? -HomeUIKitView.rigidBillboardTravel : 0)
         .animation(Motion.move, value: hidden)
         .animation(Motion.move, value: lifted)
         .padding(.top, Self.topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
-        .environment(\.colorScheme, onPicture ? .dark : scheme)
         // Placed against the real screen edges (the inset above is ours).
         .ignoresSafeArea()
         .onChange(of: expanded) { _, isExpanded in
@@ -176,12 +185,19 @@ struct GlassSidebar: View {
     static var hideTravel: CGFloat { topBarTop + topBarItemHeight + 30 }
 
 
+    /// The tabs centred on the screen, the avatar at the right: tried,
+    /// liked as much; left (the rows' text edge) for now.
+    static let centred = false
     static let topBarTop: CGFloat = 44
-    /// The items' height: the focus capsule's.
-    static let topBarItemHeight: CGFloat = 52
-    static let textSize: CGFloat = 28
+    /// The items' height: the focus capsule's. (52 and 28 pt words were
+    /// before, words alone, Search an icon.)
+    static let topBarItemHeight: CGFloat = 46
+    static let textSize: CGFloat = 25
+    static let iconSize: CGFloat = 22
+    /// Between an item's icon and its name.
+    static let iconGap: CGFloat = 10
     /// A name's room each side inside its capsule.
-    static let slotPadding: CGFloat = 22
+    static let slotPadding: CGFloat = 18
     /// Between the items' capsules: room for one growing in beside one
     /// going (with none, they touched; 12 pt was too far apart).
     static let itemSpacing: CGFloat = 6
@@ -211,31 +227,64 @@ private struct TopNavFocus: ViewModifier {
     static let leaveFade: Animation = .linear(duration: 0.28)
 }
 
-/// One tab in the top navigation: its name (Search: its icon), the current
-/// one at the primary level, the others two levels down; focused, dark on
-/// the white capsule (`TopNavFocus`).
+/// One tab in the top navigation: its icon and name, the current one at
+/// the primary level, the others two levels down; focused, dark on the
+/// white capsule (`TopNavFocus`).
 private struct TopNavLabel: View {
     let tab: AppTab
     let current: Bool
     var focused = false
 
     var body: some View {
-        Group {
-            if tab == .search {
-                // A square slot, so the highlight is a circle here.
-                Image(systemName: tab.icon)
-                    .font(.system(size: GlassSidebar.textSize - 2, weight: .semibold))
-                    .frame(width: GlassSidebar.topBarItemHeight)
-            } else {
-                Text(tab.label)
-                    .font(.system(size: GlassSidebar.textSize, weight: .medium))
-                    .padding(.horizontal, GlassSidebar.slotPadding)
-            }
+        HStack(spacing: GlassSidebar.iconGap) {
+            Image(systemName: tab.icon)
+                .font(.system(size: GlassSidebar.iconSize, weight: .semibold))
+            Text(tab.label)
+                .font(.system(size: GlassSidebar.textSize, weight: .medium))
         }
+        .padding(.horizontal, GlassSidebar.slotPadding)
         .frame(height: GlassSidebar.topBarItemHeight)
         .modifier(TopNavFocus(lit: focused,
                               rest: CueInk.color(current ? FixedFocusText.primary : FixedFocusText.secondary),
                               pill: current))
         .animation(.easeOut(duration: 0.18), value: current)
+    }
+}
+
+/// A tab with nothing on it yet (Discover, the placeholder): its name and
+/// one empty card, so Down from the bar has somewhere to land (with
+/// nothing focusable, focus went nowhere). Back: the bar.
+struct EmptyTabPage: View {
+    let title: String
+    let onBack: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text(title)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(CueInk.primary)
+            Button {} label: {
+                RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                    .fill(focused ? FlatControl.focus : FlatControl.rest)
+                    .frame(width: 557, height: 313)
+                    .overlay {
+                        Text("Nothing here yet")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(focused ? FlatControl.contentOnFocus : FlatControl.content)
+                    }
+                    .scaleEffect(focused ? 1 + FixedFocusMetrics.focusLift(CGSize(width: 557, height: 313)) : 1)
+                    .animation(Motion.focus, value: focused)
+            }
+            .buttonStyle(PlainCardButtonStyle())
+            .focused($focused)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.leading, FixedFocusMetrics.titleInset)
+        .padding(.top, 40)
+        // The whole page one section: Down from any tab lands on the card.
+        .focusSection()
+        .background { ATVBackground() }
+        .onExitCommand(perform: onBack)
     }
 }

@@ -999,9 +999,7 @@ struct RootView: View {
                              onTabSelected: { newTab in selectTab(newTab) },
                              hidden: sidebarMovedOut,
                              lifted: topBarPlace.pageDown && sidebarFocus == nil
-                                && AppTab(rawValue: selectedTab)?.isHomeLike == true,
-                             // (The billboard as a card: the bar is on the page.)
-                             onPicture: false)
+                                && AppTab(rawValue: selectedTab)?.isHomeLike == true)
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
                     // Back while IN the rail collapses it into content instead
@@ -1184,6 +1182,9 @@ struct RootView: View {
             homeLikeStack(.series, path: $seriesPath, active: active)
         case .home:
             homeLikeStack(.home, path: $homePath, active: active)
+        case .discover, .placeholder:
+            // Empty for now (`EmptyTabPage`).
+            EmptyTabPage(title: tab.label) { focusSidebar(tab.rawValue) }
         }
     }
 

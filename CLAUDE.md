@@ -90,9 +90,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture (the billboard card's text and dots, Details, the stage, player,
   trailers, cards' contents, menus and panels, glass). The top bar and
   the next row's name are on the page now (the billboard a card): page
-  ink. (`GlassSidebar.onPicture` and the name's ink flip, `flipName`,
-  from the full-screen billboard, are unused: to remove with the top
-  bar's changes.) Never `.white` for page text.
+  ink (the full-screen billboard's switching inks, `onPicture` and
+  `flipName`, are gone). Never `.white` for page text.
   (Keeping Cue dark-only, as Apple's TV app, was talked over: tvOS's
   own Home goes light too.)
 - **Glass only for what floats above the page** (hold menus, source
@@ -230,9 +229,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture's edges carried on was liked at 36, then not wanted; Search and
   Settings drifting by a SwiftUI offset stuttered; a parallax and a
   grown picture were tried.)
-- **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs as
-  words from the page's left edge (28 pt medium; the current one primary,
-  the others secondary), the avatar at the right edge; the current tab
+- **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs,
+  each its icon and name (`AppTab.topBarOrder`: Search, Home, Discover,
+  Placeholder, Settings; Movies and Series off it, going away; Discover
+  and the placeholder an empty page with one card, `EmptyTabPage`, so
+  Down has somewhere to land) from the page's left edge (25 pt medium,
+  22 pt icons, 46 pt tall; 28 pt words alone, Search an icon, were
+  before; the current one primary, the others secondary), the avatar at
+  the right edge; the current tab
   keeps the season's flat grey pill at rest (`FlatControl.selected`), the
   rest nothing behind them; coming in from the page only the current tab
   takes focus, so it lands there (it landed on the nearest, Home lit

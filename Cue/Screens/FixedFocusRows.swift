@@ -1010,7 +1010,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         cell.concealed = rowConcealed(indexPath.item)
         cell.drop = peekDrop(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
-        UIView.performWithoutAnimation { cell.nameOnPicture = nameOnPicture(indexPath.item) }
         cell.titleLift = peekNameLift(indexPath.item)
         cell.titleScale = 1
         return cell
@@ -1030,7 +1029,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         (cell as? FixedFocusRowCell)?.concealed = rowConcealed(indexPath.item)
         (cell as? FixedFocusRowCell)?.drop = peekDrop(indexPath.item)
         (cell as? FixedFocusRowCell)?.titleAlpha = titleAlpha(indexPath.item)
-        UIView.performWithoutAnimation { (cell as? FixedFocusRowCell)?.nameOnPicture = nameOnPicture(indexPath.item) }
     }
 
     /// Focus moved (natively). Left/Right: the box stays, its content
@@ -2329,7 +2327,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             cell.concealed = rowConcealed(cell.rowIndex)
             cell.drop = peekDrop(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
-            cell.nameOnPicture = nameOnPicture(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
             UIView.performWithoutAnimation { cell.titleLift = peekNameLift(cell.rowIndex); cell.titleScale = 1 }
             cell.applyAccessory()
@@ -2370,14 +2367,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// billboard (bottom left, in line with the dots), dimmed like a row
     /// out of focus. The other waiting rows' names are hidden; that one too
     /// while the billboard steps into Details.
-    /// The next row's name on the billboard's picture: in white, as the
-    /// billboard's text, whatever the appearance; on the page again (the
-    /// billboard up), the page's ink — crossfaded over the move.
-    private func nameOnPicture(_ rowIndex: Int) -> Bool {
-        // (The billboard as a card: the name is under it, on the page.)
-        if pinnedStage?.cardFrame != nil { return false }
-        return isFeatured(focusedRow) && isNext(rowIndex)
-    }
 
     private func titleAlpha(_ rowIndex: Int) -> CGFloat {
         if rows.indices.contains(rowIndex), hiddenTitleRowIDs.contains(rows[rowIndex].id) { return 0 }
@@ -2431,14 +2420,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let rowMove = cell.layer.animationKeys()?
             .compactMap { cell.layer.animation(forKey: $0) as? CABasicAnimation }
             .first { $0.keyPath == "position" }
-        // The name's ink: it crosses the picture's edge about half way.
-        if let spring = rowMove as? CASpringAnimation {
-            let progress = Self.springProgress(spring)
-            let half = progress.values.firstIndex { $0 >= 0.5 } ?? progress.values.count / 2
-            cell.flipName(after: progress.duration * Double(half) / Double(progress.values.count - 1))
-        } else {
-            cell.flipName(after: (rowMove?.duration ?? FixedFocusMotion.billboardScroll) / 2)
-        }
         let timing = rowMove?.timingFunction ?? CAMediaTimingFunction(name: .easeInEaseOut)
         let duration = rowMove?.duration ?? FixedFocusMotion.billboardScroll
         let spot = rigidRest != nil ? rigidNameY ?? FixedFocusRowsLayout.nextNameY : FixedFocusRowsLayout.nextNameY
@@ -3257,33 +3238,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// The name's brightness (see the controller's `titleAlpha`).
     var titleAlpha: CGFloat = 1 {
         didSet { applyHeader() }
-    }
-    /// On the billboard's picture (`nameOnPicture`): the name in dark
-    /// mode's white. Set at once; a move between billboard and rows keeps
-    /// the old ink until the name crosses the picture's edge (`flipName`).
-    var nameOnPicture = false {
-        didSet {
-            guard nameOnPicture != oldValue else { return }
-            nameFlip += 1
-            title.overrideUserInterfaceStyle = nameOnPicture ? .dark : .unspecified
-        }
-    }
-    private var nameFlip = 0
-
-    /// The name's ink changing where it crosses the picture's edge, `after`
-    /// seconds into the move (a fade across the whole move left it, half
-    /// white, unseen on the light page mid-way).
-    func flipName(after delay: Double) {
-        nameFlip += 1
-        let flip = nameFlip
-        let style: UIUserInterfaceStyle = nameOnPicture ? .dark : .unspecified
-        title.overrideUserInterfaceStyle = nameOnPicture ? .unspecified : .dark
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.nameFlip == flip else { return }
-            UIView.transition(with: self.title, duration: 0.12, options: .transitionCrossDissolve) {
-                self.title.overrideUserInterfaceStyle = style
-            }
-        }
     }
     /// How far the name sits above its usual place over the cards (the next
     /// row's, waiting under the billboard: up on the billboard).
