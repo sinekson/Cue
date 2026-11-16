@@ -65,6 +65,8 @@ enum TopBarAvatar {
 final class TopBarPlace: ObservableObject {
     static let shared = TopBarPlace()
     @Published var pageDown = false
+    /// How far it goes up then: the billboard's own travel.
+    @Published var lift: CGFloat = HomeUIKitView.rigidBillboardTravel
 }
 
 /// The top navigation: part of the page, not floating over it — the tabs
@@ -166,7 +168,7 @@ struct GlassSidebar: View {
                                         : FixedFocusMetrics.titleInset - Self.slotPadding)
         .padding(.trailing, Spotlight.screenInset - Self.avatarInset)
         .frame(maxWidth: .infinity)
-        .offset(y: hidden ? -Self.hideTravel : lifted ? -HomeUIKitView.rigidBillboardTravel : 0)
+        .offset(y: hidden ? -Self.hideTravel : lifted ? -TopBarPlace.shared.lift : 0)
         .animation(Motion.move, value: hidden)
         .animation(Motion.move, value: lifted)
         .padding(.top, Self.topBarTop)

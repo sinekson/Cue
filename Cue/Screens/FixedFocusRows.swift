@@ -573,10 +573,12 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return ((1080 - content) / 2).rounded() - above - rowTop
     }
     /// Centred, how far the billboard goes up for the row under it: its
-    /// edge `peekGap` over that row's name.
+    /// edge (the screen's; Home's card's foot) `centredGap` over that
+    /// row's name, as any row above the focused one.
     private var centredBillboardTravel: CGFloat? {
         guard let featured = featuredIndex, let drop = centredDrop(featured + 1) else { return nil }
-        return 1080 - (rowTop + drop - FixedFocusMetrics.centredGap)
+        let edge = pinnedStage?.cardFrame?.maxY ?? 1080
+        return edge - (rowTop + drop - FixedFocusMetrics.centredGap)
     }
     /// How far a focused row draws, from its anchor (its name; a panel's
     /// top) to the end of its cards (a panel's edge).
@@ -1869,6 +1871,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func applyOverlayPosition() {
         guard let featured = featuredIndex else { return }
         let depth = max(focusedRow - featured, 0)
+        // Home's top bar goes up with the card, as far (`TopBarPlace.lift`).
+        if pinnedStage?.cardFrame != nil, let travel = centredBillboardTravel,
+           TopBarPlace.shared.lift != travel {
+            DispatchQueue.main.async { TopBarPlace.shared.lift = travel }
+        }
         applyPinnedStage(depth: depth)
         let scroll = billboardUp(depth: depth)
         for moved in [overlayHost?.view, controlsHost == nil ? nil : controlsPlace].compactMap({ $0 }) {
