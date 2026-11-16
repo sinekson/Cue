@@ -1044,8 +1044,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Home's billboard card: grown while focus is on it (its hidden
         // cards; a hold menu over it keeps it so).
         if !HoldMenu.shared.isOpen {
-            setBillboardLit(context.nextFocusedView.flatMap { Self.rowCell(containing: $0) }
-                .map { isFeatured($0.rowIndex) } ?? false)
+            let rows = [context.previouslyFocusedView, context.nextFocusedView]
+                .map { $0.flatMap { Self.rowCell(containing: $0) }?.rowIndex }
+            // Coming from (or going to) another row, the rows scroll: it
+            // grows on the scroll's timing, not focus's (grown at once, the
+            // scroll still bringing it in, felt off). To and from the top
+            // bar nothing moves but the card: focus's.
+            setBillboardLit(rows[1].map { isFeatured($0) } ?? false,
+                            duration: rows[0] != nil && rows[1] != nil && rows[0] != rows[1]
+                                ? FixedFocusMotion.billboardScroll : Motion.focusDuration)
         }
         // Back in view after hiding, the system puts focus on the first
         // card on screen (without asking): on to `returnRow`'s instead,
@@ -1870,16 +1877,37 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     static let dipDepth: CGFloat = 1
     static let dipDown: Double = 0.12
     static let dipUp: Double = 0.4
+    /// The running dip, to start the next from where it is.
+    private var dipRun: (start: CFTimeInterval, from: CGFloat, low: CGFloat, down: Double)?
+    /// The dip's own factor now (1: none), on its two eased legs.
+    private func dipFactor(at time: CFTimeInterval) -> CGFloat {
+        guard let run = dipRun else { return 1 }
+        let t = time - run.start
+        if t < run.down {
+            let p = CGFloat(t / run.down)
+            return run.from + (run.low - run.from) * (1 - (1 - p) * (1 - p))
+        }
+        let p = CGFloat(min(1, (t - run.down) / Self.dipUp))
+        return run.low + (1 - run.low) * (p * p * (3 - 2 * p))
+    }
+
+    /// Added onto the card's own transform (a scale relative to it), so the
+    /// dip rides on whatever else moves it: a page while the rows are still
+    /// scrolling to the billboard (replacing the transform dropped the
+    /// scroll: the card jumped to its place, then the scroll went on).
     private func dipBillboardCard() {
         guard billboardLit, let stage = pinnedStage, stage.cardFrame != nil else { return }
         let grown = cardScale
-        let low = 1 + (grown - 1) * (1 - Self.dipDepth)
-        let now = stage.layer.presentation()?.transform.m11 ?? grown
+        let low = (1 + (grown - 1) * (1 - Self.dipDepth)) / grown
+        let clock = CACurrentMediaTime()
+        let now = dipFactor(at: clock)
         // Down only as far as it still has to go.
-        let left = grown > low ? max(0, min(1, (now - low) / (grown - low))) : 1
+        let left = low < 1 ? max(0, min(1, (now - low) / (1 - low))) : 1
         let down = Self.dipDown * Double(left)
+        dipRun = (clock, now, low, down)
         let dip = CAKeyframeAnimation(keyPath: "transform")
-        dip.values = [now, low, grown].map { CATransform3DMakeScale($0, $0, 1) }
+        dip.isAdditive = true
+        dip.values = [now, low, 1].map { CATransform3DMakeScale($0, $0, 1) }
         dip.keyTimes = [0, NSNumber(value: down / (down + Self.dipUp)), 1]
         dip.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
         dip.duration = down + Self.dipUp
@@ -1888,10 +1916,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
-    private func setBillboardLit(_ lit: Bool) {
+    private func setBillboardLit(_ lit: Bool, duration: Double = Motion.focusDuration) {
         guard lit != billboardLit, pinnedStage?.cardFrame != nil else { return }
         billboardLit = lit
-        UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+        UIView.animate(springDuration: duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.applyOverlayPosition()
         }
