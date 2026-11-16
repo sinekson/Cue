@@ -233,20 +233,26 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   each its icon and name (`AppTab.topBarOrder`: Search, Home, Discover,
   Placeholder, Settings; Movies and Series off it, going away; Discover
   and the placeholder an empty page with one card, `EmptyTabPage`, so
-  Down has somewhere to land) from the page's left edge (25 pt medium,
-  22 pt icons, 46 pt tall; 28 pt words alone, Search an icon, were
-  before; the current one primary, the others secondary), the avatar at
-  the right edge; the current tab
+  Down has somewhere to land) from the rows' text edge, where their names
+  start (from the cards' edge it read 4 pt left; centred on the screen
+  was tried, liked as much: `GlassSidebar.centred`, off) (25 pt medium,
+  22 pt icons, 46 pt tall, 15 pt in each pill, 10 pt between pills;
+  28 pt words alone, Search an icon, were before; the current one
+  primary, the others secondary); at the right the profile as a tab:
+  its name, then its avatar 4 pt inside the pill's round end with a
+  light rim, its edge on the cards' right edge (a lone 42 pt avatar
+  16 pt past it read lost; flush in the pill, focused it had no white
+  round it); the current tab
   keeps the season's flat grey pill at rest (`FlatControl.selected`), the
   rest nothing behind them; coming in from the page only the current tab
   takes focus, so it lands there (it landed on the nearest, Home lit
   faintly, then snapped); focused, the season buttons' focus (`ActionFace`: the white capsule
   growing in on the item, 5 % larger, dark text; quicker than the
-  buttons': 0.12 s in, 0.28 s out, the fade linear (0.35 slow, 0.2 abrupt here; easing out was tried), 6 pt
-  apart; a plain fade with no growth was tried; nothing travels: a capsule
+  buttons': 0.12 s in, 0.28 s out, the fade linear (0.35 slow, 0.2 abrupt here; easing out was tried);
+  going, it only fades, not shrinking as the buttons' (`shrinks`); a plain fade with no growth coming in was tried; nothing travels: a capsule
   gliding along the bar was slow and odd to the avatar). Focus moving along it
-  switches tab. Pages are laid out below it. On Home, Movies and Series it
-  sits on the billboard and goes up with it into the rows (same distance,
+  switches tab. Pages are laid out below it. On Home it
+  sits above the billboard card and goes up with it into the rows (same distance,
   same move: `TopBarPlace`, `lifted`); off a tab's root, into Details or a
   trailer it moves out the top (`hidden`), always in the view tree,
   disabled while hidden. (The floating glass pill, and auto-hiding it,

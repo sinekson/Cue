@@ -1812,6 +1812,9 @@ struct ActionFace: ViewModifier {
     var open = DetailActionButton.open
     var leave = DetailActionButton.leave
     var leaveFade = DetailActionButton.leaveFade
+    /// Going, the capsule shrinks into the button as it fades; false: it
+    /// only fades (the top bar's).
+    var shrinks = true
 
     /// A flat pill's edge (the still's, Search's): a faint light edge
     /// brighter along the top.
@@ -1849,7 +1852,7 @@ struct ActionFace: ViewModifier {
                         // Shrinking only into nothing: over a resting pill it
                         // stays its size — one pill changing colour (shrunk,
                         // two pills showed, one inside the other).
-                        .scaleEffect(lit || pill ? 1 : DetailActionButton.leaveScale)
+                        .scaleEffect(lit || pill || !shrinks ? 1 : DetailActionButton.leaveScale)
                         .opacity(lit ? 1 : 0)
                         .animation(lit ? open : leaveFade, value: lit)
                         .opacity(dimmed ? DetailActionButton.dimmedHighlight : 1)

@@ -131,16 +131,28 @@ struct GlassSidebar: View {
                 .disabled(!navFocused && tab.rawValue != selected)
             }
             Spacer(minLength: 0)
-            // The profile, at the right edge — a square slot, so the
-            // highlight is a circle on it (as on the search icon).
+            // The profile, at the right edge: its name as a tab's, then the
+            // avatar near the bar's full height with the cards' light rim,
+            // `avatarInset` inside the capsule's round end (flush, focused
+            // it had no white round it); its edge on the cards' right
+            // edge. (A 42 pt avatar alone, 16 pt past the cards, read lost.)
             Button(action: onProfileTap) {
-                ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 4)
-                    // Where the gate's picked avatar flies (`ProfileGate`).
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                        TopBarAvatar.frame = $0
-                    }
-                    .frame(width: Self.topBarItemHeight, height: Self.topBarItemHeight)
-                    .modifier(TopNavFocus(lit: navFocused && lit == -1, rest: .white))
+                HStack(spacing: Self.iconGap) {
+                    Text(profiles.active.name)
+                        .font(.system(size: Self.textSize, weight: .medium))
+                        .lineLimit(1)
+                    ProfileAvatarView(profile: profiles.active, size: Self.topBarItemHeight - 2 * Self.avatarInset)
+                        .overlay { Circle().strokeBorder(.white.opacity(0.25), lineWidth: 2) }
+                        // Where the gate's picked avatar flies (`ProfileGate`).
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            TopBarAvatar.frame = $0
+                        }
+                }
+                .padding(.leading, Self.slotPadding)
+                .padding(.trailing, Self.avatarInset)
+                .frame(height: Self.topBarItemHeight)
+                .modifier(TopNavFocus(lit: navFocused && lit == -1,
+                                      rest: CueInk.color(FixedFocusText.secondary)))
             }
             .buttonStyle(PlainCardButtonStyle())
             .focused(focusBinding, equals: -1)
@@ -152,7 +164,7 @@ struct GlassSidebar: View {
         // padding is the capsule's room, so the edge is the slot's).
         .padding(.leading, Self.centred ? Spotlight.screenInset - Self.slotPadding
                                         : FixedFocusMetrics.titleInset - Self.slotPadding)
-        .padding(.trailing, Spotlight.screenInset - Self.slotPadding)
+        .padding(.trailing, Spotlight.screenInset - Self.avatarInset)
         .frame(maxWidth: .infinity)
         .offset(y: hidden ? -Self.hideTravel : lifted ? -HomeUIKitView.rigidBillboardTravel : 0)
         .animation(Motion.move, value: hidden)
@@ -194,18 +206,23 @@ struct GlassSidebar: View {
     static let topBarItemHeight: CGFloat = 46
     static let textSize: CGFloat = 25
     static let iconSize: CGFloat = 22
+    /// The avatar inside its capsule's round end.
+    static let avatarInset: CGFloat = 4
     /// Between an item's icon and its name.
     static let iconGap: CGFloat = 10
-    /// A name's room each side inside its capsule.
-    static let slotPadding: CGFloat = 18
+    /// A name's room each side inside its capsule (with `itemSpacing`, the
+    /// words 40 pt apart; 42 read a little far).
+    static let slotPadding: CGFloat = 15
     /// Between the items' capsules: room for one growing in beside one
-    /// going (with none, they touched; 12 pt was too far apart).
-    static let itemSpacing: CGFloat = 6
+    /// fading at its full size (6 pt touched once the fade stopped
+    /// shrinking; with none, they touched; 12 pt was too far apart).
+    static let itemSpacing: CGFloat = 10
 }
 
 /// The top bar's focus: the season buttons' (`ActionFace`): the white
-/// capsule growing in on the focused item, shrinking and fading out of the
-/// one left, the item 5 % larger — nothing travels along the bar. At rest
+/// capsule growing in on the focused item, only fading out of the one left
+/// (shrinking as it faded, as the buttons', was before), the item 5 %
+/// larger — nothing travels along the bar. At rest
 /// the current tab keeps the season's flat grey pill (`FlatControl.selected`).
 private struct TopNavFocus: ViewModifier {
     let lit: Bool
@@ -215,7 +232,8 @@ private struct TopNavFocus: ViewModifier {
     func body(content: Content) -> some View {
         content
             .modifier(ActionFace(lit: lit, rest: rest, pill: pill, current: true, restShadow: false,
-                                 open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade))
+                                 open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade,
+                                 shrinks: false))
             .scaleEffect(lit ? DetailActionButton.focusScale : 1)
             .animation(lit ? Self.open : Self.leave, value: lit)
     }
