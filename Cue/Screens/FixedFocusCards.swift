@@ -1858,7 +1858,7 @@ final class FixedFocusBadges: UIView {
     /// looked small beside them), sharp: drawn at the larger scale.
     private static let markHeight: CGFloat = 22
     private static var marks: [MDBListProvider: UIImage] = [:]
-    private static func mark(_ provider: MDBListProvider) -> UIImage? {
+    static func mark(_ provider: MDBListProvider) -> UIImage? {
         if let known = marks[provider] { return known }
         let screen = UIScreen.main.scale
         let renderer = ImageRenderer(content: RatingMark(provider: provider))

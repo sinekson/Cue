@@ -518,8 +518,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture alone under still text felt disconnected) (a slide fitted to the card, a deck of cards
   and a carousel were tried: a quick turn back glitched, hurried or
   retargeted); Select opens Details, held the card's hold menu (Library, Rate… as every card). The
-  text bottom left, 63 pt from the card's side and foot (`cardMargin`);
-  the dots bottom right, their foot on the tagline's line, no pill.
+  text bottom left, 63 pt from the card's side and foot (`cardMargin`):
+  logo, facts, tagline; the dots bottom right, their foot on the
+  tagline's line, no pill. Trying the cards' layout (`BillboardCorners`):
+  top left the reason, the status and one fact, each on the cards'
+  plate (the picture's deep colour, its ink), top right the ratings
+  (first three) on one plate; the plates' contents on the text's edges
+  (the symbol over the logo's left, the last score over the dots' end),
+  as far from the top as from the side. Details keeps the old block
+  (opening jumps more until the card grows into Details).
   (Full screen, edge to edge, was before, with a left fade, then tried:
   a bottom fade, no fade, a uniform dim; the buttons under the text,
   then bottom right over the dots, the dots right of the buttons: none

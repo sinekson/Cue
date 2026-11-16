@@ -2015,6 +2015,9 @@ struct FixedFocusBillboardText: View {
     var logo: String? = nil
     /// Details' line in the reason's place (`DetailTrailerHint`).
     var lead: AnyView? = nil
+    /// Home's card: the reason, status, fact and ratings are on plates in
+    /// its top corners (`BillboardCorners`): only logo, facts and tagline.
+    var corners = false
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
     static let logoToChips: CGFloat = 20
@@ -2138,6 +2141,7 @@ struct FixedFocusBillboardText: View {
         VStack(alignment: .leading, spacing: 0) {
             // One place, the reason or Details' line: swapped, the old one
             // rising out as it fades, the new one coming up into it.
+            if !corners {
             ZStack(alignment: .leading) {
                 if let reason {
                     BillboardReasonLabel(reason: reason)
@@ -2149,12 +2153,15 @@ struct FixedFocusBillboardText: View {
             }
             .frame(height: 30, alignment: .leading)
             .padding(.bottom, Self.space - Self.labelInset)
+            }
             logoView
 
             VStack(alignment: .leading, spacing: 0) {
                 // The status badge, a fact and the ratings.
-                chips
-                    .padding(.top, Self.space - Self.labelInset)
+                if !corners {
+                    chips
+                        .padding(.top, Self.space - Self.labelInset)
+                }
                 // THE FACTS — what it is, quieter than the logo and the
                 // chips. (Without the rating: the chips carry it.)
                 Text(FixedFocusShowInfo.factsLine(item, info: info))
@@ -2162,7 +2169,8 @@ struct FixedFocusBillboardText: View {
                     .foregroundStyle(CueInk.body)
                     .lineLimit(1)
                     .frame(height: Self.lineHeight, alignment: .leading)
-                    .padding(.top, Self.gap - Self.labelInset - Self.lineInset)
+                    .padding(.top, corners ? Self.space - Self.lineInset
+                                           : Self.gap - Self.labelInset - Self.lineInset)
                 // The tagline — the mood, quiet and italic; no tagline: the
                 // name (ALWAYS a line here: every title's block has the same
                 // height, nothing moves).
@@ -2184,7 +2192,7 @@ struct FixedFocusBillboardText: View {
 private struct BillboardReasonLabel: View {
     let reason: BillboardReason
 
-    private var symbol: FixedFocusBadges.Symbol? {
+    var symbol: FixedFocusBadges.Symbol? {
         switch reason {
         case .newEpisode, .newSeason: return FixedFocusBadges.symbol(.news)
         case .because: return FixedFocusBadges.symbol(.taste)
@@ -2194,7 +2202,7 @@ private struct BillboardReasonLabel: View {
         }
     }
 
-    private var detail: String? {
+    var detail: String? {
         if case .trending(let rank) = reason { return "No. \(rank)" }
         return reason.detail
     }
@@ -2217,9 +2225,125 @@ private struct BillboardReasonLabel: View {
     }
 
     /// "Because you watched" runs on into its title; the others get a dot.
-    private var separator: String {
+    var separator: String {
         if case .because = reason { return " " }
         return " · "
+    }
+}
+
+/// TRYING: Home's billboard card in the cards' layout — top left the
+/// reason, the status and one fact, each on the cards' plate
+/// (`FixedFocusBadges`: a deep shade of the picture's colour, its ink);
+/// top right the ratings (the first three sources) on one plate.
+private struct BillboardCorners: View {
+    let item: MetaItem
+    let reason: BillboardReason?
+    @State private var tint: UIColor?
+
+    private var url: String? { TMDBService.originalSize(item.background) ?? item.poster }
+
+    private func ink(_ level: CGFloat) -> Color {
+        Color(uiColor: tint.map { SourceTint.ink($0, level) } ?? UIColor.white.withAlphaComponent(level))
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: FixedFocusBadges.gap) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: FixedFocusBadges.gap) { reasonPlate; badgePlates }
+                VStack(alignment: .leading, spacing: FixedFocusBadges.gap) {
+                    reasonPlate
+                    HStack(spacing: FixedFocusBadges.gap) { badgePlates }
+                }
+            }
+            Spacer(minLength: 0)
+            ratingsPlate
+        }
+        .task(id: url) {
+            guard let url else { tint = nil; return }
+            if let known = SourceTint.cached(for: url) { tint = known; return }
+            tint = nil
+            let sampled = await SourceTint.tint(for: url)
+            withAnimation(.easeInOut(duration: Motion.fadeDuration)) { tint = sampled }
+        }
+    }
+
+    @ViewBuilder private var reasonPlate: some View {
+        if let reason {
+            let label = BillboardReasonLabel(reason: reason)
+            plate(symbol: label.symbol) {
+                Text(reason.lead).foregroundStyle(ink(FixedFocusText.primary))
+                + Text(label.detail.map { label.separator + $0 } ?? "")
+                    .font(.system(size: 23, weight: .regular))
+                    .foregroundStyle(ink(FixedFocusText.body))
+            }
+        }
+    }
+
+    @ViewBuilder private var badgePlates: some View {
+        if let status = FixedFocusShowInfo.status(item) {
+            let badge = FixedFocusBadges.status(status)
+            plate(symbol: badge.symbol) { Text(badge.text).foregroundStyle(ink(FixedFocusText.primary)) }
+        }
+        if let fact = TitleRecords.shared.facts(item).first {
+            plate(symbol: FixedFocusBadges.symbol(fact.kind)) {
+                Text(fact.text).foregroundStyle(ink(FixedFocusText.primary))
+            }
+        }
+    }
+
+    private var ratings: [MDBListRatingEntry] {
+        let settings = MDBListSettingsStore.current
+        guard settings.showsRatings(onDetails: false) else { return [] }
+        let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
+        let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
+        let known = TitleRecords.shared.ratings(item) ?? nil
+        return Array(MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: false)
+            .prefix(FixedFocusBillboardText.ratingsShown))
+    }
+
+    @ViewBuilder private var ratingsPlate: some View {
+        let all = ratings
+        if !all.isEmpty {
+            HStack(spacing: 20) {
+                ForEach(all) { entry in
+                    HStack(spacing: 9) {
+                        if let mark = FixedFocusBadges.mark(entry.provider) { Image(uiImage: mark) }
+                        Text(entry.text).foregroundStyle(ink(FixedFocusText.primary))
+                    }
+                }
+            }
+            .font(Font(FixedFocusBadges.font))
+            .modifier(Plate(colour: FixedFocusBadges.plate(tint)))
+        }
+    }
+
+    private func plate(symbol: FixedFocusBadges.Symbol?, @ViewBuilder words: () -> Text) -> some View {
+        HStack(spacing: 9) {
+            if let symbol {
+                let colours = symbol.colours.map {
+                    $0 == FixedFocusBadges.symbolGrey ? ink(FixedFocusText.body) : Color(uiColor: $0)
+                }
+                Image(systemName: symbol.name)
+                    .font(.system(size: 21, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(colours[0], colours.count > 1 ? colours[1] : colours[0])
+            }
+            words()
+        }
+        .font(Font(FixedFocusBadges.font))
+        .lineLimit(1)
+        .modifier(Plate(colour: FixedFocusBadges.plate(tint)))
+    }
+
+    private struct Plate: ViewModifier {
+        let colour: UIColor
+        func body(content: Content) -> some View {
+            content
+                .padding(.horizontal, FixedFocusBadges.padding)
+                .frame(height: FixedFocusBadges.height)
+                .background(Color(uiColor: colour),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
     }
 }
 
@@ -2698,13 +2822,31 @@ extension HomeUIKitView {
         // with the text, not a moment after it.)
         let _ = billboardRecord
         let records = TitleRecords.shared
-        return FixedFocusBillboardText(item: item, info: records.size(item),
-                                reason: opened ? nil : billboardReasons[item.id],
-                                ratings: billboardRatingsRow(item),
-                                tagline: records.tagline(item))
-            .frame(height: opened ? FixedFocusBillboardText.bottom : StagePictureView.homeTextBottom,
-                   alignment: .bottomLeading)
-            .padding(.leading, FixedFocusMetrics.titleInset + (opened ? 0 : StagePictureView.textIn))
+        let card = StagePictureView.homeCard
+        let margin = StagePictureView.cardMargin
+        // TRYING: the cards' layout — the reason, status and fact on plates
+        // top left, the ratings on one top right; logo, facts and tagline
+        // at the foot. Into Details the block takes them back (Details'
+        // own layout).
+        return ZStack(alignment: .topLeading) {
+            FixedFocusBillboardText(item: item, info: records.size(item),
+                                    reason: nil,
+                                    ratings: billboardRatingsRow(item),
+                                    tagline: records.tagline(item),
+                                    corners: !opened)
+                .frame(height: opened ? FixedFocusBillboardText.bottom : StagePictureView.homeTextBottom,
+                       alignment: .bottomLeading)
+                .padding(.leading, FixedFocusMetrics.titleInset + (opened ? 0 : StagePictureView.textIn))
+            // The plates' contents on the text's edges (the reason's symbol
+            // over the logo's left, the last score over the dots' right
+            // end), the plates past them; as far from the top as from the
+            // side, as on the cards.
+            let inset = margin - FixedFocusBadges.padding
+            BillboardCorners(item: item, reason: billboardReasons[item.id])
+                .frame(width: card.width - 2 * inset, alignment: .topLeading)
+                .offset(x: card.minX + inset, y: card.minY + inset)
+                .opacity(opened ? 0 : 1)
+        }
     }
 
     /// The ratings chips (nil: none at all) — the catalog's IMDb score until
