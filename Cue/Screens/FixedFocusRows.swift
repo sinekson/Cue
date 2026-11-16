@@ -1695,6 +1695,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if pinnedBillboardPicture { loadViewIfNeeded(); makePinnedStage() } else {
                 pinnedStage?.removeFromSuperview()
                 pinnedStage = nil
+                billboardShadow?.removeFromSuperview()
+                billboardShadow = nil
             }
             if isViewLoaded { outer.reloadData() }
         }
@@ -1720,7 +1722,28 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
         stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
         pinnedStage = stage
+        if let card = stage.cardFrame {
+            // Home's card: focused, the cards' soft shadow (the picture is
+            // masked to the card: it can't hold it). A screen-sized layer
+            // under it, moved, grown and dipped as it is.
+            let holder = UIView(frame: stage.frame)
+            holder.isUserInteractionEnabled = false
+            holder.alpha = 0
+            let image = FixedFocusCardEdge.shadowImage
+            let caps = image.capInsets, size = image.size
+            let shadow = UIView(frame: card.insetBy(dx: -FixedFocusCardEdge.shadowPad, dy: -FixedFocusCardEdge.shadowPad))
+            shadow.layer.contents = image.cgImage
+            shadow.layer.contentsScale = image.scale
+            shadow.layer.contentsCenter = CGRect(x: caps.left / size.width, y: caps.top / size.height,
+                                                 width: max(0, size.width - caps.left - caps.right) / size.width,
+                                                 height: max(0, size.height - caps.top - caps.bottom) / size.height)
+            holder.addSubview(shadow)
+            view.insertSubview(holder, belowSubview: stage)
+            billboardShadow = holder
+        }
     }
+    /// Home's card's focus shadow (`makePinnedStage`).
+    private var billboardShadow: UIView?
 
     /// The pinned picture at a depth: blurred and darker below the
     /// billboard (in the move's animation), and — once the rows are up — out,
@@ -1733,6 +1756,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if rigidBillboardTravel != nil {
             stage.transform = CGAffineTransform(translationX: 0, y: -billboardUp(depth: depth))
                 .scaledBy(x: cardScale, y: cardScale)
+            billboardShadow?.transform = stage.transform
+            billboardShadow?.alpha = billboardLit ? 1 : 0
             return
         }
         stage.setBelow(depth > 0)
@@ -1933,7 +1958,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         dip.keyTimes = [0, NSNumber(value: down / (down + Self.dipUp)), 1]
         dip.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
         dip.duration = down + Self.dipUp
-        for layer in [stage.layer, overlayHost?.view.layer].compactMap({ $0 }) {
+        for layer in [stage.layer, overlayHost?.view.layer, billboardShadow?.layer].compactMap({ $0 }) {
             layer.add(dip, forKey: "dip")
         }
     }
