@@ -573,7 +573,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   tabs, their look, focus and timing (`TopNavFocus`: 25 pt medium,
   46 pt pills, the current on the flat grey, focused the white
   capsule), switching on focus as the bar, Up from the cards on the
-  current one; more than fit scroll along with focus. Its rows, by what
+  current one; more than fit scroll along with focus. The episodes keep
+  focus at the first card's spot (`anchoredRowIDs`: the season's map
+  above it, the eye stays put; moving focus made it go between them),
+  Left/Right: the slide, the old card's shrink and the new one's growth
+  together on the move's spring (tried, all worse: the spot dipping as
+  the large rows' box; focus handed over first, the slide 0.12 or
+  0.06 s later; the large rows' box without its dip, the next episode
+  dissolving in on a still card: lost the grow and shrink, which is
+  liked; the growth quicker, 0.12 s: over too soon; the new card
+  growing on arrival, at 90 % or half the slide: late).
+  Its rows, by what
   each is for (2026-11-17): a film's Collection as tall cards
   (`showcaseRowIDs`: TMDB's text-free pictures, `collectionScenes`) in
   release order, the film itself in it with "You're here" (a grey pin,
