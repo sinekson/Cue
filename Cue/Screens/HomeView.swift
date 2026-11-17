@@ -271,7 +271,7 @@ final class HomeViewModel: ObservableObject {
             // title under the show's name.
             let episodes = row.episodes ?? [:]
             var art = row.art ?? [:]
-            var subtitles: [String: String] = [:]
+            var subtitles = row.subtitles ?? [:]
             for (id, episode) in episodes {
                 if let still = episode.still { art[id] = still }
                 if let name = episode.name, !name.isEmpty { subtitles[id] = name }

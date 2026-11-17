@@ -661,8 +661,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             && !isShowcase(rowIndex) && !isGrid(rowIndex) && !isContinue(rowIndex)
             && custom(rowIndex) == nil && !isLandscape(rowIndex) && !isLogo(rowIndex)
             && !(rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id))
-            // Saved for Later: plain posters, moving focus.
-            && rows[rowIndex].id != HomeView.libraryRowID
+            // Saved for Later and the rewatch rows: plain posters, moving focus.
+            && !isPlain(rowIndex)
     }
 
     /// The trailer on the focused showcase card (nil: none) — another card,
@@ -723,10 +723,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var belowVisible: CGFloat = FixedFocusMetrics.belowVisible
     /// Captions under the cards: everywhere but Home, where only the
     /// landscape rows (Continue Watching, New Episodes: the show over the
-    /// episode's title) and Saved for Later (when it was added) have them.
+    /// episode's title), Saved for Later (when it was added) and the
+    /// rewatch rows (when you finished it) have them.
     func hasCaptions(_ rowIndex: Int) -> Bool {
-        !captionsOnCards(rowIndex) && (captions || isLandscape(rowIndex)
-            || (rows.indices.contains(rowIndex) && rows[rowIndex].id == HomeView.libraryRowID))
+        !captionsOnCards(rowIndex) && (captions || isLandscape(rowIndex) || isPlain(rowIndex))
+    }
+    /// Plain posters with moving focus and a line under them: Saved for
+    /// Later, the rewatch rows (`CueRows.CardShape.plain`).
+    func isPlain(_ rowIndex: Int) -> Bool {
+        rows.indices.contains(rowIndex)
+            && (rows[rowIndex].id == HomeView.libraryRowID || rows[rowIndex].shape == .plain)
     }
     /// The room under a row's cards for their caption: two lines, one
     /// where no card has a second (the studios: two left a gap under the

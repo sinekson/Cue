@@ -379,6 +379,8 @@ enum CueRows {
         var shape: CardShape? = nil
         /// An episode row's episode per show (`episode` cards).
         var episodes: [String: EpisodeCard]? = nil
+        /// The line under a `plain` card, by title id ("Finished 8 months ago").
+        var subtitles: [String: String]? = nil
     }
 
     /// A row's cards, by what the row is for: tall showcase cards for what's
@@ -386,7 +388,10 @@ enum CueRows {
     /// rows), Top 10's ranked grid, and Continue Watching's landscape card
     /// for a row of episodes (New Episodes, Airing Today: the episode's
     /// still, "S2:E5" and its day on it, the show over its title under it).
-    enum CardShape: String, Codable, Sendable { case poster, tall, ranked, episode, spotlight }
+    /// A row's cards. `poster`: on Home a large row; `plain`: plain posters
+    /// with moving focus and a second line under them, Saved for Later's
+    /// (what you've watched already: nothing to inspect).
+    enum CardShape: String, Codable, Sendable { case poster, plain, tall, ranked, episode, spotlight }
 
     /// A show's newest episode, for its card in an episode row.
     struct EpisodeCard: Codable, Sendable, Equatable {
@@ -441,7 +446,7 @@ enum CueRows {
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 24
+    static let version = 25
     /// Today's Pick (the full-width card) doesn't show a title again for
     /// this long.
     static let spotlightRest: TimeInterval = 7 * 24 * 60 * 60
@@ -453,7 +458,7 @@ enum CueRows {
     static let minimumOwn = 5
     static let rowLength = 25
     /// Home's large rows, the catalogue's and your own together.
-    static let homeLarge = 12
+    static let homeLarge = 10
     /// The best-ten grids: a person's and a studio's or network's on Home,
     /// each from the most pulling this many of its family in your taste;
     /// IMDb's votes a title needs at least (a studio's catalogue is larger:
@@ -1339,7 +1344,8 @@ enum CueRows {
         mutating func add(_ id: String, _ title: String, _ titles: [Title], fresh: Bool = true,
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
                           own: Bool = false, ranked: Bool = false, reasons: Bool = false,
-                          showcase: Showcase? = nil, shape: CardShape = .poster, reason: String) -> Bool {
+                          showcase: Showcase? = nil, shape: CardShape = .poster,
+                          subtitles: [String: String]? = nil, reason: String) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1383,7 +1389,8 @@ enum CueRows {
             }
             rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item),
                             badges: badges.isEmpty ? nil : badges,
-                            art: showcase?.art, shape: ranked ? .ranked : showcase != nil ? .tall : shape))
+                            art: showcase?.art, shape: ranked ? .ranked : showcase != nil ? .tall : shape,
+                            subtitles: subtitles))
             why.append(Why(tab: tab, title: title, reason: reason))
             return true
         }
@@ -1865,11 +1872,18 @@ enum CueRows {
             layout.add("pickbackup", "Pick Back Up", own.pickBackUp, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
                        shape: .poster, reason: "Shows you started, untouched for over a month")
         }
-        /// Some days (`rewatchChance`): what you finished long ago, for the
-        /// season where it fits, else from a year ago, else any.
+        /// What you finished long ago, for the season where it fits, else
+        /// from a year ago, else any: plain posters, when you finished each
+        /// under it.
         @discardableResult
         func rewatch(_ layout: inout Layout) -> Bool {
-            guard jitter(day, "rewatch") < rewatchChance else { return false }
+            let relative = RelativeDateTimeFormatter()
+            relative.unitsStyle = .full
+            var finished: [String: String] = [:]
+            for title in own.rewatch {
+                guard let last = byID[title.item.id]?.last else { continue }
+                finished[title.item.id] = "Finished " + relative.localizedString(for: last, relativeTo: now)
+            }
             let tab = layout.tab
             let media: (Title) -> Bool = { title in
                 switch tab {
@@ -1891,7 +1905,7 @@ enum CueRows {
                 let titles = ranked(own.rewatch.filter { !Set($0.traits.keywords).isDisjoint(with: keywords) })
                 if layout.add("rewatch.season", "\(season.prefix(1).uppercased() + season.dropFirst()) Favourites",
                               titles, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
-                              shape: .poster, reason: "For \(season): titles you finished before") { return true }
+                              shape: .plain, subtitles: finished, reason: "For \(season): titles you finished before") { return true }
             }
             let yearAgo = ranked(own.rewatch.filter { title in
                 let ago = now.timeIntervalSince(byID[title.item.id]?.last ?? now) / 86_400
@@ -1899,9 +1913,9 @@ enum CueRows {
             })
             if jitter(day, "rewatch.year") < 0.5,
                layout.add("rewatch.year", "A Year Ago This Month", yearAgo, fresh: false, keepOrder: true,
-                          minimum: minimumOwn, own: true, shape: .poster, reason: "What you were watching a year ago") { return true }
+                          minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "What you were watching a year ago") { return true }
             return layout.add("rewatch", "Watch Again", ranked(own.rewatch), fresh: false, keepOrder: true,
-                       minimum: minimumOwn, own: true, shape: .poster, reason: "Finished at least \(rewatchAfterDays) days ago, some days")
+                       minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "Finished at least \(rewatchAfterDays) days ago")
         }
 
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
@@ -1954,7 +1968,6 @@ enum CueRows {
                                group: "service") { serviceRow(&$0, index) })
         }
         large.append(Large(score: 0.65 * 0.8 + 0.35 * jitter(day, "pickbackup"), group: "own") { pickBackUp(&$0) })
-        large.append(Large(score: 0.65 * 0.6 + 0.35 * jitter(day, "rewatchrow"), group: "own") { rewatch(&$0) })
         var queue = large.sorted { $0.score > $1.score }
         var lastGroup: String?
         var placed = 0
@@ -1974,42 +1987,44 @@ enum CueRows {
         } else {
             nextLarge(&home)
         }
-        home.add("picks", "Top Picks for You", picksList, keepOrder: true, reasons: true, shape: .tall, reason: picksReason)
-        nextLarge(&home)
-        home.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
-                 reason: "Always here: today's trending, ranked")
-        nextLarge(&home)
-        home.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
-                 keepOrder: true, shape: .episode, reason: newReason)
-        nextLarge(&home)
-        func gridRow(_ index: Int) {
-            guard index < gridsMade.count else { return }
+        func gridRow(_ layout: inout Layout, _ index: Int) -> Bool {
+            guard index < gridsMade.count else { return false }
             let grid = gridsMade[index]
-            home.add("best.\(grid.id)", grid.title, grid.titles, fresh: false, keepOrder: true,
-                     minimum: rankedLength, own: true, ranked: true,
-                     reason: "In your taste: the best by IMDb's rating (a person's, a studio's or network's, by score)")
+            return layout.add("best.\(grid.id)", grid.title, grid.titles, fresh: false, keepOrder: true,
+                            minimum: rankedLength, own: true, ranked: true,
+                            reason: "In your taste: the best by IMDb's rating (a person's, a studio's or network's, by score)")
         }
-        newAndNotable(&home, homeShowcase)
-        nextLarge(&home)
-        gridRow(0)
-        nextLarge(&home)
-        if let spotlight {
-            let reason = CueRows.reason(spotlight, model: model, known: known, curated: curated)
-            home.rows.append(Row(id: "cue.home.spotlight", title: "Today's Pick for You", tabs: ["home"],
-                                 items: [spotlight.item], badges: reason.map { [spotlight.item.id: $0] },
-                                 shape: .spotlight))
-            home.why.append(Why(tab: "home", title: "Today's Pick for You",
-                                reason: "Your best match today, not up in the last week"))
-        }
-        nextLarge(&home)
-        home.add("comingsoon", "Coming Soon for You", homeComing.titles, fresh: false, keepOrder: true,
-                 minimum: showcaseMinimum, own: true, showcase: homeComing,
-                 reason: "Out in the next \(Int(comingDays)) days, in your taste: your shows first")
-        nextLarge(&home)
-        nextLarge(&home)
-        nextLarge(&home)
-        gridRow(1)
-        while placed < homeLarge, !queue.isEmpty { nextLarge(&home) }
+        // The fixed rows, each followed by a large row: never two large rows
+        // side by side. One that doesn't make it takes its large row with it
+        // (that day has fewer rows).
+        let fixedRows: [(inout Layout) -> Bool] = [
+            { $0.add("picks", "Top Picks for You", picksList, keepOrder: true, reasons: true, shape: .tall,
+                     reason: picksReason) },
+            { $0.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
+                     reason: "Always here: today's trending, ranked") },
+            { $0.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
+                     keepOrder: true, shape: .episode, reason: newReason) },
+            { $0.add("newnotable", "New & Notable", homeShowcase.titles, fresh: false, keepOrder: true,
+                     minimum: showcaseMinimum, own: true, showcase: homeShowcase,
+                     reason: "What's new: new seasons of your shows first, then the biggest and most yours") },
+            { gridRow(&$0, 0) },
+            { layout in
+                guard let spotlight else { return false }
+                let reason = CueRows.reason(spotlight, model: model, known: known, curated: curated)
+                layout.rows.append(Row(id: "cue.home.spotlight", title: "Today's Pick for You", tabs: ["home"],
+                                       items: [spotlight.item], badges: reason.map { [spotlight.item.id: $0] },
+                                       shape: .spotlight))
+                layout.why.append(Why(tab: "home", title: "Today's Pick for You",
+                                      reason: "Your best match today, not up in the last week"))
+                return true
+            },
+            { $0.add("comingsoon", "Coming Soon for You", homeComing.titles, fresh: false, keepOrder: true,
+                     minimum: showcaseMinimum, own: true, showcase: homeComing,
+                     reason: "Out in the next \(Int(comingDays)) days, in your taste: your shows first") },
+            { rewatch(&$0) },
+            { gridRow(&$0, 1) },
+        ]
+        for row in fixedRows where row(&home) { nextLarge(&home) }
 
         var movies = Layout(tab: "movie", model: model, seen: seen, left: left, out: out, passes: passes, day: day,
                               known: known, top10: top10, curated: curated)
@@ -2259,8 +2274,6 @@ extension CueRows {
 
     /// Watch Again and its kind: finished at least this long ago.
     static let rewatchAfterDays = 180
-    /// The days a rewatch row is up (of the day's chance).
-    static let rewatchChance = 0.45
     /// Finished titles looked up for it (a request each, kept a month).
     static let rewatchLookups = 60
 

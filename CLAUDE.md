@@ -148,7 +148,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Up, rewatch, add-on catalogs; elsewhere still posters). (Wide cards,
   the showcase cell at the landscape size with logo, badges and facts,
   for "picking something now" rows, were removed 2026-11-15: the large
-  rows made them pointless.) Saved for Later plain posters with moving focus, Top 10's grid. (The
+  rows made them pointless.) Saved for Later and the rewatch row plain posters with moving focus, Top 10's grid. (The
   fixed focus box was retired 2026-11-13: too many hacks for what it gave;
   back 2026-11-15 narrower, only showing: the large rows' box.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
@@ -352,21 +352,23 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   cut out, was the look before; tried: the digit stretched tall, the
   word written downwards, a numeral over or behind the poster, a strip
   joined to the poster). **Home's order**: Continue Watching, Saved for
-  Later (second: the quickest way back to it), then the special rows at
-  fixed places with 12 large rows between them (`homeLarge`): large,
+  Later (second: the quickest way back to it), then large and fixed
+  rows taking turns, 10 large (`homeLarge`), 21 rows in all: large,
   Top Picks, large, Top 10, large, New Episodes, large, New & Notable,
   large, a best-ten grid, large, Today's Pick for You, large, Coming
-  Soon for You, large, large, large, the second
-  grid, the rest large (grids at about rows 12 and 19: further apart
-  than two near each other). A special row that doesn't make it closes up. The large rows
+  Soon for You, large, rewatch, large, the second grid, large (grids
+  at rows 12 and 20). Never two large rows side by side (with every
+  large row open, three in a row read as one pattern): a fixed row
+  that doesn't make it takes its large row with it, that day has
+  fewer rows. More fixed rows, more large ones. The large rows
   by score, the catalogue's and your own together (Because You Watched,
   the latest title first and always the first large row, two more of
   the last five by the day; Pick Back Up; the country's three biggest
-  services; rewatch), yours on the catalogue's scale (Because You Watched
-  fit 0.9, Pick Back Up 0.8, rewatch 0.6, services 0.5, each with the
+  services), yours on the catalogue's scale (Because You Watched
+  fit 0.9, Pick Back Up 0.8, services 0.5, each with the
   day's chance), never two of a group side by side (talked over
   2026-11-15: the specials dense at the top, spaced lower; 12 large rows,
-  about 22 in all; 15 catalogue rows and every fixed row pinned to a
+  about 22 in all, runs of them at the end, was until 2026-11-17; 15 catalogue rows and every fixed row pinned to a
   slot was before). Today's Pick for You (`spotlight`, the full-width
   card): one showcase card the content's width, as tall as the tall
   cards (600 pt looked short), on the
@@ -410,10 +412,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Because You Watched seed, and counts against its traits at half Not for
   Me's; a rating overrides it (Why These Rows lists them).
   Opening Details, trailers and Search opens as signals, and runtime as a
-  trait, were talked over: noise or said already. Some days (45 %) a
-  rewatch row of what you finished 180 days ago or more: the season's
-  ("Christmas Favourites", by its keywords), else A Year Ago This Month,
-  else Watch Again (Comfort Shows needs rewatch data we don't have). Your
+  trait, were talked over: noise or said already. A rewatch row,
+  always (some days, 45 %, was before), of what you finished 180 days
+  ago or more: the season's ("Christmas Favourites", by its keywords),
+  else A Year Ago This Month, else Watch Again (Comfort Shows needs
+  rewatch data we don't have); plain posters with moving focus, when
+  you finished it under each (`plain`, Saved for Later's look: nothing
+  to inspect in what you've seen). Your
   own rows show at 5 and ignore the two-rows cap.
   Rebuilt on a new day, after 6 h or when the recent watches change, shown
   on the next load, never mid-browse. Why These Rows: the taste
