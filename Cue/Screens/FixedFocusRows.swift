@@ -3857,6 +3857,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             .offsetBy(dx: -stripHost.frame.minX, dy: -stripHost.frame.minY)
         // Covers the list wherever its cards (and their lift) reach.
         UIView.performWithoutAnimation { applyConcealMask() }
+        // The box at the spot (made before the strip had its place).
+        if let box, box.frame.origin != boxFrame.origin {
+            UIView.performWithoutAnimation { box.frame = boxFrame }
+        }
     }
 
     /// Holds the strip; a panel row's clips to the panel.
@@ -3971,10 +3975,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 gridLayout.lineHeight = controller.gridLine(rowIndex)
             }
             let feature = controller.isFeature(rowIndex)
-            if feature {
-                featureLayout.focused = selectedIndex
-                featureLayout.open = holdsFocus(cv)
-            }
+            if feature { featureLayout.focused = selectedIndex }
             let layout: UICollectionViewLayout = ranked ? gridLayout : feature ? featureLayout : flowLayout
             if cv.collectionViewLayout !== layout {
                 cv.setCollectionViewLayout(layout, animated: false)
@@ -4006,8 +4007,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                 pendingAim = selectedIndex
                 setNeedsLayout()
             }
-            // A large row with focus in it: its box again.
-            if controller.isFeature(rowIndex), featureLayout.open {
+            // A large row: its box again.
+            if controller.isFeature(rowIndex) {
                 destinationStrip?.layoutIfNeeded()
                 UIView.performWithoutAnimation { syncBox(animated: false) }
             }
@@ -4217,34 +4218,12 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     func collectionView(_ cv: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {
         guard cv === destinationStrip, let controller, let row else { return }
+        guard let index = context.nextFocusedIndexPath?.item else { return }
         let feature = controller.isFeature(rowIndex)
-        // A large row opens with focus in it and closes as focus goes to
-        // another row; focus leaving the rows (a hold menu, Details, the top
-        // bar) leaves it open.
-        var opening: Bool?
-        if feature {
-            let inRows = superview.map { context.nextFocusedView?.isDescendant(of: $0) == true } ?? false
-            let open = context.nextFocusedIndexPath != nil || HoldMenu.shared.isOpen || !inRows
-            if open != featureLayout.open { opening = open }
-        }
-        guard let index = context.nextFocusedIndexPath?.item else {
-            if let opening {
-                featureLayout.open = opening
-                rowMoves += 1
-                let move = rowMoves
-                FixedFocusMotion.run(duration: Motion.moveDuration) {
-                    self.applyFeature(in: cv)
-                } completion: { _ in self.boxMoveEnded(move) }
-            }
-            return
-        }
         let card = controller.destinationCard(rowIndex)
         let offset = windowOffset(focusing: index, card: card.width, count: row.items.count)
-        let relayout = feature && (featureLayout.focused != index || opening != nil)
-        if feature {
-            featureLayout.focused = index
-            if let opening { featureLayout.open = opening }
-        }
+        let relayout = feature && featureLayout.focused != index
+        if feature { featureLayout.focused = index }
         rowMoves += 1
         let move = rowMoves
         FixedFocusMotion.run(duration: Motion.moveDuration) {
@@ -4252,11 +4231,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             if offset != cv.contentOffset.x { cv.contentOffset = CGPoint(x: offset, y: 0) }
             self.applyNameRoom(focusing: index)
         } completion: { _ in self.boxMoveEnded(move) }
-    }
-
-    /// Focus is on one of `cv`'s cards.
-    private func holdsFocus(_ cv: UICollectionView) -> Bool {
-        (UIFocusSystem.focusSystem(for: cv)?.focusedItem as? UIView)?.isDescendant(of: cv) == true
     }
 
     /// A showcase card (a row's cell, or a large row's box): the title, its
@@ -4286,23 +4260,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private func showFeature(_ card: FixedFocusShowcaseCell, animated: Bool) {
         let focused = featureLayout.focused
         if (focused...focused + 2).contains(card.itemIndex) { card.wantBackdrop() }
-        card.setOpen(false, animated: false)
+        card.setOpen(false)
     }
 
     // MARK: The large rows' box
 
     /// The open card at the spot, Netflix's way: one card above the posters
-    /// that stands still. Left/Right: the next title dissolves in over it,
-    /// the posters sliding one step under it. Up/Down: it opens out of the
-    /// focused poster and closes back into it (ours). The poster under it
-    /// keeps focus, press and hold; the box shows them and plays its
-    /// trailer (`FixedFocusShowcaseCell.mirror`).
-    /// One box for as long as the row: closed, it's hidden at the poster's
-    /// spot; opening again, it grows from where it is (closing too).
+    /// that stands still, in focus or not (Up/Down only grows it by focus).
+    /// Left/Right: the next title dissolves in over it, the posters sliding
+    /// one step under it. The poster under it keeps focus, press and hold;
+    /// the box shows them and plays its trailer
+    /// (`FixedFocusShowcaseCell.mirror`).
     private var box: FixedFocusShowcaseCell?
     private var boxItem: String?
-    /// Open (or opening); false while it closes and once hidden.
-    private var boxOpen = false
 
     private var boxFrame: CGRect {
         guard let cv = destinationStrip else { return .zero }
@@ -4320,65 +4290,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
               row.items.indices.contains(featureLayout.focused) else { return dropBox() }
         let index = featureLayout.focused, item = row.items[index]
         let frame = boxFrame
-        let posterFrame = CGRect(origin: frame.origin, size: FixedFocusFeatureLayout.poster)
-        guard featureLayout.open else {
-            // Closing: back into the poster under it, its growth going in
-            // the same spring (left grown, the poster under it showed
-            // smaller at once as it went), then hidden.
-            guard let closing = box, boxOpen else { return }
-            boxOpen = false
-            let under = underBox(index)
-            under?.mirror = nil
-            closing.setOpen(false, animated: animated)
-            grow(closing, to: posterFrame, focused: false, animated: animated) { [weak self, weak under] in
-                // Opened again meanwhile: it stays.
-                guard let self, self.box === closing, !self.boxOpen else { return }
-                closing.isHidden = true
-                under?.hiddenUnderBox = false
-            }
-            return
-        }
         let under = underBox(index)
-        if let box, boxOpen, boxItem == item.id {
+        if let box, boxItem == item.id {
             under?.mirror = box
             under?.hiddenUnderBox = true
             return
         }
-        if !boxOpen {
-            // Into the row: the row's box out of the focused poster (from
-            // where it is, if it's still closing). Another title than the
-            // one it holds (the row changed while closed): a new box.
-            if let box, boxItem != item.id {
-                box.removeFromSuperview()
-                self.box = nil
+        // The row's box, at once (the row shown, or its titles changed).
+        guard let old = box else {
+            let new = makeBox(item, index: index)
+            if let under { new.adoptPictures(from: under) }
+            UIView.performWithoutAnimation {
+                new.frame = frame
+                new.setOpen(true)
+                new.reflect(focused: under?.isFocused ?? false, pressed: false, held: false)
+                under?.mirror = new
+                new.layoutIfNeeded()
             }
-            let opening = box ?? makeBox(item, index: index)
-            box = opening
-            boxItem = item.id
-            boxOpen = true
-            if opening.isHidden {
-                // Card, outline and shadow laid out at once as the poster
-                // at rest, its focus growth coming with the opening (grown
-                // at once, the poster jumped bigger, then opened).
-                UIView.performWithoutAnimation {
-                    opening.frame = posterFrame
-                    opening.setOpen(false, animated: false)
-                    opening.reflect(focused: false, pressed: false, held: false)
-                    opening.layoutIfNeeded()
-                }
-                opening.isHidden = false
-            }
-            if let under { opening.adoptPictures(from: under) }
             under?.hiddenUnderBox = true
-            grow(opening, to: frame, focused: under?.isFocused ?? true, animated: animated)
-            // After the grow took the focus look: mirrored before it, the
-            // box took it at once, outside the spring.
-            UIView.performWithoutAnimation { under?.mirror = opening }
-            opening.setOpen(true, animated: animated)
+            box = new
+            boxItem = item.id
             return
         }
-        // Along the row (open, another title): a new box over the old.
-        guard let old = box else { return }
         let new = makeBox(item, index: index)
         // Before it opens (it chooses the poster or the backdrop by what it has).
         if let under { new.adoptPictures(from: under) }
@@ -4431,8 +4364,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // (a pale box larger than the card, shrinking).
         UIView.performWithoutAnimation {
             new.frame = frame
-            new.isHidden = false
-            new.setOpen(true, animated: false)
+            new.setOpen(true)
             // Focused already (the card under it may hear of its focus
             // only after this).
             new.reflect(focused: under?.isFocused ?? false, pressed: false, held: false)
@@ -4450,7 +4382,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         boxItem = item.id
     }
 
-    /// A box for `item`, hidden, above the row's posters. Made outside the
+    /// A box for `item` above the row's posters. Made outside the
     /// move's spring: made in it, its setup was animated too (the shadow
     /// growing in from nothing over the card).
     private func makeBox(_ item: MetaItem, index: Int) -> FixedFocusShowcaseCell {
@@ -4458,28 +4390,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         UIView.performWithoutAnimation {
             let new = FixedFocusShowcaseCell()
             new.isUserInteractionEnabled = false
-            new.isHidden = true
             configureShowcase(new, item, index: index)
             stripHost.addSubview(new)
             made = new
         }
         return made
-    }
-
-    /// The box to `frame`, everything in it laid out in the same spring,
-    /// its focus look (`focused`) too.
-    private func grow(_ box: FixedFocusShowcaseCell, to frame: CGRect, focused: Bool, animated: Bool,
-                      then done: @escaping () -> Void = {}) {
-        let apply = {
-            box.frame = frame
-            box.reflect(focused: focused, pressed: false, held: false)
-            box.layoutIfNeeded()
-        }
-        guard animated else {
-            UIView.performWithoutAnimation(apply)
-            return done()
-        }
-        FixedFocusMotion.run(duration: Motion.moveDuration, animations: apply) { _ in done() }
     }
 
     /// The card sliding in under the box along the row, hidden once there.
@@ -4497,7 +4412,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     private func dropBox() {
         slidingUnder = nil
-        boxOpen = false
         box?.removeFromSuperview()
         box = nil
         boxItem = nil
@@ -4602,24 +4516,22 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 }
 
 /// A large row (Home's browsing rows): portrait posters, focus held at
-/// the spot. In the focused row the focused card is open there, a wide card
+/// the spot. The focused card is open there, in focus or not, a wide card
 /// as tall as a poster (`featureCard`, its right edge near the screen's
-/// middle); the posters after it beside it, the ones before gone out at the
-/// left. A row out of focus is all posters, its card still at the spot.
-/// A card's frame follows from where it is against the focused one and
-/// whether the row is open, nothing else: a move changes `focused` or
-/// `open`, and every card goes to its new frame on one spring. The row's
-/// height never changes.
+/// middle; the row's box, `FixedFocusRowCell.syncBox`); the posters after
+/// it beside it, the ones before gone out at the left. A card's frame
+/// follows from where it is against the focused one, nothing else: a move
+/// changes `focused`, and every card goes to its new frame on one spring.
+/// The row's height never changes.
 final class FixedFocusFeatureLayout: UICollectionViewLayout {
     var focused = 0
-    var open = false
     var left: CGFloat = 0
     static var large: CGSize { FixedFocusMetrics.featureCard }
     static var poster: CGSize { FixedFocusMetrics.featurePoster }
     private var frames: [CGRect] = []
     private var width: CGFloat = 0
 
-    /// The offset that puts card `index` at the spot (open or not).
+    /// The offset that puts card `index` at the spot.
     func offset(for index: Int) -> CGFloat { CGFloat(index) * (Self.poster.width + FixedFocusMetrics.gap) }
 
     override func prepare() {
@@ -4633,7 +4545,7 @@ final class FixedFocusFeatureLayout: UICollectionViewLayout {
             // (`FixedFocusRowCell.syncBox`), its room left after the focused one.
             // The focused one centred in that room: posters go in and come
             // out on both sides alike (at its left, Right's were quicker).
-            let under = open && index == focused
+            let under = index == focused
             defer { x += (under ? Self.large.width : Self.poster.width) + gap }
             let inset = under ? (Self.large.width - Self.poster.width) / 2 : 0
             return CGRect(origin: CGPoint(x: x + inset, y: 0), size: Self.poster)

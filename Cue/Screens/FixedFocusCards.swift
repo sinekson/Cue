@@ -414,7 +414,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             }
         }
         // Out of a large row: its words and shade back.
-        if !feature, featureChanged { setOpen(true, animated: false) }
+        if !feature, featureChanged { setOpen(true) }
         applyFocus(isFocused)
         setNeedsLayout()
     }
@@ -446,13 +446,10 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// card and the next two): not for every poster in view.
     private var backdropWanted = false
 
-    /// Inside `setOpen` (it fades the poster itself).
-    private var settingOpen = false
-
-    /// A large row's box opening out of `poster` (the card under it, the
-    /// same title): its poster, backdrop and logo taken as that card shows
-    /// them, in from the first frame (loaded anew, one not in memory then
-    /// left an empty card for a few frames: a flicker).
+    /// A large row's box for `poster` (the card under it, the same title):
+    /// its poster, backdrop and logo taken as that card shows them, in from
+    /// the first frame (loaded anew, one not in memory left an empty card
+    /// for a few frames: a flicker).
     func adoptPictures(from poster: FixedFocusShowcaseCell) {
         guard poster.item?.id == item?.id else { return }
         if picture.image == nil, let image = poster.picture.image {
@@ -483,11 +480,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
                               waiting: { [weak self] waiting in
             guard let self, !waiting else { return }
             UIView.performWithoutAnimation { self.layoutPicture() }
-            // In after the card opened: the poster goes now.
-            if self.open, !self.settingOpen {
-                Self.fade(self.picture, to: 0, animated: true)
-                self.swell(opening: true, delay: 0)
-            }
+            // In after the box opened: the poster fades off it.
+            if self.open, self.picture.alpha > 0 { Self.fade(self.picture, to: 0, animated: true) }
         })
     }
 
@@ -762,52 +756,22 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         }
     }
 
-    /// A large row's card open (the backdrop and words, the poster gone) or
-    /// a poster. Their fades on their own timing in the move's spring
-    /// (Core Animation: a nested UIView animation takes the spring's):
-    /// opening, the backdrop there at once under the poster, the poster
-    /// (once the backdrop is in) and the words over the first part; closing,
-    /// the words at once, the poster back over the last part, the backdrop
-    /// gone after it — the card's edges only ever uncover a picture.
+    /// A large row's card open (the backdrop and words, the poster gone:
+    /// the row's box) or a poster (the cards under it). Set at once: the
+    /// box is open from the moment it's made.
     private var open = true
 
-    func setOpen(_ open: Bool, animated: Bool) {
-        guard open != self.open || !animated else { return }
+    func setOpen(_ open: Bool) {
         self.open = open
-        // A backdrop in memory answers at once: its fade is this one's
-        // (faded there too, this one found the poster already at 0 — a new
-        // card has no presentation yet — and the poster vanished at once).
-        settingOpen = true
         if open { wantBackdrop() }
-        settingOpen = false
-        let move = Motion.moveDuration, fade = Motion.fadeDuration
-        Self.fade(words, to: open ? 1 : 0, animated: animated)
-        Self.fade(shade, to: open ? 1 : 0, animated: animated)
         let opened = feature && open
-        Self.fade(backdrop, to: opened ? 1 : 0, delay: opened ? 0 : move, duration: 0.01, animated: animated)
-        let goes = opened && backdrop.image != nil
-        Self.fade(picture, to: goes ? 0 : 1, delay: opened ? 0 : move - fade, animated: animated)
-        if animated, feature, goes || !opened { swell(opening: opened, delay: opened ? 0 : move - fade) }
+        for view in [words, shade] as [UIView] { Self.fade(view, to: open ? 1 : 0, animated: false) }
+        Self.fade(backdrop, to: opened ? 1 : 0, animated: false)
+        Self.fade(picture, to: opened && backdrop.image != nil ? 0 : 1, animated: false)
     }
 
-    /// The poster grows a little as it fades off the backdrop (and shrinks
-    /// back as it returns): the backdrop reads as coming out of it. On the
-    /// layer alone, with the fade: gone or back at rest when it ends.
-    private static let swellScale: CGFloat = 1.03
-
-    private func swell(opening: Bool, delay: Double) {
-        let animation = CABasicAnimation(keyPath: "transform.scale")
-        animation.fromValue = opening ? 1 : Self.swellScale
-        animation.toValue = opening ? Self.swellScale : 1
-        animation.duration = Motion.fadeDuration
-        animation.beginTime = picture.layer.convertTime(CACurrentMediaTime(), from: nil) + delay
-        animation.fillMode = .both
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        picture.layer.add(animation, forKey: "swell")
-    }
-
-    private static func fade(_ view: UIView, to alpha: CGFloat, delay: Double = 0,
-                             duration: Double = Motion.fadeDuration, animated: Bool) {
+    /// `view` to `alpha`, faded (from where it is) or at once.
+    private static func fade(_ view: UIView, to alpha: CGFloat, animated: Bool) {
         let from = view.layer.presentation()?.opacity ?? Float(view.alpha)
         view.layer.removeAnimation(forKey: "open")
         UIView.performWithoutAnimation { view.alpha = alpha }
@@ -815,9 +779,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = from
         animation.toValue = Float(alpha)
-        animation.duration = duration
-        animation.beginTime = view.layer.convertTime(CACurrentMediaTime(), from: nil) + delay
-        animation.fillMode = .backwards
+        animation.duration = Motion.fadeDuration
         animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         view.layer.add(animation, forKey: "open")
     }

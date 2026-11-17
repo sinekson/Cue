@@ -454,8 +454,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Watching "S1:E5" over its bar.
   **Large rows** (Home's browsing rows, `FixedFocusFeatureLayout` at the
   end of `FixedFocusRows.swift`, `featureRows`): posters (`featurePoster`,
-  330 × 495), focus held at the first card's spot; in the focused row the
-  focused title open there as a wide card as tall as a poster
+  330 × 495), focus held at the first card's spot; in every large row, in focus
+  or not, the title at the spot open there as a wide card as tall as a poster
   (`featureCard`, 880 × 495, its right edge near the screen's middle;
   badges, logo, facts on it; grown as every card (level with the posters, only outline and shadow, was hard to see), pressed and held as every card; the row's name
   steps up by the growth, as over every grown card: `focusLift`), the posters after it beside it, the ones
@@ -476,13 +476,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   48 pt in from the push's side: good, too much movement; the cut
   going in and out with the box's dip: better and worse at once; the
   box's shade cast on the posters beside it: unnoticed at 14 %, not
-  wanted); Up/Down: it
-  opens out of the focused poster (the backdrop there at once under
-  the poster, the poster fading off it growing 3 %, shade and words
-  over the first 0.25 s) and closes back into it: one box per row,
-  hidden when closed, growing again from where it is; it takes the
-  poster's pictures and logo as shown (loaded anew, the first visit
-  flickered an empty card). Every card in the row
+  wanted); Up/Down: only focus, the box growing as every card
+  (decided 2026-11-17: calmer, and every glitch of the way in went
+  with it; before, it opened out of the focused poster, the backdrop
+  under it and the poster fading off growing 3 %, and closed back into
+  it). The box takes the poster's pictures and logo as shown (loaded
+  anew, it showed an empty card a few frames). Several large rows in a
+  row read as one pattern: to be broken up (talked over). Every card in the row
   a poster; the one under the box keeps focus, press and hold, the box
   shows them and plays its trailer (`FixedFocusShowcaseCell.mirror`;
   the old fixed focus box mirrored moves and masks too, hence retired).
@@ -491,11 +491,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   where it is, from its middle: too much movement; opening from its
   middle at the spot left rows out of focus starting 275 pt in; a
   taller open card; the poster lifted above the card's clip; the shade
-  kept on the posters, full or at 35 %.) Rows out of focus all posters.
+  kept on the posters, full or at 35 %.)
   After the trailers' 2 s rest the open card plays its trailer, as the
   showcase cards (the billboard's trailer settings).
-  Backdrops load for the focused card and the next two only. Focus
-  leaving the rows (hold menu, Details, top bar) leaves it open. (All
+  Backdrops load for the card at the spot and the next two only. (All
   landscape, small cards after the large one, was tried 2026-11-15: posters
   look better. Before: posters with the focused title's words in a
   strip under the row; posters were "judging a book by its cover";
