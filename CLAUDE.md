@@ -544,7 +544,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   a bottom fade, no fade, a uniform dim; the buttons under the text,
   then bottom right over the dots, the dots right of the buttons: none
   sat right.) Select opens Details as a window growing out of the card
-  (below). Still to do: the buttons' host in `FixedFocusRows`
+  (below). It never pages while Details is up or opening (from the
+  press, `DetailTransition.busy`): Back finds the title it left; one
+  that changed is a bug. Still to do: the buttons' host in `FixedFocusRows`
   (`billboardControls`) is unused.
   Picture in UIKit, text in SwiftUI, content from `BillboardPicks`, dots
   in UIKit on Left/Right's spring, the timer's fill a linear UIView
@@ -599,7 +601,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   parts quicker inside it (0.18 s, `partsBack`: its text crossed the
   page's mid-fade): under the still of Details, its card on its
   background drawn as the opening's cover (`cardCover`); a trailer on
-  the card: one plain dissolve. (Opening in place, Home's billboard becoming Details' in two
+  the card: one plain dissolve. The one exception, back into Home's
+  billboard card it opened from (nearly the same picture in place: the
+  dissolve read abrupt): Details' card shrinks into it (0.4 s, eased in
+  and out: the opening's quick-start curve read as a snap), the
+  background fading round it, the card fading off over its last 45 %
+  onto the billboard's own text (`shrink`, `fromBillboard`). (Opening in place, Home's billboard becoming Details' in two
   phases, `openInPlace`, was before: with the card it only jumped.) From
   Home, Movies and Series it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages

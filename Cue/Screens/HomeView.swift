@@ -2480,12 +2480,15 @@ extension HomeUIKitView {
     }
     /// The setting on, a title to go to, nothing over the billboard.
     /// A trailer's end needs no more: it pages on after moves along the
-    /// buttons too (`autoPageDone`).
+    /// buttons too (`autoPageDone`). Never while Details is up, or opening
+    /// (from the press: it's counted open only once pushed) — Back must
+    /// find the title it left.
     var autoPagePossible: Bool {
         guard let billboard else { return false }
         // It stops at the last title (no wrap back to the first).
         return autoPage && billboard.index < billboard.count - 1
             && homeScenePhase == .active && active && detailsOpen.depth == 0
+            && !DetailTransition.shared.busy
     }
     /// A new episode's or season's pick: that season's trailer (TMDB's
     /// season airing then).

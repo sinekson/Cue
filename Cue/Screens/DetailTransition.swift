@@ -91,6 +91,16 @@ final class DetailTransition {
     /// text crossed the page's mid-fade). (0.25 s for it all was before.)
     static let detailsBack: Double = 0.3
     static let partsBack: Double = 0.18
+    /// …into Home's billboard card, the one exception (the same picture
+    /// nearly in place: a dissolve read as a jump): Details' card shrinks
+    /// into it, eased in and out, the background going round it, the
+    /// card fading off over the end (`shrinkFadeFrom`) onto the billboard
+    /// card's own text and dots.
+    static let shrinkTime: Double = 0.4
+    static let shrinkFadeFrom: Double = 0.55
+    /// The opening's zoom curve, quick from the start, did most of the
+    /// shrink in 0.1 s under the parts' fade: a snap.
+    static let shrinkCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
     static let ringAfter: Double = 1.5
     static let giveUp: Double = 8
 
@@ -103,6 +113,8 @@ final class DetailTransition {
     private var pictures: [String: String] = [:]
     /// Details pages whose card plays a trailer now.
     private var playing = Set<String>()
+    /// Details pages opened from Home's billboard card (Back shrinks into it).
+    private var fromBillboard = Set<String>()
     func cardPlays(_ itemID: String, _ shown: Bool) {
         if shown { playing.insert(itemID) } else { playing.remove(itemID) }
     }
@@ -159,6 +171,7 @@ final class DetailTransition {
             : grown?.card ?? StageTrailer.carriedFrame(for: item.id) ?? Self.focusedCard(in: window) ?? small
         let carriedFrame = grown == nil && !crossfade ? StageTrailer.carriedFrame(for: item.id) : nil
         CueRows.Memory.shared.opened(item.id)
+        if grown != nil { fromBillboard.insert(item.id) }
         busy = true
         ModeSwap.shared.handingOver = true
         DetailOpenProbe.pressed()
@@ -320,9 +333,17 @@ final class DetailTransition {
     func closeLayer(itemID: String, close: @escaping () -> Void, gone: @escaping () -> Void) {
         guard !busy else { close(); gone(); return }
         let card = cardCover(itemID)
+        // Opened from Home's billboard card, the card still on its title
+        // (it never pages while Details is up): back into it.
+        var shrink: (() -> Void)?
+        if let card, fromBillboard.contains(itemID), let home = StagePictureView.homeCardShown,
+           home.shownItemID == itemID, let into = home.openingWindow() {
+            shrink = { Self.shrink(card, into: into) }
+        }
         forget(itemID)
         PageFade.shared.drop(itemID)
-        PageFade.shared.fadeOff(under: card, time: Self.detailsBack, close, gone: gone)
+        PageFade.shared.fadeOff(under: card, time: shrink == nil ? Self.detailsBack : Self.shrinkTime,
+                                underMove: shrink, close, gone: gone)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
 
@@ -338,6 +359,39 @@ final class DetailTransition {
         guard let itemID else { return }
         pictures[itemID] = nil
         playing.remove(itemID)
+        fromBillboard.remove(itemID)
+    }
+
+    /// Back into Home's billboard card: `cover` (`cardCover`: Details'
+    /// card on its background) — the card into `into`'s card, its picture
+    /// from Details' framing to the card's, the shade with it (the same
+    /// fade, scaled as the card); the background going round it; the card
+    /// fading off over the end onto the billboard card under it.
+    private static func shrink(_ cover: UIView, into: Window) {
+        guard cover.subviews.count == 2 else { return }
+        let background = cover.subviews[0], card = cover.subviews[1]
+        guard card.subviews.count == 2 else { return }
+        let picture = card.subviews[0], shade = card.subviews[1]
+        let target = StagePictureView.detailsCard
+        let k = length
+        let time = shrinkTime * k
+        animate(background.layer, "opacity", from: 1, to: 0, detailsBack * k, inOut)
+        move(card.layer, from: target, to: into.card, time, shrinkCurve)
+        if let end = into.picture {
+            move(picture.layer, from: picture.frame,
+                 to: end.offsetBy(dx: -into.card.minX, dy: -into.card.minY), time, shrinkCurve)
+        }
+        let sx = into.card.width / target.width, sy = into.card.height / target.height
+        let shadeEnd = CGRect(x: -target.minX * sx, y: -target.minY * sy,
+                              width: screen.width * sx, height: screen.height * sy)
+        move(shade.layer, from: shade.frame, to: shadeEnd, time, shrinkCurve)
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 1, 0]
+        fade.keyTimes = [0, NSNumber(value: shrinkFadeFrom), 1]
+        fade.timingFunctions = [CAMediaTimingFunction(name: .linear), inOut]
+        fade.duration = time
+        set(card.layer, "opacity", 0)
+        card.layer.add(fade, forKey: "opacity")
     }
 
     /// Back: Details without its parts — its card on its background, drawn
@@ -749,8 +803,10 @@ final class PageFade {
     /// fading off it as soon as the close is committed (`backTime`; set
     /// off with the close, the page under it came a frame late — a dip;
     /// waiting for an on-time frame cost up to 0.1 s more).
-    /// `under`, `time`: as `back`'s.
+    /// `under`, `time`: as `back`'s; `underMove`: `under`'s own animation
+    /// in place of its fade (Back into Home's billboard card).
     func fadeOff(under: UIView? = nil, time: Double = DetailTransition.backTime,
+                 underMove: (() -> Void)? = nil,
                  _ close: @escaping () -> Void, gone: @escaping () -> Void) {
         guard !busy, let window = Self.window,
               let shot = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
@@ -768,7 +824,9 @@ final class PageFade {
             CATransaction.begin()
             DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
                                      (under == nil ? time : DetailTransition.partsBack) * k, DetailTransition.inOut)
-            if let under {
+            if let underMove {
+                underMove()
+            } else if let under {
                 DetailTransition.animate(under.layer, "opacity", from: 1, to: 0, time * k, DetailTransition.inOut)
             }
             CATransaction.commit()

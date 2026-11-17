@@ -277,6 +277,8 @@ final class StagePictureView: UIView {
 
     /// Home's billboard card (the rows' pinned stage), for Details' way in.
     static weak var homeCardShown: StagePictureView?
+    /// The title on the card now (Back into it: `DetailTransition`).
+    var shownItemID: String? { shownItem?.id }
 
     /// The card on the screen as it's drawn now — Details' opening grows
     /// a window out of it (`DetailTransition.Window`): the card, its
