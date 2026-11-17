@@ -5,7 +5,8 @@ import XCTest
 /// Environment (passed as TEST_RUNNER_<name> through xcodebuild; see
 /// `remote.sh`):
 /// - `KEYS`: comma-separated steps — `up` `down` `left` `right` `select`
-///   `menu` `playpause` `home`, `hold` (Select held 1 s), `wait:<seconds>`,
+///   `menu` `playpause` `home`, `hold` (Select held 1 s), `hold:<key>` (that
+///   key held 1 s: `hold:up`), `wait:<seconds>`,
 ///   `shot:<name>` (screenshot to `SHOTS`/<name>.png), `focus` (log what
 ///   has focus). A step `<key>*<n>` repeats it.
 /// - `LAUNCH_ARGS`: space-separated; set → the app is relaunched with them,
@@ -55,6 +56,14 @@ final class Remote: XCTestCase {
                 case "hold": remote.press(.select, forDuration: 1)
                 case "focus": logFocus("now")
                 default:
+                    if step.hasPrefix("hold:") {
+                        let keys: [String: XCUIRemote.Button] = ["up": .up, "down": .down, "left": .left,
+                                                                 "right": .right, "select": .select]
+                        guard let key = keys[String(step.dropFirst(5))] else { XCTFail("Unknown hold \(step)"); continue }
+                        remote.press(key, forDuration: 1)
+                        print("REMOTE step: \(step)")
+                        continue
+                    }
                     if step.hasPrefix("wait:") {
                         Thread.sleep(forTimeInterval: Double(step.dropFirst(5)) ?? 1)
                         continue

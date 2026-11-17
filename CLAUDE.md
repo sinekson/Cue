@@ -14,7 +14,7 @@ Server-facing values (`nuvio_tvos_preferences`, `syncSource: "nuvio"`) must not 
 - Verify yourself only for behaviour or focus bugs, or when asked — not
   while a design is still being iterated (focus is made proper after).
   Tool: `Tools/RemoteDriver/remote.sh "<keys>" [launch args]` presses real
-  Siri Remote keys on the sim (`up/down/left/right/select/menu`, `hold`,
+  Siri Remote keys on the sim (`up/down/left/right/select/menu`, `hold` (Select), `hold:<key>`,
   `wait:<s>`, `shot:<name>`, `focus`, `<key>*<n>`; ~20 s per run).
   Launched by the driver (launch args) the player never starts: for
   playback, `simctl launch` and drive without args.
@@ -586,7 +586,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   ratings top right), the card's bottom fade (`StageArt.cardShade`); the
   buttons in it bottom right where Home's dots are, their foot on the
   tagline's line, dark whatever the setting (`detailsButtonsY`; on the
-  page under a smaller card was tried); focus lands on Play when it
+  page under a smaller card was tried; in their place a cross of held
+  arrows, Select Play, held Up the trailer, Left Rate, Right Library,
+  with chevrons and names round Play, was tried 2026-11-17: it didn't
+  look as hoped, and holding every time would annoy); focus lands on Play when it
   opens (the engine's nearest by position was the seasons:
   `didUpdateFocus` sends an arrival from outside on to the buttons); the
   episodes peeking under the card; the season buttons the top bar's
@@ -887,6 +890,8 @@ made the gap breathe; Up/Down into moving-focus rows runs through
 - Home's animation curves as a whole (timings and springs: the scroll,
   focus growth, the billboard card's dip and growth; growing the card on
   the scroll's 0.6 s when the rows scroll was tried, back to focus's 0.3).
+- Held Up/Down scrolling faster past a moment's hold, Home and Details
+  (talked over 2026-11-17, not built).
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
