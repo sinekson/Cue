@@ -4377,7 +4377,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             // shows): at the end of the row's move (`boxMoveEnded`).
             if animated {
                 slidingUnder = (under, new)
-                under?.fadeIntoBox()
             } else {
                 under?.hiddenUnderBox = true
             }
@@ -4407,13 +4406,13 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// a sheet into a laser: one going in vanishes where it meets the box,
     /// one coming out appears where it leaves it, never seen under it (a
     /// whole poster fading slid visibly under the box). Only while the
-    /// move runs; the hole is the grown box, so the dip shows nothing.
+    /// move runs; the hole is the grown box, so the dip shows nothing (the
+    /// cut going in and out with the dip was better and worse at once).
     private var edgeMask: BoxEdgeMask?
     /// Past the strip's bounds all round: grown cards and their shadows.
     private static let edgeMaskMargin: CGFloat = 400
-    /// The soft edge outside the box (under the 40 pt gap less the box's
-    /// growth, so a resting poster beside it isn't touched).
-    private static let edgeFeather: CGFloat = 16
+    /// The cut's edge: a fine line, only smoothed (16 pt read as a fade).
+    private static let edgeFeather: CGFloat = 1
 
     /// Puts the mask on (held presses keep the one there: it's mid-move).
     private func cutAtBox(_ cv: UICollectionView) {
@@ -4579,7 +4578,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 }
 
 /// A large row's posters along Left/Right (`FixedFocusRowCell.cutAtBox`):
-/// opaque but for the box's span, a short soft edge either side.
+/// opaque but for the box's span, a fine smoothed edge either side.
 private final class BoxEdgeMask: UIView {
     override class var layerClass: AnyClass { CAGradientLayer.self }
 

@@ -465,13 +465,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   size and up again (0.35 s, the old and new as one), the next title dissolves in
   over it (the new over the old, 0.25 s), the posters sliding one step
   under it, never seen there: cut off at the grown box's edges while the
-  move runs, a 16 pt soft edge (`cutAtBox`, a sheet into a laser), the
-  one going in also fading out in 0.12 s from the press (Netflix's;
-  `fadeIntoBox`), the old title's poster coming out through the edge
-  at full light; the poster under the box centred in it, so both ways
-  alike (at its left, Right's were quicker) (tried: the posters going
-  in and out fading whole over the slide: one half-seen slid under the
-  box; the slide 0.5 s, Netflix's curve: worse); Up/Down: it
+  move runs, a sharp line (`cutAtBox`, a sheet into a laser; a 16 pt
+  soft edge read as a fade), at full light both ways; the poster under
+  the box centred in it, so both ways alike (at its left, Right's were
+  quicker) (tried: the posters going in and out fading whole over the
+  slide: one half-seen slid under the box; the one going in fading in
+  0.12 s from the press, Netflix's, and the one coming out fading in as
+  it emerged: nicer without; the slide 0.5 s, Netflix's curve: worse;
+  the box's new picture drifting 48 pt in from the push's side: looked
+  good, too much movement; the cut going in and out with the box's dip:
+  better and worse at once); Up/Down: it
   opens out of the focused poster (the backdrop there at once under
   the poster, the poster fading off it growing 3 %, shade and words
   over the first 0.25 s) and closes back into it. Every card in the row
