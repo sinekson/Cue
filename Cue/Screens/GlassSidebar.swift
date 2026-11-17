@@ -242,7 +242,7 @@ struct GlassSidebar: View {
 /// (shrinking as it faded, as the buttons', was before), the item 5 %
 /// larger — nothing travels along the bar. At rest
 /// the current tab keeps the season's flat grey pill (`FlatControl.selected`).
-private struct TopNavFocus: ViewModifier {
+struct TopNavFocus: ViewModifier {
     let lit: Bool
     let rest: Color
     var pill = false
@@ -259,8 +259,9 @@ private struct TopNavFocus: ViewModifier {
     /// Quicker than the buttons' (0.15 s in, 0.35 s out): focus runs along
     /// the bar, switching tabs as it goes.
     static let open: Animation = .spring(duration: 0.12, bounce: 0)
-    static let leave: Animation = .spring(duration: 0.28, bounce: 0)
-    static let leaveFade: Animation = .linear(duration: 0.28)
+    static let leaveTime = 0.28
+    static let leave: Animation = .spring(duration: leaveTime, bounce: 0)
+    static let leaveFade: Animation = .linear(duration: leaveTime)
 }
 
 /// One tab in the top navigation: its icon and name, the current one at

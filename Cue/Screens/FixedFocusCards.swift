@@ -939,9 +939,42 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private var outlineScale: CGFloat = 1
     private let name = UILabel()
     private let detail = UILabel()
-    /// A logo row's logo: fitted inside the picture's light plate.
+    /// A grid's portraits: the name and role on the card, at its foot over
+    /// the cards' bottom fade, as a tall card's words (under it, two lines
+    /// of portraits left the rows above and below no peek).
+    private let onCardShade = FixedFocusShade()
+    private let onCardText = UIView()
+    private let onCardName = UILabel()
+    private let onCardDetail = UILabel()
+    private var captionOnCard = false
+    /// Focused: the name and role in full, wrapping upward from the foot
+    /// (two lines each at most: a wrapped name left the role cut at
+    /// three); at rest a line each, a long one fading out
+    /// at its end (no "…"). Crossfaded (`onCardFade`) as the card grows.
+    private var onCardFull = false
+    private static let onCardFade = 0.25
+    private static let onCardLines = 2
+    /// A cut line's end fading into the card.
+    private static let fadeRun: CGFloat = 36
+    /// A logo row's logo: one colour, the page's ink, on the flat grey of
+    /// the page's controls (light plates glared in dark; the brands'
+    /// colours on them looked a jumble).
     private let logo = UIImageView()
     static let logoInset = CGSize(width: 34, height: 30)
+    /// Most of the logo's picture opaque: drawn on a box of its own.
+    private static func boxed(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage else { return false }
+        let side = 24
+        var alpha = [UInt8](repeating: 0, count: side * side)
+        guard let context = CGContext(data: &alpha, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue) else { return false }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return Double(alpha.filter { $0 > 200 }.count) / Double(alpha.count) > 0.7
+    }
+    /// `FlatControl.rest`, in UIKit.
+    private static let logoPlate = UIColor { $0.userInterfaceStyle == .light
+        ? UIColor.white.withAlphaComponent(0.32) : UIColor.white.withAlphaComponent(0.13) }
 
     /// The name and second line under the card (its row focused).
     func setCaptionShown(_ shown: Bool) {
@@ -1004,6 +1037,18 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         logo.contentMode = .scaleAspectFit
         logo.isHidden = true
         picture.addSubview(logo)
+        onCardShade.isHidden = true
+        picture.insertSubview(onCardShade, belowSubview: edge)
+        onCardText.isUserInteractionEnabled = false
+        picture.insertSubview(onCardText, belowSubview: edge)
+        onCardName.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
+        onCardName.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        onCardDetail.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
+        onCardDetail.textColor = UIColor.white.withAlphaComponent(FixedFocusText.body)
+        for label in [onCardName, onCardDetail] {
+            label.isHidden = true
+            onCardText.addSubview(label)
+        }
         outline.isUserInteractionEnabled = false
         outline.layer.borderColor = UIColor.white.cgColor
         outline.layer.cornerRadius = Spotlight.cornerRadius
@@ -1070,7 +1115,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         nameBar.isHidden = !isPlaceholder
         detailBar.isHidden = !isPlaceholder
         picture.isHidden = isPlaceholder
-        logo.frame = picture.bounds.insetBy(dx: Self.logoInset.width, dy: Self.logoInset.height)
+        // (Room round it in proportion: a wide logo stays a band across a
+        // square, never a block.)
+        let room = picture.bounds.size
+        logo.frame = picture.bounds.insetBy(dx: max(Self.logoInset.width, room.width * 0.16),
+                                            dy: max(Self.logoInset.height, room.height * 0.3))
+        if captionOnCard { layoutOnCard() }
         // (As on Continue Watching's fixed-focus cards.)
         state.frame = card
         CATransaction.begin()
@@ -1082,6 +1132,70 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         outline.layer.borderColor = FixedFocusRing.color.cgColor
         outlineLight.image = lit ? FixedFocusCardEdge.focusImage : nil
         outlineLight.frame = outline.bounds
+    }
+
+    /// The name and role on the card: from the foot up, the role's lines,
+    /// then the name's.
+    private func layoutOnCard() {
+        onCardShade.frame = picture.bounds
+        onCardText.frame = picture.bounds
+        let inset = FixedFocusMetrics.textIndent + 8
+        let width = picture.bounds.width - 2 * inset
+        let step = FixedFocusMetrics.captionLineOffset
+        let wrap = onCardName.font.lineHeight.rounded()
+        let hasDetail = !onCardDetail.isHidden
+        func lines(_ label: UILabel) -> Int {
+            let text = (label.text ?? "") as NSString
+            let height = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                           options: .usesLineFragmentOrigin,
+                                           attributes: [.font: label.font as Any], context: nil).height
+            return max(1, Int((height / label.font.lineHeight).rounded(.up)))
+        }
+        var nameLines = 1, detailLines = hasDetail ? 1 : 0
+        if onCardFull {
+            let name = lines(onCardName), detail = hasDetail ? lines(onCardDetail) : 0
+            detailLines = min(detail, Self.onCardLines)
+            nameLines = min(name, Self.onCardLines)
+        }
+        let foot = picture.bounds.height - 18
+        var top = foot - 30
+        if hasDetail {
+            top -= CGFloat(detailLines - 1) * wrap
+            onCardDetail.frame = CGRect(x: inset, y: top, width: width, height: 30 + CGFloat(detailLines - 1) * wrap)
+            top -= step
+        }
+        top -= CGFloat(nameLines - 1) * wrap
+        onCardName.frame = CGRect(x: inset, y: top, width: width, height: 30 + CGFloat(nameLines - 1) * wrap)
+        for (label, count) in [(onCardName, nameLines), (onCardDetail, detailLines)] {
+            label.numberOfLines = count
+            label.lineBreakMode = onCardFull ? .byTruncatingTail : .byClipping
+            // At rest, a line too long fades out at its end.
+            let cut = !onCardFull && lines(label) > 1
+            if cut {
+                let mask = (label.layer.mask as? CAGradientLayer) ?? CAGradientLayer()
+                mask.frame = label.bounds
+                mask.startPoint = CGPoint(x: 0, y: 0.5)
+                mask.endPoint = CGPoint(x: 1, y: 0.5)
+                mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+                mask.locations = [0, NSNumber(value: Double(1 - Self.fadeRun / max(width, 1))), 1]
+                label.layer.mask = mask
+            } else {
+                label.layer.mask = nil
+            }
+        }
+    }
+
+    /// Focus on and off: the text in full or a line each, crossfaded.
+    private func setOnCardFull(_ full: Bool, animated: Bool) {
+        guard captionOnCard, full != onCardFull else { return }
+        let change = {
+            self.onCardFull = full
+            self.layoutOnCard()
+        }
+        guard animated else { change(); return }
+        UIView.transition(with: onCardText, duration: Self.onCardFade,
+                          options: [.transitionCrossDissolve, .beginFromCurrentState, .allowUserInteraction],
+                          animations: change)
     }
 
     /// The card itself, without its caption (in the cell).
@@ -1125,8 +1239,16 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     func configure(_ item: MetaItem, subtitle: String?, index: Int, rowCell: FixedFocusRowCell?, card: CGSize,
                    progress: WatchProgress? = nil, cardState: FixedFocusCardState? = nil,
-                   art override: String? = nil, isLogo: Bool = false) {
+                   art override: String? = nil, isLogo: Bool = false, captionOnCard: Bool = false) {
         itemIndex = index
+        self.captionOnCard = captionOnCard
+        onCardName.text = item.name
+        onCardDetail.text = subtitle
+        for view in [onCardShade, onCardName] as [UIView] { view.isHidden = !captionOnCard }
+        onCardDetail.isHidden = !captionOnCard || subtitle?.isEmpty != false
+        name.isHidden = captionOnCard
+        detail.isHidden = captionOnCard
+        onCardFull = captionOnCard && isFocused
         self.rowCell = rowCell
         cardHeight = card.height
         isPlaceholder = FixedFocusPlaceholder.isPlaceholder(item)
@@ -1149,15 +1271,26 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         let key = "\(item.id)|\(art ?? "")|\(Int(card.width))|\(blurred)"
         guard key != shown else { return }
         shown = key
-        // A logo: on a light plate, fitted with room around it.
+        // A logo: on the page's grey, in its ink, fitted with room around it.
         logo.isHidden = !isLogo
+        // (The art dark in both appearances; a logo's plate is the page's.)
+        picture.overrideUserInterfaceStyle = isLogo ? .unspecified : .dark
         if isLogo {
             // (Drops a reused card's poster still on its way — it landed
             // over the logo's plate.)
             FixedFocusImages.load(nil, into: picture, maxDimension: 0)
             logo.image = nil
+            logo.tintColor = CueInk.ui(FixedFocusText.primary)
             FixedFocusImages.load(art, into: logo, maxDimension: PictureSize.landscape,
-                                  waiting: { [weak self] in self?.pictureWaiting($0, plate: true) })
+                                  waiting: { [weak self] waiting in
+                guard let self else { return }
+                // (A logo drawn on a box of its own keeps its colours: in
+                // one colour it went a solid bar.)
+                if !waiting, let image = self.logo.image, !Self.boxed(image) {
+                    self.logo.image = image.withRenderingMode(.alwaysTemplate)
+                }
+                self.pictureWaiting(waiting, plate: true)
+            })
             return
         }
         guard let art else {
@@ -1206,7 +1339,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private func pictureWaiting(_ waiting: Bool, plate: Bool) {
         loadingCard.follow(waiting: waiting)
         edge.isHidden = waiting
-        picture.backgroundColor = plate && !waiting ? UIColor(white: 0.9, alpha: 1) : nil
+        picture.backgroundColor = plate && !waiting ? Self.logoPlate : nil
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
@@ -1221,6 +1354,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             self.applyFocus(focused)
             self.layoutIfNeeded()
         } completion: { _ in }
+        // (Its own timing: outside the move's spring.)
+        setOnCardFull(focused, animated: true)
     }
 
     /// Select pressed / held: the card sinks a little (back on release, or
@@ -1912,6 +2047,7 @@ final class FixedFocusBadges: UIView {
         case .limited: return Symbol("square.stack.fill", .grey)
         case .top10: return Symbol("chart.line.uptrend.xyaxis", .accent)
         case .taste: return Symbol("heart.fill", .red)
+        case .here: return Symbol("mappin.and.ellipse", .grey)
         }
     }
 

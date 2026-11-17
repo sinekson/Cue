@@ -1897,6 +1897,17 @@ enum TMDBService {
     }
 
     /// The parts of a TMDB collection as MetaItems (for the "belongs to" row).
+    /// A collection's parts' text-free pictures (`cardScene`), by the
+    /// ids `collectionItems` gives them.
+    static func collectionScenes(id: Int, language: String = preferredLanguage) async -> [String: String] {
+        guard let raw = try? await resolveCollection(id: id, language: language) else { return [:] }
+        let pairs = await boundedConcurrentMap(raw, limit: 4) { item -> [String] in
+            let id = await imdbID(tmdbID: item.tmdbID, isMovie: true) ?? "tmdb:\(item.tmdbID)"
+            return await cardScene(tmdbID: item.tmdbID, isMovie: true).map { [id, $0] } ?? []
+        }
+        return Dictionary(pairs.filter { $0.count == 2 }.map { ($0[0], $0[1]) }, uniquingKeysWith: { a, _ in a })
+    }
+
     static func collectionItems(id: Int, language: String = preferredLanguage) async -> [MetaItem] {
         guard let raw = try? await resolveCollection(id: id, language: language) else { return [] }
         return await mapToMetaItems(raw)

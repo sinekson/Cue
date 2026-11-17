@@ -26,6 +26,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var destinationRowIDs: Set<String> = []
     /// Of them, ranked (Top 10: each card's place beside it).
     var rankedRowIDs: Set<String> = []
+    /// Of them, grids of their own cards (Details' people and studios):
+    /// lines of them, all in view, as Top 10's, no place numbers.
+    var gridRowIDs: Set<String> = []
     /// Of them, showcases (New & Notable: tall cards, the trailer in the
     /// focused one), and whether its trailers play, with sound.
     var showcaseRowIDs: Set<String> = []
@@ -227,6 +230,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.landscapeRowIDs = landscapeRowIDs
         controller.panelRowIDs = panelRowIDs
         controller.rankedRowIDs = rankedRowIDs
+        controller.gridRowIDs = gridRowIDs
         controller.showcaseRowIDs = showcaseRowIDs
         controller.showcaseTrailers = showcaseTrailers
         controller.spotlightRowIDs = spotlightRowIDs
@@ -548,6 +552,35 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func isRanked(_ rowIndex: Int) -> Bool {
         rows.indices.contains(rowIndex) && rankedRowIDs.contains(rows[rowIndex].id)
     }
+    /// Grids of their own cards (see `FixedFocusRows.gridRowIDs`).
+    var gridRowIDs: Set<String> = []
+    /// Laid out as a grid, all in view: Top 10's, or one of `gridRowIDs`.
+    func isGrid(_ rowIndex: Int) -> Bool {
+        isRanked(rowIndex) || (rows.indices.contains(rowIndex) && gridRowIDs.contains(rows[rowIndex].id))
+    }
+    /// A grid's line, its card and caption room.
+    func gridLine(_ rowIndex: Int) -> CGFloat {
+        destinationCard(rowIndex).height
+            + (isRanked(rowIndex) || !hasCaptions(rowIndex) ? 0 : FixedFocusMetrics.captionRoom)
+    }
+    /// A grid's lines in view: two; more move a line at a time.
+    static let gridLinesShown = 2
+    /// The first of a grid's lines in view: the focused line and the one
+    /// before it (the first two at its start), the rest peeking as rows.
+    func gridStart(_ rowIndex: Int) -> Int {
+        guard isGrid(rowIndex), rows.indices.contains(rowIndex) else { return 0 }
+        let columns = gridColumns(rowIndex)
+        let lines = (rows[rowIndex].items.count + columns - 1) / columns
+        guard lines > Self.gridLinesShown else { return 0 }
+        let line = (selected[rows[rowIndex].id] ?? 0) / columns
+        return min(max(0, line - 1), lines - Self.gridLinesShown)
+    }
+    /// Each grid's first line in view as last laid out.
+    private var shownGridStart: [String: Int] = [:]
+    /// A grid's cards across: portraits seven (as their rows), else five.
+    func gridColumns(_ rowIndex: Int) -> Int {
+        rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id) ? 7 : 5
+    }
 
     /// Showcase rows (New & Notable): tall cards with everything on them,
     /// no caption; the focused card's trailer after a rest (`showcaseTrailer`).
@@ -565,7 +598,18 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard centred, rows.indices.contains(r), !isFeatured(r) else { return nil }
         // (A Top 10's grid: with its name, so the rows above and below
         // both keep a peek.)
-        let whole = isPanel(r) || isRanked(r)
+        let whole = isPanel(r) || isGrid(r)
+        // A grid of more lines than shown: the two in view in the middle,
+        // with its name while they're its first.
+        let columns = gridColumns(r)
+        if isGrid(r), (rows[r].items.count + columns - 1) / columns > Self.gridLinesShown {
+            let start = gridStart(r), line = gridLine(r), gap = FixedFocusMetrics.gap
+            let name = FixedFocusMetrics.titleHeight + titleExtra(r)
+            let shown = CGFloat(Self.gridLinesShown) * line + CGFloat(Self.gridLinesShown - 1) * gap
+            let content = (start == 0 ? name : 0) + shown
+            let top = start == 0 ? 0 : name + CGFloat(start) * (line + gap)
+            return ((1080 - content) / 2).rounded() - top - rowTop
+        }
         let above = whole ? 0 : FixedFocusMetrics.titleHeight + titleExtra(r)
         // (A poster row's strip with its cards; the cards alone, not
         // their captions.)
@@ -614,7 +658,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     func isFeature(_ rowIndex: Int) -> Bool {
         featureRows && isDestination(rowIndex) && !isFeatured(rowIndex) && !isBanner(rowIndex)
-            && !isShowcase(rowIndex) && !isRanked(rowIndex) && !isContinue(rowIndex)
+            && !isShowcase(rowIndex) && !isGrid(rowIndex) && !isContinue(rowIndex)
             && custom(rowIndex) == nil && !isLandscape(rowIndex) && !isLogo(rowIndex)
             && !(rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id))
             // Saved for Later: plain posters, moving focus.
@@ -655,7 +699,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if isSpotlight(rowIndex) { return FixedFocusMetrics.spotlightCard }
         if isShowcase(rowIndex) { return FixedFocusMetrics.showcaseCard }
         if isFeature(rowIndex) { return FixedFocusMetrics.featureCard }
-        if isLogo(rowIndex) { return FixedFocusMetrics.logoCard }
+        // (A grid of logos: Top 10's squares.)
+        if isLogo(rowIndex) { return isGrid(rowIndex) ? FixedFocusMetrics.rankedCard : FixedFocusMetrics.logoCard }
         // Continue Watching (moving focus): its cards at their own size —
         // the fixed box's.
         if isContinue(rowIndex) {
@@ -680,8 +725,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// landscape rows (Continue Watching, New Episodes: the show over the
     /// episode's title) and Saved for Later (when it was added) have them.
     func hasCaptions(_ rowIndex: Int) -> Bool {
-        captions || isLandscape(rowIndex)
-            || (rows.indices.contains(rowIndex) && rows[rowIndex].id == HomeView.libraryRowID)
+        !captionsOnCards(rowIndex) && (captions || isLandscape(rowIndex)
+            || (rows.indices.contains(rowIndex) && rows[rowIndex].id == HomeView.libraryRowID))
+    }
+    /// A grid of portraits: names on the cards, not under them.
+    func captionsOnCards(_ rowIndex: Int) -> Bool {
+        isGrid(rowIndex) && !isRanked(rowIndex)
+            && rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id)
     }
     /// The room under a row's cards for their captions (in `cardHeight`).
     /// (Not a collection's: its panel is its edge — placed by that.)
@@ -699,6 +749,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             : isFeature(rowIndex) ? FixedFocusMetrics.featureCard.height
             : isRanked(rowIndex) ? FixedFocusGridLayout.height(card: FixedFocusMetrics.rankedCard.height,
                                                                count: rows[rowIndex].items.count)
+            : isGrid(rowIndex) ? FixedFocusGridLayout.height(card: gridLine(rowIndex),
+                                                             count: rows[rowIndex].items.count,
+                                                             columns: gridColumns(rowIndex))
             : isDestination(rowIndex) ? destinationCard(rowIndex).height + caption
             : FixedFocusMetrics.height
     }
@@ -1170,6 +1223,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let id = self.beginMove()
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
+                self.dimGridLines()
                 oldRowCell?.relayout()
                 rowCell.focus(index: itemIndex)
                 // The row list doesn't scroll: its layout places every row
@@ -1398,7 +1452,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let rowChanged = rowIndex != focusedRow || !hasFocus
         let fromBillboard = rowChanged && hasFocus && isFeatured(focusedRow)
         hasFocus = true
-        guard rowChanged else { return }
+        // (Along a grid onto a line out of view: the page moves a line.)
+        let gridID = rows.indices.contains(rowIndex) ? rows[rowIndex].id : ""
+        let gridMoved = isGrid(rowIndex) && shownGridStart[gridID] != gridStart(rowIndex)
+        shownGridStart[gridID] = gridStart(rowIndex)
+        guard rowChanged || gridMoved else { return }
         let oldRowCell = outer.cellForItem(at: IndexPath(item: focusedRow, section: 0)) as? FixedFocusRowCell
         if fromBillboard, rigidRest == nil { sendRowsBelowAway() }
         focusedRow = rowIndex
@@ -1421,6 +1479,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if fromBillboard { self.liftNextTitle(down: true) }
         }
         move()
+    }
+
+    /// The focused grid's lines out of view peek as rows do (`peekAlpha`);
+    /// a grid out of focus whole (its row dims).
+    func dimGridLines() {
+        for case let cell as FixedFocusRowCell in outer.visibleCells { cell.dimGridLines() }
+    }
+    /// A grid's card's level: dimmed on a line out of view while the row
+    /// has focus.
+    func gridAlpha(_ rowIndex: Int, item: Int) -> CGFloat {
+        guard isGrid(rowIndex), rowIndex == focusedRow, hasFocus else { return 1 }
+        let line = item / gridColumns(rowIndex), start = gridStart(rowIndex)
+        return line >= start && line < start + Self.gridLinesShown ? 1 : FixedFocusMetrics.peekAlpha
     }
 
     /// The title you rest on, its records brought up to date. (The ones
@@ -2679,15 +2750,15 @@ struct FixedFocusRowHeader: Equatable {
     var selected: Int
 }
 
-/// A header's button: Details' button look (glass at rest, the bright
-/// highlight focused, a touch larger) — moving focus along the header.
-/// Select: down into the row.
+/// A header's button (Details' seasons): the top bar's tab, its look,
+/// focus and timing (`TopNavFocus`) — moving focus along the header
+/// switches season, as along the bar. Select: down into the row.
 final class FixedFocusHeaderButton: UIView {
     weak var rowCell: FixedFocusRowCell?
     let label: String
     let index: Int
-    static let height: CGFloat = 64
-    static let spacing: CGFloat = 16
+    static let height = GlassSidebar.topBarItemHeight
+    static let spacing = GlassSidebar.itemSpacing
     /// Between the buttons and the cards.
     static let gapBelow: CGFloat = 36
 
@@ -2724,19 +2795,20 @@ final class FixedFocusHeaderButton: UIView {
 
     private func render(released: Bool = false) {
         host.rootView = FixedFocusSeasonFace(label: label, lit: lit, selected: selected)
-        let scale = lit && !pressed ? DetailActionButton.focusScale : 1
-        // The action buttons' timing: a press quick in, back on a spring;
-        // focus in quick, out slower.
-        let duration = pressed ? DetailActionButton.pressInTime : released ? 0.3 : lit ? 0.15 : 0.35
+        // Focus's growth and timing are the face's (`TopNavFocus`); a
+        // press takes it back to its resting size, quick in, on a spring out.
+        let scale = pressed ? 1 / DetailActionButton.focusScale : 1
         if pressed {
-            UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            UIView.animate(withDuration: DetailActionButton.pressInTime, delay: 0,
+                           options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
                 self.transform = CGAffineTransform(scaleX: scale, y: scale)
             }
             return
         }
-        UIView.animate(withDuration: duration, delay: 0, usingSpringWithDamping: 1,
+        guard transform != .identity else { return }
+        UIView.animate(withDuration: released ? 0.3 : TopNavFocus.leaveTime, delay: 0, usingSpringWithDamping: 1,
                        initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-            self.transform = CGAffineTransform(scaleX: scale, y: scale)
+            self.transform = .identity
         }
     }
 
@@ -2786,9 +2858,9 @@ final class FixedFocusHeaderButton: UIView {
     }
 }
 
-/// A season button's face (see `FixedFocusHeaderButton`): the action
-/// buttons' (`ActionFace`) — the row's season in the text's colour, the
-/// others quieter.
+/// A season button's face (see `FixedFocusHeaderButton`): a top bar
+/// tab's (`TopNavFocus`) — the row's season at primary on the flat grey
+/// pill, the others at secondary, page ink.
 struct FixedFocusSeasonFace: View {
     let label: String
     let lit: Bool
@@ -2796,15 +2868,15 @@ struct FixedFocusSeasonFace: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: DetailActionButton.textSize, weight: .semibold))
+            .font(.system(size: GlassSidebar.textSize, weight: .medium))
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, DetailActionButton.textPadding)
+            .padding(.horizontal, GlassSidebar.slotPadding)
             .frame(height: FixedFocusHeaderButton.height)
-            // The row's season on the light grey (the current one of a
-            // set), the others plain.
-            .modifier(ActionFace(lit: lit, rest: selected ? DetailActionButton.restContent : FlatControl.contentMuted,
-                                 pill: selected, current: true))
+            .modifier(TopNavFocus(lit: lit,
+                                  rest: CueInk.color(selected ? FixedFocusText.primary : FixedFocusText.secondary),
+                                  pill: selected))
+            .animation(.easeOut(duration: 0.18), value: selected)
     }
 }
 
@@ -3849,10 +3921,12 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         destinationStrip?.isHidden = !isDestination
         if let cv = destinationStrip {
             // A Top 10: all ten at once, two lines of five (no scrolling).
-            let ranked = controller.isRanked(rowIndex)
+            let ranked = controller.isGrid(rowIndex)
             if ranked {
-                gridLayout.cell = FixedFocusMetrics.rankedCard
-                gridLayout.lineHeight = FixedFocusMetrics.rankedCard.height
+                let card = controller.destinationCard(rowIndex)
+                gridLayout.cell = card
+                gridLayout.columns = controller.gridColumns(rowIndex)
+                gridLayout.lineHeight = controller.gridLine(rowIndex)
             }
             let feature = controller.isFeature(rowIndex)
             if feature {
@@ -4024,8 +4098,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                                cardState: controller.isLandscape(rowIndex) && !controller.isContinue(rowIndex)
                                    ? controller.cardStates[item.id] : nil,
                                art: row.art[item.id],
-                               isLogo: controller.isLogo(rowIndex))
+                               isLogo: controller.isLogo(rowIndex),
+                               captionOnCard: controller.captionsOnCards(rowIndex))
                 cell.setCaptionShown(captionsShown)
+                cell.alpha = controller.gridAlpha(rowIndex, item: indexPath.item)
             }
             return cell
         }
@@ -4035,6 +4111,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 
     private var billboardCardsOff: Bool { isFeatured && controller?.billboardFocusOutside == true }
+
+    /// A grid's lines out of view dimmed (`gridAlpha`).
+    func dimGridLines() {
+        guard let cv = destinationStrip, let controller, controller.isGrid(rowIndex) else { return }
+        for cell in cv.visibleCells {
+            guard let index = cv.indexPath(for: cell)?.item else { continue }
+            cell.alpha = controller.gridAlpha(rowIndex, item: index)
+        }
+    }
 
     func collectionView(_ cv: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool {
         if cv === strip && billboardCardsOff { return false }
@@ -4411,7 +4496,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let gap = FixedFocusMetrics.gap
         let pitch = card + gap
         // A Top 10's grid shows all its cards: never moves.
-        if controller?.isRanked(rowIndex) == true { return 0 }
+        if controller?.isGrid(rowIndex) == true { return 0 }
         // A large landscape row: the focused card large at the spot.
         if controller?.isFeature(rowIndex) == true { return featureLayout.offset(for: index) }
         // Focus stays in place (`FixedFocusRows.anchoredRowIDs`): the
@@ -4497,13 +4582,13 @@ final class FixedFocusFeatureLayout: UICollectionViewLayout {
 /// A Top 10's cards: two lines of five, all on screen, in rank order
 /// (1–5 above, 6–10 below), the rows' gap between cards and lines alike.
 final class FixedFocusGridLayout: UICollectionViewLayout {
-    static let columns = 5
     /// The grid's height for `count` cards, each line `card` tall (its
     /// caption room in).
-    static func height(card: CGFloat, count: Int) -> CGFloat {
+    static func height(card: CGFloat, count: Int, columns: Int = 5) -> CGFloat {
         let lines = CGFloat(max(1, (count + columns - 1) / columns))
         return lines * card + (lines - 1) * FixedFocusMetrics.gap
     }
+    var columns = 5
     var left: CGFloat = 0
     var cell: CGSize = .zero
     /// A line's height: the card and its caption room.
@@ -4515,7 +4600,7 @@ final class FixedFocusGridLayout: UICollectionViewLayout {
         let count = collectionView?.numberOfItems(inSection: 0) ?? 0
         let gap = FixedFocusMetrics.gap
         frames = (0..<count).map { i in
-            let column = CGFloat(i % Self.columns), line = CGFloat(i / Self.columns)
+            let column = CGFloat(i % columns), line = CGFloat(i / columns)
             return CGRect(x: left + column * (cell.width + gap), y: line * (lineHeight + gap),
                           width: cell.width, height: lineHeight)
         }

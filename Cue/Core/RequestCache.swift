@@ -250,6 +250,8 @@ actor SourceListCache {
 struct CardBadge: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case news, returns, finale, person, gem, acclaimed, limited, top10, taste
+        /// Details' collection: the film you're on.
+        case here
     }
     let kind: Kind
     let text: String

@@ -70,14 +70,18 @@ struct DetailAbout: View {
         }
     }
 
-    /// About's band: black at half.
+    /// About's band: black at half; light, white over the page (tvOS's
+    /// light rows are lighter than the grey, not darker).
     static let bandOpacity = 0.5
+    static let bandLight = 0.4
     /// How far above About's name the band starts (its name: above this
     /// view — see `FixedFocusRows.customRows`).
     static var bandRise: CGFloat { FixedFocusMetrics.titleHeight + 36 }
 
     private var band: some View {
-        Color.black.opacity(Self.bandOpacity)
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .light
+            ? UIColor.white.withAlphaComponent(Self.bandLight)
+            : UIColor.black.withAlphaComponent(Self.bandOpacity) })
         // (The whole screen's width, from the screen's left edge; past the
         // screen's bottom.)
         .frame(width: 1920, height: 1400)

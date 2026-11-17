@@ -373,8 +373,7 @@ final class DetailViewModel: ObservableObject {
             if !self.detailApplied {
                 await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
             } else if let collection = self.collection, self.collectionParts.isEmpty, tmdb.useCollections {
-                let parts = await TMDBService.collectionItems(id: collection.id)
-                    .filter { $0.id != self.meta.id }.deduplicatedByID()
+                let parts = await TMDBService.collectionItems(id: collection.id).deduplicatedByID()
                 if !parts.isEmpty { self.collectionParts = parts }
             }
             // A failed load never replaces ratings handed over from the
@@ -402,9 +401,8 @@ final class DetailViewModel: ObservableObject {
         enrichmentPending = false
         applyNow(detail: detail, tmdb: tmdb)
         if tmdb.useCollections, let collection {
-            // (The film itself left out: the row is the rest of its series.)
+            // (The film itself in it, marked: where it sits in its series.)
             collectionParts = await TMDBService.collectionItems(id: collection.id)
-                .filter { $0.id != meta.id }
                 .deduplicatedByID()
         }
     }
@@ -610,9 +608,10 @@ struct DetailView: View {
         self.onSelectKeyword = onSelectKeyword
     }
 
-    /// Over its picture: dark in both appearances (`CueInk`).
+    /// The page's ink (`CueInk`): light or dark as tvOS is; what's on the
+    /// card's picture (its text, the buttons) and the About panel dark.
     var body: some View {
-        page.environment(\.colorScheme, .dark)
+        page
     }
 
     @ViewBuilder private var page: some View {
@@ -633,6 +632,7 @@ struct DetailView: View {
                     returningTo = .info
                     actionFocus = .info
                 }
+                .environment(\.colorScheme, .dark)
                 .transition(.opacity)
             }
 
@@ -770,7 +770,20 @@ struct DetailView: View {
                            // moving focus too — posters / portraits, a
                            // caption under each.
                            destinationRowIDs: seasonIDs.union([Self.collectionRowID, Self.moreRowID,
-                                                               Self.castRowID, Self.studiosRowID]),
+                                                               Self.moreFromRowID, Self.castRowID,
+                                                               Self.studiosRowID]),
+                           // People and studios: grids, all in view.
+                           gridRowIDs: [Self.castRowID, Self.studiosRowID],
+                           // The collection: tall cards, the trailer in the
+                           // focused one after the rest.
+                           showcaseRowIDs: [Self.collectionRowID],
+                           showcaseTrailers: (layout.heroTrailersEnabled, layout.heroTrailerSound),
+                           // More Like This, More from …: Home's large rows.
+                           featureRows: true,
+                           // As Home: the focused row's cards in the screen's
+                           // middle, the rows round it and the card above
+                           // the episodes peeking `centredGap` away.
+                           centred: true,
                            // Cast & Crew: smaller portraits — many people.
                            portraitRowIDs: [Self.castRowID],
                            onSelect: onSelectItem,
@@ -867,6 +880,8 @@ struct DetailView: View {
                 // first (with the core load), the rest together in ONE change.
                 await viewModel.loadSeasons(viewModel.meta.seasons)
             }
+            .task(id: viewModel.crew.map(\.id)) { await loadMoreFrom() }
+            .task(id: viewModel.collectionParts.map(\.id)) { await prepareCollection() }
             // The row waits on the episode Play shows: Down lands there.
             .onChange(of: aimKey, initial: true) { _, _ in
                 guard focusedRowEpisode == nil, let target = seriesPlayTarget else { return }
@@ -878,6 +893,49 @@ struct DetailView: View {
 
     /// The episode in focus in the row (nil: none yet).
     @State private var focusedRowEpisode: String?
+    /// The collection's cards' pictures: text-free, as Top 10's
+    /// (`TMDBService.cardScene`), by title.
+    @State private var collectionArt: [String: String] = [:]
+    /// More from … (`moreFromRow`): whose, and their titles.
+    @State private var moreFrom: (name: String, items: [MetaItem])?
+
+    /// The director (a show: the creator) with the most other work that
+    /// counts — real roles (`cuePersonTitles`), 2,000 votes, no shorts —
+    /// four titles at least; nil: none.
+    private func loadMoreFrom() async {
+        let isMovie = !viewModel.meta.isSeries
+        let job = isMovie ? "Director" : "Creator"
+        let people = viewModel.crew.filter { $0.character?.contains(job) == true }.prefix(2)
+        var best: (name: String, items: [MetaItem])?
+        for person in people {
+            let titles = await TMDBService.cuePersonTitles(personID: person.id)
+                .filter { title in
+                    title.item.id != viewModel.meta.id && title.traits.votes >= Self.moreFromVotes
+                        && !(title.isMovie && (title.traits.runtime ?? 90) < 40)
+                }
+                .map(\.item)
+            if titles.count >= Self.moreFromLeast, titles.count > (best?.items.count ?? 0) {
+                best = (person.name, Array(titles.prefix(25)))
+            }
+        }
+        guard !Task.isCancelled else { return }
+        moreFrom = best
+    }
+    private static let moreFromVotes = 2_000
+    private static let moreFromLeast = 4
+
+    /// The collection: its cards' pictures, and focus waiting on the part
+    /// after this one (else the first).
+    private func prepareCollection() async {
+        let parts = viewModel.collectionParts
+        guard let collection = viewModel.collection, !parts.isEmpty else { return }
+        let here = parts.firstIndex { $0.id == viewModel.meta.id }
+        let next = here.map { $0 + 1 < parts.count ? $0 + 1 : 0 } ?? 0
+        rowCommand = FixedFocusRowsCommand(action: .aim(rowID: Self.collectionRowID, index: next))
+        let art = await TMDBService.collectionScenes(id: collection.id)
+        guard !Task.isCancelled else { return }
+        collectionArt = art
+    }
     /// The episode the row is aimed at (Play's; a season's from the pill).
     @State private var aimedRowEpisode: String?
     @State private var rowCommand: FixedFocusRowsCommand?
@@ -919,6 +977,7 @@ struct DetailView: View {
     private static let episodesRowID = seasonRowPrefix + "all"
     private static let collectionRowID = "detail.collection"
     private static let moreRowID = "detail.more"
+    private static let moreFromRowID = "detail.morefrom"
     private static let castRowID = "detail.cast"
     private static let aboutRowID = "detail.about"
     /// About's room: from under its name at the rows' spot to the screen's
@@ -932,7 +991,9 @@ struct DetailView: View {
     }
     private static let personPrefix = "person:"
     /// About this many people in Cast & Crew.
-    private static let castCount = 20
+    /// Three lines of seven in the grid (two in view; 28 meant more
+    /// presses for people rarely looked for).
+    private static let castCount = 21
     /// Under the billboard: how much of the episodes' cards peeks up.
     private static let episodesPeek: CGFloat = 60
 
@@ -1038,7 +1099,9 @@ struct DetailView: View {
         .environmentObject(progressStore).environmentObject(library)
         .environmentObject(watched).environmentObject(mdblist)
         .environmentObject(tmdbSettings).environmentObject(layout)
-        .environmentObject(playerSettings).environmentObject(profiles))
+        .environmentObject(playerSettings).environmentObject(profiles)
+        // On the picture: dark, whatever the setting.
+        .environment(\.colorScheme, .dark))
     }
 
     /// The rows: the billboard, a row per season, More Like This, the collection.
@@ -1050,14 +1113,20 @@ struct DetailView: View {
             rows.append(HomeRow(id: Self.episodesRowID, title: "Episodes",
                                 items: data.rowItems, subtitles: data.subtitles))
         }
-        // A film's series first — its next part is the likeliest next watch.
-        if let collection = viewModel.collection, !viewModel.collectionParts.isEmpty {
-            rows.append(HomeRow(id: Self.collectionRowID, title: collection.name,
-                                items: viewModel.collectionParts))
+        // A film's series first — its next part is the likeliest next watch:
+        // tall cards in release order, the film itself in it, marked.
+        if let collection = viewModel.collection,
+           viewModel.collectionParts.contains(where: { $0.id != viewModel.meta.id }) {
+            var row = HomeRow(id: Self.collectionRowID, title: collection.name, items: viewModel.collectionParts)
+            row.badges = [viewModel.meta.id: CardBadge(kind: .here, text: "You're here")]
+            row.art = collectionArt
+            rows.append(row)
         }
-        if !viewModel.moreLikeThis.isEmpty {
+        // (The collection's films are its row's, not these.)
+        let inCollection = Set(rows.contains { $0.id == Self.collectionRowID }
+            ? viewModel.collectionParts.map(\.id) : [])
+        if case let more = viewModel.moreLikeThis.filter({ !inCollection.contains($0.id) }), !more.isEmpty {
             // (Films you've seen last — TMDB's order otherwise.)
-            let more = viewModel.moreLikeThis
             let seen = more.filter { watched.isWatched($0) }
             rows.append(HomeRow(id: Self.moreRowID, title: "More Like This",
                                 items: more.filter { !watched.isWatched($0) } + seen))
@@ -1072,6 +1141,14 @@ struct DetailView: View {
                 subtitles: Dictionary(people.compactMap { person in
                     person.character.flatMap { $0.isEmpty ? nil : ("\(Self.personPrefix)\(person.id)", $0) }
                 }, uniquingKeysWith: { a, _ in a })))
+        }
+        // The director's (a show: the creator's) other work: after the
+        // people, where they're seen.
+        if let moreFrom, case let items = moreFrom.items.filter({ !inCollection.contains($0.id) }),
+           items.count >= Self.moreFromLeast {
+            let seen = items.filter { watched.isWatched($0) }
+            rows.append(HomeRow(id: Self.moreFromRowID, title: "More from \(moreFrom.name)",
+                                items: items.filter { !watched.isWatched($0) } + seen))
         }
         // The network and studios, by their logos — before About.
         let companies = viewModel.companies
@@ -2013,7 +2090,7 @@ final class DetailPreparer {
             }
             if tmdb.useCollections, let collection = prepared.detail?.collection {
                 prepared.collectionParts = await TMDBService.collectionItems(id: collection.id)
-                    .filter { $0.id != meta.id }.deduplicatedByID()
+                    .deduplicatedByID()
             }
             prepared.dataDone = true
             DetailOpenProbe.note(String(format: "prepared (%.0f ms after start)", (CACurrentMediaTime() - self.startedAt) * 1000))

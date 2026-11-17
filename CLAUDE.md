@@ -87,9 +87,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   light, black at tvOS's text grey (primary 58 %, then 52, 46, 40; the
   controls' words to full black; 85 % read near-black, tvOS's 38 % title
   grey too light). Dark always, whatever the setting: everything on a
-  picture (the billboard card's text and dots, Details, the stage, player,
-  trailers, cards' contents, menus and panels, glass). The top bar and
-  the next row's name are on the page now (the billboard a card): page
+  picture (the billboard card's text and dots, Details' card (its text
+  and buttons) and About panel, the stage, player,
+  trailers, cards' contents, menus and panels, glass). The top bar,
+  the next row's name and Details' page (rows, captions, seasons) are on
+  the page now (the billboard and Details' picture cards): page
   ink (the full-screen billboard's switching inks, `onPicture` and
   `flipName`, are gone). Never `.white` for page text.
   (Keeping Cue dark-only, as Apple's TV app, was talked over: tvOS's
@@ -487,10 +489,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the facts and a 4-line description under the box.) Details' rows,
   Search and grids keep name and second line, 24 pt. The focused row's
   cards centred on the screen (captions not counted), Apple TV's (`FixedFocusRows.centred`, Home
-  only; centring name and cards together sat the cards 31 pt low), the
+  and Details; centring name and cards together sat the cards 31 pt low), the
   rows above and below the same 64 pt gap from it (`centredGap`; 56, the
   other pages' `peekGap`, was tight, 72 a little much), so both peek alike (~200 pt by a fixed row); the row under the billboard too, the billboard
-  peeking above it the same gap away (~265 pt). Row names 34 pt
+  peeking above it the same gap away (~265 pt; Details' card above the
+  episodes less, their season buttons and map above the cards). Row names 34 pt
   semibold, a little low in their line, near their cards.
 - **Billboard** (Details shares it): the cards' badges in their words
   and symbols, no plates (the text is on the shade; outlined chips read as
@@ -566,7 +569,34 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   page under a smaller card was tried); focus lands on Play when it
   opens (the engine's nearest by position was the seasons:
   `didUpdateFocus` sends an arrival from outside on to the buttons); the
-  episodes peeking under the card; the page the title's colours as
+  episodes peeking under the card; the season buttons the top bar's
+  tabs, their look, focus and timing (`TopNavFocus`: 25 pt medium,
+  46 pt pills, the current on the flat grey, focused the white
+  capsule), switching on focus as the bar, Up from the cards on the
+  current one; more than fit scroll along with focus. Its rows, by what
+  each is for (2026-11-17): a film's Collection as tall cards
+  (`showcaseRowIDs`: TMDB's text-free pictures, `collectionScenes`) in
+  release order, the film itself in it with "You're here" (a grey pin,
+  `CardBadge.here`), focus waiting on the next part (two posters with
+  captions, the film left out, read empty; landscape is the episodes'
+  look, a grid of 2–4 looks lost); More Like This and More from … (the
+  director's, a show's creator's, the one with more: `cuePersonTitles`,
+  2,000 votes, no shorts, 4 at least; after Cast & Crew) Home's large rows; the
+  collection's films in neither; Cast & Crew a grid of the portraits
+  (`gridRowIDs`: lines of seven, 21 people (28 meant presses for people
+  rarely looked for); the name and role on the card over the cards'
+  bottom fade (under it, two lines left no peeks), a line each at rest,
+  a long one fading out at its end (no "…"), in full when focused,
+  two lines each at most, wrapping upward from the foot, crossfaded
+  (0.25 s) as the card grows (running text is rejected for cards; six
+  across left ~38 pt peeks); two lines in view,
+  a third coming in a line at a time, the focused line and the one
+  before it centred, the rest peeking as rows and dimmed as them
+  (`gridStart`); square cut off the shoulders, circles disliked); Network & Studios a grid of
+  Top 10's squares, the logo in the page's ink on its flat grey, a logo
+  on a box of its own in its colours (light plates with the brands'
+  colours looked weak); About's band white over the page in light. The
+  page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
   bands from its picture, stronger — dimmed 40 %, ceiling 0.34; light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
@@ -815,11 +845,8 @@ made the gap breathe; Up/Down into moving-focus rows runs through
 
 ## Open / later
 
-- Details below the episodes, agreed order: Trailers & Extras (TMDB videos,
-  no image galleries — parked until the playback work), More Like This,
-  Collection (films; built — above More Like This), Cast & Crew (built),
-  About (built).
-  Styles decided one row at a time.
+- Details' Trailers & Extras (TMDB videos, no image galleries — parked
+  until the playback work): after More Like This, before Cast & Crew.
 - Presses mid-animation (the rule under Design rules): rows, pages,
   Settings' sidebar done; the rest as glitches are found. Flat vs glass
   consistency pass.
