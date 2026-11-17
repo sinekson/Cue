@@ -248,8 +248,6 @@ final class ModeSwap: ObservableObject {
     var billboardFacts: TMDBService.TitleFacts?
     /// The meta line's series size as the billboard showed it.
     var billboardSeriesSize: String?
-    /// The background's colours under the billboard — Details starts on them.
-    var billboardTint: (first: Color?, second: Color?) = (nil, nil)
 
     /// From Select on the billboard or a card until Details is up: Home
     /// holds still (no focus moves), and a Select, Back or Down pressed

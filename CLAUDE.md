@@ -501,7 +501,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   a pick from a row says the row's own reason for it where Cue's rows
   have one (who's in it, your taste, what's new: "With Bryan Cranston"),
   else the row's name; never a fact badge (the line under the logo says
-  those, Details too, so opening in place doesn't jump). Details' line
+  those, Details too). Details' line
   keeps its spot. The block grows up from its bottom; two gaps
   as seen: 34 pt between its parts (reason, logo, the lines under it,
   Details' buttons), 19 between those lines (chips, facts, tagline; the
@@ -514,7 +514,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   a large card on the page (`StagePictureView.homeCard`): the rows'
   edges, 40 pt under the top bar and above the next row's name, the
   cards' corners; its own shade, the cards' bottom fade starting higher
-  (`StageArt.cardShade`; Details keeps the screen's left fade). No
+  (`StageArt.cardShade`). No
   buttons: the card takes focus (the Featured row's hidden cells), grown
   as every wide card (its dots too; between it and the rows grown in the
   scroll's own move, its room for the growth kept: the 40 pt is to the
@@ -536,21 +536,57 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (first three) on one plate; the plates' contents on the text's edges
   (the symbol over the logo's left, the last score over the dots' end),
   as far from the top as from the side. Details keeps the old block
-  (opening jumps more until the card grows into Details).
+  (its own looks now: it no longer has to match Home's billboard).
   (Full screen, edge to edge, was before, with a left fade, then tried:
   a bottom fade, no fade, a uniform dim; the buttons under the text,
   then bottom right over the dots, the dots right of the buttons: none
-  sat right.) Still to do: opening Details jumps (the card should grow
-  into it, as the cards' trailers do, `DetailTransitionOverlay.grow`);
-  the buttons' host in `FixedFocusRows` (`billboardControls`) is unused.
+  sat right.) Select opens Details as a window growing out of the card
+  (below). Still to do: the buttons' host in `FixedFocusRows`
+  (`billboardControls`) is unused.
   Picture in UIKit, text in SwiftUI, content from `BillboardPicks`, dots
   in UIKit on Left/Right's spring, the timer's fill a linear UIView
   animation (`BillboardDotsView`: in SwiftUI the main thread's paging
   work made them stutter and flicker). No Play: Details is the way to
   play.
-- **Details** shares the billboard's text and shade. Into Details is
-  `DetailTransition`, all Core Animation; from the billboard in place
-  (`openInPlace`). From Home, Movies and Series it's a layer over the page
+- **Details** (in progress, 2026-11-17; may be reverted): Home's
+  billboard card, opened: the picture a card at the top
+  (`StagePictureView.detailsCard`: 24 pt from the screen's top and
+  sides, `detailsInset` (the rows' edges, 84, was before), its foot
+  40 pt above the episodes' name, as Home's card's), the text in it as Home's card (`cardText`: logo, facts,
+  tagline, the trailer line over the logo), its badges as the card's
+  (`BillboardCorners(details:)`: status and one fact top left, all its
+  ratings top right), the card's bottom fade (`StageArt.cardShade`); the
+  buttons in it bottom right where Home's dots are, their foot on the
+  tagline's line, dark whatever the setting (`detailsButtonsY`; on the
+  page under a smaller card was tried); focus lands on Play when it
+  opens (the engine's nearest by position was the seasons:
+  `didUpdateFocus` sends an arrival from outside on to the buttons); the
+  episodes peeking under the card; the page the title's colours as
+  bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
+  bands from its picture, stronger — dimmed 40 %, ceiling 0.34; light a
+  deeper tint, `liftedStrong` — drawn when focus rests on a title, so
+  the press finds them; without it Details read as Home) (the blurred
+  picture and the title's tint behind the rows went before). Down
+  scrolls the card away with the rows. (Full screen with the screen-wide
+  bottom fade was just before; the strong left fade, `BillboardShade`,
+  was disliked beside the card's.) Pages opened from Details still draw its picture blurred
+  (`DetailsBackdropBackground`). Into Details is
+  `DetailTransition`, all Core Animation, the same from every card: the
+  page goes into Details' background (the title's bands, 0.3 s); the
+  card pressed grows into Details' card (0.55 s, the old zoom's curve,
+  corners kept; `DetailTransition.Window`: Home's billboard card its own
+  picture and shade, `openingWindow`; any other card where it is,
+  `focusedCard`), the picture crossfading in over the card's (0.15 s;
+  0.38 left a see-through window over the page), Details' shade on it
+  from the start, going with the window (coming in late, the picture went
+  bright then dim: most cards have a fade already); then the card alone on the background while Details is
+  built under it; then the cover fades off as one (0.28 s) over Details,
+  which draws the same card on the same background: only its parts
+  appear, nothing moves (the cover's parts fading one by one let the
+  page under show through mid-fade: a flicker). A trailer playing grows
+  with it. Back: the general dissolve. (Opening in place, Home's billboard becoming Details' in two
+  phases, `openInPlace`, was before: with the card it only jumped.) From
+  Home, Movies and Series it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages
   use `PageFade`. `trail`: Back is never more than two pages deep.
 - **Back**: on a tab's page, focus to the top bar in one press; below the

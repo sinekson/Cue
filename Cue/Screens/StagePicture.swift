@@ -38,16 +38,47 @@ final class StagePictureView: UIView {
         return CGRect(x: Spotlight.screenInset, y: top,
                       width: width, height: ((bottom - top) / (1 + growth / 2)).rounded())
     }
+    /// DETAILS AS THE CARD, OPENED: its picture the same card, larger —
+    /// `detailsInset` from the screen's top and sides (the rows' edges was
+    /// before) — its foot `cardGap` above the episodes' name, as Home's
+    /// card's; the buttons in it, bottom right. No focus of its own, never
+    /// grown. (The card smaller, the buttons on the page under it, was
+    /// before.)
+    static let detailsInset: CGFloat = 24
+    static var detailsCard: CGRect {
+        let bottom = FixedFocusRowsLayout.nextNameY - cardGap
+        return CGRect(x: detailsInset, y: detailsInset, width: 1920 - 2 * detailsInset,
+                      height: bottom - detailsInset)
+    }
+    /// Details' buttons, in its card bottom right where Home's dots are:
+    /// their foot on the tagline's line, Play's caption ("S1:E5") under
+    /// them in the margin.
+    static var detailsButtonsY: CGFloat { detailsCard.maxY - cardMargin - DetailActionButton.height }
+    /// Their right end, from the screen's right.
+    static var detailsButtonsTrailing: CGFloat { 1920 - detailsCard.maxX + cardMargin }
     /// What's in it this far in from its sides and foot: the text bottom
     /// left, the dots bottom right on its last baseline. No buttons: the
     /// card takes focus (its buttons, as Details', bottom left, then right
     /// over the dots, were before).
     static let cardMargin: CGFloat = 63
     static var dotsY: CGFloat { homeCard.maxY - cardMargin - BillboardDots.dot }
-    /// Home's text block, its bottom (the tagline's line) at the margin.
-    static var homeTextBottom: CGFloat { homeCard.maxY - cardMargin + FixedFocusBillboardText.lineInset }
-    /// The text's and buttons' shift in (they stood at the rows' text edge).
-    static var textIn: CGFloat { homeCard.minX + cardMargin - FixedFocusMetrics.titleInset }
+    /// A card's text block, its bottom (the tagline's line) at the margin.
+    static func textBottom(_ card: CGRect) -> CGFloat { card.maxY - cardMargin + FixedFocusBillboardText.lineInset }
+    /// The text's shift in from the rows' text edge.
+    static func textIn(_ card: CGRect) -> CGFloat { card.minX + cardMargin - FixedFocusMetrics.titleInset }
+
+    /// The picture as a card shows it (screen points, the card unscaled):
+    /// the page's size, moved up or down for its faces (`Page.band`) — as
+    /// far as they're known yet.
+    static func cardPicture(in card: CGRect, url: String?) -> CGRect {
+        let size = CGSize(width: pictureSize.width + 2 * drift, height: pictureSize.height)
+        var picture = CGRect(origin: CGPoint(x: -drift, y: 0), size: size)
+        let known = url.flatMap { faces[$0] ?? faces[TMDBService.originalSize($0) ?? $0] }
+        if let known, let centre = known {
+            picture.origin.y = min(card.minY, max(card.maxY - size.height, card.midY - centre * size.height))
+        }
+        return picture
+    }
     /// Clipped to this (screen points, before the billboard's travel),
     /// nil: the whole picture.
     var cardFrame: CGRect? { didSet { setNeedsLayout() } }
@@ -113,7 +144,8 @@ final class StagePictureView: UIView {
                 let shift = min(band.minY, max(band.maxY - bounds.height, band.midY - faces * bounds.height))
                 picture.center.y += shift
             }
-            shade.image = inCard ? StageArt.cardShade : StageArt.shade
+            shade.image = band.map { StageArt.cardShade($0.offsetBy(dx: -StagePictureView.drift, dy: 0)) }
+                ?? StageArt.shade
             // The whole picture, edge to edge (on the screen's part only,
             // the strip past it showed as a bright line on a sliding edge).
             shade.frame = bounds
@@ -165,20 +197,6 @@ final class StagePictureView: UIView {
         guard surface.superview !== page else { return }
         page.insertSubview(surface, aboveSubview: page.picture)
         page.setNeedsLayout()
-    }
-
-    /// Into Details in place: the picture leans in as Details'
-    /// (`ModeSwap.depthScale`) — the picture only: a trailer never zooms.
-    func lean(_ on: Bool, animated: Bool) {
-        let scale = on ? ModeSwap.depthScale(1) : 1
-        let picture = page.picture
-        let apply = { picture.transform = CGAffineTransform(scaleX: scale, y: scale) }
-        if animated {
-            UIView.animate(springDuration: Motion.moveDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
-                           options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
-        } else {
-            UIView.performWithoutAnimation(apply)
-        }
     }
 
     /// The current title's text again (its data arriving: a rating, the
@@ -255,6 +273,20 @@ final class StagePictureView: UIView {
         } else if mask != nil {
             mask = nil
         }
+    }
+
+    /// Home's billboard card (the rows' pinned stage), for Details' way in.
+    static weak var homeCardShown: StagePictureView?
+
+    /// The card on the screen as it's drawn now — Details' opening grows
+    /// a window out of it (`DetailTransition.Window`): the card, its
+    /// picture (moved for its faces) and the screen's part (a trailer's).
+    func openingWindow() -> DetailTransition.Window? {
+        guard let cardFrame, window != nil else { return nil }
+        let screenPart = CGRect(x: Self.drift, y: 0, width: Self.pictureSize.width, height: page.bounds.height)
+        return DetailTransition.Window(card: convert(cardFrame, to: nil),
+                                       picture: page.picture.convert(page.picture.bounds, to: nil),
+                                       screen: page.convert(screenPart, to: nil))
     }
 
     /// `direction`: +1 paging right (the new one comes from the right).
@@ -417,7 +449,7 @@ final class StagePictureView: UIView {
 
     /// Home's card: where a picture's faces are, down it (the cards' rule,
     /// `TMDBService.faceCentre`), once per picture, from a small copy.
-    private static var faces: [String: CGFloat?] = [:]
+    fileprivate static var faces: [String: CGFloat?] = [:]
     private static let faceQueue = DispatchQueue(label: "cue.stage-faces", qos: .utility)
     private static func findFaces(_ url: String, in image: CGImage, done: @escaping (CGFloat?) -> Void) {
         if let known = faces[url] { done(known); return }
@@ -438,19 +470,35 @@ final class StagePictureView: UIView {
     }
 }
 
-/// The billboard's shade (the SwiftUI `BillboardShade`: its left fade)
-/// as a still image, made once. THE shade: the billboard's, Details' and
-/// the transition's alike.
+/// The shades over a picture, made once: bottom fades, the cards' way
+/// (a fade from the left, darkest at the screen's edge, was Details' and
+/// the full-screen billboard's: disliked beside the card's).
 @MainActor
 enum StageArt {
     /// HOME'S CARD's shade: the cards' bottom fade (`FixedFocusShade`'s
     /// curve, starting higher: the billboard's text is taller than a
     /// card's), over the card's height; no left fade. A column of the
     /// screen's height, stretched across.
-    static let cardShade: UIImage = {
-        let card = StagePictureView.homeCard
+    static func cardShade(_ card: CGRect) -> UIImage {
+        let key = "\(card.minY)-\(card.maxY)"
+        if let made = cardShades[key] { return made }
+        let made = bottomFade(over: card.minY...card.maxY, stops: cardStops)
+        cardShades[key] = made
+        return made
+    }
+    private static var cardShades: [String: UIImage] = [:]
+    private static let cardStops: [(at: CGFloat, dark: CGFloat)] = [(0.3, 0), (0.55, 0.3), (0.8, 0.65), (1, 0.85)]
+
+    /// DETAILS' shade (and the transition's): the card's bottom fade
+    /// exactly, over the screen.
+    static let shade: UIImage = bottomFade(over: 0...StagePictureView.pictureSize.height, stops: cardStops)
+
+    /// Black, darker down `span` (in the screen's points) by `stops`
+    /// (share of the span, darkness), eased between them; a column of the
+    /// screen's height, stretched across.
+    private static func bottomFade(over span: ClosedRange<CGFloat>,
+                                   stops: [(at: CGFloat, dark: CGFloat)]) -> UIImage {
         let h = Int(StagePictureView.pictureSize.height)
-        let stops: [(at: CGFloat, dark: CGFloat)] = [(0.3, 0), (0.55, 0.3), (0.8, 0.65), (1, 0.85)]
         func dark(_ share: CGFloat) -> CGFloat {
             guard share > stops[0].at else { return stops[0].dark }
             for (a, b) in zip(stops, stops.dropFirst()) where share <= b.at {
@@ -464,20 +512,12 @@ enum StageArt {
                                                format: { let f = UIGraphicsImageRendererFormat(); f.scale = 1; return f }())
         return renderer.image { context in
             for y in 0..<h {
-                let share = (CGFloat(y) + 0.5 - card.minY) / card.height
+                let share = (CGFloat(y) + 0.5 - span.lowerBound) / (span.upperBound - span.lowerBound)
                 UIColor.black.withAlphaComponent(dark(min(max(share, 0), 1))).setFill()
                 context.fill(CGRect(x: 0, y: y, width: 1, height: 1))
             }
         }
-    }()
-
-    static let shade: UIImage? = {
-        let renderer = ImageRenderer(content: BillboardShade()
-            .frame(width: StagePictureView.pictureSize.width,
-                   height: StagePictureView.pictureSize.height))
-        renderer.scale = 1
-        return renderer.uiImage
-    }()
+    }
 
     /// DETAILS' DIM below its billboard, by the picture's own brightness:
     /// at least `StagePictureView.dimBelow`, more for a bright picture —

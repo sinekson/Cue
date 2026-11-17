@@ -36,18 +36,10 @@ enum BackCatch {
     }
 }
 
-/// The remote held while a movement runs to its end (Details opened in
-/// place from the billboard, and its Back): presses and directional focus
-/// moves are dropped — the screen settling is the sign it takes input
-/// again. Focus moves the app makes itself go through.
+/// The remote's last press (any button), and work waiting until it has
+/// been still a while (`whenIdle`).
 @MainActor
 enum InputHold {
-    private(set) static var on = false
-    /// Presses dropped at their start: their ends are dropped too.
-    private static var dropped: Set<ObjectIdentifier> = []
-
-    static func begin() { on = true }
-    static func end() { on = false }
     /// The last press's start (any button).
     private(set) static var lastPress: CFTimeInterval = 0
 
@@ -69,7 +61,6 @@ enum InputHold {
 
     static func install() {
         hookSendEvent()
-        hookShouldUpdateFocus()
     }
 
     private typealias Send = @convention(c) (AnyObject, Selector, UIEvent) -> Void
@@ -78,42 +69,13 @@ enum InputHold {
         guard let method = class_getInstanceMethod(UIWindow.self, selector) else { return }
         let original = unsafeBitCast(method_getImplementation(method), to: Send.self)
         let wrapped: @convention(block) (AnyObject, UIEvent) -> Void = { window, event in
-            if let presses = (event as? UIPressesEvent)?.allPresses, MainActor.assumeIsolated({ drops(presses) }) { return }
+            if let presses = (event as? UIPressesEvent)?.allPresses,
+               presses.contains(where: { $0.phase == .began }) {
+                MainActor.assumeIsolated { lastPress = CACurrentMediaTime() }
+            }
             original(window, selector, event)
         }
         method_setImplementation(method, imp_implementationWithBlock(wrapped))
-    }
-
-    private static func drops(_ presses: Set<UIPress>) -> Bool {
-        var drop = false
-        for press in presses {
-            let id = ObjectIdentifier(press)
-            if press.phase == .began { lastPress = CACurrentMediaTime() }
-            if dropped.contains(id) {
-                drop = true
-                if press.phase == .ended || press.phase == .cancelled { dropped.remove(id) }
-            } else if on, press.phase == .began {
-                dropped.insert(id)
-                drop = true
-            }
-        }
-        return drop
-    }
-
-    private typealias ShouldUpdate = @convention(c) (AnyObject, Selector, UIFocusUpdateContext) -> Bool
-    /// The window holds every focused view: asked about every move.
-    private static func hookShouldUpdateFocus() {
-        let selector = #selector(UIView.shouldUpdateFocus(in:))
-        guard let method = class_getInstanceMethod(UIWindow.self, selector) else { return }
-        let original = unsafeBitCast(method_getImplementation(method), to: ShouldUpdate.self)
-        let wrapped: @convention(block) (AnyObject, UIFocusUpdateContext) -> Bool = { window, context in
-            if MainActor.assumeIsolated({ on }), !context.focusHeading.isEmpty { return false }
-            return original(window, selector, context)
-        }
-        let imp = imp_implementationWithBlock(wrapped)
-        if !class_addMethod(UIWindow.self, selector, imp, method_getTypeEncoding(method)) {
-            method_setImplementation(method, imp)
-        }
     }
 }
 
@@ -371,9 +333,8 @@ struct RootView: View {
     @State private var sidebarEnabled = false
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
-    /// Home's page below its billboard: the top bar has gone up with it.
-    /// Into / out of Details in place: the top bar moves out with Home's parts.
-    private var billboardOpening = BillboardOpening.shared
+    /// The billboard's trailer on its picture: the top bar moves out.
+    private var billboardTrailer = BillboardTrailer.shared
 
     @ObservedObject private var launch = LaunchPreloader.shared
 
@@ -928,10 +889,10 @@ struct RootView: View {
     private static let railSettle: Double = 0.25
 
     private var showSidebar: Bool { !sidebarMovedOut }
-    /// Out with the page's parts: off a tab's root, into Details in place,
-    /// for the billboard's trailer (with the peek).
+    /// Out with the page's parts: off a tab's root, for the billboard's
+    /// trailer (with the peek).
     private var sidebarMovedOut: Bool {
-        !atTabRoot || billboardOpening.opened || billboardOpening.trailerShown
+        !atTabRoot || billboardTrailer.shown
     }
     /// The app's single root: the top navigation floating over full-bleed
     /// content. OVERLAY layout, so the bar just draws over the content.
@@ -957,7 +918,7 @@ struct RootView: View {
                     guard ctx.focusHeading.contains(.up) else { return }
                     // Out for the billboard's trailer: back first (focus
                     // leaving the buttons stops the trailer anyway).
-                    if billboardOpening.trailerShown { billboardOpening.trailerShown = false }
+                    if billboardTrailer.shown { billboardTrailer.shown = false }
                     // Search root with the rail ON SCREEN but inside one of its
                     // short `.disabled` windows (the moments after a tab switch
                     // or a rail exit, kept so the engine seeds focus into the
@@ -1071,7 +1032,7 @@ struct RootView: View {
             }
         }
         .animation(perf.motionOn
-                   ? billboardOpening.running ? Motion.move : .spring(response: 0.34, dampingFraction: 0.86)
+                   ? .spring(response: 0.34, dampingFraction: 0.86)
                    : nil, value: showSidebar)
         .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: sidebarFocus != nil)
@@ -1434,7 +1395,7 @@ struct RootView: View {
     /// Back always wins: enable now, focus on the next tick.
     private func focusSidebar(_ tab: Int) {
         AppProbe.focus("focusSidebar(\(Self.tabName(tab)))  enabled=\(sidebarEnabled.probe)")
-        if billboardOpening.trailerShown { billboardOpening.trailerShown = false }
+        if billboardTrailer.shown { billboardTrailer.shown = false }
         sidebarEngagedAt = Date()
         setSidebarEnabled(true)
         DispatchQueue.main.async { sidebarFocus = tab }
@@ -2226,7 +2187,6 @@ final class LaunchPreloader: ObservableObject {
         // One-time artwork (cheap), on the main actor — under the curtain.
         _ = StageArt.shade
         _ = FixedFocusCardEdge.shadowImage
-        _ = BillboardShade.image
 
         // ③ The rest of the minimum, through the queue (`LoadQueue`): what
         // the first screen draws and one press reaches — records, pictures.
@@ -2281,10 +2241,6 @@ final class LaunchPreloader: ObservableObject {
             record(item)
             picture(TMDBService.originalSize(item.background) ?? item.poster, PictureSize.screen)
             picture(item.logo, PictureSize.logo)
-            if let art = item.background ?? item.poster {
-                jobs.append(.init(key: "colours:\(art)", kind: "colours", lane: .picture, band: .launch,
-                                  order: jobs.count, source: "launch") { _ = await FixedFocusTint.colors(for: art) })
-            }
             if let addon = addonManager.metaAddons(for: item.type, id: item.id).first {
                 jobs.append(.init(key: "meta:\(item.id)", kind: "meta", lane: .data, band: .launch,
                                   order: jobs.count, source: "launch") {
@@ -2849,7 +2805,6 @@ final class TitlePreloader {
             await PicturePreloader.shared.load(.init(page, PictureSize.screen))
         }
         await PicturePreloader.shared.load(.init(logo, PictureSize.logo))
-        if let art = item.background ?? item.poster { _ = await FixedFocusTint.colors(for: art) }
         guard depth == .full else { return net }
         _ = await BlurredBackdrop.image(for: meta.background ?? meta.poster)
         // A show: the season extras (Details asks for every season — the

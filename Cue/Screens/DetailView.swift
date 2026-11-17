@@ -64,20 +64,6 @@ struct FocusBridgeHost<Value: Hashable, Content: View>: View {
 }
 
 /// Reads the depth for its content alone: only it updates on a change.
-/// Details' picture leaned in (`ModeSwap.depthScale`) — opened from the
-/// billboard in place, only as its parts arrive (`BillboardOpening
-/// .detailsLeaned`). Its own view: the page doesn't observe the opening.
-struct DetailLean: ViewModifier {
-    private var opening = BillboardOpening.shared
-    let depth: CGFloat
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(opening.detailsLeaned ? ModeSwap.depthScale(depth) : 1)
-            // (Set from Home's side — no transaction reaches this host.)
-            .animation(Motion.move, value: opening.detailsLeaned)
-    }
-}
-
 struct RowsDepthReader<Content: View>: View {
     let model: DetailRowsDepth
     @ViewBuilder let content: (Int) -> Content
@@ -517,6 +503,9 @@ struct DetailView: View {
     @State private var pageShown = false
     /// The series' size and status, once loaded (see `FixedFocusShowInfo`).
     @State private var showInfo: TMDBService.ShowSize?
+    /// Bumped once the title's records are brought up to date: the corner
+    /// badges read them (status, fact, ratings).
+    @State private var recordsRead = 0
     /// The billboard's one line under the logo (TMDB's tagline; the name
     /// until it's known) — as on Home's billboard.
     @State private var billboardTagline: String?
@@ -553,24 +542,12 @@ struct DetailView: View {
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
-    /// The title's colours: Episodes / More sit on them (as Home's rows).
-    @State private var tint: Color? = MainActor.assumeIsolated {
-        ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardTint.first : nil
-    }
-    @State private var tintSecond: Color? = MainActor.assumeIsolated {
-        ModeSwap.shared.billboardItemID != nil ? ModeSwap.shared.billboardTint.second : nil
-    }
-    /// The picture blurred, for Episodes / More (nil: none / not yet).
-    @State private var blurredBackdrop: UIImage?
     /// Opened from Home's billboard: this page plays its half of the swap
     /// in, and Back plays it out and returns (see `ModeSwap`).
     @State private var fromBillboard: Bool
     /// Built with its data (`DetailPreparer`): nothing to hold back.
     @State private var prepared: Bool
     private let onReturnToBillboard: (() -> Void)?
-    /// From a box: the scrim arrives half-way (the growing box took it that
-    /// far) and finishes with the page's parts; Back takes it half-way back.
-    @State private var scrim: Double
     /// The trailer full screen: its cover, at once…
     @State private var trailerCover = false
     /// …and the page's text, buttons and shade fading out under it.
@@ -621,7 +598,6 @@ struct DetailView: View {
         }
         _viewModel = StateObject(wrappedValue: model)
         _fromBillboard = State(initialValue: fromBillboard)
-        _scrim = State(initialValue: 1)
         _depth = State(initialValue: 1)
         _billboardSeriesSize = State(initialValue: fromBillboard
             ? MainActor.assumeIsolated { ModeSwap.shared.billboardSeriesSize } : nil)
@@ -839,10 +815,6 @@ struct DetailView: View {
                            // Out with the trailer, back as it goes — and in
                            // from Home's playing trailer, never shown before it.
                            peekHidden: trailer.shown || (!pageShown && StageTrailer.carries(viewModel.meta.id)),
-                           // Opened in place from Home's billboard: up from
-                           // below after the hand-over, down first on Back.
-                           followsDetailsArriving: true,
-                           hidesBillboardPicture: true,
                            // The season's progress: between the season
                            // buttons and the episodes.
                            rowTitleAccessories: rowProgressAccessory,
@@ -857,7 +829,14 @@ struct DetailView: View {
                            // moved with the rows in the same animation.
                            billboardOverlay: rowsBillboardOverlay,
                            billboardOverlayHeight: Self.overlayHeight,
+                           // Its picture a card on the page (the rows'),
+                           // its text on it; the buttons under it.
+                           billboardPageText: { _ in cardText },
+                           pinnedBillboardPicture: true,
+                           billboardTrailer: trailer,
                            rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel,
+                           billboardCard: StagePictureView.detailsCard,
+                           billboardPicture: viewModel.backdropURL,
                            // The episode in focus always at the first card's
                            // spot.
                            anchoredRowIDs: seasonIDs,
@@ -900,74 +879,16 @@ struct DetailView: View {
     @State private var aimedRowEpisode: String?
     @State private var rowCommand: FixedFocusRowsCommand?
 
-    /// THE PICTURE stays: sharp under the overview (the billboard's shade
-    /// on it); below it, its blurred copy fades in over it and it steps
-    /// back, dimmed — the shade gone (no text there to keep readable): the
-    /// rows sit on calm ground of the same picture. (Tried
-    /// 2026-10-07: Home's way — the picture going up, the rows on the
-    /// title's colour layout; the blur looked better here.)
+    /// Behind the page: the app's background (the picture is the card,
+    /// the rows'); the trailer full screen over it while it's up there.
     private var rowsBackdrop: some View {
-        RowsDepthReader(model: rowsDepth) { depth in rowsBackdrop(below: depth > 0) }
-    }
-
-    private func rowsBackdrop(below: Bool) -> some View {
-        let url = viewModel.backdropURL
-        let drift = StagePictureView.drift
-        return ZStack {
-            TitleTintBackground(tint: tint, second: tintSecond)
-                .task(id: url ?? "") {
-                    guard let url, let colors = await FixedFocusTint.colors(for: url)
-                    else { return }
-                    tint = colors.first
-                    tintSecond = colors.second
-                }
-            // EXACTLY where Home's billboard left it (the swap): its size, a
-            // little wider than the screen, leaned in by the step-in zoom.
-            // Its picture not in yet: the page's background until it is.
-            if viewModel.pictureLate { ATVBackground() }
-            RemoteImage(url: url, maxDimension: PictureSize.screen, showsPlaceholder: false)
-                .frame(width: 1920 + 2 * drift, height: 1080)
-                .modifier(DetailLean(depth: depth))
-                .frame(width: 1920, height: 1080)
-                .clipped()
-            // The trailer never leans in: the screen, as on Home, whatever
-            // the picture's depth (it's other footage — the still's zoom
-            // under it never shows).
+        ZStack {
+            TitleBandsBackground(url: viewModel.backdropURL)
             StageTrailerView(trailer: trailer)
                 .frame(width: 1920, height: 1080)
-            ZStack {
-                if let blurredBackdrop {
-                    Image(uiImage: blurredBackdrop)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 1920 + 2 * drift, height: 1080)
-                }
-            }
-            .modifier(DetailLean(depth: depth))
-            .frame(width: 1920, height: 1080)
-            .clipped()
-            .opacity(below ? 1 : 0)
-            // Below: the dim, more for a bright picture.
-            Color.black.opacity(below ? StageArt.dimBelow(for: url) : 0)
-            // The billboard's shade, exactly Home's (`StageArt.shade`).
-            Group {
-                if let shade = StageArt.shade {
-                    Image(uiImage: shade).resizable()
-                } else {
-                    BillboardShade()
-                }
-            }
-            .frame(width: 1920, height: 1080)
-            .opacity(below || trailerFull ? 0 : scrim)
+                .opacity(trailerFull ? 1 : 0)
         }
         .frame(width: 1920, height: 1080)
-        // (On the backdrop itself: an empty view never starts a task. By the
-        // picture's address: it arrives after the page opens.)
-        .task(id: url ?? "") {
-            blurredBackdrop = await BlurredBackdrop.image(for: url)
-        }
-        // On the rows' own curve and time.
-        .animation(FixedFocusMotion.animation(duration: FixedFocusMotion.billboardScroll), value: below)
         .allowsHitTesting(false)
         .ignoresSafeArea()
     }
@@ -1071,32 +992,50 @@ struct DetailView: View {
 
     /// The engine's host for them reaches down to the buttons and their
     /// captions — no further: it would cover the rows from focus.
-    private static var overlayHeight: CGFloat { FixedFocusBillboardText.buttonsY + 130 }
+    private static var overlayHeight: CGFloat { StagePictureView.detailsButtonsY + 130 }
 
-    /// The billboard's text and buttons at their place on the billboard —
-    /// the engine moves (and dims) them with the rows.
+    /// The buttons in the card, bottom right — the engine moves them with
+    /// the rows. On the picture: dark, whatever the setting.
     private var rowsBillboardText: some View {
-        ZStack(alignment: .topLeading) {
-            // Home's billboard text exactly (the description under the
-            // tagline), on its bottom line, the buttons below.
-            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: ratingsBadges,
+        headerExtras
+            .environment(\.colorScheme, .dark)
+            .frame(height: TitleBlock.buttonHeight)
+            .padding(.top, StagePictureView.detailsButtonsY)
+            .padding(.trailing, StagePictureView.detailsButtonsTrailing)
+            // (Its host's size — see `overlayHeight` — from the screen's top.)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+    }
+
+    /// The card's text, on its picture (the rows' card, `billboardPageText`):
+    /// Home's card's layout — the trailer line, logo, facts and tagline
+    /// bottom left, the badges on plates in its top corners.
+    private var cardText: AnyView {
+        let card = StagePictureView.detailsCard
+        let inset = StagePictureView.cardMargin - FixedFocusBadges.padding
+        return AnyView(ZStack(alignment: .topLeading) {
+            FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: nil,
                                     tagline: billboardTagline ?? TitleRecords.shared.tagline(viewModel.meta),
                                     logo: viewModel.shownLogo,
-                                    lead: AnyView(DetailTrailerHint(model: viewModel, trailer: trailer)))
-                .task(id: viewModel.meta.id) {
-                    let meta = viewModel.meta
-                    await TitleRecords.shared.refresh(meta, [.show, .facts])
-                    showInfo = TitleRecords.shared.size(meta)
-                    billboardTagline = TitleRecords.shared.tagline(meta)
-                }
-                .frame(height: FixedFocusBillboardText.bottom, alignment: .bottomLeading)
-                .padding(.leading, FixedFocusMetrics.titleInset)
-            headerExtras
-                .frame(height: TitleBlock.buttonHeight)
-                .padding(.top, FixedFocusBillboardText.buttonsY)
+                                    lead: AnyView(DetailTrailerHint(model: viewModel, trailer: trailer)),
+                                    corners: true)
+                .frame(height: StagePictureView.textBottom(card), alignment: .bottomLeading)
+                .padding(.leading, FixedFocusMetrics.titleInset + StagePictureView.textIn(card))
+            BillboardCorners(item: viewModel.meta, reason: nil, details: true, revision: recordsRead)
+                .frame(width: card.width - 2 * inset, alignment: .topLeading)
+                .offset(x: card.minX + inset, y: card.minY + inset)
         }
-        // (Its host's size — see `overlayHeight` — from the screen's top.)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: viewModel.meta.id) {
+            let meta = viewModel.meta
+            await TitleRecords.shared.refresh(meta, [.show, .facts])
+            showInfo = TitleRecords.shared.size(meta)
+            billboardTagline = TitleRecords.shared.tagline(meta)
+            recordsRead += 1
+        }
+        .environmentObject(addonManager)
+        .environmentObject(progressStore).environmentObject(library)
+        .environmentObject(watched).environmentObject(mdblist)
+        .environmentObject(tmdbSettings).environmentObject(layout)
+        .environmentObject(playerSettings).environmentObject(profiles))
     }
 
     /// The rows: the billboard, a row per season, More Like This, the collection.
@@ -1187,8 +1126,6 @@ struct DetailView: View {
         // default.
         FocusBridgeHost(bridge: actionBridge, defaultValue: .play,
                         onChange: { old, new in actionFocusChanged(from: old, to: new) }) { focus in actionRow(focus) }
-            // (The billboard's column.)
-            .padding(.leading, FixedFocusMetrics.titleInset)
     }
 
     /// A Select, Back or Down made during the swap (`ModeSwap.heldPress`).
@@ -1277,6 +1214,8 @@ struct DetailView: View {
     /// instead of the focus engine skipping a row.
     private func actionRow(_ focus: FocusState<ActionControl?>.Binding) -> some View {
             HStack(spacing: CueSpacing.md) {
+                // (Right-aligned: in the card, bottom right.)
+                Spacer(minLength: 0)
                 // Play is present from the FIRST frame, even before the
                 // episode list has loaded and `seriesPlayTarget` can say
                 // which episode it starts (a page without it let focus
@@ -1298,8 +1237,7 @@ struct DetailView: View {
                     onHold: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .manual }
                         else { openSources(target) }
-                    },
-                    other: .init(title: "Details", icon: "info.circle")
+                    }
                 )
                 .focused(focus, equals: .play)
                 // The other two are one focus section, so a vertical move
@@ -1315,8 +1253,7 @@ struct DetailView: View {
                         title: saved ? "In Library" : "Library",
                         isPrimary: false, lit: litAction == .library, bare: true,
                         // No toast: the button itself says it ("In Library").
-                        action: { library.toggle(viewModel.meta) },
-                        other: .init(title: saved ? "In Library" : "Library", icon: saved ? "checkmark" : "plus")
+                        action: { library.toggle(viewModel.meta) }
                     )
                     .focused(focus, equals: .library)
                     // About in place, over the page (the billboard
@@ -1327,8 +1264,7 @@ struct DetailView: View {
                         action: {
                             if viewModel.meta.description?.isEmpty == false { summaryShown = true }
                             else { ToastCenter.shared.show("No summary for this title", icon: "text.alignleft") }
-                        },
-                        other: .init(title: "Next", icon: "chevron.right", plain: true)
+                        }
                     )
                     .focused(focus, equals: .info)
                     // Your rating, over the page (`RatingPanel`); focus
@@ -1348,22 +1284,18 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .rate)
-                    // (No billboard button in its place: in only once
-                    // Details' own buttons are.)
-                    .opacity(BillboardOpening.shared.detailsArriving ? 0 : 1)
                 }
                 .focusSection()
-                Spacer(minLength: 0)
             }
             .padding(.top, CueSpacing.xs)
             // Up from the buttons (nothing above them): the trailer full
             // screen — the hint over the logo says so.
             .onMoveCommand { if $0 == .up, !rowsDepth.upEaten() { openFullTrailer() } }
-            // Full-width focus section: the buttons stay left-aligned, but the
+            // Full-width focus section: the buttons stay right-aligned, but the
             // section spans the row so pressing Up from a right-scrolled cast
             // card still lands here (a narrow left-only section is missed when
             // the card below is scrolled far right).
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .trailing)
             // NO .focusSection() here: a programmatic `actionFocus = .play`
             // from OUTSIDE a focus section is silently ignored on tvOS 26,
             // which broke the teaser's direct Down-to-Play jump. Reachability
@@ -1606,27 +1538,11 @@ struct DetailActionButton: View {
     /// Nothing behind it at rest (the billboard's Next).
     var plain = false
     var iconSize = DetailActionButton.iconSize
-    /// Home's billboard button: dimmed after its press into Details in
-    /// place (`BillboardOpening.focusDimmed`) — pressing it no longer
-    /// possible — back to full with Home's parts on Back.
-    var billboard = false
     let action: () -> Void
     var onHold: (() -> Void)? = nil
     /// Holding Select opens this menu instead (the billboard's Details:
     /// Play, Choose Source).
     var holdEntries: [MenuEntry]? = nil
-    /// Into / out of Details in place: the other page's button in this
-    /// place, worn until the second phase — Details' buttons wear Home's
-    /// while its parts are held out (`detailsArriving`), becoming Details'
-    /// with its peek and hint (Details → Play, › → About); on Back Home's
-    /// wear Details' (`BillboardOpening.homeWearsDetails`), becoming
-    /// Home's with its parts.
-    var other: Other? = nil
-    struct Other {
-        let title: String
-        let icon: String
-        var plain = false
-    }
 
     /// Its hold menu open (Play).
     @State private var held = false
@@ -1636,25 +1552,7 @@ struct DetailActionButton: View {
     /// Play, lit from the first frame).
     @State private var focusLit = false
     @State private var focusKnown = false
-    private var opening = BillboardOpening.shared
     private var shownLit: Bool { focusKnown ? focusLit : lit }
-    /// The other page's button worn (`other`).
-    private var worn: Other? {
-        guard let other else { return nil }
-        let wears = billboard ? opening.homeWearsDetails : opening.detailsArriving && !opening.closing
-        return wears ? other : nil
-    }
-    private var shownTitle: String { worn?.title ?? title }
-    /// In place, dimmed until the second phase ends — pressing not
-    /// possible: Details' while its parts are held out (coming in, and
-    /// from Back's start), Home's from the press until its parts are back.
-    private var openingDimmed: Bool {
-        billboard ? opening.focusDimmed : other != nil && opening.detailsArriving
-    }
-    /// Kept pressed while dimmed — the focused one (the one pressed; the
-    /// others shrank with it), only into Details (Back presses no button).
-    private var keptPressed: Bool { shownLit && openingDimmed && !opening.closing }
-    private var shownIcon: String { worn?.icon ?? icon }
 
     /// Its focus came or went: lit / unlit AT ONCE — the old button and the
     /// new one change together, on one curve (`open`). (A 50 ms wait before
@@ -1688,11 +1586,6 @@ struct DetailActionButton: View {
     static let iconBox: CGFloat = 30
     /// Lighting up / the caption coming in / the scale: a no-bounce spring.
     static let open: Animation = .spring(duration: 0.15, bounce: 0)
-    /// Into / out of Details in place (`openingDimmed`): the highlight's
-    /// share — "pressing not possible". In from the release (the press's
-    /// shrink done), out with the second phase's move.
-    static let dimmedHighlight: Double = 0.5
-    static let dim: Animation = .easeInOut(duration: 0.2)
     /// Focus leaving: the capsule shrinks into the button (to `leaveScale`
     /// of it) as it fades — slower than it came, so it's seen going; the
     /// fade goes evenly with the shrink, from the start (a delayed fade
@@ -1721,41 +1614,36 @@ struct DetailActionButton: View {
             HStack(spacing: 10) {
                 // A labelled button: its name alone; an icon button: its icon.
                 if bare {
-                    Image(systemName: shownIcon)
+                    Image(systemName: icon)
                         .font(.system(size: iconSize, weight: .bold))
-                        // (Into Details in place: › becomes About's;
-                        // set from another host — no transaction.)
-                        .contentTransition(["plus", "checkmark"].contains(shownIcon)
+                        .contentTransition(["plus", "checkmark"].contains(icon)
                             ? .symbolEffect(.replace.downUp.byLayer, options: .nonRepeating)
                             : .opacity)
-                        .animation(Motion.move, value: shownIcon)
+                        .animation(Motion.move, value: icon)
                         .frame(width: Self.iconBox, height: Self.iconBox)
                 } else {
-                    // (Into Details in place: Details becomes Play — the
-                    // two names crossfade, centred, as the width goes from
-                    // one to the other; the text's own content transition
-                    // kept the old name left-aligned, cut off.)
+                    // (A new name crossfades, centred, as the width goes
+                    // from one to the other; the text's own content
+                    // transition kept the old name left-aligned, cut off.)
                     ZStack {
-                        Text(shownTitle)
+                        Text(title)
                             .font(.system(size: Self.textSize, weight: .semibold))
                             .lineLimit(1)
                             .fixedSize()
-                            .id(shownTitle)
+                            .id(title)
                             .transition(.opacity)
                     }
-                    .frame(width: Self.labelWidth(shownTitle))
-                    // (Set from another host — no transaction reaches it.)
-                    .animation(Motion.move, value: shownTitle)
+                    .frame(width: Self.labelWidth(title))
+                    .animation(Motion.move, value: title)
                 }
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
             .frame(width: bare ? Self.height : nil, height: Self.height)
-            .modifier(ActionFace(lit: shownLit, pill: !(worn?.plain ?? plain), dimmed: openingDimmed))
-            .animation(Motion.move, value: worn?.plain ?? plain)
+            .modifier(ActionFace(lit: shownLit, pill: !plain))
             // Under it while focused (outside its frame: the row never moves
             // for it): a show's episode, the bare button's name.
             .overlay(alignment: .top) {
-                if let text = isPrimary ? caption : bare ? shownTitle : nil {
+                if let text = isPrimary ? caption : bare ? title : nil {
                     Text(text)
                         .font(.system(size: Self.captionSize, weight: .medium))
                         .foregroundStyle(AppGlass.textMuted)
@@ -1763,14 +1651,11 @@ struct DetailActionButton: View {
                         .fixedSize()
                         .opacity(shownLit ? 1 : 0)
                         .animation(litAnimation, value: shownLit)
-                        // (Play's episode comes with Play.)
-                        .opacity(isPrimary && worn != nil ? 0 : 1)
-                        .animation(Motion.move, value: worn != nil)
                         .offset(y: Self.height + Self.captionGap)
                 }
             }
         }
-        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, dimmed: keptPressed, onFocus: focusChanged))
+        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, onFocus: focusChanged))
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
         .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
@@ -1801,9 +1686,6 @@ struct ActionFace: ViewModifier {
     /// The pill as the current one of a set (the row's season): the flat
     /// light grey (`FlatControl.selected`), not the glass.
     var current = false
-    /// Its highlight dimmed (into / out of Details in place) — at
-    /// `DetailActionButton.dimmedHighlight`.
-    var dimmed = false
     /// With nothing behind it at rest: a soft shadow under the content (over
     /// pictures); false: none (the top bar's words).
     var restShadow = true
@@ -1855,8 +1737,6 @@ struct ActionFace: ViewModifier {
                         .scaleEffect(lit || pill || !shrinks ? 1 : DetailActionButton.leaveScale)
                         .opacity(lit ? 1 : 0)
                         .animation(lit ? open : leaveFade, value: lit)
-                        .opacity(dimmed ? DetailActionButton.dimmedHighlight : 1)
-                        .animation(dimmed ? DetailActionButton.dim : Motion.move, value: dimmed)
                 }
             }
             .animation(lit ? open : leave, value: lit)
@@ -1868,15 +1748,12 @@ struct ActionFace: ViewModifier {
 private struct DetailPressStyle: ButtonStyle {
     let lit: Bool
     let held: Bool
-    /// Into / out of Details in place: kept pressed while dimmed (the
-    /// press doesn't grow back), growing back with the second phase.
-    var dimmed = false
     /// The button's own focus, as it comes and goes.
     var onFocus: (Bool) -> Void = { _ in }
     static let focusScale = DetailActionButton.focusScale
 
     func makeBody(configuration: Configuration) -> some View {
-        PressBody(configuration: configuration, lit: lit, held: held, dimmed: dimmed, onFocus: onFocus)
+        PressBody(configuration: configuration, lit: lit, held: held, onFocus: onFocus)
     }
 
     private struct PressBody: View {
@@ -1884,7 +1761,6 @@ private struct DetailPressStyle: ButtonStyle {
         let configuration: Configuration
         let lit: Bool
         let held: Bool
-        let dimmed: Bool
         let onFocus: (Bool) -> Void
         /// Shown pressed: from the press on, for at least `pressIn`'s
         /// time (a quick tap still shrinks all the way), then grows back.
@@ -1895,11 +1771,9 @@ private struct DetailPressStyle: ButtonStyle {
         var body: some View {
             let base = lit ? DetailPressStyle.focusScale : 1
             let scale = held ? base + FixedFocusMetrics.heldGrowth
-                : down || dimmed ? 1 : base
+                : down ? 1 : base
             return configuration.label
                 .scaleEffect(scale)
-                // (Dimmed, as the highlight; undimmed, on the move.)
-                .animation(dimmed ? DetailActionButton.dim : Motion.move, value: dimmed)
                 // A press: quick in, back on a spring; focus: with the
                 // highlight, on its curve.
                 .animation(down ? DetailActionButton.pressIn
@@ -2001,6 +1875,8 @@ final class TitlePictures {
             guard let url = await self.picture(for: item),
                   await ImageCache.shared.preload(url, maxDimension: PictureSize.screen)
             else { return nil }
+            // Details' background, ready for the press (`TitleBands`).
+            Task { await TitleBands.shared.image(for: url) }
             return url
         }
     }
@@ -2185,26 +2061,26 @@ final class DetailPreparer {
         let picture = prepared.pictureLate ? nil : prepared.picture
         let stills = peekStills(meta, extras: prepared.extras, fallback: picture)
         await withTaskGroup(of: Void.self) { group in
-            if let logo { group.addTask { await ImageCache.shared.preload(logo, maxDimension: PictureSize.logo) } }
+            var pending = 0
+            if let logo { pending += 1; group.addTask { await ImageCache.shared.preload(logo, maxDimension: PictureSize.logo) } }
             // The episodes' peek: its first cards' stills (created just
             // before the rise, they loaded then — the name rose alone and
             // the cards popped in at its end).
             if !stills.isEmpty {
+                pending += 1
                 group.addTask { @MainActor in
                     await FixedFocusImages.prefetch(stills, within: .seconds(max(0, deadline - CACurrentMediaTime())))
                 }
             }
             if let picture {
+                pending += 1
                 group.addTask { await ImageCache.shared.preload(picture, maxDimension: PictureSize.screen) }
-                group.addTask { _ = await BlurredBackdrop.image(for: picture) }
-                group.addTask { _ = await FixedFocusTint.colors(for: picture) }
             }
             group.addTask {
                 let left = deadline - CACurrentMediaTime()
                 if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             }
             // All the pictures, or the deadline: whichever first.
-            var pending = (logo != nil ? 1 : 0) + (picture != nil ? 3 : 0) + (stills.isEmpty ? 0 : 1)
             while pending > 0, await group.next() != nil {
                 pending -= 1
                 if CACurrentMediaTime() >= deadline { break }
@@ -2300,18 +2176,12 @@ struct DetailsBackdropBackground: View {
 struct DetailTrailerHint: View {
     @ObservedObject var model: DetailViewModel
     @ObservedObject var trailer: StageTrailer
-    /// Opened in place from Home's billboard: in with the peek.
-    private var opening = BillboardOpening.shared
-
     var body: some View {
         ZStack(alignment: .leading) {
-            if model.trailerReady || trailer.shown, !opening.detailsArriving {
+            if model.trailerReady || trailer.shown {
                 SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
                     .transition(FixedFocusBillboardText.leadSwap)
             }
         }
-        // Its own (the change comes through another host: the transaction's
-        // animation didn't reach it — it popped in).
-        .animation(Motion.move, value: opening.detailsArriving)
     }
 }

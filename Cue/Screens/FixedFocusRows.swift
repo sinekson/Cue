@@ -105,17 +105,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// The peek and the dots out the bottom (while the billboard's trailer
     /// is on it); the cards stay focusable.
     var peekHidden = false
-    /// Home's billboard in Details' looks (`BillboardOpening`).
-    var openingLook = false
-    /// Details: its peek follows `BillboardOpening.detailsArriving` itself
-    /// (the page observing it re-rendered whole — a stall mid-move).
-    var followsDetailsArriving = false
     /// Paged with the peek moved out: back in at the press (the controller
     /// moves it; this tells the page, for the dots).
     var onPeekBack: () -> Void = {}
-    /// The billboard's picture isn't drawn by the rows (Details draws its
-    /// own, fixed, behind them).
-    var hidesBillboardPicture = false
     /// SwiftUI on its own line under a row's name (or its header) — the
     /// row's cards lower by as much (`titleAccessoryHeight`, under a header
     /// `headerAccessoryHeight`); shown while the row has focus (Details'
@@ -165,6 +157,15 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// row, if not the rows' distance (Home: until its edge is at the top
     /// bar's middle — the rows' usual peek above).
     var rigidBillboardTravel: CGFloat? = nil
+    /// The pinned picture as a card here (screen points; nil: the whole
+    /// picture): Home's billboard card, Details' card.
+    var billboardCard: CGRect? = nil
+    /// The card takes focus (Home): grown, its shadow, the top bar on it.
+    /// Off: a card on the page (Details, its buttons under it).
+    var billboardCardFocus = false
+    /// The billboard's picture, if not its title's own (Details': the
+    /// one it opened with).
+    var billboardPicture: String? = nil
     /// Moving-focus rows whose focus stays in place: every step also scrolls
     /// the row, the focused card always at the first card's spot (Details'
     /// episodes). Others scroll only at the edge of the cards in view.
@@ -180,16 +181,15 @@ struct FixedFocusRows: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> FixedFocusRowsController {
         let controller = FixedFocusRowsController()
-        apply(to: controller, animated: false)
+        apply(to: controller)
         return controller
     }
 
     func updateUIViewController(_ controller: FixedFocusRowsController, context: Context) {
-        apply(to: controller, animated: context.transaction.animation != nil
-              && !context.transaction.disablesAnimations)
+        apply(to: controller)
     }
 
-    private func apply(to controller: FixedFocusRowsController, animated: Bool) {
+    private func apply(to controller: FixedFocusRowsController) {
         controller.onSelect = onSelect
         controller.onSelectFeatured = onSelectFeatured
         controller.onResume = onResume
@@ -216,10 +216,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rigidPeekShowsName = rigidPeekShowsName
         controller.onPeekBack = onPeekBack
         controller.peekHidden = peekHidden
-        controller.followsDetailsArriving = followsDetailsArriving
-        if !followsDetailsArriving { controller.setOpeningLook(openingLook, animated: animated) }
         controller.rigidNameY = rigidNameY
-        controller.hidesBillboardPicture = hidesBillboardPicture
         controller.rowTitleAccessories = rowTitleAccessories
         controller.anchoredRowIDs = anchoredRowIDs
         controller.customRows = customRows
@@ -268,6 +265,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.billboardOverlayHeight = billboardOverlayHeight
         controller.billboardOverlayBelowRows = billboardOverlayBelowRows
         controller.rigidBillboardTravel = rigidBillboardTravel
+        controller.billboardCard = billboardCard
+        controller.billboardCardFocus = billboardCardFocus
+        controller.billboardPicture = billboardPicture
         controller.pinnedBillboardPicture = pinnedBillboardPicture
         billboardTrailer?.stage = controller.pinnedStage
         controller.setBillboardOverlay(billboardOverlay)
@@ -1040,6 +1040,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     override func didUpdateFocus(in context: UIFocusUpdateContext,
                                  with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
+        // Arriving from elsewhere (Details pushed over the card pressed;
+        // the engine asks nothing first) with the billboard's focus outside
+        // the rows: on to its buttons, not the episode nearest the old focus
+        // by position — no move of the rows.
+        if billboardFocusOutside, context.focusHeading.isEmpty,
+           context.previouslyFocusedView?.isDescendant(of: view) != true,
+           context.nextFocusedView?.isDescendant(of: outer) == true {
+            focusBillboardOutside()
+            return
+        }
         if heldRows != nil { DispatchQueue.main.async { self.applyHeldRows() } }
         // Home's billboard card: grown while focus is on it (its hidden
         // cards; a hold menu over it keeps it so).
@@ -1319,6 +1329,16 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
 
+    /// Details opening: focus to its buttons (its billboard's, outside the
+    /// rows) — by position the engine took the episodes or the seasons
+    /// nearer the card pressed. False with no such rows on screen.
+    static func focusDetailsButtons() -> Bool {
+        guard let rows = all.allObjects.first(where: { $0.billboardFocusOutside && $0.view.window != nil })
+        else { return false }
+        rows.focusBillboardOutside(tries: 6)
+        return true
+    }
+
     /// Back's scroll up on screen (a press on the billboard's buttons
     /// meanwhile is dropped — `DetailActionButton`).
     static var backScrolling: Bool { all.allObjects.contains { $0.backing && $0.view.window != nil } }
@@ -1493,30 +1513,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         }
     }
     var onPeekBack: () -> Void = {}
-    /// Into / out of Details in place (`BillboardOpening`): the peek out
-    /// the bottom, the picture leaning in as Details' — the move spring.
-    private(set) var openingLook = false
-    var followsDetailsArriving = false {
-        didSet {
-            guard followsDetailsArriving != oldValue else { return }
-            BillboardOpening.shared.unfollowDetailsArriving(self)
-            guard followsDetailsArriving else { return }
-            setOpeningLook(BillboardOpening.shared.detailsArriving, animated: false)
-            BillboardOpening.shared.followDetailsArriving(self) { [weak self] on in
-                self?.setOpeningLook(on, animated: BillboardOpening.shared.detailsAnimated)
-            }
-        }
-    }
-    func setOpeningLook(_ on: Bool, animated: Bool) {
-        guard on != openingLook else { return }
-        openingLook = on
-        guard isViewLoaded else { return }
-        movePeek(animated: animated)
-        // Home's picture leans in only at once (Back: under Details' still,
-        // then out with its parts) — opening, Details' picture leans in as
-        // it arrives (`BillboardOpening.leanDetails`), Home's stays still.
-        if !on || !animated { pinnedStage?.lean(on, animated: animated) }
-    }
     /// The peek out the bottom or back (`peekDrop`), on the move spring.
     private func movePeek(animated: Bool) {
         let apply = {
@@ -1525,7 +1521,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             }
             // Home's dots (its overlay) go with the peek, the same distance
             // in the same animation — attached to it.
-            if !self.followsDetailsArriving, let dots = self.overlayHost?.view.layer,
+            if let dots = self.overlayHost?.view.layer,
                let featured = self.featuredIndex {
                 Self.drop(dots, by: self.peekDrop(featured + 1))
             }
@@ -1550,10 +1546,10 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         move.fromValue = from
         layer.add(move, forKey: "drop")
     }
-    /// Out of the way (a trailer, into Details in place): down past the
+    /// Out of the way (a trailer): down past the
     /// screen's bottom.
     func peekDrop(_ rowIndex: Int) -> CGFloat {
-        guard peekHidden || openingLook, isNext(rowIndex),
+        guard peekHidden, isNext(rowIndex),
               let frame = outer.layoutAttributesForItem(at: IndexPath(item: rowIndex, section: 0))?.frame
         else { return 0 }
         // Only its cards show (Details): out by what shows, so its whole
@@ -1582,7 +1578,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return guide
     }()
     var rigidNameY: CGFloat?
-    var hidesBillboardPicture = false
     /// The line under the name (gap, map) — the cards that much lower.
     static let titleAccessoryHeight: CGFloat = 40
     /// Under a header: the accessory's line, with the same gap above it
@@ -1639,6 +1634,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var billboardOverlayHeight: CGFloat = 1080
     var billboardOverlayBelowRows = false
     var rigidBillboardTravel: CGFloat?
+    var billboardCard: CGRect?
+    var billboardCardFocus = false
+    var billboardPicture: String? {
+        didSet {
+            guard billboardPicture != oldValue, let stage = pinnedStage, let featured = featuredIndex,
+                  let item = rows[featured].items.first else { return }
+            stage.show(billboardPicture, item: item, direction: 0, animated: false)
+        }
+    }
     var anchoredRowIDs: Set<String> = []
     var customRows: [String: FixedFocusCustomRow] = [:] {
         didSet {
@@ -1708,13 +1712,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         guard pinnedStage == nil else { return }
         let stage = StagePictureView()
         stage.blursBelow = rigidBillboardTravel == nil
-        if rigidBillboardTravel != nil { stage.cardFrame = StagePictureView.homeCard }
+        stage.cardFrame = billboardCard
+        if billboardCardFocus { StagePictureView.homeCardShown = stage }
         stage.text = billboardPageText.map { text in { [weak self] in self?.environment(text($0)) ?? text($0) } }
         view.insertSubview(stage, at: 0)
         stage.bounds = CGRect(origin: .zero, size: StagePictureView.pictureSize)
         stage.center = CGPoint(x: stage.bounds.midX, y: stage.bounds.midY)
         pinnedStage = stage
-        if let card = stage.cardFrame {
+        if billboardCardFocus, let card = stage.cardFrame {
             // Home's card: focused, the cards' soft shadow (the picture is
             // masked to the card: it can't hold it). A screen-sized layer
             // under it, moved, grown and dipped as it is.
@@ -1755,7 +1760,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             // place, not its growth (following the top edge as it grew,
             // the bar stepped up and down as focus came and went), nor the
             // paging dip (it would bob).
-            TopBarFollow.shared.set(stage.transform.ty)
+            if billboardCardFocus { TopBarFollow.shared.set(stage.transform.ty) }
             return
         }
         stage.setBelow(depth > 0)
@@ -1836,7 +1841,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (Its own safe area off: it's laid out in screen points, as the rows.)
         host.safeAreaRegions = []
         // Details' info block: hidden until it rises in (`DetailTransition`).
-        DetailTransition.shared.textHostCreated(host.view)
         addChild(host)
         // Over the rows (their names on the billboard stay under the text) —
         // or under them (see `billboardOverlayBelowRows`).
@@ -1962,7 +1966,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     private func setBillboardLit(_ lit: Bool, inScroll: Bool = false) {
-        guard lit != billboardLit, pinnedStage?.cardFrame != nil else { return }
+        guard lit != billboardLit, billboardCardFocus, pinnedStage?.cardFrame != nil else { return }
         billboardLit = lit
         // The scroll's move places it (`applyOverlayPosition`), grown or not.
         if inScroll { return }
@@ -2572,7 +2576,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let away = -FixedFocusMetrics.titleLine - 20
         let travel = billboardUp(depth: 1)
         // The buttons' lower edge (focused, a little grown) at rest.
-        let buttons = FixedFocusBillboardText.buttonsY + TitleBlock.buttonHeight + Self.nameButtonsMargin
+        let buttons = StagePictureView.detailsButtonsY + TitleBlock.buttonHeight + Self.nameButtonsMargin
         let gap = spot - buttons
         // Past the buttons' own end, if that isn't out of the screen yet.
         let extra = max(buttons - travel - away, 0)
@@ -3758,7 +3762,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 
     private func placeStage(_ url: String?, item: MetaItem, direction: CGFloat, animated: Bool) {
-        guard isFeatured, controller?.hidesBillboardPicture != true else { return }
+        guard isFeatured else { return }
+        let url = controller?.billboardPicture ?? url
         // Pinned: the controller's, not part of this row.
         if let pinned = controller?.pinnedStage {
             stage?.removeFromSuperview()

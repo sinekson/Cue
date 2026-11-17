@@ -1757,8 +1757,7 @@ struct HomeUIKitView: View {
     @StateObject private var trailer = StageTrailer()
     @EnvironmentObject private var homeSettings: HomeCatalogSettingsStore
     @ObservedObject private var trailerGate = TrailerGate.shared
-    /// Into / out of Details in place: Home's parts become Details'.
-    private var opening = BillboardOpening.shared
+    private var billboardTrailer = BillboardTrailer.shared
     /// Moves between the billboard's buttons (each fades the trailer out;
     /// resting again brings it back).
     /// Arrivals on the billboard (each starts the paging clock over).
@@ -1796,16 +1795,14 @@ struct HomeUIKitView: View {
         .onAppear { if active { takeBack() } }
         .onChange(of: active) { _, now in
             if now { takeBack() }
-            opening.trailerShown = now && trailerOut
+            billboardTrailer.shown = now && trailerOut
         }
         // The top bar moves out with the peek while it plays.
-        .onChange(of: trailerOut) { _, out in if active { opening.trailerShown = out } }
+        .onChange(of: trailerOut) { _, out in if active { billboardTrailer.shown = out } }
     }
 
-    /// The trailer on the picture — or coming back on it from Details
-    /// (handed over, taken on as Home shows): the peek, the dots and the
-    /// top bar stay out (they came back, then went again).
-    private var trailerOut: Bool { trailer.shown || opening.closing && StageTrailer.carrying }
+    /// The trailer on the picture: the peek, the dots and the top bar out.
+    private var trailerOut: Bool { trailer.shown }
 
     /// Back below the billboard: all the way up to it, in one move (its
     /// title as it is, the rows keeping their places). On it: not ours —
@@ -1887,17 +1884,18 @@ struct HomeUIKitView: View {
                            // The trailer on the picture: the peek moves out
                            // the bottom (the dots too), back as it goes.
                            peekHidden: trailerOut,
-                           openingLook: opening.opened,
                            onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
                            // Its text on its pictures: each title one card.
-                           billboardPageText: { AnyView(BillboardPageText(item: $0, make: billboardText)) },
+                           billboardPageText: { AnyView(billboardText($0)) },
                            // The picture under the text: the controller's own,
                            // moved with the billboard's distance.
                            pinnedBillboardPicture: true,
                            billboardTrailer: trailer,
-                           rigidBillboardTravel: Self.rigidBillboardTravel) { item, position in
+                           rigidBillboardTravel: Self.rigidBillboardTravel,
+                           billboardCard: StagePictureView.homeCard,
+                           billboardCardFocus: true) { item, position in
                 // Every arrival on the billboard (back from the top bar, on
                 // the same title too) starts its paging clock over.
                 if position != nil { autoPageVisit &+= 1 }
@@ -1921,75 +1919,15 @@ struct HomeUIKitView: View {
     }
 }
 
-/// THE CALM GROUND under rows of cards and text: the title's colour(s)
-/// over a near-black base — flat, no vignette.
-struct TitleTintBackground: View {
-    let tint: Color?
-    var second: Color? = nil
-
-    /// Under it (Home, a folder): dark, a little lighter at the top.
-    static var base: some View {
-        LinearGradient(colors: [Color(white: 0.10), Color(white: 0.03)], startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
-    }
-
-    /// How strongly the colour covers the dark base.
-    static let tintStrength: Double = 0.5
-
-    var body: some View {
-        ZStack {
-            // Even from top to bottom: no darker lower half, no corners.
-            Color(white: 0.06)
-            if let tint {
-                // The title's colour, evenly over the whole surface.
-                Rectangle().fill(tint.opacity(Self.tintStrength))
-                // Two colours: the second one comes in towards the bottom
-                // left of the lit side (a fixed mask: only colours change,
-                // so title changes fade like the single colour).
-                if let second {
-                    Rectangle().fill(second.opacity(Self.tintStrength))
-                        .mask(LinearGradient(stops: [.init(color: .clear, location: 0.15),
-                                                     .init(color: .black, location: 0.95)],
-                                             startPoint: UnitPoint(x: 0.95, y: 0),
-                                             endPoint: UnitPoint(x: 0.5, y: 1)))
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// The background's colours from the title's artwork: its two main colours
-/// (`colors`).
+/// The colours' timing.
 @MainActor
 enum FixedFocusTint {
-    static func colors(for url: String) async
-        -> (first: Color, second: Color?)? {
-        guard let palette = await SpotlightTint.areaPalette(for: url) else { return nil }
-        return colors(from: palette)
-    }
-
-    private static func colors(from palette: [SpotlightTint.Swatch])
-        -> (first: Color, second: Color?)? {
-        guard let first = palette.first else { return nil }
-        let second = palette.count > 1 ? palette[1] : nil
-        return (shown(hue: first.hue, saturation: first.saturation),
-                second.map { shown(hue: $0.hue, saturation: $0.saturation) })
-    }
-
     /// The colours' Core Animation fade with focus (the background, the
     /// collection panels; a fade takes a
     /// curve, not a spring: the no-bounce spring's shape, fast then a long
     /// settle).
     @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
 
-    /// How bright the colour is before it is laid over the dark base.
-    static let brightness: Double = 0.45
-
-    /// The colour as the background shows it: at the tint's brightness.
-    private static func shown(hue: CGFloat, saturation: CGFloat) -> Color {
-        Color(hue: Double(hue), saturation: Double(saturation), brightness: brightness)
-    }
 }
 
 /// The billboard's text (Home's and Details'): the logo (the name), then
@@ -2011,8 +1949,9 @@ struct FixedFocusBillboardText: View {
     var logo: String? = nil
     /// Details' line in the reason's place (`DetailTrailerHint`).
     var lead: AnyView? = nil
-    /// Home's card: the reason, status, fact and ratings are on plates in
-    /// its top corners (`BillboardCorners`): only logo, facts and tagline.
+    /// The reason, status, fact and ratings on plates in the top corners
+    /// (`BillboardCorners`: Home's card, Details): only logo, facts and
+    /// tagline (Details' line still over the logo).
     var corners = false
 
     static let width = FixedFocusMetrics.boxWidth - 2 * FixedFocusMetrics.textIndent
@@ -2086,10 +2025,6 @@ struct FixedFocusBillboardText: View {
         let line = UIFont.systemFont(ofSize: FixedFocusMetrics.textSize).lineHeight
         return (line * CGFloat(summaryLines) + summarySpacing * CGFloat(summaryLines - 1)).rounded(.up)
     }
-    /// Where the Detail page's buttons start: below the chips line.
-    static var buttonsY: CGFloat {
-        FixedFocusMetrics.boxFrame.maxY + 104 + 45 + 44
-    }
     /// The chips line: the status badge, then the first ratings (nil: none).
     @MainActor
     static func ratingsChips(_ ratings: MDBListRatings?, settings: MDBListSettings, item: MetaItem,
@@ -2107,11 +2042,6 @@ struct FixedFocusBillboardText: View {
             .minimumScaleFactor(0.74)
             .frame(maxWidth: TitleBlock.logoWidth, alignment: .bottomLeading)
     }
-
-    /// The block's BOTTOM (the tagline) stands here — it grows up with
-    /// what it has, as the Apple TV app's text sits on its buttons. (On
-    /// Details: room for the buttons right below.)
-    static var bottom: CGFloat { buttonsY - (space - lineInset) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2137,9 +2067,9 @@ struct FixedFocusBillboardText: View {
         VStack(alignment: .leading, spacing: 0) {
             // One place, the reason or Details' line: swapped, the old one
             // rising out as it fades, the new one coming up into it.
-            if !corners {
+            if !corners || lead != nil {
             ZStack(alignment: .leading) {
-                if let reason {
+                if let reason, !corners {
                     BillboardReasonLabel(reason: reason)
                         .transition(Self.leadSwap)
                 } else if let lead {
@@ -2231,9 +2161,15 @@ private struct BillboardReasonLabel: View {
 /// reason, the status and one fact, each on the cards' plate
 /// (`FixedFocusBadges`: a deep shade of the picture's colour, its ink);
 /// top right the ratings (the first three sources) on one plate.
-private struct BillboardCorners: View {
+/// The billboard's badges on the cards' plates in its top corners: the
+/// reason, status and one fact top left, the ratings top right (Home's
+/// card: the first three; Details: all, as Details shows them).
+struct BillboardCorners: View {
     let item: MetaItem
     let reason: BillboardReason?
+    var details = false
+    /// Changed when the title's records were read again (redraws it).
+    var revision = 0
     @State private var tint: UIColor?
 
     private var url: String? { TMDBService.originalSize(item.background) ?? item.poster }
@@ -2289,12 +2225,12 @@ private struct BillboardCorners: View {
 
     private var ratings: [MDBListRatingEntry] {
         let settings = MDBListSettingsStore.current
-        guard settings.showsRatings(onDetails: false) else { return [] }
+        guard settings.showsRatings(onDetails: details) else { return [] }
         let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
         let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
         let known = TitleRecords.shared.ratings(item) ?? nil
-        return Array(MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: false)
-            .prefix(FixedFocusBillboardText.ratingsShown))
+        let all = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: details)
+        return details ? all : Array(all.prefix(FixedFocusBillboardText.ratingsShown))
     }
 
     @ViewBuilder private var ratingsPlate: some View {
@@ -2379,81 +2315,6 @@ enum FixedFocusShowInfo {
                                        startYearOnly: true)
             .joined(separator: "  •  ")
     }
-}
-
-/// THE STAGE'S SHADE — what lies over a full-screen backdrop so text reads
-/// on it: one fade from the left. ONE definition for Home's billboard and
-/// the Detail page: the same picture looks the same on both.
-struct BillboardShade: View {
-    var body: some View {
-        Image(uiImage: Self.image).resizable()
-            .allowsHitTesting(false)
-    }
-
-    /// The fade, darkest at the screen's left edge, clear past the text
-    /// column, then a little dark again towards the right edge (bright
-    /// pictures). No bottom fade, no top band, no vignette.
-    static let points: [(x: Double, y: Double)] = [
-        (0, 0.8),                                      // the screen's edge
-        (0.05, 0.75),
-        (0.1, 0.70),
-        (0.2, 0.66),                                    // the column's middle
-        (0.36, 0.52),
-        (0.48, 0.28),                                   // past the column
-        (0.64, 0.28),
-        (0.82, 0.28),
-        (1, 0.28),                                       // the right edge
-    ]
-
-    /// The darkness at any share of the width: one smooth curve through
-    /// `points` — monotone cubic interpolation (Fritsch–Carlson): smooth
-    /// through every point, never overshooting; level where it ends.
-    static func curve(_ points: [(x: Double, y: Double)]) -> (Double) -> Double {
-        let n = points.count
-        let slopes = (0..<n - 1).map { (points[$0 + 1].y - points[$0].y) / (points[$0 + 1].x - points[$0].x) }
-        var tangents = (0..<n).map { i -> Double in
-            if i == 0 { return slopes[0] }
-            if i == n - 1 { return 0 }
-            return slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2
-        }
-        for i in 0..<n - 1 where slopes[i] != 0 {
-            let a = tangents[i] / slopes[i], b = tangents[i + 1] / slopes[i]
-            let length = a * a + b * b
-            if length > 9 {
-                let scale = 3 / length.squareRoot()
-                tangents[i] = scale * a * slopes[i]
-                tangents[i + 1] = scale * b * slopes[i]
-            }
-        }
-        let tangentsFixed = tangents
-        return { x in
-            if x <= points[0].x { return points[0].y }
-            if x >= points[n - 1].x { return points[n - 1].y }
-            let i = min((0..<n - 1).last { points[$0].x <= x } ?? 0, n - 2)
-            let width = points[i + 1].x - points[i].x, t = (x - points[i].x) / width
-            let t2 = t * t, t3 = t2 * t
-            let y = (2 * t3 - 3 * t2 + 1) * points[i].y + (t3 - 2 * t2 + t) * width * tangentsFixed[i]
-                + (-2 * t3 + 3 * t2) * points[i + 1].y + (t3 - t2) * width * tangentsFixed[i + 1]
-            return min(max(y, 0), 1)
-        }
-    }
-
-    /// Made once: one line of pixels (black, only the alpha — RGBA,
-    /// premultiplied), stretched to the screen.
-    static let image: UIImage = {
-        let w = 960
-        let dark = curve(points)
-        var pixels = [UInt8](repeating: 0, count: w * 4)
-        for x in 0..<w {
-            pixels[x * 4 + 3] = UInt8((dark((Double(x) + 0.5) / Double(w)) * 255).rounded())
-        }
-        let provider = CGDataProvider(data: Data(pixels) as CFData)!
-        let cg = CGImage(width: w, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-                         space: CGColorSpaceCreateDeviceRGB(),
-                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                         provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: cg)
-    }()
 }
 
 /// Text levels: a hierarchy, mostly off-white.
@@ -2766,12 +2627,13 @@ extension HomeUIKitView {
         return row.items[position.index]
     }
 
-    /// Details' button: into Details — in place (`DetailTransition.openInPlace`):
-    /// Home's billboard becomes Details'.
+    /// Select on the billboard card: into Details, a window growing out of
+    /// the card (it shows Details' picture: `DetailTransition.Window`).
     /// A trailer playing goes on into Details (`StageTrailer.handOver`).
     func openBillboardTitle(_ item: MetaItem) {
         guard let onSelectFeatured else { onSelect(item); return }
-        DetailTransition.shared.openInPlace(item, trailer: trailer.handOver()) { onSelectFeatured(item) }
+        DetailTransition.shared.open(item, keepsPicture: true, trailer: trailer.handOver(),
+                                     from: StagePictureView.homeCardShown?.openingWindow()) { onSelectFeatured(item) }
     }
 
     /// The billboard's titles changed (its picks arrived): show the title now
@@ -2811,9 +2673,7 @@ extension HomeUIKitView {
     /// bottom line — it grows up — the buttons below it).
     /// (The reason — Details has none — goes with the swap; the rest stays
     /// exactly: Details' text is the billboard's.)
-    /// Into Details in place (`opened`): the reason goes (Details' hint
-    /// comes in with Details).
-    private func billboardText(_ item: MetaItem, opened: Bool) -> some View {
+    private func billboardText(_ item: MetaItem) -> some View {
         // (What's in memory already — loaded ahead, `TitleExtras` — draws
         // with the text, not a moment after it.)
         let _ = billboardRecord
@@ -2822,17 +2682,15 @@ extension HomeUIKitView {
         let margin = StagePictureView.cardMargin
         // TRYING: the cards' layout — the reason, status and fact on plates
         // top left, the ratings on one top right; logo, facts and tagline
-        // at the foot. Into Details the block takes them back (Details'
-        // own layout).
+        // at the foot.
         return ZStack(alignment: .topLeading) {
             FixedFocusBillboardText(item: item, info: records.size(item),
                                     reason: nil,
                                     ratings: billboardRatingsRow(item),
                                     tagline: records.tagline(item),
-                                    corners: !opened)
-                .frame(height: opened ? FixedFocusBillboardText.bottom : StagePictureView.homeTextBottom,
-                       alignment: .bottomLeading)
-                .padding(.leading, FixedFocusMetrics.titleInset + (opened ? 0 : StagePictureView.textIn))
+                                    corners: true)
+                .frame(height: StagePictureView.textBottom(card), alignment: .bottomLeading)
+                .padding(.leading, FixedFocusMetrics.titleInset + StagePictureView.textIn(card))
             // The plates' contents on the text's edges (the reason's symbol
             // over the logo's left, the last score over the dots' right
             // end), the plates past them; as far from the top as from the
@@ -2841,7 +2699,6 @@ extension HomeUIKitView {
             BillboardCorners(item: item, reason: billboardReasons[item.id])
                 .frame(width: card.width - 2 * inset, alignment: .topLeading)
                 .offset(x: card.minX + inset, y: card.minY + inset)
-                .opacity(opened ? 0 : 1)
         }
     }
 
@@ -2850,36 +2707,6 @@ extension HomeUIKitView {
     private func billboardRatingsRow(_ item: MetaItem) -> AnyView? {
         FixedFocusBillboardText.ratingsChips(TitleRecords.shared.ratings(item) ?? nil,
                                              settings: mdblist.settings, item: item)
-    }
-}
-
-/// A billboard card's text, following `BillboardOpening` (each card's own
-/// host: a new root view wouldn't animate).
-struct BillboardPageText<Content: View>: View {
-    private var opening = BillboardOpening.shared
-    let item: MetaItem
-    let make: (MetaItem, Bool) -> Content
-    /// `opened` as this card shows it, changed in the card's own
-    /// transaction: the reason out and back on the move (Back, the change
-    /// came with its host's new root view, unanimated — the reason was
-    /// there at once, ahead of the parts moving in).
-    @State private var shown = BillboardOpening.shared.opened
-    init(item: MetaItem, make: @escaping (MetaItem, Bool) -> Content) {
-        self.item = item
-        self.make = make
-    }
-    var body: some View {
-        make(item, shown)
-            .onChange(of: opening.opened) { _, opened in
-                guard opened != shown else { return }
-                if opening.running {
-                    withAnimation(Motion.move) { shown = opened }
-                } else {
-                    var instant = Transaction()
-                    instant.disablesAnimations = true
-                    withTransaction(instant) { shown = opened }
-                }
-            }
     }
 }
 

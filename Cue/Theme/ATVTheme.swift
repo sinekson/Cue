@@ -103,6 +103,11 @@ enum BandsPicture {
     static func lifted(_ v: Double, darker: Double = 1) -> CGFloat {
         CGFloat((0.62 + 0.28 * v) * (1 - (1 - darker) * 0.4))
     }
+    /// Details' (`TitleBands`): the picture's colour stronger over the grey
+    /// — 0 lands at 50 %, 1 at 92 %.
+    static func liftedStrong(_ v: Double, darker: Double = 1) -> CGFloat {
+        CGFloat((0.50 + 0.42 * v) * (1 - (1 - darker) * 0.4))
+    }
 
     /// Draws pools of colour on a base (Core Image on the GPU, the grain on
     /// the CPU).
@@ -183,11 +188,14 @@ enum BandsPicture {
     /// Dark: dimmed by `dim` and never brighter than `brightest`. Light:
     /// lifted to tvOS's light grey, the colours a tint (`lifted`).
     static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)], dim: Double,
-                      brightest: Double, light: Bool = false,
+                      brightest: Double, light: Bool = false, strong: Bool = false,
                       seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard let darkest = palette.first else { return nil }
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
-            if light { return (lifted(c.r, darker: extra), lifted(c.g, darker: extra), lifted(c.b, darker: extra)) }
+            if light {
+                let lift = strong ? liftedStrong : lifted
+                return (lift(c.r, extra), lift(c.g, extra), lift(c.b, extra))
+            }
             var (r, g, b) = (c.r * (1 - dim) * extra, c.g * (1 - dim) * extra, c.b * (1 - dim) * extra)
             let light = 0.2126 * r + 0.7152 * g + 0.0722 * b
             if light > brightest { let k = brightest / light; (r, g, b) = (r * k, g * k, b * k) }
@@ -628,6 +636,95 @@ final class BackgroundPicks {
             return Scored(id: item.id, name: item.name, url: url, light: light, dim: dim,
                           passes: passes, why: passes ? "passes" : "too dark")
         }.value
+    }
+}
+
+/// DETAILS' BACKGROUND: its picture's colours as bands, as the app's
+/// background (`BandsPicture.pools`) but stronger — dimmed less, a
+/// brighter ceiling; light, a deeper tint (`liftedStrong`) — the title's
+/// flavour on its page (Details is the billboard's card opened: without it
+/// it read as Home). Drawn when focus rests on a title (`TitlePictures`),
+/// kept in memory for the last few; the opening and Details draw the same
+/// image, so the hand-over can't show.
+@MainActor
+final class TitleBands {
+    static let shared = TitleBands()
+    static let dim = 0.4
+    static let brightest = 0.34
+    private static let kept = 6
+
+    private var images: [String: UIImage] = [:]
+    private var order: [String] = []
+    private var working: [String: Task<UIImage?, Never>] = [:]
+
+    private static func key(_ url: String) -> String {
+        url + (BackgroundPicks.Mode.now == .light ? "#light" : "")
+    }
+
+    func cached(_ url: String?) -> UIImage? { url.flatMap { images[Self.key($0)] } }
+
+    /// Drawn (or being drawn) for `url`; nil if it can't be.
+    @discardableResult
+    func image(for url: String) async -> UIImage? {
+        let key = Self.key(url)
+        if let image = images[key] { return image }
+        if let task = working[key] { return await task.value }
+        let light = BackgroundPicks.Mode.now == .light
+        let seed = BackgroundPicks.seed(url)
+        let small = url.replacingOccurrences(of: "/t/p/original/", with: "/t/p/w780/")
+        let task = Task<UIImage?, Never> {
+            guard let remote = URL(string: small),
+                  let data = try? await ImageCache.shared.download(remote) else { return nil }
+            return await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let source = ImageCache.decodeDownsampled(data, budget: 160)?.cgImage,
+                      let bands = BandsPicture.pools(from: BandsPicture.palette(source), dim: Self.dim,
+                                                     brightest: Self.brightest, light: light, strong: true,
+                                                     seed: seed),
+                      let picture = BandsPicture.render(base: bands.base, pools: bands.pools)
+                else { return nil }
+                return UIImage(cgImage: picture).preparingForDisplay()
+            }.value
+        }
+        working[key] = task
+        let image = await task.value
+        working[key] = nil
+        if let image {
+            images[key] = image
+            order.removeAll { $0 == key }
+            order.append(key)
+            while order.count > Self.kept { images[order.removeFirst()] = nil }
+        }
+        return image
+    }
+}
+
+/// Details' background: its title's bands (`TitleBands`), faded in if
+/// they come late; until then the app's.
+struct TitleBandsBackground: View {
+    let url: String?
+    @State private var image: UIImage?
+
+    init(url: String?) {
+        self.url = url
+        _image = State(initialValue: TitleBands.shared.cached(url))
+    }
+
+    var body: some View {
+        ZStack {
+            ATVBackground()
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: Motion.fadeDuration), value: image)
+        .task(id: url ?? "") {
+            guard let url else { image = nil; return }
+            if let known = TitleBands.shared.cached(url) { image = known; return }
+            image = await TitleBands.shared.image(for: url)
+        }
     }
 }
 
