@@ -50,7 +50,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - Dev launch args: `-detailDemo -detailID tt…` (a show; add `-detailMovie`
   for a film — The Two Towers tt0167261 has a collection), `-detailDemoSeries [tt…]`
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
-  `-transitionSlowMo` (4×), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
+  `-transitionSlowMo` (4×), `-slowMo [speed]` (every animation, 0.1 by
+  default, from the curtain's lift; timers keep real time), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
   `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
 - Settings → Developer holds experiment switches
   (`PerformanceSettingsStore`). Remove options once a decision is made.
@@ -463,7 +464,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   posters that stands still; Left/Right: the box dips to its resting
   size and up again (0.35 s, the old and new as one), the next title dissolves in
   over it (the new over the old, 0.25 s), the posters sliding one step
-  under it, the old title's poster coming out at its left; Up/Down: it
+  under it, never seen there: cut off at the grown box's edges while the
+  move runs, a 16 pt soft edge (`cutAtBox`, a sheet into a laser), the
+  one going in also fading out in 0.12 s from the press (Netflix's;
+  `fadeIntoBox`), the old title's poster coming out through the edge
+  at full light; the poster under the box centred in it, so both ways
+  alike (at its left, Right's were quicker) (tried: the posters going
+  in and out fading whole over the slide: one half-seen slid under the
+  box; the slide 0.5 s, Netflix's curve: worse); Up/Down: it
   opens out of the focused poster (the backdrop there at once under
   the poster, the poster fading off it growing 3 %, shade and words
   over the first 0.25 s) and closes back into it. Every card in the row

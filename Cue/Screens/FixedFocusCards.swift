@@ -704,7 +704,27 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     }
     /// Its picture hidden once it's under the box (sliding in, it shows).
     var hiddenUnderBox = false {
-        didSet { card.isHidden = hiddenUnderBox }
+        didSet {
+            card.layer.removeAnimation(forKey: "intoBox")
+            card.isHidden = hiddenUnderBox
+        }
+    }
+
+    /// Along the row, going in under the box: gone quickly from the press,
+    /// mostly before it reaches the box's edge (Netflix's; the edge's cut,
+    /// `FixedFocusRowCell.cutAtBox`, takes the rest). Core Animation: in
+    /// the move's spring a UIView fade took the spring's timing. Held until
+    /// it's hidden under the box (`hiddenUnderBox`).
+    func fadeIntoBox() {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = card.layer.presentation()?.opacity ?? 1
+        fade.toValue = 0
+        fade.beginTime = card.layer.convertTime(CACurrentMediaTime(), from: nil)
+        fade.duration = 0.12
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.fillMode = .forwards
+        fade.isRemovedOnCompletion = false
+        card.layer.add(fade, forKey: "intoBox")
     }
 
     /// The box showing the focus, press and hold of the card under it.

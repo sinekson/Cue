@@ -4214,9 +4214,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
         rowMoves += 1
         let move = rowMoves
+        if feature, opening == nil, featureLayout.open, relayout, box != nil { cutAtBox(cv) }
         FixedFocusMotion.run(duration: Motion.moveDuration) {
             if relayout { self.applyFeature(in: cv) }
             if offset != cv.contentOffset.x { cv.contentOffset = CGPoint(x: offset, y: 0) }
+            if let mask = self.edgeMask { mask.frame = self.edgeMaskFrame(cv) }
             self.applyNameRoom(focusing: index)
         } completion: { _ in self.boxMoveEnded(move) }
     }
@@ -4375,6 +4377,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             // shows): at the end of the row's move (`boxMoveEnded`).
             if animated {
                 slidingUnder = (under, new)
+                under?.fadeIntoBox()
             } else {
                 under?.hiddenUnderBox = true
             }
@@ -4396,6 +4399,48 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
         box = new
         boxItem = item.id
+    }
+
+    // MARK: The box's edge
+
+    /// Along the row (Left/Right), the posters cut off at the box's edges,
+    /// a sheet into a laser: one going in vanishes where it meets the box,
+    /// one coming out appears where it leaves it, never seen under it (a
+    /// whole poster fading slid visibly under the box). Only while the
+    /// move runs; the hole is the grown box, so the dip shows nothing.
+    private var edgeMask: BoxEdgeMask?
+    /// Past the strip's bounds all round: grown cards and their shadows.
+    private static let edgeMaskMargin: CGFloat = 400
+    /// The soft edge outside the box (under the 40 pt gap less the box's
+    /// growth, so a resting poster beside it isn't touched).
+    private static let edgeFeather: CGFloat = 16
+
+    /// Puts the mask on (held presses keep the one there: it's mid-move).
+    private func cutAtBox(_ cv: UICollectionView) {
+        guard edgeMask == nil else { return }
+        let mask = BoxEdgeMask()
+        let margin = Self.edgeMaskMargin
+        UIView.performWithoutAnimation {
+            mask.frame = edgeMaskFrame(cv)
+            let lift = FixedFocusMetrics.focusLift(FixedFocusMetrics.featureCard)
+            let large = FixedFocusFeatureLayout.large.width
+            let left = margin + featureLayout.left - large * lift / 2
+            mask.cut(left...(left + large * (1 + lift)), feather: Self.edgeFeather)
+        }
+        cv.mask = mask
+        edgeMask = mask
+    }
+
+    /// The mask's frame for the strip's offset: set in the move's spring
+    /// with the offset, it stands still on screen.
+    private func edgeMaskFrame(_ cv: UICollectionView) -> CGRect {
+        CGRect(x: cv.contentOffset.x, y: 0, width: cv.bounds.width, height: cv.bounds.height)
+            .insetBy(dx: -Self.edgeMaskMargin, dy: -Self.edgeMaskMargin)
+    }
+
+    private func uncutBox() {
+        destinationStrip?.mask = nil
+        edgeMask = nil
     }
 
     /// The box to `frame`, everything in it laid out in the same spring.
@@ -4420,12 +4465,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     /// The row's move has ended (the last one, `move` its count).
     private func boxMoveEnded(_ move: Int) {
-        guard move == rowMoves, let sliding = slidingUnder else { return }
+        guard move == rowMoves else { return }
+        uncutBox()
+        guard let sliding = slidingUnder else { return }
         slidingUnder = nil
         if box === sliding.box, sliding.cell?.mirror === sliding.box { sliding.cell?.hiddenUnderBox = true }
     }
 
     private func dropBox() {
+        uncutBox()
         slidingUnder = nil
         box?.removeFromSuperview()
         box = nil
@@ -4530,6 +4578,24 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 }
 
+/// A large row's posters along Left/Right (`FixedFocusRowCell.cutAtBox`):
+/// opaque but for the box's span, a short soft edge either side.
+private final class BoxEdgeMask: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+
+    func cut(_ hole: ClosedRange<CGFloat>, feather: CGFloat) {
+        guard let gradient = layer as? CAGradientLayer, bounds.width > 0 else { return }
+        let width = bounds.width
+        let solid = UIColor.white.cgColor, clear = UIColor.clear.cgColor
+        gradient.startPoint = CGPoint(x: 0, y: 0.5)
+        gradient.endPoint = CGPoint(x: 1, y: 0.5)
+        gradient.colors = [solid, solid, clear, clear, solid, solid]
+        gradient.locations = [0, hole.lowerBound - feather, hole.lowerBound,
+                              hole.upperBound, hole.upperBound + feather, width]
+            .map { NSNumber(value: Double($0 / width)) }
+    }
+}
+
 /// A large row (Home's browsing rows): portrait posters, focus held at
 /// the spot. In the focused row the focused card is open there, a wide card
 /// as tall as a poster (`featureCard`, its right edge near the screen's
@@ -4560,8 +4626,12 @@ final class FixedFocusFeatureLayout: UICollectionViewLayout {
         frames = (0..<count).map { index in
             // Every card a poster: the open card is the row's box above them
             // (`FixedFocusRowCell.syncBox`), its room left after the focused one.
-            defer { x += (open && index == focused ? Self.large.width : Self.poster.width) + gap }
-            return CGRect(origin: CGPoint(x: x, y: 0), size: Self.poster)
+            // The focused one centred in that room: posters go in and come
+            // out on both sides alike (at its left, Right's were quicker).
+            let under = open && index == focused
+            defer { x += (under ? Self.large.width : Self.poster.width) + gap }
+            let inset = under ? (Self.large.width - Self.poster.width) / 2 : 0
+            return CGRect(origin: CGPoint(x: x + inset, y: 0), size: Self.poster)
         }
         // Room for the last card open at the spot.
         width = x - gap + left + Self.large.width - Self.poster.width

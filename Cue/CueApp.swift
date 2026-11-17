@@ -2070,8 +2070,18 @@ final class LaunchPreloader: ObservableObject {
                 .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
             window?.rootViewController?.setNeedsFocusUpdate()
             window?.rootViewController?.updateFocusIfNeeded()
+            if let speed = Self.slowMotion { window?.layer.speed = speed }
         }
     }
+
+    /// Dev: `-slowMo [speed]` — every Core Animation and UIKit animation in
+    /// the app at that speed (0.1 by default) once the curtain lifts, to
+    /// watch one. Timers keep real time.
+    static let slowMotion: Float? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let at = arguments.firstIndex(of: "-slowMo") else { return nil }
+        return arguments.dropFirst(at + 1).first.flatMap(Float.init) ?? 0.1
+    }()
 
     // MARK: The gate
 
