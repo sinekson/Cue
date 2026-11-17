@@ -930,15 +930,23 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var startedOnCollection = false
 
     private func startOnCollectionIfAsked() {
-        // (`-homeFocusRow N`: start on row N.)
+        // (`-homeFocusRow N`: start on row N; `last`: the bottom row.)
         let args = ProcessInfo.processInfo.arguments
-        let asked = args.firstIndex(of: "-homeFocusRow").flatMap { args.indices.contains($0 + 1) ? Int(args[$0 + 1]) : nil }
+        let value = args.firstIndex(of: "-homeFocusRow").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
+        let wantsLast = value == "last"
+        let asked = wantsLast ? rows.indices.last : value.flatMap { Int($0) }
         guard !startedOnCollection,
               let index = asked.flatMap({ rows.indices.contains($0) ? $0 : nil })
                 ?? (args.contains("-homeFocusCollection") ? rows.indices.first(where: isPanel) : nil)
         else { return }
         startedOnCollection = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
+        // After the launch's curtain (under it, the gate took the focus
+        // update and Home's lift sent focus to the billboard).
+        Task { @MainActor [self] in
+            await LaunchPreloader.shared.lifted()
+            try? await Task.sleep(for: .milliseconds(600))
+            // `last` by the rows then (they may have grown since).
+            let index = wantsLast ? rows.indices.last ?? index : index
             focusedRow = index
             onDepth(depth(of: index))
             applyDimming()
@@ -1295,6 +1303,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if isFeatured(index) {
                 wants.append(.init(TMDBService.originalSize(item.background) ?? item.poster, PictureSize.screen))
                 wants.append(.init(item.logo, PictureSize.logo))
+            } else if isFeature(index) {
+                // A large row's open card, as its box loads it
+                // (`FixedFocusShowcaseCell.wantBackdrop`): left out, the
+                // first visit opened a dark card until its backdrop came.
+                let art = rows[index].art[item.id] ?? item.poster ?? item.background
+                wants.append(.init(item.background ?? art, PictureSize.showcase))
+                wants.append(.init(item.logo, PictureSize.cardLogo))
             } else if !isLandscape(index), !isDestination(index), custom(index) == nil {
                 wants.append(.init(item.background ?? item.poster, PictureSize.landscape))
                 wants.append(.init(item.logo, PictureSize.cardLogo))
@@ -4303,15 +4318,21 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         let frame = boxFrame
         let posterFrame = CGRect(origin: frame.origin, size: FixedFocusFeatureLayout.poster)
         guard featureLayout.open else {
-            // Closing: back into the poster under it, then gone.
+            // Closing: back into the poster under it, its growth going in
+            // the same spring (left grown, the poster under it showed
+            // smaller at once as it went), then gone.
             guard let closing = box else { return }
             box = nil
             boxItem = nil
+            closingBox = (closing, item.id)
             let under = underBox(index)
             under?.mirror = nil
             closing.setOpen(false, animated: animated)
-            grow(closing, to: posterFrame, animated: animated) { [weak self, weak under] in
+            grow(closing, to: posterFrame, focused: false, animated: animated) { [weak self, weak under] in
+                // Opened again meanwhile: it's the box again.
+                guard self?.box !== closing else { return }
                 closing.removeFromSuperview()
+                if self?.closingBox?.box === closing { self?.closingBox = nil }
                 if self?.box == nil { under?.hiddenUnderBox = false }
             }
             return
@@ -4320,6 +4341,19 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         if let box, boxItem == item.id {
             under?.mirror = box
             under?.hiddenUnderBox = true
+            return
+        }
+        // Back into the row while its box still closes: that box opens
+        // again from where it is (a new one started as the whole poster,
+        // over the closing landscape).
+        if box == nil, let (closing, id) = closingBox, id == item.id {
+            closingBox = nil
+            box = closing
+            boxItem = id
+            under?.hiddenUnderBox = true
+            grow(closing, to: frame, focused: under?.isFocused ?? true, animated: animated)
+            UIView.performWithoutAnimation { under?.mirror = closing }
+            closing.setOpen(true, animated: animated)
             return
         }
         // Made outside the move's spring: made in it, its setup was
@@ -4401,33 +4435,44 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             // Card, outline and shadow laid out in one animation: left to
             // the next layout pass and the focus's own spring, the shadow
             // ran ahead of the card, darkening the picture to its edge.
+            // It starts as the poster at rest, its focus growth coming with
+            // the opening (grown at once, the poster jumped bigger, then
+            // opened).
             UIView.performWithoutAnimation {
                 new.frame = posterFrame
                 new.setOpen(false, animated: false)
-                new.reflect(focused: under?.isFocused ?? false, pressed: false, held: false)
-                under?.mirror = new
+                new.reflect(focused: false, pressed: false, held: false)
                 new.layoutIfNeeded()
             }
             under?.hiddenUnderBox = true
-            grow(new, to: frame, animated: animated)
+            grow(new, to: frame, focused: under?.isFocused ?? true, animated: animated)
+            // After the grow took the focus look: mirrored before it, the
+            // box took it at once, outside the spring.
+            UIView.performWithoutAnimation { under?.mirror = new }
             new.setOpen(true, animated: animated)
         }
         box = new
         boxItem = item.id
     }
 
-    /// The box to `frame`, everything in it laid out in the same spring.
-    private func grow(_ box: FixedFocusShowcaseCell, to frame: CGRect, animated: Bool,
+    /// The closing box and its title, until it's gone: back in the row
+    /// meanwhile, it opens again.
+    private var closingBox: (box: FixedFocusShowcaseCell, id: String)?
+
+    /// The box to `frame`, everything in it laid out in the same spring,
+    /// its focus look (`focused`) too.
+    private func grow(_ box: FixedFocusShowcaseCell, to frame: CGRect, focused: Bool, animated: Bool,
                       then done: @escaping () -> Void = {}) {
-        guard animated else {
+        let apply = {
             box.frame = frame
+            box.reflect(focused: focused, pressed: false, held: false)
             box.layoutIfNeeded()
+        }
+        guard animated else {
+            UIView.performWithoutAnimation(apply)
             return done()
         }
-        FixedFocusMotion.run(duration: Motion.moveDuration) {
-            box.frame = frame
-            box.layoutIfNeeded()
-        } completion: { _ in done() }
+        FixedFocusMotion.run(duration: Motion.moveDuration, animations: apply) { _ in done() }
     }
 
     /// The card sliding in under the box along the row, hidden once there.
@@ -4445,6 +4490,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     private func dropBox() {
         slidingUnder = nil
+        closingBox?.box.removeFromSuperview()
+        closingBox = nil
         box?.removeFromSuperview()
         box = nil
         boxItem = nil

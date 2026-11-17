@@ -52,7 +52,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
   `-transitionSlowMo` (4×), `-slowMo [speed]` (every animation, 0.1 by
   default, from the curtain's lift; timers keep real time), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
-  `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-cue.home.billboardAutoPage NO`.
+  `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-homeFocusRow <n|last>`, `-cue.home.billboardAutoPage NO`.
 - Settings → Developer holds experiment switches
   (`PerformanceSettingsStore`). Remove options once a decision is made.
 
@@ -880,6 +880,12 @@ made the gap breathe; Up/Down into moving-focus rows runs through
 - Home's animation curves as a whole (timings and springs: the scroll,
   focus growth, the billboard card's dip and growth; growing the card on
   the scroll's 0.6 s when the rows scroll was tried, back to focus's 0.3).
+- Large rows: a flicker opening the box on a title's first visit (Up/Down
+  into the row), now and then again on a later return. Fixed so far: the
+  stalls, the poster vanishing at once, the reopening box, the shadow
+  outgrowing the picture; the open card's backdrop and logo are preloaded.
+  Not found yet: a late picture is the guess (see it with `-slowMo 0.1
+  -homeFocusRow last`).
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).

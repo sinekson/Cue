@@ -446,6 +446,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// card and the next two): not for every poster in view.
     private var backdropWanted = false
 
+    /// Inside `setOpen` (it fades the poster itself).
+    private var settingOpen = false
+
     func wantBackdrop() {
         guard feature, !backdropWanted, let backdropArt else { return }
         backdropWanted = true
@@ -454,7 +457,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             guard let self, !waiting else { return }
             UIView.performWithoutAnimation { self.layoutPicture() }
             // In after the card opened: the poster goes now.
-            if self.open {
+            if self.open, !self.settingOpen {
                 Self.fade(self.picture, to: 0, animated: true)
                 self.swell(opening: true, delay: 0)
             }
@@ -640,11 +643,16 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             + (held ? FixedFocusMetrics.heldGrowth(cardSize) : 0)
     }
 
-    /// The outline SIZED with the card, not scaled: its line stays even.
+    /// The outline and its shadow scaled with the card, by the same
+    /// transform: sized to the grown card instead, while the box grew out
+    /// of a poster with its focus (size and scale changing together) they
+    /// ran a few points ahead of the picture, the page showing pale
+    /// between the card and the shadow's edge. (The line grows with it,
+    /// 2 pt to about 2.1.)
     private func sizeOutline() {
-        let scale = scale
-        outline.bounds = CGRect(origin: .zero, size: CGSize(width: bounds.width * scale, height: bounds.height * scale))
-        outline.layer.cornerRadius = Spotlight.cornerRadius * scale
+        outline.bounds = CGRect(origin: .zero, size: bounds.size)
+        outline.transform = CGAffineTransform(scaleX: scale, y: scale)
+        outline.layer.cornerRadius = Spotlight.cornerRadius
         let pad = FixedFocusCardEdge.shadowPad
         outlineShadow.frame = outline.bounds.insetBy(dx: -pad, dy: -pad)
     }
@@ -696,6 +704,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     var isFocusedLook: Bool { focusedNow }
 
 
+
     /// A large row's card under the box (`FixedFocusRowCell`'s open card at
     /// the spot): it keeps focus, press and hold; the box shows them and
     /// plays its trailer.
@@ -738,7 +747,12 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     func setOpen(_ open: Bool, animated: Bool) {
         guard open != self.open || !animated else { return }
         self.open = open
+        // A backdrop in memory answers at once: its fade is this one's
+        // (faded there too, this one found the poster already at 0 — a new
+        // card has no presentation yet — and the poster vanished at once).
+        settingOpen = true
         if open { wantBackdrop() }
+        settingOpen = false
         let move = Motion.moveDuration, fade = Motion.fadeDuration
         Self.fade(words, to: open ? 1 : 0, animated: animated)
         Self.fade(shade, to: open ? 1 : 0, animated: animated)
