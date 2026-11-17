@@ -972,6 +972,27 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
         return Double(alpha.filter { $0 > 200 }.count) / Double(alpha.count) > 0.7
     }
+    /// A logo with a colour of its own: a sixth of its drawn pixels
+    /// clearly coloured (saturated, not dark).
+    private static func colourful(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage else { return false }
+        let side = 32
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var drawn = 0, coloured = 0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let a = Double(pixels[i + 3])
+            guard a > 128 else { continue }
+            drawn += 1
+            let rgb = (0..<3).map { Double(pixels[i + $0]) / a }
+            let high = rgb.max() ?? 0, low = rgb.min() ?? 0
+            if high > 0.25, (high - low) / max(high, 0.001) > 0.35 { coloured += 1 }
+        }
+        return drawn > 0 && Double(coloured) / Double(drawn) > 1.0 / 6
+    }
     /// `FlatControl.rest`, in UIKit.
     private static let logoPlate = UIColor { $0.userInterfaceStyle == .light
         ? UIColor.white.withAlphaComponent(0.32) : UIColor.white.withAlphaComponent(0.13) }
@@ -1285,8 +1306,10 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                                   waiting: { [weak self] waiting in
                 guard let self else { return }
                 // (A logo drawn on a box of its own keeps its colours: in
-                // one colour it went a solid bar.)
-                if !waiting, let image = self.logo.image, !Self.boxed(image) {
+                // one colour it went a solid bar. So does one with a clear
+                // colour of its own — Netflix's red; black, white and grey
+                // ones are drawn in the ink, readable in both appearances.)
+                if !waiting, let image = self.logo.image, !Self.boxed(image), !Self.colourful(image) {
                     self.logo.image = image.withRenderingMode(.alwaysTemplate)
                 }
                 self.pictureWaiting(waiting, plate: true)

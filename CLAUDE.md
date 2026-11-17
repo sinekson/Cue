@@ -593,9 +593,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   a third coming in a line at a time, the focused line and the one
   before it centred, the rest peeking as rows and dimmed as them
   (`gridStart`); square cut off the shoulders, circles disliked); Network & Studios a grid of
-  Top 10's squares, the logo in the page's ink on its flat grey, a logo
-  on a box of its own in its colours (light plates with the brands'
-  colours looked weak); About's band white over the page in light. The
+  Top 10's squares on the page's flat grey, a black, white or grey logo
+  in the page's ink, one with a clear colour of its own (Netflix's red)
+  or on a box of its own in its colours (all in the ink lost them;
+  a fixed mid grey under the logos' own colours is the alternative) (light plates with the brands'
+  colours looked weak; coloured cards from the logo's or their work's
+  colour were talked over: no), the name under it in one line's room
+  (`captionRoom`: rows with no second line reserve one, not two); About's band white over the page in light. The
   page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
   bands from its picture, stronger — dimmed 40 %, ceiling 0.34; light a

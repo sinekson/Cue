@@ -561,7 +561,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// A grid's line, its card and caption room.
     func gridLine(_ rowIndex: Int) -> CGFloat {
         destinationCard(rowIndex).height
-            + (isRanked(rowIndex) || !hasCaptions(rowIndex) ? 0 : FixedFocusMetrics.captionRoom)
+            + (isRanked(rowIndex) || !hasCaptions(rowIndex) ? 0 : captionRoom(rowIndex))
     }
     /// A grid's lines in view: two; more move a line at a time.
     static let gridLinesShown = 2
@@ -728,6 +728,15 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         !captionsOnCards(rowIndex) && (captions || isLandscape(rowIndex)
             || (rows.indices.contains(rowIndex) && rows[rowIndex].id == HomeView.libraryRowID))
     }
+    /// The room under a row's cards for their caption: two lines, one
+    /// where no card has a second (the studios: two left a gap under the
+    /// grid far larger than its one line). Landscape rows' second line
+    /// is the episode's (`progress`, card states), not `subtitles`.
+    func captionRoom(_ rowIndex: Int) -> CGFloat {
+        let one = rows.indices.contains(rowIndex) && rows[rowIndex].subtitles.isEmpty
+            && !isLandscape(rowIndex) && !isContinue(rowIndex)
+        return FixedFocusMetrics.captionRoom - (one ? FixedFocusMetrics.captionLineOffset : 0)
+    }
     /// A grid of portraits: names on the cards, not under them.
     func captionsOnCards(_ rowIndex: Int) -> Bool {
         isGrid(rowIndex) && !isRanked(rowIndex)
@@ -737,11 +746,11 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// (Not a collection's: its panel is its edge — placed by that.)
     func captionBelow(_ r: Int) -> CGFloat {
         isDestination(r) && !isBanner(r) && !isPanel(r) && !isShowcase(r) && !isRanked(r)
-            && !isFeature(r) && custom(r) == nil && hasCaptions(r) ? FixedFocusMetrics.captionRoom : 0
+            && !isFeature(r) && custom(r) == nil && hasCaptions(r) ? captionRoom(r) : 0
     }
     /// The row's cards' height (a Top 10: its grid's).
     func cardHeight(_ rowIndex: Int) -> CGFloat {
-        let caption = hasCaptions(rowIndex) ? FixedFocusMetrics.captionRoom : 0
+        let caption = hasCaptions(rowIndex) ? captionRoom(rowIndex) : 0
         if let custom = custom(rowIndex) { return custom.height }
         return isBanner(rowIndex) ? bannerHeight
             : isSpotlight(rowIndex) ? FixedFocusMetrics.spotlightCard.height
