@@ -479,7 +479,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   wanted); Up/Down: it
   opens out of the focused poster (the backdrop there at once under
   the poster, the poster fading off it growing 3 %, shade and words
-  over the first 0.25 s) and closes back into it. Every card in the row
+  over the first 0.25 s) and closes back into it: one box per row,
+  hidden when closed, growing again from where it is; it takes the
+  poster's pictures and logo as shown (loaded anew, the first visit
+  flickered an empty card). Every card in the row
   a poster; the one under the box keeps focus, press and hold, the box
   shows them and plays its trailer (`FixedFocusShowcaseCell.mirror`;
   the old fixed focus box mirrored moves and masks too, hence retired).
@@ -880,12 +883,6 @@ made the gap breathe; Up/Down into moving-focus rows runs through
 - Home's animation curves as a whole (timings and springs: the scroll,
   focus growth, the billboard card's dip and growth; growing the card on
   the scroll's 0.6 s when the rows scroll was tried, back to focus's 0.3).
-- Large rows: a flicker opening the box on a title's first visit (Up/Down
-  into the row), now and then again on a later return. Fixed so far: the
-  stalls, the poster vanishing at once, the reopening box, the shadow
-  outgrowing the picture; the open card's backdrop and logo are preloaded.
-  Not found yet: a late picture is the guess (see it with `-slowMo 0.1
-  -homeFocusRow last`).
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).

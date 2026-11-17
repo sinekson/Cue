@@ -449,6 +449,33 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// Inside `setOpen` (it fades the poster itself).
     private var settingOpen = false
 
+    /// A large row's box opening out of `poster` (the card under it, the
+    /// same title): its poster, backdrop and logo taken as that card shows
+    /// them, in from the first frame (loaded anew, one not in memory then
+    /// left an empty card for a few frames: a flicker).
+    func adoptPictures(from poster: FixedFocusShowcaseCell) {
+        guard poster.item?.id == item?.id else { return }
+        if picture.image == nil, let image = poster.picture.image {
+            FixedFocusImages.adopt(image, url: art, into: picture)
+            loadingCard.follow(waiting: false)
+            edge.isHidden = false
+            findFaces()
+        }
+        if backdrop.image == nil, let image = poster.backdrop.image {
+            FixedFocusImages.adopt(image, url: backdropArt, into: backdrop)
+            backdropWanted = true
+        }
+        if logo.image == nil, let image = poster.logo.image {
+            FixedFocusImages.adopt(image, url: item?.logo, into: logo)
+            logo.isHidden = false
+            name.isHidden = true
+        }
+        UIView.performWithoutAnimation {
+            setNeedsLayout()
+            layoutIfNeeded()
+        }
+    }
+
     func wantBackdrop() {
         guard feature, !backdropWanted, let backdropArt else { return }
         backdropWanted = true
