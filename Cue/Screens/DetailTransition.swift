@@ -36,6 +36,13 @@ final class DetailTransition {
     /// the window's quick start a slower fade (0.38 s) left a large
     /// see-through window over the page.
     static let windowFade: Double = 0.15
+    /// Settings → Appearance → Opening Details: Fade (`DetailOpening`) — no
+    /// morph: Details' card fades in where it lands, with the background,
+    /// growing from this size as a whole (as a card's focus), over
+    /// `pictureSettle`. Calmer; Grow, the morph, is the default.
+    static let crossfadeFrom: CGFloat = 0.95
+    static let crossfadeTime: Double = 0.3
+    static var crossfades: Bool { DetailOpening.current == .fade }
     /// Fade: the zoomed backdrop alone this long before the info block
     /// comes in. (Tried: the info block landing WITH the zoom's end, and
     /// 0.1 s before it — not it; a 0.25 s pause — too slow.)
@@ -129,9 +136,16 @@ final class DetailTransition {
         // way in grows into it, from the card pressed (a trailer playing in
         // it: from where it plays).
         let target = StagePictureView.detailsCard
-        let card = grown?.card ?? StageTrailer.carriedFrame(for: item.id) ?? Self.focusedCard(in: window)
-            ?? target.insetBy(dx: target.width * 0.03, dy: target.height * 0.03)
-        let carriedFrame = grown == nil ? StageTrailer.carriedFrame(for: item.id) : nil
+        // (Not from Home's billboard card: the same picture, nearly the
+        // same size and place — a second copy fading in a little off it
+        // read as a doubled picture; out of its own card the move is
+        // small and as calm.)
+        let crossfade = Self.crossfades && grown == nil
+        let small = target.insetBy(dx: target.width * (1 - Self.crossfadeFrom) / 2,
+                                   dy: target.height * (1 - Self.crossfadeFrom) / 2)
+        let card = crossfade ? small
+            : grown?.card ?? StageTrailer.carriedFrame(for: item.id) ?? Self.focusedCard(in: window) ?? small
+        let carriedFrame = grown == nil && !crossfade ? StageTrailer.carriedFrame(for: item.id) : nil
         CueRows.Memory.shared.opened(item.id)
         busy = true
         ModeSwap.shared.handingOver = true
@@ -192,10 +206,12 @@ final class DetailTransition {
                 let scale = max(card.width / target.width, card.height / target.height)
                 let from = Window(
                     card: card,
-                    picture: grown?.picture ?? CGRect(x: card.midX + (framed.minX - target.midX) * scale,
+                    picture: (crossfade ? nil : grown?.picture) ?? CGRect(x: card.midX + (framed.minX - target.midX) * scale,
                                                       y: card.midY + (framed.minY - target.midY) * scale,
                                                       width: framed.width * scale, height: framed.height * scale),
-                    screen: grown?.screen ?? carriedFrame ?? card)
+                    screen: (crossfade ? nil : grown?.screen) ?? carriedFrame
+                        ?? (crossfade ? Self.screen.insetBy(dx: Self.screen.width * (1 - Self.crossfadeFrom) / 2,
+                                                            dy: Self.screen.height * (1 - Self.crossfadeFrom) / 2) : card))
                 zoomEnd = CACurrentMediaTime() + Self.pictureSettle * k
                 moves.append(Task {
                     await Self.run {
@@ -204,7 +220,8 @@ final class DetailTransition {
                         self.overlay.window(from, into: target, picture: framed, player: trailer,
                                             Self.pictureSettle * k, Self.zoomInCurve)
                         Self.animate(self.overlay.pictureFrame.layer, "opacity", from: 0, to: 1,
-                                     Self.windowFade * k, Self.out)
+                                     (crossfade ? Self.crossfadeTime : Self.windowFade) * k,
+                                     crossfade ? Self.inOut : Self.out)
                         pageGoes()
                     }
                 })
@@ -424,6 +441,18 @@ final class DetailTransition {
     }
 }
 
+
+/// Settings → Appearance → Opening Details: the card pressed growing into
+/// Details' card (Grow, the default), or Details' card fading in where it
+/// lands (Fade — `DetailTransition.crossfades`).
+enum DetailOpening: String, CaseIterable {
+    case grow, fade
+
+    static let key = "cue.appearance.detailOpening"
+    static var current: Self { UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .grow }
+
+    var label: String { self == .grow ? "Grow" : "Fade" }
+}
 
 /// The tab in front's billboard trailer on its picture: the top bar moves
 /// out with the peek and the dots (Home sets it). Observed per property.
