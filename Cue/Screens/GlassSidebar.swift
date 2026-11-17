@@ -107,9 +107,13 @@ struct GlassSidebar: View {
     /// can tell whether this is actually a change of tab (vs. re-tapping the
     /// tab you're already on) and react accordingly.
     var onTabSelected: (Int) -> Void = { _ in }
-    /// Hidden: the bar moves out the top (shown: back in) — with the page's
-    /// parts (off a tab's root, into Details in place, a trailer).
+    /// Hidden: off a tab's root — out of the way at once, in place again at
+    /// once (the page's change covers it: moving back in, a second bar slid
+    /// over the one in the page's still on Back).
     var hidden = false
+    /// Moved out: the bar moves out the top (back in) with the page's parts
+    /// — Home's billboard trailer, with the peek.
+    var movedOut = false
     /// The item held down (Select), for the face's press dip.
     var onPress: (Int?) -> Void = { _ in }
 
@@ -126,7 +130,7 @@ struct GlassSidebar: View {
     /// (or Down) goes into its content.
     var body: some View {
         let navFocused = focusBinding.wrappedValue != nil
-        return Self.layout(hidden: hidden) {
+        return Self.layout(hidden: hidden, movedOut: movedOut) {
             ForEach(AppTab.topBarOrder) { tab in
                 Button {
                     onTabSelected(tab.rawValue)
@@ -178,7 +182,7 @@ struct GlassSidebar: View {
 
     /// The bar's items placed on the screen — the same for the focus layer
     /// and the face, so they sit on each other.
-    static func layout<Tabs: View, Profile: View>(hidden: Bool,
+    static func layout<Tabs: View, Profile: View>(hidden: Bool, movedOut: Bool,
                                                   @ViewBuilder tabs: () -> Tabs,
                                                   @ViewBuilder profile: () -> Profile) -> some View {
         HStack(alignment: .center, spacing: itemSpacing) {
@@ -199,8 +203,8 @@ struct GlassSidebar: View {
                                    : FixedFocusMetrics.titleInset - slotPadding)
         .padding(.trailing, Spotlight.screenInset - avatarInset)
         .frame(maxWidth: .infinity)
-        .offset(y: hidden ? -hideTravel : 0)
-        .animation(Motion.move, value: hidden)
+        .offset(y: hidden || movedOut ? -hideTravel : 0)
+        .animation(Motion.move, value: movedOut)
         .padding(.top, topBarTop)
         .frame(maxWidth: .infinity, alignment: .top)
         // Placed against the real screen edges (the inset above is ours).
@@ -331,6 +335,7 @@ struct TopBarFace: UIViewRepresentable {
     let focused: Int?
     let pressed: Int?
     let hidden: Bool
+    let movedOut: Bool
     let lifted: Bool
 
     final class Coordinator {
@@ -365,7 +370,7 @@ struct TopBarFace: UIViewRepresentable {
 
     private var content: Content {
         Content(profiles: profiles, profile: profiles.active, selected: selected, focused: focused,
-                pressed: pressed, hidden: hidden)
+                pressed: pressed, hidden: hidden, movedOut: movedOut)
     }
 
     struct Content: View {
@@ -375,10 +380,11 @@ struct TopBarFace: UIViewRepresentable {
         let focused: Int?
         let pressed: Int?
         let hidden: Bool
+        let movedOut: Bool
 
         var body: some View {
             let lit = focused ?? selected
-            GlassSidebar.layout(hidden: hidden) {
+            GlassSidebar.layout(hidden: hidden, movedOut: movedOut) {
                 ForEach(AppTab.topBarOrder) { tab in
                     TopNavLabel(tab: tab, current: selected == tab.rawValue,
                                 focused: focused != nil && lit == tab.rawValue)

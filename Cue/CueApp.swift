@@ -956,7 +956,7 @@ struct RootView: View {
                 // What's seen: drawn in UIKit, moved by Home's rows with the
                 // billboard card (`TopBarFollow`); the bar below holds focus.
                 TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
-                           pressed: topBarPressed, hidden: sidebarMovedOut,
+                           pressed: topBarPressed, hidden: !atTabRoot, movedOut: billboardTrailer.shown,
                            lifted: AppTab(rawValue: selectedTab)?.isHomeLike == true)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
@@ -966,7 +966,7 @@ struct RootView: View {
                              focusBinding: $sidebarFocus,
                              onProfileTap: { launch.showGate(.topBar) },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             hidden: sidebarMovedOut,
+                             hidden: !atTabRoot, movedOut: billboardTrailer.shown,
                              onPress: { topBarPressed = $0 })
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)

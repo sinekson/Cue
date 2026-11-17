@@ -714,6 +714,9 @@ struct DetailView: View {
         .onChange(of: summaryShown) { _, _ in restTrailer() }
         .onChange(of: launcher.searching) { _, _ in restTrailer() }
         .onChange(of: trailerGate.playerUp) { _, _ in restTrailer() }
+        // (Back: a trailer on the card fades off with the parts —
+        // `DetailTransition.cardCover`.)
+        .onChange(of: trailer.shown) { _, shown in DetailTransition.shared.cardPlays(viewModel.meta.id, shown) }
         .onChange(of: detailScenePhase) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailersEnabled) { _, _ in restTrailer() }
         .onChange(of: layout.heroTrailerSound) { _, _ in restTrailer() }

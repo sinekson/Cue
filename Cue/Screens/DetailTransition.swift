@@ -84,6 +84,13 @@ final class DetailTransition {
     /// first; its picture settling to Home's size; through the background
     /// picture, 0.3 + 0.3 s and 0.4 + 0.6 s — not gentle.)
     static let backTime: Double = Motion.fadeDuration
+    /// Back from Details, the same from everywhere, nothing moving: one
+    /// dissolve into the page below (`detailsBack`), Details' parts — text,
+    /// badges, buttons, episodes — on a quicker fade inside it
+    /// (`partsBack`), so they're gone before the card and background (its
+    /// text crossed the page's mid-fade). (0.25 s for it all was before.)
+    static let detailsBack: Double = 0.3
+    static let partsBack: Double = 0.18
     static let ringAfter: Double = 1.5
     static let giveUp: Double = 8
 
@@ -94,6 +101,11 @@ final class DetailTransition {
     private var appeared: String?
     /// The picture each opened page shows (Back brings it over it again).
     private var pictures: [String: String] = [:]
+    /// Details pages whose card plays a trailer now.
+    private var playing = Set<String>()
+    func cardPlays(_ itemID: String, _ shown: Bool) {
+        if shown { playing.insert(itemID) } else { playing.remove(itemID) }
+    }
     private let overlay = DetailTransitionOverlay()
 
     func pageAppeared(_ id: String) { appeared = id }
@@ -290,14 +302,15 @@ final class DetailTransition {
     static let slowMotion = ProcessInfo.processInfo.arguments.contains("-transitionSlowMo")
 
     /// Back from Details: Details dissolves into the page below — one
-    /// crossfade, from the press.
+    /// crossfade, from the press, its parts quicker (`detailsBack`).
     func close(itemID: String?, pop: @escaping () -> Void) {
         guard !busy else { pop(); return }
         // THE EXIT (from anywhere, the billboard too): every page's Back
         // (`PageFade`), into the still of the page below at the opening.
         // (No picture brought back into its card.)
+        let card = cardCover(itemID)
         forget(itemID)
-        PageFade.shared.back(key: itemID, pop)
+        PageFade.shared.back(key: itemID, under: card, time: Self.detailsBack, pop)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
 
@@ -306,9 +319,10 @@ final class DetailTransition {
     /// layer once the fade is over.
     func closeLayer(itemID: String, close: @escaping () -> Void, gone: @escaping () -> Void) {
         guard !busy else { close(); gone(); return }
+        let card = cardCover(itemID)
         forget(itemID)
         PageFade.shared.drop(itemID)
-        PageFade.shared.fadeOff(close, gone: gone)
+        PageFade.shared.fadeOff(under: card, time: Self.detailsBack, close, gone: gone)
         DetailsOpen.shared.depth = max(0, DetailsOpen.shared.depth - 1)
     }
 
@@ -323,6 +337,40 @@ final class DetailTransition {
     private func forget(_ itemID: String?) {
         guard let itemID else { return }
         pictures[itemID] = nil
+        playing.remove(itemID)
+    }
+
+    /// Back: Details without its parts — its card on its background, drawn
+    /// as the opening's cover draws them (the same as Details, to the
+    /// pixel) — under the still of Details, which fades off it quicker
+    /// (`partsBack`): the parts go first. Nil (one plain dissolve) with a
+    /// trailer on the card (it would turn into the still) or no picture.
+    private func cardCover(_ itemID: String?) -> UIView? {
+        guard let itemID, !playing.contains(itemID), let url = pictures[itemID],
+              let image = Self.decoded(url) else { return nil }
+        let screen = Self.screen
+        let target = StagePictureView.detailsCard
+        let cover = UIView(frame: screen)
+        let background = UIImageView(frame: screen)
+        background.contentMode = .scaleToFill
+        background.image = TitleBands.shared.cached(url) ?? BackgroundStore.shared.image
+        background.backgroundColor = DetailTransitionOverlay.backgroundColour
+        cover.addSubview(background)
+        let card = UIView(frame: target)
+        card.clipsToBounds = true
+        card.layer.cornerRadius = Spotlight.cornerRadius
+        card.layer.cornerCurve = .continuous
+        let picture = UIImageView(image: image)
+        picture.contentMode = .scaleAspectFill
+        picture.clipsToBounds = true
+        picture.frame = StagePictureView.cardPicture(in: target, url: url).offsetBy(dx: -target.minX, dy: -target.minY)
+        card.addSubview(picture)
+        let shade = UIImageView(image: StageArt.cardShade(target))
+        shade.contentMode = .scaleToFill
+        shade.frame = screen.offsetBy(dx: -target.minX, dy: -target.minY)
+        card.addSubview(shade)
+        cover.addSubview(card)
+        return cover
     }
 
     // MARK: Core Animation
@@ -625,7 +673,11 @@ final class PageFade {
     /// Back: this page fades into the still of the one below at once; the
     /// live page, rebuilt under both, takes over once it's drawn. Without
     /// a still, the fade waits for the page to be drawn.
-    func back(key: AnyHashable?, _ pop: @escaping () -> Void) {
+    /// `under`: a view between the two (Details' card on its background,
+    /// `DetailTransition.cardCover`) fading over `time`, the page's still
+    /// quicker (`DetailTransition.partsBack`).
+    func back(key: AnyHashable?, under: UIView? = nil, time: Double = DetailTransition.backTime,
+              _ pop: @escaping () -> Void) {
         let instant: () -> Void = {
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -640,19 +692,25 @@ final class PageFade {
         let below = take(key)
         install(in: window)
         if let below { add(below) }
+        let delay = below == nil ? DetailTransition.exitWait * k : 0
+        if let under { add(under) }
         if let shot {
             add(shot)
             CATransaction.begin()
             DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
-                                     DetailTransition.backTime * k, DetailTransition.inOut,
-                                     delay: below == nil ? DetailTransition.exitWait * k : 0)
+                                     (under == nil ? time : DetailTransition.partsBack) * k, DetailTransition.inOut,
+                                     delay: delay)
+            if let under {
+                DetailTransition.animate(under.layer, "opacity", from: 1, to: 0, time * k, DetailTransition.inOut,
+                                         delay: delay)
+            }
             CATransaction.commit()
             CATransaction.flush()
         }
         instant()
         Task { @MainActor in
             let end = CACurrentMediaTime()
-                + (DetailTransition.backTime + (below == nil ? DetailTransition.exitWait : 0)) * k
+                + (time + (below == nil ? DetailTransition.exitWait : 0)) * k
             // The live page drawn (a frame or two after the pop): the still
             // fades off it — swapped at the end, the two differed (the
             // pressed button, a picture's drift) and it flickered…
@@ -668,6 +726,7 @@ final class PageFade {
             if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             watch.end()
             shot?.removeFromSuperview()
+            under?.removeFromSuperview()
             below?.removeFromSuperview()
             root.removeFromSuperview()
             busy = false
@@ -690,13 +749,16 @@ final class PageFade {
     /// fading off it as soon as the close is committed (`backTime`; set
     /// off with the close, the page under it came a frame late — a dip;
     /// waiting for an on-time frame cost up to 0.1 s more).
-    func fadeOff(_ close: @escaping () -> Void, gone: @escaping () -> Void) {
+    /// `under`, `time`: as `back`'s.
+    func fadeOff(under: UIView? = nil, time: Double = DetailTransition.backTime,
+                 _ close: @escaping () -> Void, gone: @escaping () -> Void) {
         guard !busy, let window = Self.window,
               let shot = window.rootViewController?.view.snapshotView(afterScreenUpdates: false)
         else { close(); gone(); return }
         busy = true
         let k = DetailTransition.length
         install(in: window)
+        if let under { add(under) }
         add(shot)
         CATransaction.flush()
         close()
@@ -705,9 +767,13 @@ final class PageFade {
         Task { @MainActor in
             CATransaction.begin()
             DetailTransition.animate(shot.layer, "opacity", from: 1, to: 0,
-                                     DetailTransition.backTime * k, DetailTransition.inOut)
+                                     (under == nil ? time : DetailTransition.partsBack) * k, DetailTransition.inOut)
+            if let under {
+                DetailTransition.animate(under.layer, "opacity", from: 1, to: 0, time * k, DetailTransition.inOut)
+            }
             CATransaction.commit()
-            try? await Task.sleep(for: .seconds(DetailTransition.backTime * k))
+            try? await Task.sleep(for: .seconds(time * k))
+            under?.removeFromSuperview()
             shot.removeFromSuperview()
             root.removeFromSuperview()
             busy = false
@@ -796,12 +862,16 @@ final class DetailTransitionOverlay {
         page = nil
     }
 
+    /// Under the background picture, as `ATVBackground`'s.
+    static var backgroundColour: UIColor? {
+        BackgroundPicks.Mode.now == .light ? UIColor(white: 0.68, alpha: 1) : UIColor(named: "AppBackground")
+    }
+
     /// Details' background: the title's bands, else the app's (as
     /// `TitleBandsBackground` draws it); `fade`: crossfaded in.
     func backdrop(_ bands: UIImage?, fade: Double = 0) {
-        let light = BackgroundPicks.Mode.now == .light
         let image = bands ?? BackgroundStore.shared.image
-        background.backgroundColor = light ? UIColor(white: 0.68, alpha: 1) : UIColor(named: "AppBackground")
+        background.backgroundColor = Self.backgroundColour
         guard fade > 0 else { background.image = image; return }
         let swap = CATransition()
         swap.type = .fade

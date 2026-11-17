@@ -260,8 +260,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   followed); the SwiftUI bar (`GlassSidebar`) holds focus at the same
   spots and draws nothing (SwiftUI's focus state runs Back and the tab
   switches; a SwiftUI offset, even set frame by frame, lagged the card
-  whenever the main thread skipped frames); off a tab's root, into Details or a
-  trailer it moves out the top (`hidden`), always in the view tree,
+  whenever the main thread skipped frames); off a tab's root (into Details, a pushed
+  page) it's gone and back in place at once under the page's change
+  (`hidden`; moving back in, a second bar slid over the one in the
+  page's still on Back); for Home's billboard trailer it moves out the
+  top and back (`movedOut`), always in the view tree,
   disabled while hidden. (The floating glass pill, and auto-hiding it,
   were dropped, the setting with them.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
@@ -590,7 +593,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details' card fading in where it lands with the background (0.3 s),
   growing from 95 % as a whole as a card's focus, the rest the same;
   from Home's billboard card it grows out of the card as Grow (the same
-  picture nearly in place: a second copy fading in read as doubled). Back: the general dissolve. (Opening in place, Home's billboard becoming Details' in two
+  picture nearly in place: a second copy fading in read as doubled).
+  Back, the same from everywhere, nothing moving: one dissolve into the
+  page below (0.3 s, `detailsBack`; 0.25 for it all was before), Details'
+  parts quicker inside it (0.18 s, `partsBack`: its text crossed the
+  page's mid-fade): under the still of Details, its card on its
+  background drawn as the opening's cover (`cardCover`); a trailer on
+  the card: one plain dissolve. (Opening in place, Home's billboard becoming Details' in two
   phases, `openInPlace`, was before: with the card it only jumped.) From
   Home, Movies and Series it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages
