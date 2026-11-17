@@ -464,17 +464,19 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   posters that stands still; Left/Right: the box dips to its resting
   size and up again (0.35 s, the old and new as one), the next title dissolves in
   over it (the new over the old, 0.25 s), the posters sliding one step
-  under it, never seen there: cut off at the grown box's edges while the
-  move runs, a sharp line (`cutAtBox`, a sheet into a laser; a 16 pt
-  soft edge read as a fade), at full light both ways; the poster under
-  the box centred in it, so both ways alike (at its left, Right's were
-  quicker) (tried: the posters going in and out fading whole over the
-  slide: one half-seen slid under the box; the one going in fading in
-  0.12 s from the press, Netflix's, and the one coming out fading in as
-  it emerged: nicer without; the slide 0.5 s, Netflix's curve: worse;
-  the box's new picture drifting 48 pt in from the push's side: looked
-  good, too much movement; the cut going in and out with the box's dip:
-  better and worse at once); Up/Down: it
+  under it, the box a magnifying glass over the row inspecting the
+  title below it (so they go under it, nothing hides that); the poster
+  under the box centred in it, so both ways alike (at its left, Right's
+  were quicker) (tried, 2026-11-17: posters cut off at the box's edge
+  while the move ran, a sheet into a laser, soft (16 pt read as a fade)
+  and sharp (nice; commit 93b488f); the one going in fading out in
+  0.12 s, Netflix's, and the one coming out fading in as it emerged;
+  posters fading whole over the slide (one half-seen slid under); the
+  slide 0.5 s, Netflix's curve: worse; the box's new picture drifting
+  48 pt in from the push's side: good, too much movement; the cut
+  going in and out with the box's dip: better and worse at once; the
+  box's shade cast on the posters beside it: unnoticed at 14 %, not
+  wanted); Up/Down: it
   opens out of the focused poster (the backdrop there at once under
   the poster, the poster fading off it growing 3 %, shade and words
   over the first 0.25 s) and closes back into it. Every card in the row
