@@ -613,7 +613,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   director's, a show's creator's, the one with more: `cuePersonTitles`,
   2,000 votes, no shorts, 4 at least; after Cast & Crew) Home's large rows; the
   collection's films in neither; Cast & Crew a grid of the portraits
-  (`gridRowIDs`: lines of seven, 21 people (28 meant presses for people
+  (`gridRowIDs`: lines of seven, 14 people (21, three lines, was too much; 28 meant presses for people
   rarely looked for); the name and role on the card over the cards'
   bottom fade (under it, two lines left no peeks), a line each at rest,
   a long one fading out at its end (no "…"), in full when focused,

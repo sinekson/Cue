@@ -991,9 +991,9 @@ struct DetailView: View {
     }
     private static let personPrefix = "person:"
     /// About this many people in Cast & Crew.
-    /// Three lines of seven in the grid (two in view; 28 meant more
-    /// presses for people rarely looked for).
-    private static let castCount = 21
+    /// Two lines of seven in the grid (three, 21, was too much; 28 meant
+    /// more presses for people rarely looked for).
+    private static let castCount = 14
     /// Under the billboard: how much of the episodes' cards peeks up.
     private static let episodesPeek: CGFloat = 60
 
