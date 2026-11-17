@@ -1865,6 +1865,20 @@ final class TitlePictures {
         if decoded[item.id] == nil { decoded[item.id] = decode(item) }
     }
 
+    /// Focus on `item` outside Home's rows (Search, the grids): `focused`
+    /// once it rests there (`TitlePreloader.settle`) — the press finds the
+    /// picture in (without it the opening waited on it at the press).
+    func resting(on item: MetaItem?) {
+        restTask?.cancel()
+        guard let item else { return }
+        restTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(TitlePreloader.settle))
+            guard !Task.isCancelled else { return }
+            self.focused(item)
+        }
+    }
+    private var restTask: Task<Void, Never>?
+
     /// The picture for this opening (nil: TMDB has none — the card's then).
     func forOpening(_ item: MetaItem) -> Task<String?, Never> {
         decoded.removeValue(forKey: item.id) ?? decode(item)

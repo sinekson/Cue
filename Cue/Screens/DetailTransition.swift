@@ -160,9 +160,11 @@ final class DetailTransition {
             var moves: [Task<Void, Never>] = []
             let known = DetailPreparer.shared.peek(item.id)?.picture
             self.overlay.backdrop(TitleBands.shared.cached(known))
-            moves.append(Task { await Self.run {
+            // The page goes with the window's start (going at the press, a
+            // picture still loading left the background alone a moment).
+            let pageGoes = {
                 Self.animate(self.overlay.background.layer, "opacity", from: 0, to: 1, Self.pageTime * k, Self.inOut)
-            } })
+            }
             let url = await DetailPreparer.shared.picture(for: item, within: Self.giveUp)
             let image = url.flatMap(Self.decoded)
             // The bands drawn late (focus didn't rest on the title): faded in
@@ -203,8 +205,11 @@ final class DetailTransition {
                                             Self.pictureSettle * k, Self.zoomInCurve)
                         Self.animate(self.overlay.pictureFrame.layer, "opacity", from: 0, to: 1,
                                      Self.windowFade * k, Self.out)
+                        pageGoes()
                     }
                 })
+            } else {
+                moves.append(Task { await Self.run(pageGoes) })
             }
             // A frame for the moves to be handed over before the main thread
             // gets busy (Details is built during them).

@@ -572,8 +572,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   was disliked beside the card's.) Pages opened from Details still draw its picture blurred
   (`DetailsBackdropBackground`). Into Details is
   `DetailTransition`, all Core Animation, the same from every card: the
-  page goes into Details' background (the title's bands, 0.3 s); the
-  card pressed grows into Details' card (0.55 s, the old zoom's curve,
+  page goes into Details' background (the title's bands, 0.3 s, with
+  the window's start, not the press: a picture still loading left the
+  background alone a moment); the card pressed grows into Details' card (0.55 s, the old zoom's curve,
   corners kept; `DetailTransition.Window`: Home's billboard card its own
   picture and shade, `openingWindow`; any other card where it is,
   `focusedCard`), the picture crossfading in over the card's (0.15 s;
@@ -641,7 +642,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   band (`LoadQueue`, `PicturePreloader`): Home's reachable titles at once
   (`preloadReachable`: Left/Right's next, and Up/Down's one title per row in
   the 3 nearest rows each way — every row would evict the cache at 4K), and
-  Details' one picture as focus settles (`TitlePreloader`). A grown card's
+  Details' one picture as focus settles (`TitlePreloader`; Search and the
+  grids through `TitlePictures.resting`: without it the first opening
+  waited on the picture at the press). A grown card's
   picture still late: the poster stays until it's in. The same titles'
   records are brought up to date ahead too, after a 0.3 s rest (MDBList
   counts requests), chips drawn ahead (`TitleExtras`).

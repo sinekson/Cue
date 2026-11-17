@@ -827,6 +827,12 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
         return cell
     }
 
+    func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
+                        with coordinator: UIFocusAnimationCoordinator) {
+        let path = context.nextFocusedIndexPath
+        TitlePictures.shared.resting(on: path.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
+    }
+
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         onSelect(items[indexPath.item])
     }

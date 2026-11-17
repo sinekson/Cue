@@ -755,6 +755,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
+        TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
         // Moved by the viewer (from something in the page): no longer ours.
         if prefersFirstTitle, context.previouslyFocusedView?.isDescendant(of: collectionView) == true {
             prefersFirstTitle = false
