@@ -3156,10 +3156,30 @@ enum FixedFocusImages {
         }
     }
 
-    /// A logo without its empty edges (`LogoFit.trimmed`, as the billboard's).
+    /// `image` into `view`; a logo without its empty edges (as the
+    /// billboard's), trimmed off the main thread the first time
+    /// (`LogoFit.trimmedInBackground`): in once it's made, if still wanted.
     @MainActor
-    private static func trimmedIfLogo(_ image: UIImage, in view: UIImageView, key: String) -> UIImage {
-        view is FixedFocusLogo ? LogoFit.trimmed(image, key: key) : image
+    private static func show(_ image: UIImage?, in view: UIImageView, key: String, url: String,
+                             waiting: ((Bool) -> Void)?) {
+        guard let image, view is FixedFocusLogo else {
+            view.image = image
+            waiting?(false)
+            return
+        }
+        if let trimmed = LogoFit.cachedTrim(key: key) {
+            view.image = trimmed
+            waiting?(false)
+            return
+        }
+        view.image = nil
+        let slot = ObjectIdentifier(view)
+        Task { @MainActor [weak view] in
+            let trimmed = await LogoFit.trimmedInBackground(image, key: key)
+            guard let view, requested[slot] == url else { return }
+            view.image = trimmed
+            waiting?(false)
+        }
     }
 
     /// A picture another view already shows for `url` at this size: in at
@@ -3181,8 +3201,7 @@ enum FixedFocusImages {
         guard let url else { view.image = nil; waiting?(false); return }
         let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
         if let hit = ImageCache.shared.image(for: memoryKey) {
-            view.image = trimmedIfLogo(hit, in: view, key: memoryKey)
-            waiting?(false)
+            show(hit, in: view, key: memoryKey, url: url, waiting: waiting)
             return
         }
         view.image = nil
@@ -3208,8 +3227,7 @@ enum FixedFocusImages {
                 }
             }
             guard let view, requested[slot] == url else { return }
-            view.image = image.map { trimmedIfLogo($0, in: view, key: memoryKey) }
-            waiting?(false)
+            show(image, in: view, key: memoryKey, url: url, waiting: waiting)
         }
     }
 }

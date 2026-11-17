@@ -2423,11 +2423,18 @@ final class LoadQueue {
                 waiting[at] = job   // asked nearer: up it goes
             }
         }
+        unsorted = true
         pump()
     }
 
+    /// Jobs came in since the last sort. (Sorted on every pump — after
+    /// every job's end — the deep band's ~2,000 jobs held the main thread
+    /// 100–200 ms at a time, stalling the rows' moves.)
+    private var unsorted = false
+
     /// `source`'s waiting jobs replaced by `jobs` (focus has moved on).
     func replace(source: String, with jobs: [Job]) {
+        // (The order stays sorted: only `add` unsorts it.)
         waiting.removeAll { job in
             guard job.source == source else { return false }
             keys.remove(job.key)
@@ -2438,17 +2445,31 @@ final class LoadQueue {
 
     private func pump() {
         let playing = PlayerController.isPlaying
-        waiting.sort { ($0.band.rawValue, $0.order) < ($1.band.rawValue, $1.order) }
+        if unsorted {
+            waiting.sort { ($0.band.rawValue, $0.order) < ($1.band.rawValue, $1.order) }
+            unsorted = false
+        }
+        // Plain counts, read once (a dictionary per job, through ~2,000
+        // waiting, was itself a stall).
+        var data = running[.data, default: 0], picture = running[.picture, default: 0]
+        var dataDeep = runningDeep[.data, default: 0], pictureDeep = runningDeep[.picture, default: 0]
+        let dataShare = Self.deepShare(.data), pictureShare = Self.deepShare(.picture)
         var i = 0
         while i < waiting.count {
-            let job = waiting[i]
-            let lane = job.lane
-            let full = running[lane, default: 0] >= Self.perLane
-                || (job.band == .deep && runningDeep[lane, default: 0] >= Self.deepShare(lane))
-                || (playing && job.band != .launch)
-            if full { i += 1; continue }
-            waiting.remove(at: i)
-            start(job)
+            let lane = waiting[i].lane, band = waiting[i].band
+            if playing && band != .launch { i += 1; continue }
+            // Nothing more can start: the rest wait (sorted: once in the
+            // deep band, only deep jobs follow).
+            let dataFree = data < Self.perLane, pictureFree = picture < Self.perLane
+            if !dataFree, !pictureFree { break }
+            if band == .deep, !(dataFree && dataDeep < dataShare), !(pictureFree && pictureDeep < pictureShare) { break }
+            let free = lane == .data
+                ? dataFree && (band != .deep || dataDeep < dataShare)
+                : pictureFree && (band != .deep || pictureDeep < pictureShare)
+            guard free else { i += 1; continue }
+            if lane == .data { data += 1; if band == .deep { dataDeep += 1 } }
+            else { picture += 1; if band == .deep { pictureDeep += 1 } }
+            start(waiting.remove(at: i))
         }
         // Held for the player: looked at again every few seconds.
         if playing, !waiting.isEmpty, playerWait == nil {

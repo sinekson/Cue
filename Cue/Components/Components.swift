@@ -611,6 +611,19 @@ struct LogoFit {
         return result
     }
 
+    /// Made already (nil: not yet).
+    static func cachedTrim(key: String) -> UIImage? { cache.object(forKey: key as NSString) }
+
+    /// `trimmed`, off the main thread: it reads every pixel, and on the
+    /// main thread a row's new logos stalled its move (100–200 ms, the
+    /// page jumping at the first visit).
+    static func trimmedInBackground(_ image: UIImage, key: String) async -> UIImage {
+        if let hit = cachedTrim(key: key) { return hit }
+        let result = await Task.detached(priority: .userInitiated) { trim(image) ?? image }.value
+        cache.setObject(result, forKey: key as NSString)
+        return result
+    }
+
     private static func trim(_ image: UIImage) -> UIImage? {
         guard let cg = image.cgImage else { return nil }
         switch cg.alphaInfo {
