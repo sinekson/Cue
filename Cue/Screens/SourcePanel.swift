@@ -316,20 +316,33 @@ struct SweepLine: UIViewRepresentable {
             super.init(frame: .zero)
             isUserInteractionEnabled = false
             label.font = .systemFont(ofSize: 28, weight: .medium)
-            label.textColor = .white
             label.textAlignment = .center
             holder.isUserInteractionEnabled = false
             addSubview(holder)
             holder.addSubview(label)
-            let dim = UIColor(white: 1, alpha: Self.rest).cgColor
-            let lit = UIColor(white: 1, alpha: Self.peak).cgColor
-            band.colors = [dim, dim, lit, dim, dim]
+            paint()
+            // The page's ink by tvOS's setting (the launch curtain on the
+            // page); the stage is dark always.
+            registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (line: Line, _) in line.paint() }
             band.startPoint = CGPoint(x: 0, y: 0.5)
             band.endPoint = CGPoint(x: 1, y: 0.5)
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError() }
+
+        private var light: Bool { traitCollection.userInterfaceStyle == .light }
+        /// A text level in this appearance (`CueInk`'s: black at tvOS's
+        /// greys on light).
+        private func level(_ value: CGFloat) -> CGFloat { light ? CueInk.onLight(value) : value }
+
+        private func paint() {
+            label.textColor = light ? .black : .white
+            label.alpha = sweeping ? 1 : level(FixedFocusText.body)
+            let dim = UIColor(white: 0, alpha: level(Self.rest)).cgColor
+            let lit = UIColor(white: 0, alpha: level(Self.peak)).cgColor
+            band.colors = [dim, dim, lit, dim, dim]
+        }
 
         func set(_ text: String, sweeping: Bool) {
             // New words, a new width: the band laid out and started again
@@ -338,7 +351,7 @@ struct SweepLine: UIViewRepresentable {
             if label.text != text { running = nil }
             label.text = text
             self.sweeping = sweeping
-            label.alpha = sweeping ? 1 : FixedFocusText.body
+            label.alpha = sweeping ? 1 : level(FixedFocusText.body)
             holder.layer.mask = sweeping ? band : nil
             setNeedsLayout()
             layoutIfNeeded()
