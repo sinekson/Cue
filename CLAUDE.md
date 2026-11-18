@@ -89,7 +89,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   controls' words to full black; 85 % read near-black, tvOS's 38 % title
   grey too light). Dark always, whatever the setting: everything on a
   picture (the billboard card's text and dots, Details' card (its text
-  and buttons) and About panel, the stage, player,
+  and buttons) and About panel, the stage's card, player,
   trailers, cards' contents, menus and panels, glass). The top bar,
   the next row's name and Details' page (rows, captions, seasons) are on
   the page now (the billboard and Details' picture cards): page
@@ -425,7 +425,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   to inspect in what you've seen). Your
   own rows show at 5 and ignore the two-rows cap.
   Rebuilt on a new day, after 6 h or when the recent watches change, shown
-  on the next load, never mid-browse. Why These Rows: the taste
+  on the next load, never mid-browse. A build waits for every list, no
+  deadline (8 s per list cut most of them on the Apple TV's cold
+  builds, and the thin rows stuck for the day); title lookups through one
+  gate (48 in flight, `TMDBService.bulkGate`), a 429 retried in
+  `fetchData`; one build at a time for the same seeds. More than 10 % of
+  lists failed (`CueRows.Health`): degraded, the whole rows saved before
+  stay (else these show), made again 5 min later (`cueRetry`). Why These Rows: the taste
   and each row's reason. Each row says which tabs show it (`HomeRow.tabs`).
   Passed over (`CueRows.Memory`, `Passes`): focus resting 1.5 s on a title
   of Cue's rows without opening it counts once a day; three days and it's
@@ -671,7 +677,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   background alone a moment); the card pressed grows into Details' card (0.55 s, the old zoom's curve,
   corners kept; `DetailTransition.Window`: Home's billboard card its own
   picture and shade, `openingWindow`; any other card where it is,
-  `focusedCard`), the picture crossfading in over the card's (0.15 s;
+  `focusedCard`), the picture crossfading in over the card's, framed for its faces as
+  Details will (found ahead at focus, `prepareFaces`, else waited on
+  0.25 s: found after, Details moved it at the end on the TV) (0.15 s;
   0.38 left a see-through window over the page), Details' shade on it
   from the start, going with the window (coming in late, the picture went
   bright then dim: most cards have a fade already); then the card alone on the background while Details is
@@ -805,15 +813,89 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
   take the first link (`PlayLauncher`); a link that fails or shows
   no frame in 20 s: the next, silently, once (3 was the fork's: two failing usually share a cause), then the source list; 5-min cache; none remembered; each add-on gets 20 s to answer (Play waits on them in order). Hold Play: the source list
-  (`SourcePanel`).
-- **The stage** (`PlayStage`, `PlayStageView`): every way into the player goes
-  through the title's picture softly blurred (12 pt: shapes and colours, no detail to compete with the text; sharp was tried), evenly dimmed, 70 % at least, more for a bright picture (`StageArt.dimBelow`; Details' 55 % left the centred text hard to read): an episode's TMDB still in full size, else TMDB's backdrop as Details', for every way in (from a card's hold menu looked up at the press, 1.5 s at most, else the card's own background; never the poster) (the blur under Details' rows looked boring; the billboard's left shade, a softer blur, a dimmed blur over the screen as it was at the press, the title's colours, and a magazine page (the picture framed on a near-black page: terrible) were tried), centred over it, its foot 40 pt above the shelf's tabs: the logo, always (a catalog item without one: MetaHub's by IMDb id, as the billboard), trimmed and sized by area (`LogoFit`, 70,000 pt² within 728 × 160, its foot fixed; a film keeps the episode lines' room, so it sits as a show's), the name 48 pt semibold where none loads, a show's episode: "SEASON 2, EPISODE 5" as a label above its name (spaced capitals, 23 pt medium, the secondary level), the name 32 pt medium at the primary level ("Season 2 · Episode 5" on a line under the name looked cramped, and the dot was disliked; a level lower was hard to read on the picture) (tried: a centred logo fitted to a box (uneven); the centred name (plain); a poster card above; low on the left the name, the billboard's logo, and the poster beside the text). What's happening, one place for every way in: under the episode, keeping its room, a line, 28 pt medium at the body level, at work a soft light passing through it left to right, then a rest (`SweepLine`: 1 s, a 0.6 s rest, a band about half the words wide; the words at the secondary level, the light at 85 %, past the levels on purpose; the loading symbol beside it put the words off centre; above or below, a letter wave and a size pulse were tried) (a quiet 24 pt line there was too faint, top right was tried, and Refresh's "Searching" doubled it); the lines a little playful, one of each set per press, never changing mid-wait (`PlayStage`): searching "Finding a print", "Finding a good copy", "Checking under the couch"; starting "Lights down", "Shh, it's starting", "Curtain up"; a link failed and the next tried "Swapping reels"; with the list up, no light, both failed "The first two wouldn't play. Pick another." (one link: "That one…"; more, after a fresh search: "These…"); the links that didn't play marked on their cards, "Didn't play" in Playing's place, their words at half, still to pick (a timed-out link can work later), focus landing on the first link not tried, until the list closes or Refresh (no colour, no strike, not removed: the list would jump), nothing found "No prints anywhere. Try Refresh in a bit." ("Searching sources" and "Starting" were boring). The logo keeps one spot for every way in and never moves. Play: the logo still (a pulsing logo pulled the eye from the list; dots and the name fading in and out were tried too), the status
-  from the start, film; no list; Back returns to the
-  page. Choose Source: the same, with the player's shelf below from the start (glass, the add-ons' tabs, Refresh turning with "Searching" only for a search it started; the first search is the corner's; the cards as they come, at once from a list still in the cache), same place, size, glass and cards (`ShelfShape`, `SourceCard`): its tabs the shelf's Sources unfolded (`StageSheet`: the player's own sheet, a `PlayerSheet` with Sources always unfolded; one code, so the glass sits under the tabs as in the player (a SwiftUI copy drew it over them: a reflection). SwiftUI's host refuses UIKit's focus requests: the stage holds focus from Details' Play until the list is up, then drops it into the sheet; focus lands on the first card (Refresh while there's none; landing on the tabs, as the player's shelf, was talked over: Choose Source is for picking), so the tabs go out of focus until it has left them) (cards on no glass were tried; a column of rows, Nuvio's two columns and a grid were talked over: one card, one look).
-  After a pick the row fades; Back returns to it, on that card. All links
-  failing brings the row up on the stage. The player's cover is clear so the
-  stage stays under it until the first frame; then lights down: the film holds paused (no controls for that pause), the stage's text fades (0.25 s) and its picture goes to black (0.7 s), then the film rises out of the black (0.45 s, easing out) and plays, its sound rising from silence over 0.8 s; presses but Back are dropped until it has risen (most are a stray second Play) (a crossfade straight from the stage was talked over); leaving is one fade
-  straight to the page.
+  (`SourcePanel`), Play held as a card is: back to its resting size at
+  the press, grown 3 % past its focus as the stage comes (a direct hold
+  reports `onHeld` too; the button made anew after each hold,
+  `pressGeneration`: SwiftUI's Button stays pressed once a hold cancels
+  its press, and the next hold didn't move it); its release is no press on what has focus by
+  then (`HoldMenu.releasePending`: with the links cached, focus was on
+  the first card and the release played it)).
+- **The stage** (`PlayStage`, `PlayStageView`, reworked 2026-11-18): every
+  way into the player goes through Details' card, where Details has it
+  (`StagePictureView.detailsCard`, its picture moved for faces, its
+  bottom fade), on the title's bands as Details' page, following the
+  setting, a step more vivid (saturation 2.2: Home 1.4, Details 1.8;
+  the same layout deepening as the stage comes in, closer to the film;
+  `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
+  setting were first: a second change, and lights down goes dark
+  anyway): from Details nothing moves, the buttons fade and the text
+  swaps. The card dark always; the list on the page in its ink (the
+  tabs Details' season pills, Refresh a flat control: `PanelTab.onPage`). The picture: an episode's TMDB still in
+  full size, else TMDB's backdrop as Details' (from a card's hold menu
+  looked up at the press, 1.5 s at most, else the card's own background;
+  never the poster). In it, bottom left as Details' text: the logo
+  (Details' fit; MetaHub's by IMDb id where the item has none; the name
+  where none loads), then a show's "Season 2, Episode 5" over the
+  episode's name, a film's facts over its tagline. Bottom right, where
+  Details' buttons were, what's happening, right-aligned, 28 pt medium,
+  at work a soft light passing through it (`SweepLine`: 1 s, a 0.6 s
+  rest, a band about half the words wide; the words at the secondary
+  level, the light at 85 %, past the levels on purpose). The lines a
+  little playful, one of each set per press, never changing mid-wait:
+  searching "Finding a print", "Finding a good copy", "Checking under the
+  couch"; starting "Lights down", "Shh, it's starting", "Curtain up"; a
+  link failed and the next tried "Swapping reels"; with the list up, no
+  light: both failed "The first two wouldn't play. Pick another." (one:
+  "That one…"; more, after a fresh search: "These…"); nothing found "No
+  prints anywhere. Try Refresh in a bit."; no add-on gives links "No
+  add-ons with sources. Add one in Settings.". The links that didn't play
+  marked on their cards ("Didn't play", words at half, still to pick),
+  focus on the first link not tried, until the list closes or Refresh.
+  (Before: the picture blurred and dimmed full screen, the logo and lines
+  centred, the player's glass shelf over it: outdated beside the cards.)
+  Choose Source (and Play finding nothing): the list on the page under the
+  card (`StageSheet`, the player's sheet with Sources unfolded, `onPage`:
+  no glass, the cards running past its edges as a row's, at the rows'
+  edge): the add-ons' tabs, Refresh (turning with "Searching" only for a
+  search it started), when they were found; until there are links the
+  card stays in Details' place and the tabs and Refresh sit under it,
+  then the card scrolls up whole, picture and text, the row coming up
+  with it, as Details' Down (`ShelfShape.stageScroll`, the rows' 0.5 s
+  no-bounce spring; the card's foot rising over a still picture was
+  first: read as a crop, not a scroll). Opening on the list (Choose Source) as
+  into Details: the stage in over 0.3 s (Play's 0.7; its own fade,
+  `shownIn`, as one composited picture: the root's insertion transition
+  cut it in, and a plain opacity washed it grey), the tabs and the
+  cards' peek in Details' peek's place, then the scroll (moving while
+  fading in read as a move and a fade). From a card's hold menu (Choose Source, Continue Watching's too)
+  as into Details: with Opening Details on Grow (Home's billboard card
+  always), the stage's card opaque from the card's frame, with Details'
+  picture (decoded at focus, waited on 0.5 s at most, else the fade) or
+  Home's billboard card's and Today's Pick's own (`Scene.fromCard`,
+  `PlayLauncher.grownFrom`; the picture, logo and a show's episode
+  waited on together, 0.5 s at most, so nothing lands mid-move; Details'
+  picture with Fade too, never the episode's still), growing into Details' place (0.55 s, the opening's
+  curve), bands, text and row fading in round it, then the scroll; links
+  already in (a cached list) scroll during the grow, one movement; Back
+  as Details' Back, one movement from where it is: into Home's
+  billboard card or Today's Pick it shrinks straight back into the card
+  (0.4 s) as the rest fades (`Scene.shrinksBack`); into any other card
+  one fade off (0.3 s) (the scroll back only leads into Details' same
+  card; grow then scroll, scroll then shrink were two movements). Focus: the stage holds it until the list is up, then drops it
+  into the sheet: the first card, Refresh while there's none (with no
+  add-ons the fold still builds, so Refresh is there: focus was lost and
+  Back stuck). Back with the list up closes it, the way in reversed: the card
+  scrolls back to Details' place, then the stage fades off over Details'
+  same card (0.3 s; `SourcePicker.leave`; moving while fading was before); otherwise it stops the
+  stage. After a pick the row fades; Back returns to it, on that card.
+  All links failing brings the row up. The player's cover is clear so the
+  stage stays under it until the first frame; then lights down: the film
+  holds paused (no controls for that pause), the text and row fade
+  (0.25 s), the card's window grows to the screen, corners easing off
+  (0.55 s, the opening's curve) as its picture goes to black (0.7 s in
+  all), then the film rises out of the black (0.45 s, easing out) and
+  plays, its sound rising from silence over 0.8 s; presses but Back are
+  dropped until it has risen; leaving is one fade straight to the page.
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.
@@ -847,7 +929,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (k-means), each 1.4× the picture's saturation (Details' 1.8×), the darkest the base, the rest soft pools in a random layout
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
-  bands; dimmed as Details', no colour past 0.40, grained, app-wide,
+  bands; dark, light's mirror: sunk to 0.05–0.22 (`sunk`; 0.07–0.30 too light), a dark grey
+  with the colours a tint over it (dimmed as Details', no colour past
+  0.40, read too colourful beside light's silver), grained, app-wide,
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
   too busy at times, and with it the hue-runs rule went).
   Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
@@ -872,7 +956,9 @@ Animation's own 0.25 s, so make it a view (`FixedFocusShade`); two identical
 layers crossfading dip (flicker); a SwiftUI hosting view's own opacity darkens
 the screen mid-fade, so fade a plain view holding it; never draw text twice;
 `CATransaction.flush()` or CA starts a runloop late; a view going out is frozen,
-environment changes only reach it through its transition; a wholly covered page
+environment changes only reach it through its transition; SwiftUI's
+opacity on a stack fades each layer apart (a grey wash where they overlap):
+`.compositingGroup()` first; a wholly covered page
 isn't drawn until revealed, so covers are 99.5 % opaque; text changed under an opacity
 animation hiding it may never be drawn (an empty badge plate): hide by the
 view's own alpha and a timer. A SwiftUI animation starts a frame after a UIKit one
@@ -882,7 +968,9 @@ drawn in a UIKit view moved in the same animation (the top bar). Home's
 billboard follows the row under it by the layout's own tops
 (`FixedFocusRowsLayout.rowTop`): rows differ in height, a fixed pitch
 made the gap breathe; Up/Down into moving-focus rows runs through
-`enterRow`, not `didUpdateFocus`'s move.
+`enterRow`, not `didUpdateFocus`'s move. Never trim a logo (`LogoFit`) on the main thread: it reads every
+pixel (~30 ms); `RemoteImage` and the preloads trim it ahead (a grow froze
+mid-move).
 
 ## Removed / rejected (don't bring back)
 

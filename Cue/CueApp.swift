@@ -366,7 +366,8 @@ struct RootView: View {
                         setPlayback(nil)
                         playerClosed()
                     }) { request in sources(request) }
-                    .transition(.asymmetric(insertion: .opacity.animation(PlayStage.fadeIn), removal: .opacity))
+                    // In: its own fade (`PlayStageView.shownIn`).
+                    .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
             }
             .animation(Motion.fade, value: stage.scene != nil)
@@ -1785,7 +1786,7 @@ struct RootView: View {
             sourcePicker.picked = true
             stage.note = nil
             play(request.meta, request.video, entry, all, fromStart: request.fromStart)
-        }, onClose: { sourcePicker.close() })
+        }, onClose: { sourcePicker.back() })
         .id(request.id)
         .ignoresSafeArea()
     }
@@ -1797,7 +1798,10 @@ struct RootView: View {
     private func playManuallyFromProgress(_ progress: WatchProgress) {
         Task { @MainActor in
             let (meta, video) = await canonicalResumeIdentity(progress)
-            SourcePicker.shared.open(meta, video)
+            // Grown out of the card as into Details, with Details' picture
+            // (decoded at focus: in from the first frame).
+            let card = await PlayLauncher.shared.grownFrom(meta)
+            SourcePicker.shared.open(meta, video, art: card?.art, bands: card?.art, from: card?.window)
         }
     }
 

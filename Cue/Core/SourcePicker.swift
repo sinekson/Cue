@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The stage: the title's backdrop, the logo or name over it.
+/// The stage: Details' card on the title's dark bands, its picture and
+/// what plays in it.
 /// Every way into the player goes through it, from the press until the film's
 /// first frame has come up over it. The root shows it while `scene` is set.
 @MainActor
@@ -8,13 +9,26 @@ final class PlayStage: ObservableObject {
     static let shared = PlayStage()
 
     /// Coming up, slower than a page's fade: the room going dark before a film.
-    nonisolated static let fadeIn: Animation = .easeInOut(duration: 0.7)
+    nonisolated static let fadeInDuration: Double = 0.7
+    /// Opening on the list (Choose Source): the page round the card
+    /// changes as into Details (its background's 0.3 s), then it scrolls.
+    nonisolated static let listFadeIn: Double = 0.3
 
     struct Scene: Equatable {
-        let title: String
-        /// Blurred and dimmed: an episode's still, else TMDB's backdrop, as
+        let meta: MetaItem
+        var title: String { meta.name }
+        /// The card's picture: an episode's still, else TMDB's backdrop, as
         /// Details' and the billboard's.
         var art: String?
+        /// The page's bands come from this (Details': its backdrop).
+        var bands: String?
+        /// The card it grows out of (as into Details): the
+        /// card and its picture on screen at the press.
+        var fromCard: CGRect?
+        var fromPicture: CGRect?
+        /// Back shrinks it into that card (Home's billboard card, Today's
+        /// Pick: as Details' Back); else it fades off as from Details.
+        var shrinksBack = false
         let logo: String?
         /// A show's episode: its name, and "Season 2, Episode 5".
         let episodeName: String?
@@ -44,6 +58,7 @@ final class PlayStage: ObservableObject {
         }
     }
     static let nothingFoundLine = "No prints anywhere. Try Refresh in a bit."
+    static let noAddonsLine = "No add-ons with sources. Add one in Settings."
 
     @Published private(set) var scene: Scene?
     @Published var note: Note?
@@ -52,7 +67,8 @@ final class PlayStage: ObservableObject {
     @Published var dark = false
     nonisolated static let lightsDown: Double = 0.7
 
-    func show(_ meta: MetaItem, _ video: MetaVideo?, art: String? = nil) {
+    func show(_ meta: MetaItem, _ video: MetaVideo?, art: String? = nil, bands: String? = nil,
+              from: DetailTransition.Window? = nil, shrinksBack: Bool = false) {
         let same = scene?.title == meta.name
         var name = same ? scene?.episodeName : nil, number = same ? scene?.episodeNumber : nil
         if let video, let season = video.season, let episode = video.episode {
@@ -62,10 +78,16 @@ final class PlayStage: ObservableObject {
         // A TMDB still in full size; an add-on's thumbnail is often too small.
         let still = video?.thumbnail.flatMap { $0.contains("image.tmdb.org") ? TMDBService.originalSize($0) : nil }
         let known = art ?? still ?? (same ? scene?.art : nil)
+        let knownBands = bands ?? (same ? scene?.bands : nil)
         if !same { note = nil }
         dark = false
-        scene = Scene(title: meta.name, art: known,
-                      logo: meta.logo ?? (same ? scene?.logo : nil) ?? BillboardPicks.metaHubLogo(meta.id),
+        scene = Scene(meta: meta, art: known, bands: knownBands,
+                      fromCard: from?.card ?? (same ? scene?.fromCard : nil),
+                      fromPicture: from?.picture ?? (same ? scene?.fromPicture : nil),
+                      shrinksBack: from != nil ? shrinksBack : same && scene?.shrinksBack == true,
+                      // Kept for the same title: a show's full record can
+                      // name another logo file (it swapped in mid-move).
+                      logo: (same ? scene?.logo : nil) ?? meta.logo ?? BillboardPicks.metaHubLogo(meta.id),
                       episodeName: name, episodeNumber: number,
                       searchingLine: same ? scene?.searchingLine ?? Self.pick(Self.searchingLines, not: nil)
                           : Self.pick(Self.searchingLines, not: scene?.searchingLine ?? lastSearching),
@@ -74,15 +96,19 @@ final class PlayStage: ObservableObject {
         lastSearching = scene?.searchingLine
         lastStarting = scene?.startingLine
         artTask?.cancel()
-        guard known == nil else { return }
+        if let knownBands {
+            Task { await TitleBands.shared.image(for: knownBands, saturation: BandsPicture.stageSaturation) }
+        }
+        guard known == nil || knownBands == nil else { return }
         // Not handed one (a card's hold menu): TMDB's backdrop, as Details
         // shows it; the card's own background only where TMDB has none or
         // takes too long. Never the poster (a smear, stretched to 16:9).
         let fallback = meta.background
         artTask = Task { [weak self] in
-            let found = await Self.backdrop(meta)
-            guard !Task.isCancelled, let self, self.scene?.title == meta.name, self.scene?.art == nil else { return }
-            self.scene?.art = found ?? fallback
+            let found = await Self.backdrop(meta) ?? fallback
+            guard !Task.isCancelled, let self, self.scene?.title == meta.name else { return }
+            if self.scene?.art == nil { self.scene?.art = found }
+            if self.scene?.bands == nil { self.scene?.bands = found ?? self.scene?.art }
         }
     }
 
@@ -138,6 +164,10 @@ final class SourcePicker: ObservableObject {
     @Published var searching = false
     /// The search is done and found nothing.
     @Published var empty = false
+    /// No add-on gives links at all.
+    @Published var noAddons = false
+    /// Links are in: the stage's card makes room for their row.
+    @Published var hasLinks = false
     /// Links tried for this title that didn't play (`rejectionKey`), marked
     /// on the list until it closes or Refresh brings new links.
     @Published var failed: Set<String> = []
@@ -145,14 +175,26 @@ final class SourcePicker: ObservableObject {
     /// the list (`PlayStageView`).
     @Published var listShown = false
 
-    func open(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, art: String? = nil) {
+    func open(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, art: String? = nil,
+              bands: String? = nil, from: DetailTransition.Window? = nil, shrinksBack: Bool = false) {
         if request?.meta.id != meta.id || request?.video?.id != video?.id { failed = [] }
-        PlayStage.shared.show(meta, video, art: art)
+        PlayStage.shared.show(meta, video, art: art, bands: bands, from: from, shrinksBack: shrinksBack)
         picked = false
         searching = false
         empty = false
+        noAddons = false
+        hasLinks = false
         listShown = false
         request = Request(meta: meta, video: video, fromStart: fromStart)
+    }
+
+    /// The stage's way out of the list (`PlayStageView`): the way in
+    /// reversed. Nil: closed at once.
+    var leave: (() -> Void)?
+
+    /// Back from the list.
+    func back() {
+        if let leave { leave() } else { close() }
     }
 
     func close() {
@@ -160,6 +202,8 @@ final class SourcePicker: ObservableObject {
         picked = false
         searching = false
         empty = false
+        noAddons = false
+        hasLinks = false
         failed = []
         listShown = false
         PlayStage.shared.clear()

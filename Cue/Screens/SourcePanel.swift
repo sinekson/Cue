@@ -1,10 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// The stage: the title's picture sharp under an even dim, and centred above
-/// the shelf's place its logo (else the name) and a line on what's happening while
-/// it waits, in one spot for every way in, never moving, still; the player's
-/// shelf of links under it when there is one.
+/// The stage: Details' card, where Details has it, on the title's bands
+/// as Details' page (following the setting). In the
+/// card at Details' text's place the logo and what plays (a show's episode,
+/// a film's facts and tagline); where Details' buttons were, a line on
+/// what's happening. With the list up, the card's foot rises and the links
+/// are a row on the page under it. Lights down: the card's window grows to
+/// the screen as its picture goes dark, and the film rises out of the black.
 /// Back while finding or loading stops it.
 struct PlayStageView<Sources: View>: View {
     @ObservedObject private var picker = SourcePicker.shared
@@ -15,12 +18,29 @@ struct PlayStageView<Sources: View>: View {
 
     /// Holds focus while there's no list, so Back reaches the stage.
     @FocusState private var holding: Bool
+    /// Scrolled up for the links' row, once there are links, as Details'
+    /// card scrolls up with its rows (from Details' card: once the stage is
+    /// in). Until then where Details has it, the tabs and Refresh under it.
+    @State private var short = false
+    /// The stage is in (its fade done): only then does it scroll, so the
+    /// row is first in Details' peek's place, then moves, never both.
+    @State private var settled = false
+    /// Its own fade in (the root's insertion transition never ran: it cut
+    /// in, a flicker).
+    @State private var shownIn = false
+    /// On the way out (`leave`).
+    @State private var leaving = false
+    /// Grown out of the card it came from into Details' place (`fromCard`).
+    @State private var opened = false
+    /// Back's fade off as a whole (not shrinking into its card).
+    @State private var gone = false
+    private var growing: Bool { scene.fromCard != nil }
 
     @ObservedObject private var stage = PlayStage.shared
 
     private var listUp: Bool { picker.request != nil && !picker.picked }
     private var searchingNow: Bool { launcher.searching != nil || picker.searching }
-    /// At work: the loading symbol with a line from the press's set.
+    /// At work: a line from the press's set, the light passing through it.
     private var waiting: Bool { !listUp || picker.searching }
     /// The line: at work, or with the list up, why there's nothing to play.
     private var status: String? {
@@ -29,35 +49,32 @@ struct PlayStageView<Sources: View>: View {
             return stage.note == .swapping ? PlayStage.swappingLine : scene.startingLine
         }
         if case .allFailed(let tried) = stage.note { return PlayStage.allFailedLine(tried: tried) }
+        if picker.noAddons { return PlayStage.noAddonsLine }
         if picker.empty { return PlayStage.nothingFoundLine }
         return nil
     }
 
-    /// Over its picture: dark in both appearances (`CueInk`).
-    var body: some View {
-        stageBody.environment(\.colorScheme, .dark)
+    private var card: CGRect {
+        if stage.dark { return CGRect(origin: .zero, size: StagePictureView.pictureSize) }
+        if !opened, let from = scene.fromCard { return from }
+        let card = StagePictureView.detailsCard
+        return short ? card.offsetBy(dx: 0, dy: -ShelfShape.stageScroll) : card
     }
 
-    @ViewBuilder private var stageBody: some View {
-        ZStack(alignment: .top) {
-            // The picture sharp, evenly dimmed so the centred text reads
-            // anywhere on it: more than under Details' rows, more again for a
-            // bright picture.
-            Color.black
-            // Lights down: the picture goes to black, slowly, the text first.
-            ZStack {
-                RemoteImage(url: scene.art, maxDimension: PictureSize.screen, showsPlaceholder: false)
-                    .frame(width: 1920, height: 1080)
-                    .blur(radius: Self.blur, opaque: true)
-                Color.black.opacity(max(Self.dim, StageArt.dimBelow(for: scene.art)))
+    /// The page follows the setting, as Details'; the card is dark always.
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // Details' bands a step more vivid: closer to the film.
+            TitleBandsBackground(url: scene.bands, saturation: BandsPicture.stageSaturation)
+                .frame(width: 1920, height: 1080)
+                .opacity(partsIn)
+            Group {
+                picture
+                text
+                    .opacity(stage.dark ? 0 : partsIn)
+                    .animation(Motion.fade, value: stage.dark)
             }
-            .opacity(stage.dark ? 0 : 1)
-            .animation(.easeInOut(duration: PlayStage.lightsDown), value: stage.dark)
-            header
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, 1080 - ShelfShape.top + Self.aboveShelf)
-                .opacity(stage.dark ? 0 : 1)
-                .animation(Motion.fade, value: stage.dark)
+            .environment(\.colorScheme, .dark)
             // With the list too, until it has taken focus from Details' Play
             // behind the stage: then it goes, and focus falls into the list
             // (SwiftUI's host refuses UIKit's own requests).
@@ -65,70 +82,224 @@ struct PlayStageView<Sources: View>: View {
                 Color.clear
                     .focusable()
                     .focused($holding)
-                    .onExitCommand(perform: onBack)
+                    .onExitCommand(perform: back)
             }
             if let request = picker.request {
+                // Under the card, moved by the card's own state in the same
+                // move (on its own animation it ran ahead of the card).
                 sources(request)
-                    .opacity(listUp ? 1 : 0)
+                    .offset(y: ShelfShape.stageTop + (short ? 0 : ShelfShape.stageScroll))
+                    .opacity(listUp && !stage.dark ? partsIn : 0)
                     .disabled(!listUp)
             }
         }
-        .frame(width: 1920, height: 1080)
+        .frame(width: 1920, height: 1080, alignment: .topLeading)
         .ignoresSafeArea()
+        // As one picture: without the group each layer took the opacity
+        // (bands, the card's black, the picture through each other: a
+        // grey wash mid-fade).
+        .compositingGroup()
+        .opacity((growing || shownIn) && !gone ? 1 : 0)
+        .onExitCommand(perform: back)
         .animation(Motion.fade, value: listUp)
         // Focus here at once: left where it was (Details' Play, in its own
         // host, isn't disabled with the page), a Back reached no handler.
-        .onAppear { DispatchQueue.main.async { holding = true } }
-        .onChange(of: listUp) { _, up in if !up { holding = true } }
+        .onAppear {
+            picker.leave = leave
+            // Back on Home: focus to the row it left (else the first card
+            // on screen took it, Continue Watching).
+            FixedFocusRowsController.keepReturnRows()
+            DispatchQueue.main.async { holding = true }
+            // As into Details: the page changes round the card first (the
+            // stage's fade), then one move up.
+            let fade = picker.request != nil ? PlayStage.listFadeIn : PlayStage.fadeInDuration
+            withAnimation(.easeInOut(duration: fade)) { shownIn = true }
+            // Out of Home's billboard card: the card grows into Details'
+            // place, opaque over its own picture, the rest fading in round it.
+            if growing { withAnimation(Self.growCurve) { opened = true } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + (growing ? Self.grow : fade)) {
+                settled = true
+                withAnimation(ShelfShape.stageScrollAnimation) { short = picker.request != nil && picker.hasLinks }
+            }
+        }
+        .onDisappear { picker.leave = nil }
+        // Links in while it grows (a cached list, at once): the scroll
+        // joins the grow, one movement; from Details only once it's in.
+        .onChange(of: picker.request != nil && picker.hasLinks) { _, on in
+            guard settled || growing, !leaving else { return }
+            withAnimation(ShelfShape.stageScrollAnimation) { short = on }
+        }
+        // Up while it already holds focus (Play found nothing): it goes
+        // now, or it kept focus and the list never got it.
+        .onChange(of: listUp) { _, up in
+            if !up { holding = true } else if holding { picker.listShown = true }
+        }
         .onChange(of: holding) { _, on in if on, listUp { picker.listShown = true } }
     }
 
-    /// Centred, its foot just above the shelf's tabs: the logo, a show's
-    /// episode (its number as a label over its name), then the status.
-    private var header: some View {
-        VStack(spacing: 0) {
-            mark
-            // A show's episode: its number as a small label over its name.
-            // A film keeps their room, so the logo sits in one spot for both.
-            Text(scene.episodeNumber?.uppercased() ?? " ")
-                .font(.system(size: 23, weight: SectionHint.weight))
-                .tracking(SectionHint.tracking)
-                .foregroundStyle(CueInk.secondary)
-                .padding(.top, 28)
-            Text(scene.episodeName ?? " ")
-                .font(.system(size: 32, weight: .medium))
-                .foregroundStyle(CueInk.primary)
-                .padding(.top, 6)
-            work
-                .padding(.top, 28)
-        }
-        .lineLimit(1)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: Self.textWidth)
+    /// Bands, text and row: with the whole stage's fade, or, grown out of
+    /// Home's card (the card opaque from the start), fading on their own.
+    private var partsIn: CGFloat { growing ? (shownIn ? 1 : 0) : 1 }
+    /// The opening's zoom (`DetailTransition.zoomInCurve`, 0.55 s); Back
+    /// into the card as Details' (0.4 s, eased in and out).
+    private static var growCurve: Animation { .timingCurve(0.2, 0.7, 0.2, 1, duration: grow) }
+    private static var shrink: Double { 0.4 }
+
+    /// Back: with the list up it closes (as the list's own Back), else the
+    /// stage stops what it's doing.
+    private func back() {
+        if listUp { picker.back() } else { onBack() }
     }
 
-    /// What's happening, under the episode on every way in, keeping its room
-    /// so nothing moves: at work a line from the press's set with a light
-    /// passing through it (beside it, the loading symbol left the words off
-    /// centre; above or below, a letter wave and a pulse were tried); with
-    /// the list up, why there's nothing to play, still. The one place for it
-    /// (Refresh shows only its own search).
+    /// Back from the list: from Details the card scrolls back down to
+    /// Details' place (the row to its peek), then the stage fades off over
+    /// Details' same card; grown out of a card, one movement from where it
+    /// is (shrunk into its card, or a fade). Presses meanwhile are dropped.
+    private func leave() {
+        guard !leaving else { return }
+        leaving = true
+        let fadeOff = {
+            // Into Home's billboard card or Today's Pick: shrunk back into
+            // it (as Details' Back), the rest fading round it.
+            if growing && scene.shrinksBack {
+                withAnimation(.easeInOut(duration: PlayStage.listFadeIn)) { shownIn = false }
+                withAnimation(.easeInOut(duration: Self.shrink)) { opened = false } completion: { closed() }
+                return
+            }
+            // Anywhere else: one fade off, whole, as Details' Back.
+            withAnimation(.easeInOut(duration: PlayStage.listFadeIn)) { gone = true } completion: {
+                closed()
+            }
+        }
+        // Grown out of a card: straight from where it is, one movement
+        // (the scroll back only leads into Details' same card).
+        guard short, !growing else { return fadeOff() }
+        withAnimation(ShelfShape.stageScrollAnimation) { short = false } completion: { fadeOff() }
+    }
+
+    /// Gone: focus back on the page's row it left (Home; Details takes
+    /// its own back).
+    private func closed() {
+        picker.close()
+        DispatchQueue.main.async { FixedFocusRowsController.returnFocus() }
+    }
+
+    /// The card: the picture as Details' card shows it (a window onto the
+    /// screen-sized picture, moved for its faces), its bottom fade.
+    private var picture: some View {
+        let card = card
+        // The picture goes with the card (scrolled with it, as Details').
+        let full = StagePictureView.cardPicture(in: StagePictureView.detailsCard, url: scene.art)
+        let shown = stage.dark ? CGRect(origin: CGPoint(x: full.minX, y: 0), size: full.size)
+            : !opened && scene.fromPicture != nil ? scene.fromPicture!
+            : full.offsetBy(dx: 0, dy: card.minY - StagePictureView.detailsCard.minY)
+        return ZStack(alignment: .topLeading) {
+            Color.black
+            ZStack(alignment: .topLeading) {
+                RemoteImage(url: scene.art, maxDimension: PictureSize.screen, showsPlaceholder: false)
+                    .frame(width: shown.width, height: shown.height)
+                    .offset(x: shown.minX - card.minX, y: shown.minY - card.minY)
+                // The card's bottom fade, over the card (not the picture).
+                LinearGradient(stops: Self.shade, startPoint: .top, endPoint: .bottom)
+                    .frame(width: card.width, height: card.height)
+            }
+            // Lights down: the picture goes to black as the window grows.
+            .opacity(stage.dark ? 0 : 1)
+            .animation(.easeInOut(duration: PlayStage.lightsDown - Self.darkDelay).delay(Self.darkDelay),
+                       value: stage.dark)
+        }
+        .frame(width: card.width, height: card.height, alignment: .topLeading)
+        .clipShape(RoundedRectangle(cornerRadius: stage.dark ? 0 : Spotlight.cornerRadius, style: .continuous))
+        .offset(x: card.minX, y: card.minY)
+        .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: stage.dark)
+        .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: opened)
+    }
+
+    /// Details' card shade (`StageArt.cardShade`'s stops, eased between),
+    /// as a gradient so it goes with the card's foot.
+    private static var shade: [Gradient.Stop] { StageShade.stops }
+}
+
+/// Details' card shade as gradient stops (`PlayStageView`).
+private enum StageShade {
+    static let stops: [Gradient.Stop] = {
+        let stops: [(CGFloat, CGFloat)] = [(0.3, 0), (0.55, 0.3), (0.8, 0.65), (1, 0.85)]
+        var out = [Gradient.Stop(color: .clear, location: 0)]
+        for (a, b) in zip(stops, stops.dropFirst()) {
+            for i in 0...6 {
+                let t = CGFloat(i) / 6
+                let eased = t * t * (3 - 2 * t)
+                out.append(.init(color: .black.opacity(a.1 + (b.1 - a.1) * eased), location: a.0 + (b.0 - a.0) * t))
+            }
+        }
+        return out
+    }()
+}
+
+extension PlayStageView {
+    /// Bottom left the logo and what plays, as Details' text; bottom right,
+    /// where its buttons were, what's happening.
+    private var text: some View {
+        let card = card
+        return ZStack(alignment: .topLeading) {
+            block
+                .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                .frame(width: card.width - 2 * StagePictureView.cardMargin,
+                       height: StagePictureView.textBottom(card) - card.minY, alignment: .bottomLeading)
+                .offset(x: card.minX + StagePictureView.cardMargin, y: card.minY)
+            work
+                .frame(width: Self.statusWidth, height: Self.statusHeight)
+                .offset(x: card.maxX - StagePictureView.cardMargin - Self.statusWidth,
+                        y: StagePictureView.textBottom(card) - Self.statusHeight + Self.statusDrop)
+        }
+    }
+
+    private typealias Text26 = FixedFocusBillboardText
+
+    /// The logo, then two lines: a show's "Season 2, Episode 5" over the
+    /// episode's name; a film's facts over its tagline, as Details.
+    private var block: some View {
+        let meta = scene.meta
+        let episode = scene.episodeNumber != nil
+        let first = episode ? scene.episodeNumber ?? ""
+            : FixedFocusShowInfo.factsLine(meta, info: TitleRecords.shared.size(meta))
+        let second = episode ? scene.episodeName ?? " " : TitleRecords.shared.tagline(meta) ?? meta.name
+        return VStack(alignment: .leading, spacing: 0) {
+            mark
+            Text(first)
+                .font(.system(size: Text26.textSize, weight: .medium))
+                .foregroundStyle(CueInk.body)
+                .frame(height: Text26.lineHeight, alignment: .leading)
+                .padding(.top, Text26.space - Text26.lineInset)
+            Text(second)
+                .font(episode ? .system(size: Text26.textSize, weight: .regular)
+                              : .system(size: Text26.textSize, weight: .regular).italic())
+                .foregroundStyle(CueInk.secondary)
+                .frame(height: Text26.lineHeight, alignment: .leading)
+                .padding(.top, Text26.gap - 2 * Text26.lineInset)
+        }
+        .lineLimit(1)
+        .frame(maxWidth: Self.textWidth, alignment: .leading)
+    }
+
+    /// What's happening, keeping its room so nothing moves: at work a line
+    /// from the press's set with a light passing through it; with the list
+    /// up, why there's nothing to play, still.
     private var work: some View {
-        SweepLine(text: status ?? " ", sweeping: waiting)
+        SweepLine(text: status ?? " ", sweeping: waiting, alignment: .right)
             .id(status)
             .transition(.opacity)
-            .frame(width: Self.textWidth, height: 36)
             .opacity(status == nil ? 0 : 1)
             .animation(Motion.fade, value: status)
     }
 
-    /// The logo, trimmed and sized by area as the billboard's (`LogoFit`) so
-    /// logos weigh alike, its foot in one place; the name where there's none.
+    /// The logo as Details' card's (`FixedFocusBillboardText`'s fit); the
+    /// name where there's none.
     @ViewBuilder private var mark: some View {
         if let logo = scene.logo {
-            RemoteImage(url: logo, maxDimension: Self.logoSize.width, showsPlaceholder: false,
-                        fallback: AnyView(name), logoFit: LogoFit(area: Self.logoArea, maxSize: Self.logoSize))
-                .frame(height: Self.logoSize.height, alignment: .bottom)
+            RemoteImage(url: logo, maxDimension: Text26.logoMaxSize.width, showsPlaceholder: false,
+                        fallback: AnyView(name),
+                        logoFit: LogoFit(area: Text26.logoArea, maxSize: Text26.logoMaxSize))
         } else {
             name
         }
@@ -136,20 +307,22 @@ struct PlayStageView<Sources: View>: View {
 
     private var name: some View {
         Text(scene.title)
-            .font(.system(size: 48, weight: .semibold))
+            .font(FusionType.heroTitle)
             .foregroundStyle(CueInk.primary)
+            .lineLimit(2)
+            .minimumScaleFactor(0.74)
+            .frame(maxWidth: TitleBlock.logoWidth, alignment: .bottomLeading)
     }
 
-    private static var logoSize: CGSize { CGSize(width: 728, height: 160) }
-    private static var logoArea: CGFloat { 70_000 }
-    /// The picture's dim at least (Details' rows: 0.55).
-    private static var dim: CGFloat { 0.7 }
-    /// Soft: the picture still reads, its detail doesn't compete with the text.
-    private static var blur: CGFloat { 12 }
-
-    private static var textWidth: CGFloat { 1200 }
-    /// Its foot this far above the shelf's tabs.
-    private static var aboveShelf: CGFloat { 40 }
+    private static var textWidth: CGFloat { 900 }
+    private static var statusWidth: CGFloat { 760 }
+    private static var statusHeight: CGFloat { 36 }
+    /// The status's baseline on the second line's.
+    private static var statusDrop: CGFloat { 3 }
+    /// Lights down: the window's growth (the opening's zoom), the picture
+    /// going dark after this.
+    private static var grow: Double { 0.55 }
+    private static var darkDelay: Double { 0.2 }
 }
 
 /// The sources on the stage, under the title: the player's shelf with Sources
@@ -186,17 +359,17 @@ struct SourcePanel: View {
         StageSources(entries: model.entries, addons: model.addonNames, loading: model.isLoading,
                      refreshing: refreshing, failed: picker.failed, foundAt: model.foundAt, active: !picker.picked, focusRequest: focusRequest,
                      onPick: play, onRefresh: searchAgain, onBack: onClose)
-            .frame(width: ShelfShape.width, height: ShelfShape.height)
-            .padding(.top, ShelfShape.top)
+            .frame(width: ShelfShape.stageWidth, height: ShelfShape.height)
             .frame(width: 1920, height: 1080, alignment: .top)
             .ignoresSafeArea()
-            .environment(\.colorScheme, .dark)
             .onExitCommand(perform: onClose)
             .onChange(of: picker.picked) { _, picked in
                 if !picked, let pickedID { focusRequest = .init(entry: pickedID) }
             }
             .onChange(of: model.isLoading && !refreshing, initial: true) { _, waiting in picker.searching = waiting }
             .onChange(of: !model.isLoading && model.entries.isEmpty, initial: true) { _, empty in picker.empty = empty }
+            .onChange(of: !model.isLoading && model.addonNames.isEmpty, initial: true) { _, none in picker.noAddons = none }
+            .onChange(of: !model.entries.isEmpty, initial: true) { _, some in picker.hasLinks = some }
             .task {
                 await model.load(addonManager: addonManager)
             }
@@ -274,7 +447,8 @@ private struct StageSources: UIViewControllerRepresentable {
         sheet.onBack = onBack
         sheet.failed = failed
         sheet.searching = loading && refreshing
-        sheet.foundAt = loading ? nil : foundAt
+        // No add-ons: nothing was found, not "just now".
+        sheet.foundAt = loading || addons.isEmpty ? nil : foundAt
         sheet.update(entries: entries, addons: addons, loading: loading, active: active)
         guard let focusRequest, focusRequest != context.coordinator.served else { return }
         context.coordinator.served = focusRequest
@@ -289,10 +463,13 @@ private struct StageSources: UIViewControllerRepresentable {
 struct SweepLine: UIViewRepresentable {
     let text: String
     let sweeping: Bool
+    /// The words in the line's box: centred, or at its right end (the stage).
+    var alignment: NSTextAlignment = .center
 
     func makeUIView(context: Context) -> Line { Line() }
 
     func updateUIView(_ line: Line, context: Context) {
+        line.alignment = alignment
         line.set(text, sweeping: sweeping)
     }
 
@@ -304,6 +481,9 @@ struct SweepLine: UIViewRepresentable {
         private let holder = UIView()
         private let band = CAGradientLayer()
         private var sweeping = false
+        var alignment: NSTextAlignment = .center {
+            didSet { if alignment != oldValue { setNeedsLayout() } }
+        }
         /// What the running sweep was made for: the same, it runs on.
         private var running: CGFloat?
         /// At rest the words a level down; the light past the primary, on
@@ -364,7 +544,8 @@ struct SweepLine: UIViewRepresentable {
             let size = label.sizeThatFits(bounds.size)
             let width = min(size.width, bounds.width)
             holder.frame = bounds
-            label.frame = CGRect(x: (bounds.width - width) / 2, y: (bounds.height - size.height) / 2,
+            let x = alignment == .right ? bounds.width - width : (bounds.width - width) / 2
+            label.frame = CGRect(x: x, y: (bounds.height - size.height) / 2,
                                  width: width, height: size.height)
             // Three times the line, so it covers it wherever the band is; a
             // wide, soft band: about half the words lit at its peak.
@@ -392,8 +573,10 @@ struct SweepLine: UIViewRepresentable {
             band.removeAnimation(forKey: "sweep")
             guard wanted != nil else { return }
             let move = CABasicAnimation(keyPath: "transform.translation.x")
-            move.fromValue = -0.8 * width
-            move.toValue = 0.8 * width
+            // Through the words, wherever they sit in the line.
+            let centre = label.frame.midX - bounds.midX
+            move.fromValue = centre - 0.8 * width
+            move.toValue = centre + 0.8 * width
             move.duration = Self.pass
             move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             let round = CAAnimationGroup()
@@ -402,7 +585,7 @@ struct SweepLine: UIViewRepresentable {
             round.repeatCount = .infinity
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            band.transform = CATransform3DMakeTranslation(-0.8 * width, 0, 0)
+            band.transform = CATransform3DMakeTranslation(centre - 0.8 * width, 0, 0)
             CATransaction.commit()
             band.add(round, forKey: "sweep")
         }

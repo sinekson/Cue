@@ -190,6 +190,16 @@ private final class PanelTab: UIView {
     /// Folded away it can't take focus.
     var available = true
 
+    /// On the page (the stage's list), not on glass over a picture: the
+    /// page's ink, no shadow; chosen, Details' season pill; a button (Refresh)
+    /// a flat control, not glass.
+    var onPage = false {
+        didSet {
+            glass?.isHidden = onPage
+            paint()
+        }
+    }
+
     /// Asks every add-on again, past the caches.
     static func refresh() -> PanelTab { PanelTab(symbol: "arrow.trianglehead.2.clockwise.rotate.90", named: "Refresh") }
 
@@ -223,6 +233,7 @@ private final class PanelTab: UIView {
         title.layer.shadowRadius = 8
         for sub in [platter, title, icon] as [UIView] { addSubview(sub) }
         paint()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (tab: PanelTab, _) in tab.paint() }
     }
 
     @available(*, unavailable)
@@ -254,6 +265,8 @@ private final class PanelTab: UIView {
             return super.pressesEnded(presses, with: event)
         }
         setPressed(false)
+        // A hold's release landing here (Refresh, focused as the list came) isn't a press.
+        guard !HoldMenu.shared.releasePending else { return }
         action()
     }
 
@@ -268,12 +281,17 @@ private final class PanelTab: UIView {
     }
 
     private func paint() {
+        let level = chosen || glass != nil ? FixedFocusText.primary : FixedFocusText.body
         title.textColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
-            : UIColor.white.withAlphaComponent(chosen || glass != nil ? FixedFocusText.primary : FixedFocusText.body)
+            : onPage ? CueInk.ui(level) : UIColor.white.withAlphaComponent(level)
         icon.tintColor = title.textColor
-        title.layer.shadowOpacity = isFocused ? 0 : 0.8
+        title.layer.shadowOpacity = isFocused || onPage ? 0 : 0.8
         icon.layer.shadowOpacity = title.layer.shadowOpacity
-        platter.alpha = isFocused ? 1 : chosen && marksChosen && glass == nil ? Self.chosenFill : 0
+        // On the page `FlatControl`'s fills (white, lighter on light).
+        let light = traitCollection.userInterfaceStyle == .light
+        let chosenFill = onPage && light ? 0.55 : Self.chosenFill
+        let restFill: CGFloat = onPage && glass != nil ? (light ? 0.32 : 0.13) : 0
+        platter.alpha = isFocused ? 1 : chosen && marksChosen && glass == nil ? chosenFill : restFill
         let scale: CGFloat = isFocused && !pressed ? 1.05 : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
     }
@@ -310,6 +328,17 @@ class PlayerSheet: UIView {
     private var heldExtra: String?
     /// The stage's: the fold is all there is, unfolded for good, nothing before it.
     fileprivate var foldOnly = false
+    /// The stage's: on the page, no glass; the cards run on past its edges
+    /// as a row's, the tabs over the cards' edge.
+    fileprivate var onPage = false {
+        didSet {
+            glass.isHidden = onPage
+            clip.clipsToBounds = !onPage
+            for tab in tabs + [again] { tab.onPage = onPage }
+            found.layer.shadowOpacity = onPage ? 0 : 0.8
+            setNeedsLayout()
+        }
+    }
     private var unfolded: Bool { foldOnly || fold?.extras.contains(current) == true }
     /// On the folded tab or one it unfolded into, open: Refresh and when the
     /// links were found come out after them.
@@ -548,7 +577,7 @@ class PlayerSheet: UIView {
         super.layoutSubviews()
         let panel = bounds.inset(by: UIEdgeInsets(top: Self.tabRow, left: 0, bottom: 0, right: 0))
         tabRow.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: PanelTab.height)
-        tabRow.center = CGPoint(x: bounds.midX, y: PanelTab.height / 2)
+        tabRow.center = CGPoint(x: bounds.midX + (onPage ? ShelfShape.cardsIn : 0), y: PanelTab.height / 2)
         glass.frame = panel
         clip.frame = panel
         var x: CGFloat = 0
@@ -580,7 +609,9 @@ class PlayerSheet: UIView {
     /// One tab unfolds into these; `preferred` is where it opens.
     fileprivate func setFold(_ tab: Int, into titles: [String], preferred: Int?) {
         let old = fold.map { tabs[$0.extras].map(\.text) } ?? []
-        if old != titles {
+        // None at all still makes the fold: Refresh comes out with it (no
+        // add-ons on the stage left nothing to focus, and Back stuck).
+        if old != titles || fold == nil {
             let chosen = unfolded ? tabs[current].text : nil
             if let fold {
                 for extra in tabs[fold.extras] { extra.removeFromSuperview() }
@@ -590,6 +621,7 @@ class PlayerSheet: UIView {
             let start = tabs.count
             for title in titles {
                 let extra = PanelTab(title)
+                extra.onPage = onPage
                 tabRow.insertSubview(extra, belowSubview: again)
                 tabs.append(extra)
                 pages.append(pages[tab])
@@ -1669,6 +1701,7 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
     init() {
         super.init(tabs: ["Sources"], height: PlayerShelf.height)
         foldOnly = true
+        onPage = true
         row.dataSource = self
         row.delegate = self
         row.register(SourceCard.self, forCellWithReuseIdentifier: "card")
@@ -1796,6 +1829,8 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        // The release of the hold that opened the list isn't a pick.
+        guard !HoldMenu.shared.releasePending else { return }
         onPick(shown[indexPath.item])
     }
 
@@ -1810,6 +1845,23 @@ final class StageSheet: PlayerSheet, UICollectionViewDataSource, UICollectionVie
 
 enum ShelfShape {
     static let width: CGFloat = 1920 - 160
+    /// The cards' left edge in the sheet.
+    static let cardsIn = PlayerSheet.inset + PlayerShelf.rowInsets.left
+    /// On the stage's page: the cards at the rows' edge, the sheet's foot
+    /// `StagePictureView.detailsInset` above the screen's (no glass: its
+    /// inset there shows as nothing).
+    static let stageX = Spotlight.screenInset - cardsIn
+    static let stageWidth = 1920 - 2 * stageX
+    static var stageTop: CGFloat {
+        1080 - StagePictureView.detailsInset - PlayerShelf.height + PlayerSheet.inset
+    }
+    /// How far the stage scrolls for the links: the card from Details' place
+    /// to `cardGap` above them, the row up from under it.
+    static var stageScroll: CGFloat {
+        StagePictureView.detailsCard.maxY + StagePictureView.cardGap - stageTop
+    }
+    /// Details' scroll (`Motion.verticalDuration`, the rows' no-bounce spring).
+    static let stageScrollAnimation: Animation = .spring(duration: Motion.verticalDuration, bounce: 0)
     /// Its top, tabs included; it ends `margin` above the screen's foot.
     static let top: CGFloat = 1080 - PlayerShelf.margin - PlayerShelf.height
     static let height = PlayerShelf.height

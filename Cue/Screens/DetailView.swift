@@ -469,7 +469,8 @@ struct DetailView: View {
     @ObservedObject private var ratings = TitleRatings.shared
 
     private func play(_ video: MetaVideo?, fromStart: Bool = false) {
-        launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video))
+        launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video),
+                      bands: viewModel.backdropURL)
     }
 
     /// The stage's picture: the episode's TMDB still in full size, else the backdrop.
@@ -481,7 +482,7 @@ struct DetailView: View {
     /// Hold Play (or an episode's "Choose Source"): the source list, on the
     /// stage (`SourcePicker`).
     private func openSources(_ video: MetaVideo?) {
-        SourcePicker.shared.open(viewModel.meta, video, art: stageArt(video))
+        SourcePicker.shared.open(viewModel.meta, video, art: stageArt(video), bands: viewModel.backdropURL)
     }
     var onSelectItem: (MetaItem) -> Void = { _ in }
     /// The pages opened from here (a person, a studio, a genre, a tag) get
@@ -1630,6 +1631,9 @@ struct DetailActionButton: View {
 
     /// Its hold menu open (Play).
     @State private var held = false
+    /// A new button after each hold: SwiftUI's Button stays pressed once a
+    /// hold has cancelled its press (the next hold then didn't move it).
+    @State private var pressGeneration = 0
     /// Lit by ITS OWN focus (a press redraws this button alone — the page's
     /// `lit` reached it late: through the page's redraw, and across the rows'
     /// SwiftUI host). `lit` only until focus first comes or goes (the swap's
@@ -1754,10 +1758,14 @@ struct DetailActionButton: View {
         .buttonStyle(DetailPressStyle(lit: shownLit, held: held,
                                        focusScale: untintedGlass ? Self.detailsFocusScale : Self.focusScale,
                                        onFocus: focusChanged))
+        .id(pressGeneration)
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
         .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
-                  onHeld: { held = $0 }) {
+                  onHeld: { now in
+                      held = now
+                      if !now { pressGeneration += 1 }
+                  }) {
             holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
         }
     }
@@ -1866,7 +1874,9 @@ private struct DetailPressStyle: ButtonStyle {
                 .scaleEffect(scale)
                 // A press: quick in, back on a spring; focus: on focus's
                 // spring (the white goes quicker).
-                .animation(down ? DetailActionButton.pressIn
+                // Held: grown past focus as a card is (its time and curve).
+                .animation(held ? .easeOut(duration: FixedFocusMetrics.heldDuration)
+                           : down ? DetailActionButton.pressIn
                            : releasing ? DetailActionButton.pressOut
                            : DetailActionButton.grow,
                            value: scale)
@@ -1974,13 +1984,24 @@ final class TitlePictures {
         decoded.removeValue(forKey: item.id) ?? decode(item)
     }
 
+    /// The picture decoded at focus, left for the next opening (the stage
+    /// growing out of a card: Choose Source).
+    func shown(_ item: MetaItem) -> Task<String?, Never> {
+        if let task = decoded[item.id] { return task }
+        let task = decode(item)
+        decoded[item.id] = task
+        return task
+    }
+
     private func decode(_ item: MetaItem) -> Task<String?, Never> {
         Task { @MainActor in
             guard let url = await self.picture(for: item),
                   await ImageCache.shared.preload(url, maxDimension: PictureSize.screen)
             else { return nil }
-            // Details' background, ready for the press (`TitleBands`).
+            // Details' background, ready for the press (`TitleBands`), and
+            // its faces (Details' framing, as the opening's).
             Task { await TitleBands.shared.image(for: url) }
+            Task { await StagePictureView.prepareFaces(url) }
             return url
         }
     }

@@ -31,6 +31,8 @@ final class DetailTransition {
     /// A: the window, from the card pressed into Details' card, the
     /// picture settling at Details' framing.
     static let pictureDelay: Double = 0.05
+    /// The most the window waits on its picture's faces (`prepareFaces`).
+    static let facesWait: Double = 0.25
     static let pictureSettle: Double = 0.55
     /// …the window's picture crossfading in over the card's, quickly: on
     /// the window's quick start a slower fade (0.38 s) left a large
@@ -213,6 +215,16 @@ final class DetailTransition {
             }
             let url = await DetailPreparer.shared.picture(for: item, within: Self.giveUp)
             let image = url.flatMap(Self.decoded)
+            // Its faces, if focus didn't rest long enough to find them: a
+            // short wait, so the window frames it as Details will.
+            if let url, image != nil {
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await StagePictureView.prepareFaces(url) }
+                    group.addTask { try? await Task.sleep(for: .seconds(Self.facesWait)) }
+                    await group.next()
+                    group.cancelAll()
+                }
+            }
             // The bands drawn late (focus didn't rest on the title): faded in
             // over the app's while the card waits — before the reveal, so
             // Details opens on the same.
@@ -538,7 +550,7 @@ final class DetailTransition {
 
     /// The card focused at the press, on the screen at its focused size
     /// (its caption not counted) — what the window grows out of.
-    private static func focusedCard(in window: UIWindow) -> CGRect? {
+    static func focusedCard(in window: UIWindow) -> CGRect? {
         guard let focused = UIFocusSystem.focusSystem(for: window)?.focusedItem as? UIView else { return nil }
         if let cell = focused as? FixedFocusShowcaseCell { return cell.holdMenu([]).rest ?? cell.screenCard }
         if let cell = focused as? FixedFocusDestinationCell { return cell.holdMenu([]).rest }

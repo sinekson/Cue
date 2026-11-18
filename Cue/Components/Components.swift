@@ -461,15 +461,26 @@ final class ImageCache: @unchecked Sendable {
     func preload(_ value: String, maxDimension: CGFloat? = nil, maxPixels: CGFloat? = nil,
                  turn: DecodeGate.Turn = .now, still: (@MainActor () -> Bool)? = nil) async -> Bool {
         let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: maxPixels)
-        if image(for: key) != nil { return true }
+        if let hit = image(for: key) { return await trimLogo(hit, value, maxDimension) }
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: maxPixels)
-        if await diskImage(for: value, budget: budget, memoryKey: key, turn: turn, still: still) != nil { return true }
+        if let disk = await diskImage(for: value, budget: budget, memoryKey: key, turn: turn, still: still) {
+            return await trimLogo(disk, value, maxDimension)
+        }
         if let still, !(await still()) { return false }
         guard let url = URL(string: value), let data = try? await download(url),
               let prepared = await DecodeGate.shared.run(turn, still: still, {
                   ImageCache.decodeDownsampled(data, budget: budget)
               }) else { return false }
         insert(prepared, for: value, data: data, memoryKey: key)
+        return await trimLogo(prepared, value, maxDimension)
+    }
+
+    /// The billboard's, Details' and the stage's logo (`PictureSize.logo`):
+    /// trimmed ahead too, off the main thread, so `RemoteImage` shows it
+    /// from its first frame.
+    private func trimLogo(_ image: UIImage, _ value: String, _ size: CGFloat?) async -> Bool {
+        guard let size, await size == PictureSize.logo, LogoFit.cachedTrim(key: value) == nil else { return true }
+        _ = await LogoFit.trimmedInBackground(image, key: value)
         return true
     }
 
@@ -734,7 +745,10 @@ struct RemoteImage: View {
         // placeholder and no fade. Without this a poster inside a view that
         // slides in (the player's info sheet) appeared a beat after its card,
         // fading in over a black box while the card was still moving.
-        if let url, let cached = ImageCache.shared.image(for: Self.memoryKey(url, maxDimension: maxDimension, maxPixels: maxPixels)) {
+        // A logo only once trimmed (`load` trims it off the main thread:
+        // trimmed in `body`, a new logo stalled a move, the stage's grow).
+        if let url, logoFit == nil || LogoFit.cachedTrim(key: url) != nil,
+           let cached = ImageCache.shared.image(for: Self.memoryKey(url, maxDimension: maxDimension, maxPixels: maxPixels)) {
             _image = State(initialValue: cached)
             _shownKey = State(initialValue: url)
         }
@@ -844,6 +858,7 @@ struct RemoteImage: View {
         if value == shownKey { return }
         failed = false
         if let cached = ImageCache.shared.image(for: memoryKey(value)) {
+            guard await trimmed(cached, key: value) else { return }
             show(cached, key: value, duration: 0.28)
             return
         }
@@ -853,6 +868,7 @@ struct RemoteImage: View {
             for: value, budget: pixelBudget, memoryKey: memoryKey(value)
         ) {
             if Task.isCancelled { return }
+            guard await trimmed(disk, key: value) else { return }
             show(disk, key: value, duration: 0.28)
             return
         }
@@ -878,7 +894,16 @@ struct RemoteImage: View {
         }
         if Task.isCancelled { return }
         ImageCache.shared.insert(prepared, for: value, data: data, memoryKey: memoryKey(value))
+        guard await trimmed(prepared, key: value) else { return }
         show(prepared, key: value, duration: 0.35)
+    }
+
+    /// A logo trimmed off the main thread before it's shown (`fitted` then
+    /// finds it made). False: no longer wanted.
+    private func trimmed(_ image: UIImage, key: String) async -> Bool {
+        guard logoFit != nil, LogoFit.cachedTrim(key: key) == nil else { return true }
+        _ = await LogoFit.trimmedInBackground(image, key: key)
+        return !Task.isCancelled
     }
 
     private var placeholder: some View {

@@ -103,6 +103,13 @@ enum BandsPicture {
     static func lifted(_ v: Double, darker: Double = 1) -> CGFloat {
         CGFloat((0.62 + 0.28 * v) * (1 - (1 - darker) * 0.4))
     }
+    /// A colour's channel for dark mode: toward tvOS's dark grey (its
+    /// Settings', about 11 %), the picture's colour a soft tint over it —
+    /// 0 lands at 5 %, 1 at 22 % (light's `lifted`, mirrored; 7–30 % was
+    /// too light).
+    static func sunk(_ v: Double, darker: Double = 1) -> CGFloat {
+        CGFloat((0.05 + 0.17 * v) * (1 - (1 - darker) * 0.4))
+    }
     /// Details' (`TitleBands`): the picture's colour stronger over the grey
     /// — 0 lands at 50 %, 1 at 92 %.
     static func liftedStrong(_ v: Double, darker: Double = 1) -> CGFloat {
@@ -189,19 +196,25 @@ enum BandsPicture {
     /// lifted to tvOS's light grey, the colours a tint (`lifted`).
     static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)], dim: Double,
                       brightest: Double, light: Bool = false, strong: Bool = false,
-                      seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
+                      saturation chosen: Double? = nil, seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard let darkest = palette.first else { return nil }
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
             // The picture's hues pushed out from its grey (k-means averages
             // and the blur pull them toward grey); Details' further.
             var c = c
-            let saturation = strong ? Self.strongSaturation : Self.saturation
+            let saturation = chosen ?? (strong ? Self.strongSaturation : Self.saturation)
             let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
             func out(_ v: Double) -> Double { min(1, max(0, y + (v - y) * saturation)) }
             (c.r, c.g, c.b) = (out(c.r), out(c.g), out(c.b))
             if light {
                 let lift = strong ? liftedStrong : lifted
                 return (lift(c.r, extra), lift(c.g, extra), lift(c.b, extra))
+            }
+            // The app's, dark: light's mirror, a dark grey with the
+            // picture's colours a tint over it (dimmed alone, they read
+            // too colourful beside light's silver). Details' keeps its own.
+            if !strong, chosen == nil {
+                return (sunk(c.r, darker: extra), sunk(c.g, darker: extra), sunk(c.b, darker: extra))
             }
             var (r, g, b) = (c.r * (1 - dim) * extra, c.g * (1 - dim) * extra, c.b * (1 - dim) * extra)
             let light = 0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -236,6 +249,9 @@ enum BandsPicture {
     /// background, Details' (`strong`).
     static let saturation = 1.4
     static let strongSaturation = 1.8
+    /// The play stage's: a step past Details', the same bands deepening as
+    /// it comes in (closer to the film).
+    static let stageSaturation = 2.2
 }
 
 /// The same numbers for the same seed (a picture's layout drawn again).
@@ -451,7 +467,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands2-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands4-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
     /// A new picture is due: the mode changed, or it's been up 4 h (coming
@@ -668,28 +684,41 @@ final class TitleBands {
     private var order: [String] = []
     private var working: [String: Task<UIImage?, Never>] = [:]
 
-    private static func key(_ url: String) -> String {
-        url + (BackgroundPicks.Mode.now == .light ? "#light" : "")
+    /// `saturation`: other than Details' (the play stage's).
+    private static func key(_ url: String, _ saturation: Double?) -> String {
+        url + (BackgroundPicks.Mode.now == .light ? "#light" : "") + (saturation.map { "#s\($0)" } ?? "")
     }
 
-    func cached(_ url: String?) -> UIImage? { url.flatMap { images[Self.key($0)] } }
+    func cached(_ url: String?, saturation: Double? = nil) -> UIImage? {
+        url.flatMap { images[Self.key($0, saturation)] }
+    }
 
     /// Drawn (or being drawn) for `url`; nil if it can't be.
     @discardableResult
-    func image(for url: String) async -> UIImage? {
-        let key = Self.key(url)
+    func image(for url: String, saturation: Double? = nil) async -> UIImage? {
+        let key = Self.key(url, saturation)
         if let image = images[key] { return image }
         if let task = working[key] { return await task.value }
         let light = BackgroundPicks.Mode.now == .light
         let seed = BackgroundPicks.seed(url)
         let small = url.replacingOccurrences(of: "/t/p/original/", with: "/t/p/w780/")
+        // The picture already decoded (Details' opening waits on it): no
+        // download first (it came seconds late at times).
+        let decoded = ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: PictureSize.screen,
+                                                                        maxPixels: nil))?.cgImage
         let task = Task<UIImage?, Never> {
-            guard let remote = URL(string: small),
-                  let data = try? await ImageCache.shared.download(remote) else { return nil }
+            var data: Data?
+            if decoded == nil {
+                guard let remote = URL(string: small),
+                      let downloaded = try? await ImageCache.shared.download(remote) else { return nil }
+                data = downloaded
+            }
             return await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                guard let source = ImageCache.decodeDownsampled(data, budget: 160)?.cgImage,
+                guard let source = decoded.flatMap({ Self.shrunk($0, to: 160) })
+                        ?? data.flatMap({ ImageCache.decodeDownsampled($0, budget: 160)?.cgImage }),
                       let bands = BandsPicture.pools(from: BandsPicture.palette(source), dim: Self.dim,
                                                      brightest: Self.brightest, light: light, strong: true,
+                                                     saturation: saturation,
                                                      seed: seed),
                       let picture = BandsPicture.render(base: bands.base, pools: bands.pools)
                 else { return nil }
@@ -707,17 +736,33 @@ final class TitleBands {
         }
         return image
     }
+
+    /// A decoded picture drawn small (its longest side `side` pixels).
+    nonisolated private static func shrunk(_ image: CGImage, to side: Int) -> CGImage? {
+        let scale = Double(side) / Double(max(image.width, image.height))
+        let w = max(1, Int(Double(image.width) * scale)), h = max(1, Int(Double(image.height) * scale))
+        guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return context.makeImage()
+    }
 }
 
 /// Details' background: its title's bands (`TitleBands`), faded in if
 /// they come late; until then the app's.
 struct TitleBandsBackground: View {
     let url: String?
+    /// Other than Details' (the play stage's); until drawn, Details' own.
+    var saturation: Double? = nil
     @State private var image: UIImage?
 
-    init(url: String?) {
+    init(url: String?, saturation: Double? = nil) {
         self.url = url
-        _image = State(initialValue: TitleBands.shared.cached(url))
+        self.saturation = saturation
+        _image = State(initialValue: TitleBands.shared.cached(url, saturation: saturation)
+                       ?? (saturation == nil ? nil : TitleBands.shared.cached(url)))
     }
 
     var body: some View {
@@ -733,8 +778,8 @@ struct TitleBandsBackground: View {
         .animation(.easeInOut(duration: Motion.fadeDuration), value: image)
         .task(id: url ?? "") {
             guard let url else { image = nil; return }
-            if let known = TitleBands.shared.cached(url) { image = known; return }
-            image = await TitleBands.shared.image(for: url)
+            if let known = TitleBands.shared.cached(url, saturation: saturation) { image = known; return }
+            image = await TitleBands.shared.image(for: url, saturation: saturation)
         }
     }
 }

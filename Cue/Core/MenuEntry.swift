@@ -77,6 +77,10 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
     /// A menu is open: the card it belongs to keeps its focus look (focus
     /// itself is in the menu).
     private(set) var isOpen = false
+    /// A direct hold's Select still down: its release isn't a press on
+    /// whatever has focus by then (the stage's first link, or Refresh, got
+    /// picked by it).
+    private(set) var releasePending = false
     private var pending: HoldMenuRequest?
     /// The focused SwiftUI view's menu (`.holdMenu`), by its id.
     private var swiftUI: (id: UUID, request: () -> HoldMenuRequest?)?
@@ -151,9 +155,23 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
+        if recognizer.state != .began, recognizer.state != .changed, releasePending {
+            // Let go: past the release's own delivery, then presses count again.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.releasePending = false }
+            return
+        }
         guard recognizer.state == .began, let request = pending else { return }
         pending = nil
-        if request.direct { request.entries.first?.run(); return }
+        if request.direct {
+            releasePending = true
+            // Held as a card is (pressed smaller, then grown past its focus
+            // size), the hold's action running as it grows; back once the
+            // page over it has come (Select let go by then).
+            request.onHeld?(true)
+            request.entries.first?.run()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { request.onHeld?(false) }
+            return
+        }
         present(request)
     }
 

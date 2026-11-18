@@ -272,6 +272,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private let place = UILabel()
     private let corner = UIImageView(image: FixedFocusShowcaseCell.cornerShade)
     private var art: String?
+    /// Its picture now (the stage growing out of Today's Pick: `PlayLauncher`).
+    var shownArt: String? { art }
     private var extras: Task<Void, Never>?
     private var pressed = false
     private var held = false

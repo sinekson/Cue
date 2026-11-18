@@ -325,6 +325,8 @@ final class StagePictureView: UIView {
     static weak var homeCardShown: StagePictureView?
     /// The title on the card now (Back into it: `DetailTransition`).
     var shownItemID: String? { shownItem?.id }
+    /// Its picture now (the stage growing out of it: `PlayLauncher`).
+    var shownPictureURL: String? { shownURL }
 
     /// The card on the screen as it's drawn now — Details' opening grows
     /// a window out of it (`DetailTransition.Window`): the card, its
@@ -498,6 +500,20 @@ final class StagePictureView: UIView {
     /// Home's card: where a picture's faces are, down it (the cards' rule,
     /// `TMDBService.faceCentre`), once per picture, from a small copy.
     fileprivate static var faces: [String: CGFloat?] = [:]
+
+    /// Found ahead, from the picture decoded (focus resting, the opening's
+    /// wait): Details frames it as the opening's window did. Found after
+    /// the picture was up, Details moved it (on the TV, at the end of the
+    /// opening).
+    static func prepareFaces(_ url: String) async {
+        guard faces[url] == nil,
+              let image = ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: PictureSize.screen,
+                                                                             maxPixels: nil))?.cgImage
+        else { return }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            findFaces(url, in: image) { _ in done.resume() }
+        }
+    }
     private static let faceQueue = DispatchQueue(label: "cue.stage-faces", qos: .utility)
     private static func findFaces(_ url: String, in image: CGImage, done: @escaping (CGFloat?) -> Void) {
         if let known = faces[url] { done(known); return }

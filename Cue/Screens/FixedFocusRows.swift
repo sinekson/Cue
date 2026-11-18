@@ -969,6 +969,26 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// interaction), still on screen — the page's own opacity hides it.
     /// (Hidden, the tabs' crossfade lost them: they vanished from the page
     /// going out, and came on a few frames late on the one coming in.)
+    /// Something over the page took focus without deactivating it (the
+    /// stage): coming back, focus goes to the row it left, not the first
+    /// card on screen.
+    static func keepReturnRows() {
+        for controller in all.allObjects where controller.isViewLoaded && controller.view.window != nil
+            && controller.view.isUserInteractionEnabled && controller.returnRow == nil {
+            controller.returnRow = controller.focusedRow
+        }
+    }
+
+    /// …and once it's gone, focus sent there: on the TV it landed on the
+    /// top bar (outside the rows, where `returnRow` never redirects).
+    static func returnFocus() {
+        for controller in all.allObjects where controller.isViewLoaded && controller.view.window != nil
+            && controller.view.isUserInteractionEnabled {
+            guard let row = controller.returnRow else { continue }
+            controller.requestFocus(row: row)
+        }
+    }
+
     func setActive(_ active: Bool) {
         guard view.isUserInteractionEnabled != active else { return }
         if !active { returnRow = focusedRow; restShowcase(on: nil) }
