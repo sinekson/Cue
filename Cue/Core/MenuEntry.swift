@@ -255,6 +255,10 @@ private final class HoldMenuController: UIViewController {
         }
         // A pick closes it itself, once the choice is known (`close(then:)`).
         panel.picked = {}
+        // Small and clear from the first frame (set in `viewDidAppear`, the
+        // panel showed whole for a frame, went, then grew).
+        panel.alpha = 0
+        panel.transform = CGAffineTransform(scaleX: Self.openScale, y: Self.openScale)
         view.addSubview(panel)
     }
 
@@ -333,10 +337,11 @@ private final class HoldMenuController: UIViewController {
     static let closeScale: CGFloat = 0.6
     static let closeDuration: Double = 0.22
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        panel.alpha = 0
-        panel.transform = CGAffineTransform(scaleX: Self.openScale, y: Self.openScale)
+    /// Started as it goes up, not once it's up (`viewDidAppear` came a frame
+    /// or more after the hold: it felt slow to answer).
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        view.layoutIfNeeded()
         panel.revealRows()
         request.onHeld?(true)
         if let from = request.from { moveHole(to: request.anchor, from: from) }
@@ -360,21 +365,33 @@ private final class HoldMenuController: UIViewController {
         super.pressesBegan(presses, with: event)
     }
 
-    /// Out quickly; then (focus back on the card) the choice runs.
+    /// Gone at once, focus back on the card (the next press and the next
+    /// hold work straight away; dismissed after its fade, Back left the
+    /// page deaf for a moment and a hold then wasn't taken), the panel and
+    /// dim fading out on the window over the page; then the choice runs.
     private func close(then action: (() -> Void)? = nil) {
         guard !closing else { return }
         closing = true
         request.onHeld?(false)
         if let rest = request.rest { moveHole(to: rest, from: request.anchor) }
+        // Presented over the full screen: its points are the window's.
+        let leaving = [dim, panel]
+        if let window = view.window {
+            for part in leaving {
+                part.isUserInteractionEnabled = false
+                window.addSubview(part)
+            }
+        }
+        dismiss(animated: false) {
+            HoldMenu.shared.closed()
+            action?()
+        }
         UIView.animate(withDuration: Self.closeDuration, delay: 0, options: [.curveEaseIn]) {
             self.panel.alpha = 0
             self.panel.transform = CGAffineTransform(scaleX: Self.closeScale, y: Self.closeScale)
             self.dim.alpha = 0
         } completion: { _ in
-            self.dismiss(animated: false) {
-                HoldMenu.shared.closed()
-                action?()
-            }
+            leaving.forEach { $0.removeFromSuperview() }
         }
     }
 }
