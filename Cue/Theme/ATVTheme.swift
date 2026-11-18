@@ -192,6 +192,13 @@ enum BandsPicture {
                       seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard let darkest = palette.first else { return nil }
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
+            // The picture's hues pushed out from its grey (k-means averages
+            // and the blur pull them toward grey); Details' further.
+            var c = c
+            let saturation = strong ? Self.strongSaturation : Self.saturation
+            let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+            func out(_ v: Double) -> Double { min(1, max(0, y + (v - y) * saturation)) }
+            (c.r, c.g, c.b) = (out(c.r), out(c.g), out(c.b))
             if light {
                 let lift = strong ? liftedStrong : lifted
                 return (lift(c.r, extra), lift(c.g, extra), lift(c.b, extra))
@@ -225,6 +232,10 @@ enum BandsPicture {
     }
 
     private static let poolCount = 8
+    /// The colours' saturation, times the picture's: the app's
+    /// background, Details' (`strong`).
+    static let saturation = 1.4
+    static let strongSaturation = 1.8
 }
 
 /// The same numbers for the same seed (a picture's layout drawn again).
@@ -440,7 +451,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands2-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
     /// A new picture is due: the mode changed, or it's been up 4 h (coming
@@ -649,7 +660,7 @@ final class BackgroundPicks {
 @MainActor
 final class TitleBands {
     static let shared = TitleBands()
-    static let dim = 0.4
+    static let dim = 0.3
     static let brightest = 0.34
     private static let kept = 6
 

@@ -658,7 +658,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`captionRoom`: rows with no second line reserve one, not two); About's band white over the page in light. The
   page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
-  bands from its picture, stronger — dimmed 40 %, ceiling 0.34; light a
+  bands from its picture, stronger — each colour's saturation 1.8× the picture's (k-means and the blur greyed them: barely noticeable), dimmed 30 % (40 % before), ceiling 0.34; light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
   the press finds them; without it Details read as Home) (the blurred
   picture and the title's tint behind the rows went before). Down
@@ -840,7 +840,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
   one Home title's TMDB backdrop as its colours: up to four main ones
-  (k-means), the darkest the base, the rest soft pools in a random layout
+  (k-means), each 1.4× the picture's saturation (Details' 1.8×), the darkest the base, the rest soft pools in a random layout
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
   bands; dimmed as Details', no colour past 0.40, grained, app-wide,
