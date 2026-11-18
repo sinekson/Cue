@@ -421,7 +421,7 @@ private struct WhyRatingsPanel: View {
                 ForEach(groups, id: \.0) { rating, names in
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(spacing: 14) {
-                            WhyThumbs(rating: rating)
+                            WhySymbol(rating: rating)
                             Text(rating.name)
                                 .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
                                 .foregroundStyle(CueInk.primary)
@@ -445,24 +445,14 @@ private struct WhyRatingsPanel: View {
     }
 }
 
-/// The rating's thumbs, as its tile's: down, up, two up.
-private struct WhyThumbs: View {
+/// The rating's symbol, as its tile's: ✕, ✓, ♥.
+private struct WhySymbol: View {
     let rating: TitleRatings.Rating
 
     var body: some View {
-        let font = Font.system(size: 30, weight: .semibold)
-        Group {
-            switch rating {
-            case .notForMe: Image(systemName: "hand.thumbsdown.fill").font(font)
-            case .like: Image(systemName: "hand.thumbsup.fill").font(font)
-            case .love:
-                HStack(spacing: -10) {
-                    Image(systemName: "hand.thumbsup.fill").font(font)
-                    Image(systemName: "hand.thumbsup.fill").font(font).offset(y: -3)
-                }
-            }
-        }
-        .foregroundStyle(CueInk.primary)
+        Image(systemName: rating.symbol(filled: true))
+            .font(.system(size: 30, weight: .semibold))
+            .foregroundStyle(CueInk.primary)
     }
 }
 

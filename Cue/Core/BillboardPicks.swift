@@ -2508,12 +2508,13 @@ extension CueRows {
             }
         }
 
-        /// What it does, under the tiles.
-        var effect: String {
+        /// Its symbol, everywhere it's shown: ✕, ✓, ♥ (thumbs were before);
+        /// `filled` for the current one (only the heart has a fill).
+        func symbol(filled: Bool = false) -> String {
             switch self {
-            case .notForMe: return "Left out of your rows, and less like it"
-            case .like: return "More like this"
-            case .love: return "Much more like this"
+            case .notForMe: return "xmark"
+            case .like: return "checkmark"
+            case .love: return filled ? "heart.fill" : "heart"
             }
         }
     }
@@ -2560,6 +2561,13 @@ extension CueRows {
     }
 
     /// Sets it; the same rating again clears it.
+    /// The hold menus' Not for Me: checked while it holds, Select again
+    /// clears it.
+    static func notForMeEntry(_ item: MetaItem) -> MenuEntry {
+        MenuEntry(title: "Not for Me", icon: Rating.notForMe.symbol(),
+                  checked: shared.rating(item.id) == .notForMe) { shared.rate(item, .notForMe) }
+    }
+
     func rate(_ item: MetaItem, _ rating: Rating) {
         load()
         if entries[item.id]?.rating == rating {

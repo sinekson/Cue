@@ -1185,8 +1185,10 @@ extension View {
 /// search bar, detail icon circles, season chips).
 extension View {
     @MainActor
-    func liquidGlass<S: Shape>(in shape: S) -> some View {
-        modifier(GlassSurface(shape: shape))
+    /// `untinted`: Apple's dark glass without our tint (the hold menus,
+    /// Details' buttons: the tint made them a dark slab).
+    func liquidGlass<S: Shape>(in shape: S, untinted: Bool = false) -> some View {
+        modifier(GlassSurface(shape: shape, untinted: untinted))
     }
 }
 
@@ -1300,6 +1302,7 @@ struct LoadingSpinner: View {
 /// surface (it follows the setting live).
 private struct GlassSurface<S: Shape>: ViewModifier {
     let shape: S
+    var untinted = false
 
     /// Glass is dark in both appearances, its text white: it floats over
     /// pictures as much as over the page.
@@ -1314,7 +1317,7 @@ private struct GlassSurface<S: Shape>: ViewModifier {
             content.background(FusionMaterials.dialog, in: shape)
                 .environment(\.colorScheme, .dark)
         } else if #available(tvOS 26.0, *) {
-            content.glassEffect(.regular.tint(AppGlass.surfaceTint), in: shape)
+            content.glassEffect(untinted ? .regular : .regular.tint(AppGlass.surfaceTint), in: shape)
                 .environment(\.colorScheme, .dark)
         } else {
             content.background(.ultraThinMaterial, in: shape)

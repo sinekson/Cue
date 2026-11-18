@@ -222,7 +222,7 @@ private final class HoldMenuController: UIViewController {
     private let dim = UIView()
     /// The dim's hole: the held card, as it shows.
     private let hole = CAShapeLayer()
-    private let panel = MenuPanel()
+    private let panel = MenuPanel(untinted: true)
     private var placed = false
     private var closing = false
 
@@ -594,7 +594,7 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
     var minWidth: CGFloat = 0
     var maxWidth: CGFloat = 900
 
-    private let glass = GlassBacking(RoundedRectangle(cornerRadius: MenuPanelRow.height / 2 + inset, style: .continuous))
+    private let glass: GlassBacking
     private let list: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
         layout.minimumLineSpacing = 0
@@ -610,8 +610,12 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
     /// After a pick that doesn't stay: the menu's owner closes it.
     var picked: () -> Void = {}
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    /// `untinted`: Apple's dark glass without our tint (the hold menus; the
+    /// player's keep it: on the film, untinted was at times unreadable).
+    init(untinted: Bool = false) {
+        glass = GlassBacking(RoundedRectangle(cornerRadius: MenuPanelRow.height / 2 + Self.inset, style: .continuous),
+                             untinted: untinted)
+        super.init(frame: .zero)
         addSubview(glass)
         heading.font = Self.headingFont
         heading.textColor = CueInk.ui(FixedFocusText.secondary)

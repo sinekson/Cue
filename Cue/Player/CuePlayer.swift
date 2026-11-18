@@ -45,8 +45,9 @@ final class PlayerFocusView: UIView {
 final class GlassBacking: UIView {
     private let host: UIViewController
 
-    init<S: Shape>(_ shape: S) {
-        let host = UIHostingController(rootView: Color.clear.liquidGlass(in: shape))
+    /// `untinted`: without our dark tint (`liquidGlass(in:untinted:)`).
+    init<S: Shape>(_ shape: S, untinted: Bool = false) {
+        let host = UIHostingController(rootView: Color.clear.liquidGlass(in: shape, untinted: untinted))
         // Near the screen's edge the safe area would push the glass off its bounds.
         host.safeAreaRegions = []
         self.host = host

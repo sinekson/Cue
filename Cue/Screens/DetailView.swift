@@ -509,7 +509,7 @@ struct DetailView: View {
     @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, library, info, rate
+        case play, library, info, love
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -524,6 +524,7 @@ struct DetailView: View {
     /// own, and SwiftUI focus state doesn't reach across hosts. The page
     /// reads and sets it through the bridge, under the same name.
     @State private var actionBridge = FocusBridge<ActionControl>()
+
     private var actionFocus: ActionControl? {
         get { actionBridge.current }
         nonmutating set { actionBridge.request(newValue) }
@@ -534,8 +535,8 @@ struct DetailView: View {
     @State private var aboutContentHeight: CGFloat = 0
     /// Info's glass panel (the summary) is open.
     @State private var summaryShown = false
-    /// Focus going back onto Info or Rate as its panel closes: not
-    /// redirected to Play.
+    /// Focus going back onto Info as its panel closes, or Love as its hold
+    /// menu does: not redirected to Play.
     @State private var returningTo: ActionControl?
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
@@ -1308,7 +1309,7 @@ struct DetailView: View {
                 DetailActionButton(
                     icon: "play.fill", title: "Play",
                     isPrimary: true, lit: litAction == .play,
-                    caption: target.map(seriesPlayTitle),
+                    caption: target.map(seriesPlayTitle), untintedGlass: true, leadingIcon: true,
                     action: {
                         if viewModel.meta.isSeries, target == nil { pendingSeriesPlay = .auto }
                         else { play(target) }
@@ -1331,7 +1332,7 @@ struct DetailView: View {
                     DetailActionButton(
                         icon: saved ? "checkmark" : "plus",
                         title: saved ? "In Library" : "Library",
-                        isPrimary: false, lit: litAction == .library, bare: true,
+                        isPrimary: false, lit: litAction == .library, bare: true, untintedGlass: true,
                         // No toast: the button itself says it ("In Library").
                         action: { library.toggle(viewModel.meta) }
                     )
@@ -1340,30 +1341,26 @@ struct DetailView: View {
                     // shows only the tagline).
                     DetailActionButton(
                         icon: "text.alignleft", title: "About",
-                        isPrimary: false, lit: litAction == .info, bare: true,
+                        isPrimary: false, lit: litAction == .info, bare: true, untintedGlass: true,
                         action: {
                             if viewModel.meta.description?.isEmpty == false { summaryShown = true }
                             else { ToastCenter.shared.show("No summary for this title", icon: "text.alignleft") }
                         }
                     )
                     .focused(focus, equals: .info)
-                    // Your rating, over the page (`RatingPanel`); focus
-                    // comes back here.
+                    // Love: a heart, Select toggles it; held, Not for Me
+                    // (as the cards' hold menus).
                     let rating = ratings.rating(viewModel.meta.id)
-                    let icon = rating == .notForMe ? "hand.thumbsdown" : "hand.thumbsup"
+                    let meta = viewModel.meta
                     DetailActionButton(
-                        icon: rating == nil ? icon : icon + ".fill",
-                        title: rating?.name ?? "Rate",
-                        isPrimary: false, lit: litAction == .rate, bare: true,
-                        action: {
-                            let meta = viewModel.meta
-                            let seen = meta.isSeries ? watched.items.values.contains { $0.contentID == meta.id }
-                                : watched.isWatched(meta)
-                            returningTo = .rate
-                            RatingPanel.present(meta, watched: seen)
-                        }
+                        icon: rating == .love ? "heart.fill" : "heart",
+                        title: rating == .love ? "Loved" : "Love",
+                        isPrimary: false, lit: litAction == .love, bare: true, untintedGlass: true,
+                        action: { TitleRatings.shared.rate(meta, .love) },
+                        holdEntries: [TitleRatings.notForMeEntry(meta)],
+                        onHoldMenu: { returningTo = .love }
                     )
-                    .focused(focus, equals: .rate)
+                    .focused(focus, equals: .love)
                 }
                 .focusSection()
             }
@@ -1617,12 +1614,18 @@ struct DetailActionButton: View {
     var bare = false
     /// Nothing behind it at rest (the billboard's Next).
     var plain = false
+    /// On the glass without our dark tint (Details').
+    var untintedGlass = false
+    /// A labelled button's icon before its name (Details' Play).
+    var leadingIcon = false
     var iconSize = DetailActionButton.iconSize
     let action: () -> Void
     var onHold: (() -> Void)? = nil
     /// Holding Select opens this menu instead (the billboard's Details:
     /// Play, Choose Source).
     var holdEntries: [MenuEntry]? = nil
+    /// Its hold menu opening (Details: focus comes back to it, not Play).
+    var onHoldMenu: (() -> Void)? = nil
 
     /// Its hold menu open (Play).
     @State private var held = false
@@ -1702,6 +1705,10 @@ struct DetailActionButton: View {
                         .animation(Motion.move, value: icon)
                         .frame(width: Self.iconBox, height: Self.iconBox)
                 } else {
+                    if leadingIcon {
+                        Image(systemName: icon)
+                            .font(.system(size: iconSize, weight: .bold))
+                    }
                     // (A new name crossfades, centred, as the width goes
                     // from one to the other; the text's own content
                     // transition kept the old name left-aligned, cut off.)
@@ -1719,7 +1726,7 @@ struct DetailActionButton: View {
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
             .frame(width: bare ? Self.height : nil, height: Self.height)
-            .modifier(ActionFace(lit: shownLit, pill: !plain))
+            .modifier(ActionFace(lit: shownLit, pill: !plain, untintedGlass: untintedGlass))
             // Under it while focused (outside its frame: the row never moves
             // for it): a show's episode, the bare button's name.
             .overlay(alignment: .top) {
@@ -1739,7 +1746,7 @@ struct DetailActionButton: View {
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
         .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
-                  onHeld: { held = $0 }) {
+                  onHeld: { held = $0; if $0 { onHoldMenu?() } }) {
             holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
         }
     }
@@ -1766,6 +1773,8 @@ struct ActionFace: ViewModifier {
     /// The pill as the current one of a set (the row's season): the flat
     /// light grey (`FlatControl.selected`), not the glass.
     var current = false
+    /// The pill's glass without our dark tint (Details' buttons).
+    var untintedGlass = false
     /// With nothing behind it at rest: a soft shadow under the content (over
     /// pictures); false: none (the top bar's words).
     var restShadow = true
@@ -1801,7 +1810,7 @@ struct ActionFace: ViewModifier {
                                 Capsule().strokeBorder(Self.pillEdge, lineWidth: 1)
                             } else {
                                 // (The glass has its own edge.)
-                                Color.clear.liquidGlass(in: Capsule())
+                                Color.clear.liquidGlass(in: Capsule(), untinted: untintedGlass)
                             }
                         }
                         // (Coming in, it grows into the button: into Details

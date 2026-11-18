@@ -102,6 +102,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   glass everywhere (`AppGlass`). Everything in the page is flat
   (`FlatControl`). Exception: the action buttons' pill at rest (`ActionFace`:
   glass at rest; focused a white capsule, dark content, 5 % larger).
+  Details' buttons and the hold menus on Apple's dark glass without our
+  tint (decided 2026-11-18, `untinted`; the player's keep the tint). Tried:
+  clear glass (the menus unreadable), following tvOS's setting (light
+  glass, dark words: hard to read), the badges' plate (buttons read as
+  badges), a frost with no rim.
   In the player the glass sits directly on the picture: no shade or dimming under it (a shade made it read dark; without the glass's dark tint it was at times unreadable, so the tint stays).
 - **Text:** the system font; 24 pt regular is the base, 23–25 pt the floor.
   Four levels, everywhere (`FixedFocusText`): primary 82 %, body 72 %,
@@ -432,15 +437,16 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   summer), lifted while they last; This Anime Season always (an episode out
   since the season began). Talk and news shows never in a row.
   Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Application
-  Support, not a cache): Not for Me, I Like This, Love This, from a card's
-  hold menu (Rate / "Rated: …", after the watched entry) and Details' fourth
-  button (after About, filled once rated); unwatched titles too. The screen
-  (`RatingPanel`, end of `DetailAbout.swift`): presented over whatever is in
-  front, About's blur, the poster, "How was …?" / "What do you think of …?"
-  in the wizard's heading, three round tiles as the gate's Add Profile,
-  the current one on the selected grey with its symbol filled, what the
-  focused one does under them; opens on the current, else I Like This;
-  Select rates and closes (the same again clears it), Back closes. Like
+  Support, not a cache), decided 2026-11-18: watching already teaches
+  the taste, so only the two ends are asked. Love: Details' fourth button
+  (after About), a heart, Select toggles it ("Love" / "Loved").
+  Not for Me: a hold menu entry, every card's and the held heart's
+  (checked while it holds, Select again clears it). I Like This is no
+  longer set (older ones still count). (Tried: a full-screen panel of
+  ✕ ✓ ♥ tiles; Rate in the hold menus; a star opening into ✕ ✓ ♥ in
+  place, the other buttons beside it or faded: too many buttons.) Next:
+  ✕ ✓ ♥ on the player's end card, when there's an opinion. Unwatched
+  titles too. Like
   counts 1.5×, Love 2× in the taste and seeds Because You Watched more;
   both first in Watch Again; Not for Me is out of every row Cue makes
   (the world's and Pick Back Up too) and the billboard, its traits taken
@@ -553,7 +559,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   bobbing, half faint; the
   picture alone under still text felt disconnected) (a slide fitted to the card, a deck of cards
   and a carousel were tried: a quick turn back glitched, hurried or
-  retargeted); Select opens Details, held the card's hold menu (Library, Rate… as every card). The
+  retargeted); Select opens Details, held the card's hold menu (Library… as every card). The
   text bottom left, 63 pt from the card's side and foot (`cardMargin`):
   logo, facts, tagline; the dots bottom right, their foot on the
   tagline's line, no pill. Trying the cards' layout (`BillboardCorners`):
@@ -585,7 +591,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`BillboardCorners(details:)`: status and one fact top left, all its
   ratings top right), the card's bottom fade (`StageArt.cardShade`); the
   buttons in it bottom right where Home's dots are, their foot on the
-  tagline's line, dark whatever the setting (`detailsButtonsY`; on the
+  tagline's line, dark whatever the setting, Play its ▶ and name, the rest
+  icons (`detailsButtonsY`; on the
   page under a smaller card was tried; in their place a cross of held
   arrows, Select Play, held Up the trailer, Left Rate, Right Library,
   with chevrons and names round Play, was tried 2026-11-17: it didn't
@@ -792,7 +799,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
   menus and the player's Audio and Subtitles; a change there reaches all
   (the SwiftUI hold menu is gone). Entries: playing, the source, Library,
-  watched (narrow to wide), Rate, Use as Background, red last; one name per action (Start Over, Go to
+  watched (narrow to wide), Not for Me, Use as Background, red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
   A held card grows half its focus growth more, a press takes half back
