@@ -115,6 +115,9 @@ final class DetailTransition {
     private var playing = Set<String>()
     /// Details pages opened from Home's billboard card (Back shrinks into it).
     private var fromBillboard = Set<String>()
+    /// Details pages opened from Today's Pick: Back shrinks into it too,
+    /// wherever it is then.
+    private var fromSpotlight: [String: () -> Window?] = [:]
     func cardPlays(_ itemID: String, _ shown: Bool) {
         if shown { playing.insert(itemID) } else { playing.remove(itemID) }
     }
@@ -172,6 +175,10 @@ final class DetailTransition {
         let carriedFrame = grown == nil && !crossfade ? StageTrailer.carriedFrame(for: item.id) : nil
         CueRows.Memory.shared.opened(item.id)
         if grown != nil { fromBillboard.insert(item.id) }
+        if grown == nil, let cell = UIFocusSystem.focusSystem(for: window)?.focusedItem as? FixedFocusShowcaseCell,
+           cell.spotlight, cell.item?.id == item.id {
+            fromSpotlight[item.id] = { [weak cell] in cell?.backWindow() }
+        }
         busy = true
         ModeSwap.shared.handingOver = true
         DetailOpenProbe.pressed()
@@ -339,6 +346,8 @@ final class DetailTransition {
         if let card, fromBillboard.contains(itemID), let home = StagePictureView.homeCardShown,
            home.shownItemID == itemID, let into = home.openingWindow() {
             shrink = { Self.shrink(card, into: into) }
+        } else if let card, let into = fromSpotlight[itemID]?() {
+            shrink = { Self.shrink(card, into: into) }
         }
         forget(itemID)
         PageFade.shared.drop(itemID)
@@ -360,6 +369,7 @@ final class DetailTransition {
         pictures[itemID] = nil
         playing.remove(itemID)
         fromBillboard.remove(itemID)
+        fromSpotlight[itemID] = nil
     }
 
     /// Back into Home's billboard card: `cover` (`cardCover`: Details'

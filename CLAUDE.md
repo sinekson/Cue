@@ -691,12 +691,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   parts quicker inside it (0.18 s, `partsBack`: its text crossed the
   page's mid-fade): under the still of Details, its card on its
   background drawn as the opening's cover (`cardCover`); a trailer on
-  the card: one plain dissolve. The one exception, back into Home's
+  the card: one plain dissolve. The exceptions, back into Home's
   billboard card it opened from (nearly the same picture in place: the
   dissolve read abrupt): Details' card shrinks into it (0.4 s, eased in
   and out: the opening's quick-start curve read as a snap), the
   background fading round it, the card fading off over its last 45 %
-  onto the billboard's own text (`shrink`, `fromBillboard`). (Opening in place, Home's billboard becoming Details' in two
+  onto the billboard's own text (`shrink`, `fromBillboard`); back into
+  Today's Pick the same, wherever it is then (`fromSpotlight`,
+  `backWindow`). (Opening in place, Home's billboard becoming Details' in two
   phases, `openInPlace`, was before: with the card it only jumped.) From
   Home, Movies and Series it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages

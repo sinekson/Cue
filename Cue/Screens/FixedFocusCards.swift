@@ -561,6 +561,14 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// The card on screen as it looks now (grown): where a trailer handed
     /// into Details grows from.
     var screenCard: CGRect { mirror?.screenCard ?? card.convert(card.bounds, to: nil) }
+    /// Today's Pick as Back from Details shrinks into it: the card and its
+    /// picture on the screen (as Home's billboard card's `openingWindow`).
+    func backWindow() -> DetailTransition.Window? {
+        guard spotlight, window != nil else { return nil }
+        return DetailTransition.Window(card: card.convert(card.bounds, to: nil),
+                                       picture: picture.convert(picture.bounds, to: nil),
+                                       screen: card.convert(card.bounds, to: nil))
+    }
 
     private func layoutPicture() {
         if feature {
