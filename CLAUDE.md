@@ -257,7 +257,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   faintly, then snapped); focused, the season buttons' focus (`ActionFace`: the white capsule
   growing in on the item, 5 % larger, dark text; quicker than the
   buttons': 0.12 s in, 0.28 s out, the fade linear (0.35 slow, 0.2 abrupt here; easing out was tried);
-  going, it only fades, not shrinking as the buttons' (`shrinks`); a plain fade with no growth coming in was tried; nothing travels: a capsule
+  going, it only fades; a plain fade with no growth coming in was tried; nothing travels: a capsule
   gliding along the bar was slow and odd to the avatar). Focus moving along it
   switches tab. Pages are laid out below it. On Home it
   sits above the billboard card and goes up with it into the rows (its
@@ -440,8 +440,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Support, not a cache), decided 2026-11-18: watching already teaches
   the taste, so only the two ends are asked. Love: Details' fourth button
   (after About), a heart, Select toggles it ("Love" / "Loved").
-  Not for Me: a hold menu entry, every card's and the held heart's
-  (checked while it holds, Select again clears it). I Like This is no
+  Not for Me: a hold menu entry, the cards' only (a crossed heart; ✕ was
+  disliked; on Details, under a held Love, was not wanted: Details is for
+  what you're curious about), checked while it holds, Select again
+  clears it. I Like This is no
   longer set (older ones still count). (Tried: a full-screen panel of
   ✕ ✓ ♥ tiles; Rate in the hold menus; a star opening into ✕ ✓ ♥ in
   place, the other buttons beside it or faded: too many buttons.) Next:
@@ -592,7 +594,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   ratings top right), the card's bottom fade (`StageArt.cardShade`); the
   buttons in it bottom right where Home's dots are, their foot on the
   tagline's line, dark whatever the setting, Play its ▶ and name, the rest
-  icons (`detailsButtonsY`; on the
+  icons, focused the white capsule, in and out quickly (0.15 s each
+  way), the size 10 % (`detailsFocusScale`; 5 % before) on focus's 0.3 s
+  spring both ways (`grow`: the old one
+  seen settling as the new lifts) ( 0.35 s out, shrinking, lingered: it was for a button with nothing
+  behind it; the glass lit instead of white was tried) (`detailsButtonsY`; on the
   page under a smaller card was tried; in their place a cross of held
   arrows, Select Play, held Up the trailer, Left Rate, Right Library,
   with chevrons and names round Play, was tried 2026-11-17: it didn't

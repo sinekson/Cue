@@ -535,8 +535,8 @@ struct DetailView: View {
     @State private var aboutContentHeight: CGFloat = 0
     /// Info's glass panel (the summary) is open.
     @State private var summaryShown = false
-    /// Focus going back onto Info as its panel closes, or Love as its hold
-    /// menu does: not redirected to Play.
+    /// Focus going back onto Info as its panel closes: not redirected to
+    /// Play.
     @State private var returningTo: ActionControl?
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
@@ -1348,17 +1348,15 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .info)
-                    // Love: a heart, Select toggles it; held, Not for Me
-                    // (as the cards' hold menus).
+                    // Love: a heart, Select toggles it (Not for Me is the
+                    // cards' hold menus' only).
                     let rating = ratings.rating(viewModel.meta.id)
                     let meta = viewModel.meta
                     DetailActionButton(
                         icon: rating == .love ? "heart.fill" : "heart",
                         title: rating == .love ? "Loved" : "Love",
                         isPrimary: false, lit: litAction == .love, bare: true, untintedGlass: true,
-                        action: { TitleRatings.shared.rate(meta, .love) },
-                        holdEntries: [TitleRatings.notForMeEntry(meta)],
-                        onHoldMenu: { returningTo = .love }
+                        action: { TitleRatings.shared.rate(meta, .love) }
                     )
                     .focused(focus, equals: .love)
                 }
@@ -1612,8 +1610,6 @@ struct DetailActionButton: View {
     var caption: String? = nil
     /// Only its icon (its name under it while focused) — all but Play.
     var bare = false
-    /// Nothing behind it at rest (the billboard's Next).
-    var plain = false
     /// On the glass without our dark tint (Details').
     var untintedGlass = false
     /// A labelled button's icon before its name (Details' Play).
@@ -1624,8 +1620,6 @@ struct DetailActionButton: View {
     /// Holding Select opens this menu instead (the billboard's Details:
     /// Play, Choose Source).
     var holdEntries: [MenuEntry]? = nil
-    /// Its hold menu opening (Details: focus comes back to it, not Play).
-    var onHoldMenu: (() -> Void)? = nil
 
     /// Its hold menu open (Play).
     @State private var held = false
@@ -1669,16 +1663,24 @@ struct DetailActionButton: View {
     static let iconBox: CGFloat = 30
     /// Lighting up / the caption coming in / the scale: a no-bounce spring.
     static let open: Animation = .spring(duration: 0.15, bounce: 0)
-    /// Focus leaving: the capsule shrinks into the button (to `leaveScale`
-    /// of it) as it fades — slower than it came, so it's seen going; the
-    /// fade goes evenly with the shrink, from the start (a delayed fade
-    /// overlapped the next button's capsule).
+    /// The profile gate's tiles: focus leaving slower than it came, so
+    /// it's seen going.
     static let leave: Animation = .spring(duration: 0.35, bounce: 0)
-    static let leaveFade: Animation = .linear(duration: 0.35)
-    static let leaveScale: CGFloat = 0.88
-    private var litAnimation: Animation { shownLit ? Self.open : Self.leave }
+    /// The buttons' focus leaving: as quick as it came, so the old one
+    /// doesn't linger beside the new (0.35 s, the capsule shrinking into
+    /// the button as it faded, was for a button with nothing behind it).
+    static let out: Animation = .spring(duration: 0.15, bounce: 0)
+    static let outFade: Animation = .linear(duration: 0.15)
+    private var litAnimation: Animation { shownLit ? Self.open : Self.out }
+    /// The size, growing and settling back: motion, on focus's spring both
+    /// ways, so the old one is seen settling as the new one lifts (the white
+    /// switches quickly: `open`, `out`).
+    static let grow: Animation = Motion.focus
     /// Focused: this much larger.
     static let focusScale: CGFloat = 1.05
+    /// Details' buttons: larger (the lit-glass trial's 10 %: its grow and
+    /// settle read well).
+    static let detailsFocusScale: CGFloat = 1.10
     /// Pressed: back to its resting size, level with the other buttons
     /// (quick, `pressIn`), then up again (`pressOut`, a no-bounce spring).
     /// (Tried: 90 % of the focused size — smaller than the buttons beside it.)
@@ -1726,7 +1728,7 @@ struct DetailActionButton: View {
             }
             .padding(.horizontal, bare ? 0 : Self.labelPadding)
             .frame(width: bare ? Self.height : nil, height: Self.height)
-            .modifier(ActionFace(lit: shownLit, pill: !plain, untintedGlass: untintedGlass))
+            .modifier(ActionFace(lit: shownLit, untintedGlass: untintedGlass))
             // Under it while focused (outside its frame: the row never moves
             // for it): a show's episode, the bare button's name.
             .overlay(alignment: .top) {
@@ -1742,21 +1744,22 @@ struct DetailActionButton: View {
                 }
             }
         }
-        .buttonStyle(DetailPressStyle(lit: shownLit, held: held, onFocus: focusChanged))
+        .buttonStyle(DetailPressStyle(lit: shownLit, held: held,
+                                       focusScale: untintedGlass ? Self.detailsFocusScale : Self.focusScale,
+                                       onFocus: focusChanged))
         // Hold Select (Play): straight to its sources — through `HoldMenu`
         // (the press is cancelled: no Play on release), no menu.
         .holdMenu(focused: shownLit && (onHold != nil || holdEntries != nil), direct: holdEntries == nil,
-                  onHeld: { held = $0; if $0 { onHoldMenu?() } }) {
+                  onHeld: { held = $0 }) {
             holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
         }
     }
 }
 
-/// THE ACTION BUTTONS' FACE (Details' and the billboard's buttons,
-/// Details' season buttons): at rest a glass pill (`pill`; without it,
-/// the content with the text's small shadow); focused, a white capsule, dark
-/// content; leaving, the capsule shrinks into the button as it fades
-/// (`DetailActionButton.leave`, `leaveFade`).
+/// THE ACTION BUTTONS' FACE (Details' buttons, the top bar's and the
+/// seasons' tabs): at rest a glass pill (`pill`; without it, the content
+/// with the text's small shadow); focused, a white capsule, dark content,
+/// fading in and out (`DetailActionButton.open`, `out`).
 extension EnvironmentValues {
     /// Drawn into an image (the billboard's buttons going out with their
     /// card): the glass pill as a flat stand-in — glass can't be drawn.
@@ -1781,11 +1784,8 @@ struct ActionFace: ViewModifier {
     /// Coming in, and going (its shrink and its fade): the buttons' unless
     /// given (the top bar's are quicker).
     var open = DetailActionButton.open
-    var leave = DetailActionButton.leave
-    var leaveFade = DetailActionButton.leaveFade
-    /// Going, the capsule shrinks into the button as it fades; false: it
-    /// only fades (the top bar's).
-    var shrinks = true
+    var leave = DetailActionButton.out
+    var leaveFade = DetailActionButton.outFade
 
     /// A flat pill's edge (the still's, Search's): a faint light edge
     /// brighter along the top.
@@ -1813,17 +1813,10 @@ struct ActionFace: ViewModifier {
                                 Color.clear.liquidGlass(in: Capsule(), untinted: untintedGlass)
                             }
                         }
-                        // (Coming in, it grows into the button: into Details
-                        // in place, the billboard's › becoming About.)
-                        .scaleEffect(pill ? 1 : DetailActionButton.leaveScale)
                         .opacity(pill ? 1 : 0)
                     }
                     Capsule().fill(DetailActionButton.focusFill)
                         .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
-                        // Shrinking only into nothing: over a resting pill it
-                        // stays its size — one pill changing colour (shrunk,
-                        // two pills showed, one inside the other).
-                        .scaleEffect(lit || pill || !shrinks ? 1 : DetailActionButton.leaveScale)
                         .opacity(lit ? 1 : 0)
                         .animation(lit ? open : leaveFade, value: lit)
                 }
@@ -1837,12 +1830,12 @@ struct ActionFace: ViewModifier {
 private struct DetailPressStyle: ButtonStyle {
     let lit: Bool
     let held: Bool
+    var focusScale = DetailActionButton.focusScale
     /// The button's own focus, as it comes and goes.
     var onFocus: (Bool) -> Void = { _ in }
-    static let focusScale = DetailActionButton.focusScale
 
     func makeBody(configuration: Configuration) -> some View {
-        PressBody(configuration: configuration, lit: lit, held: held, onFocus: onFocus)
+        PressBody(configuration: configuration, lit: lit, held: held, focusScale: focusScale, onFocus: onFocus)
     }
 
     private struct PressBody: View {
@@ -1850,6 +1843,7 @@ private struct DetailPressStyle: ButtonStyle {
         let configuration: Configuration
         let lit: Bool
         let held: Bool
+        let focusScale: CGFloat
         let onFocus: (Bool) -> Void
         /// Shown pressed: from the press on, for at least `pressIn`'s
         /// time (a quick tap still shrinks all the way), then grows back.
@@ -1858,16 +1852,16 @@ private struct DetailPressStyle: ButtonStyle {
         @State private var releasing = false
 
         var body: some View {
-            let base = lit ? DetailPressStyle.focusScale : 1
+            let base = lit ? focusScale : 1
             let scale = held ? base + FixedFocusMetrics.heldGrowth
                 : down ? 1 : base
             return configuration.label
                 .scaleEffect(scale)
-                // A press: quick in, back on a spring; focus: with the
-                // highlight, on its curve.
+                // A press: quick in, back on a spring; focus: on focus's
+                // spring (the white goes quicker).
                 .animation(down ? DetailActionButton.pressIn
                            : releasing ? DetailActionButton.pressOut
-                           : lit ? DetailActionButton.open : DetailActionButton.leave,
+                           : DetailActionButton.grow,
                            value: scale)
                 .onChange(of: isFocused) { _, now in onFocus(now) }
                 .onChange(of: configuration.isPressed) { _, pressed in

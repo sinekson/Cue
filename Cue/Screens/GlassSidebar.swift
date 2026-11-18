@@ -250,8 +250,7 @@ struct TopNavFocus: ViewModifier {
     func body(content: Content) -> some View {
         content
             .modifier(ActionFace(lit: lit, rest: rest, pill: pill, current: true, restShadow: false,
-                                 open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade,
-                                 shrinks: false))
+                                 open: Self.open, leave: Self.leave, leaveFade: Self.leaveFade))
             .scaleEffect(lit ? DetailActionButton.focusScale : 1)
             .animation(lit ? Self.open : Self.leave, value: lit)
     }
