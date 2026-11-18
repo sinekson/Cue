@@ -271,8 +271,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   whenever the main thread skipped frames); off a tab's root (into Details, a pushed
   page) it's gone and back in place at once under the page's change
   (`hidden`; moving back in, a second bar slid over the one in the
-  page's still on Back); for Home's billboard trailer it moves out the
-  top and back (`movedOut`), always in the view tree,
+  page's still on Back); always in the view tree,
   disabled while hidden. (The floating glass pill, and auto-hiding it,
   were dropped, the setting with them.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
@@ -571,7 +570,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   bobbing, half faint; the
   picture alone under still text felt disconnected) (a slide fitted to the card, a deck of cards
   and a carousel were tried: a quick turn back glitched, hurried or
-  retargeted); Select opens Details, held the card's hold menu (Library… as every card). The
+  retargeted); its trailer plays in the card with nothing moved or hidden (the top bar, the dots and the peeking row moved out for it, Details' episodes too, from the full-screen billboard, until 2026-11-18); Select opens Details, held the card's hold menu (Library… as every card). The
   text bottom left, 63 pt from the card's side and foot (`cardMargin`):
   logo, facts, tagline; the dots bottom right, their foot on the
   tagline's line, no pill. Trying the cards' layout (`BillboardCorners`):

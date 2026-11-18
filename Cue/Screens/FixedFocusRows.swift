@@ -105,12 +105,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var rigidPeek: CGFloat? = nil
     /// …and its name stays above its cards (Home); off: hidden (Details).
     var rigidPeekShowsName = false
-    /// The peek and the dots out the bottom (while the billboard's trailer
-    /// is on it); the cards stay focusable.
-    var peekHidden = false
-    /// Paged with the peek moved out: back in at the press (the controller
-    /// moves it; this tells the page, for the dots).
-    var onPeekBack: () -> Void = {}
     /// SwiftUI on its own line under a row's name (or its header) — the
     /// row's cards lower by as much (`titleAccessoryHeight`, under a header
     /// `headerAccessoryHeight`); shown while the row has focus (Details'
@@ -217,8 +211,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rigidRest = rigidRest
         controller.rigidPeek = rigidPeek
         controller.rigidPeekShowsName = rigidPeekShowsName
-        controller.onPeekBack = onPeekBack
-        controller.peekHidden = peekHidden
         controller.rigidNameY = rigidNameY
         controller.rowTitleAccessories = rowTitleAccessories
         controller.anchoredRowIDs = anchoredRowIDs
@@ -1086,7 +1078,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // own alpha from its layout attributes.)
         cell.contentView.alpha = rowAlpha(indexPath.item)
         cell.concealed = rowConcealed(indexPath.item)
-        cell.drop = peekDrop(indexPath.item)
         cell.titleAlpha = titleAlpha(indexPath.item)
         cell.titleLift = peekNameLift(indexPath.item)
         cell.titleScale = 1
@@ -1105,7 +1096,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                         forItemAt indexPath: IndexPath) {
         cell.contentView.alpha = rowAlpha(indexPath.item)
         (cell as? FixedFocusRowCell)?.concealed = rowConcealed(indexPath.item)
-        (cell as? FixedFocusRowCell)?.drop = peekDrop(indexPath.item)
         (cell as? FixedFocusRowCell)?.titleAlpha = titleAlpha(indexPath.item)
     }
 
@@ -1603,81 +1593,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private var rigidRestSetting: CGFloat?
     var rigidPeek: CGFloat?
     var rigidPeekShowsName = false
-    /// The trailer on the picture: the peek and the dots out the bottom,
-    /// back as it goes (the billboard paging: from the press) — as into
-    /// Details in place (`movePeek`).
-    var peekHidden = false {
-        didSet {
-            guard peekHidden != oldValue, isViewLoaded else { return }
-            peekGuide.isEnabled = peekHidden
-            movePeek(animated: true)
-        }
-    }
-    var onPeekBack: () -> Void = {}
-    /// The peek out the bottom or back (`peekDrop`), on the move spring.
-    private func movePeek(animated: Bool) {
-        let apply = {
-            for case let cell as FixedFocusRowCell in self.outer.visibleCells {
-                cell.drop = self.peekDrop(cell.rowIndex)
-            }
-            // Home's dots (its overlay) go with the peek, the same distance
-            // in the same animation — attached to it.
-            if let dots = self.overlayHost?.view.layer,
-               let featured = self.featuredIndex {
-                Self.drop(dots, by: self.peekDrop(featured + 1))
-            }
-        }
-        if animated {
-            UIView.animate(springDuration: Motion.moveDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
-                           options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
-        } else {
-            UIView.performWithoutAnimation(apply)
-        }
-    }
-    /// As a row cell's `drop` on the spring: drawn only, in the
-    /// surrounding animation's time.
-    private static func drop(_ layer: CALayer, by drop: CGFloat) {
-        let from = layer.presentation()?.sublayerTransform ?? layer.sublayerTransform
-        layer.sublayerTransform = CATransform3DMakeTranslation(0, drop, 0)
-        let duration = UIView.inheritedAnimationDuration
-        guard duration > 0 else { layer.removeAnimation(forKey: "drop"); return }
-        let move = CASpringAnimation(perceptualDuration: duration, bounce: 0)
-        move.duration = move.settlingDuration
-        move.keyPath = "sublayerTransform"
-        move.fromValue = from
-        layer.add(move, forKey: "drop")
-    }
-    /// Out of the way (a trailer): down past the
-    /// screen's bottom.
-    func peekDrop(_ rowIndex: Int) -> CGFloat {
-        guard peekHidden, isNext(rowIndex),
-              let frame = outer.layoutAttributesForItem(at: IndexPath(item: rowIndex, section: 0))?.frame
-        else { return 0 }
-        // Only its cards show (Details): out by what shows, so its whole
-        // move is seen.
-        if let peek = rigidPeek, !rigidPeekShowsName { return peek + Self.peekDropSlack }
-        return max(0, view.bounds.height - outer.convert(frame, to: view).minY) + Self.peekDropSlack
-    }
-    /// Past the edge by the cards' shadow too.
-    static let peekDropSlack: CGFloat = 40
-    /// Moved out, the row is off the screen to the focus engine too (it
-    /// counts the drawn move): Down lands here, where it rests, and goes in.
-    private lazy var peekGuide: FixedFocusRedirectGuide = {
-        let guide = FixedFocusRedirectGuide { [weak self] in
-            guard let self, let featured = self.featuredIndex else { return [] }
-            self.pendingFocusRow = featured + 1
-            return [self]
-        }
-        view.addLayoutGuide(guide)
-        NSLayoutConstraint.activate([
-            guide.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            guide.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            guide.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            guide.heightAnchor.constraint(equalToConstant: 120),
-        ])
-        guide.isEnabled = false
-        return guide
-    }()
     var rigidNameY: CGFloat?
     /// The line under the name (gap, map) — the cards that much lower.
     static let titleAccessoryHeight: CGFloat = 40
@@ -2345,12 +2260,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if let cover = pinnedStage?.lastCover { coverControls(cover, startOffset: start) }
         }
         slidingUntil = CACurrentMediaTime() + StagePictureView.slideDuration * Self.pagingShare
-        // Moved out for the trailer: back in now, with the slide (its stop
-        // reaches here through the page a few frames later).
-        if peekHidden {
-            peekHidden = false
-            onPeekBack()
-        }
         onFocusItem(item, FixedFocusBillboardPosition(index: index, count: row.items.count))
         TitlePreloader.shared.focused(rows: rows, row: rowIndex, index: index)
     }
@@ -2595,7 +2504,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 if cell.concealTravel != travel { UIView.performWithoutAnimation { cell.concealTravel = travel } }
             }
             cell.concealed = rowConcealed(cell.rowIndex)
-            cell.drop = peekDrop(cell.rowIndex)
             cell.titleAlpha = titleAlpha(cell.rowIndex)
             // (Never animated here: Down/Up give it its own move.)
             UIView.performWithoutAnimation { cell.titleLift = peekNameLift(cell.rowIndex); cell.titleScale = 1 }
@@ -3494,25 +3402,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     /// the cards rise out from under it (no fade, no pop).
     var concealTravel: CGFloat? {
         didSet { if concealTravel != oldValue { applyConcealMask() } }
-    }
-
-    /// Moved down (the controller's `peekDrop`) — drawn only: the views
-    /// stay where they are, so Down still finds the row. In the surrounding
-    /// animation block's time, on a no-bounce spring.
-    var drop: CGFloat = 0 {
-        didSet {
-            guard drop != oldValue else { return }
-            let layer = contentView.layer
-            let from = layer.presentation()?.sublayerTransform ?? layer.sublayerTransform
-            layer.sublayerTransform = CATransform3DMakeTranslation(0, drop, 0)
-            let duration = UIView.inheritedAnimationDuration
-            guard duration > 0 else { layer.removeAnimation(forKey: "drop"); return }
-            let move = CASpringAnimation(perceptualDuration: duration, bounce: 0)
-            move.duration = move.settlingDuration
-            move.keyPath = "sublayerTransform"
-            move.fromValue = from
-            layer.add(move, forKey: "drop")
-        }
     }
 
     private func applyConcealMask() {

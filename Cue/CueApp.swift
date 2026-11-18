@@ -334,7 +334,6 @@ struct RootView: View {
     /// Settings lists lock the top bar out while an entry is moved.
     @ObservedObject private var topBarLock = TopBarLock.shared
     /// The billboard's trailer on its picture: the top bar moves out.
-    private var billboardTrailer = BillboardTrailer.shared
 
     @ObservedObject private var launch = LaunchPreloader.shared
 
@@ -889,11 +888,8 @@ struct RootView: View {
     private static let railSettle: Double = 0.25
 
     private var showSidebar: Bool { !sidebarMovedOut }
-    /// Out with the page's parts: off a tab's root, for the billboard's
-    /// trailer (with the peek).
-    private var sidebarMovedOut: Bool {
-        !atTabRoot || billboardTrailer.shown
-    }
+    /// Out with the page's parts: off a tab's root.
+    private var sidebarMovedOut: Bool { !atTabRoot }
     /// The app's single root: the top navigation floating over full-bleed
     /// content. OVERLAY layout, so the bar just draws over the content.
     private var tabLayout: some View {
@@ -916,9 +912,6 @@ struct RootView: View {
                             as? UIFocusUpdateContext else { return }
                     // The press that reaches for the bar: Up.
                     guard ctx.focusHeading.contains(.up) else { return }
-                    // Out for the billboard's trailer: back first (focus
-                    // leaving the buttons stops the trailer anyway).
-                    if billboardTrailer.shown { billboardTrailer.shown = false }
                     // Search root with the rail ON SCREEN but inside one of its
                     // short `.disabled` windows (the moments after a tab switch
                     // or a rail exit, kept so the engine seeds focus into the
@@ -956,7 +949,7 @@ struct RootView: View {
                 // What's seen: drawn in UIKit, moved by Home's rows with the
                 // billboard card (`TopBarFollow`); the bar below holds focus.
                 TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
-                           pressed: topBarPressed, hidden: !atTabRoot, movedOut: billboardTrailer.shown,
+                           pressed: topBarPressed, hidden: !atTabRoot,
                            lifted: AppTab(rawValue: selectedTab)?.isHomeLike == true)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
@@ -966,7 +959,7 @@ struct RootView: View {
                              focusBinding: $sidebarFocus,
                              onProfileTap: { launch.showGate(.topBar) },
                              onTabSelected: { newTab in selectTab(newTab) },
-                             hidden: !atTabRoot, movedOut: billboardTrailer.shown,
+                             hidden: !atTabRoot,
                              onPress: { topBarPressed = $0 })
                     .focusSection()
                     .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
@@ -1395,7 +1388,6 @@ struct RootView: View {
     /// Back always wins: enable now, focus on the next tick.
     private func focusSidebar(_ tab: Int) {
         AppProbe.focus("focusSidebar(\(Self.tabName(tab)))  enabled=\(sidebarEnabled.probe)")
-        if billboardTrailer.shown { billboardTrailer.shown = false }
         sidebarEngagedAt = Date()
         setSidebarEnabled(true)
         DispatchQueue.main.async { sidebarFocus = tab }

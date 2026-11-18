@@ -1757,7 +1757,6 @@ struct HomeUIKitView: View {
     @StateObject private var trailer = StageTrailer()
     @EnvironmentObject private var homeSettings: HomeCatalogSettingsStore
     @ObservedObject private var trailerGate = TrailerGate.shared
-    private var billboardTrailer = BillboardTrailer.shared
     /// Moves between the billboard's buttons (each fades the trailer out;
     /// resting again brings it back).
     /// Arrivals on the billboard (each starts the paging clock over).
@@ -1793,16 +1792,8 @@ struct HomeUIKitView: View {
         }
         // Back: this page's first say while it's in front (`HomeBack`).
         .onAppear { if active { takeBack() } }
-        .onChange(of: active) { _, now in
-            if now { takeBack() }
-            billboardTrailer.shown = now && trailerOut
-        }
-        // The top bar moves out with the peek while it plays.
-        .onChange(of: trailerOut) { _, out in if active { billboardTrailer.shown = out } }
+        .onChange(of: active) { _, now in if now { takeBack() } }
     }
-
-    /// The trailer on the picture: the peek, the dots and the top bar out.
-    private var trailerOut: Bool { trailer.shown }
 
     /// Back below the billboard: all the way up to it, in one move (its
     /// title as it is, the rows keeping their places). On it: not ours —
@@ -1881,10 +1872,6 @@ struct HomeUIKitView: View {
                            rigidNameY: FixedFocusRowsLayout.nextNameY,
                            rigidPeek: Self.firstRowPeek,
                            rigidPeekShowsName: true,
-                           // The trailer on the picture: the peek moves out
-                           // the bottom (the dots too), back as it goes.
-                           peekHidden: trailerOut,
-                           onPeekBack: { trailer.letPeekBack() },
                            billboardOverlay: billboardOverlay,
                            billboardOverlayBelowRows: true,
                            // Its text on its pictures: each title one card.

@@ -833,9 +833,6 @@ struct DetailView: View {
                            // buttons take the name's place in the row).
                            rigidPeek: Self.episodesPeek,
                            rigidPeekShowsName: true,
-                           // Out with the trailer, back as it goes — and in
-                           // from Home's playing trailer, never shown before it.
-                           peekHidden: trailer.shown || (!pageShown && StageTrailer.carries(viewModel.meta.id)),
                            // The season's progress: between the season
                            // buttons and the episodes.
                            rowTitleAccessories: rowProgressAccessory,

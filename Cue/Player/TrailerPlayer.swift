@@ -854,8 +854,6 @@ final class StageTrailer: ObservableObject {
         shown = true
     }
 
-    /// Home handed over `titleID`'s trailer (Details opening on it takes it).
-    static func carries(_ titleID: String) -> Bool { carried?.titleID == titleID }
     /// The player handed over for `titleID`, if it is (the opening plays it on).
     static func carried(for titleID: String) -> AVPlayer? { carried?.titleID == titleID ? carried?.player : nil }
     /// The card it was handed over from, on screen (nil: the billboard's).
@@ -1066,10 +1064,6 @@ final class StageTrailer: ObservableObject {
             player.replaceCurrentItem(with: nil)
         }
     }
-
-    /// The billboard paged with the peek moved out: it comes back at the
-    /// press, with the slide — this trailer's stop follows a few frames on.
-    func letPeekBack() { if shown { shown = false } }
 
     private func fade(to alpha: CGFloat, completion: (() -> Void)? = nil) {
         if alpha == 0 { playing = false }

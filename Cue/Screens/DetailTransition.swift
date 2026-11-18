@@ -566,15 +566,6 @@ enum DetailOpening: String, CaseIterable {
     var label: String { self == .grow ? "Grow" : "Fade" }
 }
 
-/// The tab in front's billboard trailer on its picture: the top bar moves
-/// out with the peek and the dots (Home sets it). Observed per property.
-@MainActor
-@Observable
-final class BillboardTrailer {
-    static let shared = BillboardTrailer()
-    var shown = false
-}
-
 /// Every page's way in and Back (Details' way in is its zoom): one
 /// crossfade, no system slide. In: the page below, as a still, fades off
 /// the new one once it's drawn; Back: the page fades into that still at
