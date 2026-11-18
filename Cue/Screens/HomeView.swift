@@ -168,7 +168,16 @@ final class HomeViewModel: ObservableObject {
     static let refreshAge: TimeInterval = 60 * 60
     /// One catalog's fetch, at most: then its saved copy stands.
     static let catalogWait: Double = 8
-    var isStale: Bool { loadedAt.map { Date().timeIntervalSince($0) > Self.refreshAge } ?? false }
+    var isStale: Bool {
+        if let retryAt, Date() > retryAt { return true }
+        return loadedAt.map { Date().timeIntervalSince($0) > Self.refreshAge } ?? false
+    }
+    /// Cue's rows came back degraded (`CueRows.Saved.degraded`): made again
+    /// from this time (`cueRetry` on), at the next refresh check.
+    private var retryAt: Date?
+    /// Cue's rows being made (`loadCueRows`).
+    private var cueBuild: (seeds: [String], task: Task<CueRows.Saved, Never>)?
+    static let cueRetry: TimeInterval = 5 * 60
 
     /// The billboard's picks (see `BillboardPicks`), made once per catalog
     /// fetch — the same rhythm, so the billboard doesn't reshuffle between.
@@ -213,6 +222,7 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var reloadRequest = 0
     func profileSwitched() {
         loadedFingerprint = []
+        cueBuild = nil   // (the last profile's: not taken over)
         reloadRequest &+= 1
     }
 
@@ -297,15 +307,29 @@ final class HomeViewModel: ObservableObject {
         }
         if CueRows.due(saved, seeds: seeds) {
             isLoading = entries.isEmpty
-            let done = AppProbe.begin("data", "cue rows")
-            let standings = await CueRows.standings(history)
-            let built = await CueRows.build(watches: history?.watches ?? [], standings: standings,
-                                            seeds: seeds, last: saved,
-                                            passes: CueRows.Memory.shared.snapshot(),
-                                            ratings: TitleRatings.shared.snapshot())
-            done("\(built.rows.count) rows, taste from \(built.titles) titles")
+            // A load arriving mid-build from the same titles takes its rows
+            // (two at launch doubled every request to TMDB).
+            let build = cueBuild.flatMap { $0.seeds == seeds ? $0.task : nil } ?? Task {
+                let done = AppProbe.begin("data", "cue rows")
+                let standings = await CueRows.standings(history)
+                let built = await CueRows.build(watches: history?.watches ?? [], standings: standings,
+                                                seeds: seeds, last: saved,
+                                                passes: CueRows.Memory.shared.snapshot(),
+                                                ratings: TitleRatings.shared.snapshot())
+                done("\(built.rows.count) rows, taste from \(built.titles) titles, \(built.health ?? "")"
+                     + (built.degraded == true ? " — degraded" : ""))
+                return built
+            }
+            cueBuild = (seeds, build)
+            let built = await build.value
+            if cueBuild?.task == build { cueBuild = nil }
             guard loadGeneration == generation else { return }
-            if !built.rows.isEmpty {
+            // Degraded (TMDB failed too many lists): whole rows saved before
+            // stay, on screen and on disk; with none, these show. Either way
+            // made again soon (`retryAt`), not kept for the day.
+            retryAt = built.degraded == true ? Date().addingTimeInterval(Self.cueRetry) : nil
+            let keepSaved = built.degraded == true && saved != nil && saved?.degraded != true
+            if !built.rows.isEmpty, !keepSaved {
                 entries = Self.entries(built.rows)
                 CueRows.save(built)
             }
@@ -373,6 +397,7 @@ final class HomeViewModel: ObservableObject {
         /// them here just made the feature look broken with no pointer to why.
         providers: CollectionProviders
     ) async {
+        retryAt = nil
         if CueRows.isOn { await loadCueRows(); return }
         loadGeneration &+= 1
         let generation = loadGeneration

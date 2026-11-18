@@ -442,11 +442,16 @@ enum CueRows {
         var version: Int?
         /// Today's Pick's titles and when each was first up (a week apart).
         var spotlights: [String: Date]? = nil
+        /// TMDB failed too many of its lists (`Health`): kept only while no
+        /// whole rows are saved, and made again at the next load.
+        var degraded: Bool? = nil
+        /// How its lists went, for the probe.
+        var health: String? = nil
     }
 
     static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
-    static let version = 25
+    static let version = 26
     /// Today's Pick (the full-width card) doesn't show a title again for
     /// this long.
     static let spotlightRest: TimeInterval = 7 * 24 * 60 * 60
@@ -515,11 +520,12 @@ enum CueRows {
         (history?.recent ?? []).map(\.id) + TitleRatings.shared.signature
     }
 
-    /// Time for new rows: none saved, older than `rebuildAge` or from another
-    /// day, or made from other titles.
+    /// Time for new rows: none saved, degraded, older than `rebuildAge` or
+    /// from another day, or made from other titles.
     static func due(_ saved: Saved?, seeds: [String], now: Date = Date()) -> Bool {
         guard let saved else { return true }
-        return now.timeIntervalSince(saved.builtAt) > rebuildAge
+        return saved.degraded == true
+            || now.timeIntervalSince(saved.builtAt) > rebuildAge
             || saved.version != version
             || saved.day != dayKey(now)
             || saved.seeds != seeds
@@ -1198,14 +1204,29 @@ enum CueRows {
 
     // MARK: Lists
 
-    /// One list's wait at most, as a catalog's (`HomeViewModel.catalogWait`).
-    static let listWait: Double = 8
+    /// A build's lists: how many were asked for, how many TMDB failed
+    /// (`TMDBService.CueList.failed`). Past `failedShare` the build is
+    /// `degraded`.
+    final class Health: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var asked = 0
+        private(set) var failed = 0
+        func note(failed didFail: Bool) {
+            lock.withLock { asked += 1; if didFail { failed += 1 } }
+        }
+        var summary: String { lock.withLock { "\(failed) of \(asked) lists failed" } }
+        var degraded: Bool { lock.withLock { Double(failed) > Double(asked) * failedShare } }
+    }
+    @TaskLocal static var health: Health?
+    static let failedShare = 0.1
 
-    /// One list's titles, at most `listWait`.
+    /// One list's titles. No deadline: a slow list is waited for (the saved
+    /// rows show meanwhile); one cut short was a row lost for the day.
     private static func list(_ path: String, _ query: [String: String] = [:], isMovie: Bool) async -> [Title] {
-        (try? await withDeadline(listWait) {
-            await TMDBService.cueList(path, query: query, isMovie: isMovie)
-        }) ?? []
+        let answer = await TMDBService.cueList(path, query: query, isMovie: isMovie)
+        health?.note(failed: answer.failed)
+        if answer.failed { AppProbe.warn("cue rows", "\(path) failed: \(answer.titles.count) titles") }
+        return answer.titles
     }
 
     /// Films and shows taken in turn.
@@ -1629,8 +1650,21 @@ enum CueRows {
         let titles: [Title]
     }
 
-    static func build(watches: [Watch], standings full: Standings, seeds: [String], last: Saved?,
+    /// New rows, `degraded` when TMDB failed too many of their lists.
+    static func build(watches: [Watch], standings: Standings, seeds: [String], last: Saved?,
                       passes: Passes, ratings: [String: TitleRatings.Entry]) async -> Saved {
+        let health = Health()
+        var saved = await $health.withValue(health) {
+            await make(watches: watches, standings: standings, seeds: seeds, last: last,
+                       passes: passes, ratings: ratings)
+        }
+        saved.health = health.summary
+        saved.degraded = health.degraded ? true : nil
+        return saved
+    }
+
+    private static func make(watches: [Watch], standings full: Standings, seeds: [String], last: Saved?,
+                             passes: Passes, ratings: [String: TitleRatings.Entry]) async -> Saved {
         let now = Date()
         let day = dayKey(now)
         let region = region

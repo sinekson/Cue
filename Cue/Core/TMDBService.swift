@@ -416,12 +416,28 @@ enum TMDBService {
         guard let url = comps.url else { throw TMDBError.badPath(path) }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw TMDBError.badResponse(http.statusCode)
+        // TMDB's rate limit (a 429) and a connection dropped under load are
+        // a wait, not an answer: asked again, `retries` times, after TMDB's
+        // Retry-After (at most 4 s) or a growing pause. (A title lookup that
+        // failed here lost the title from every row.)
+        for attempt in 0... {
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else {
+                    return data
+                }
+                guard http.statusCode == 429, attempt < retries else { throw TMDBError.badResponse(http.statusCode) }
+                let after = (http.value(forHTTPHeaderField: "Retry-After")).flatMap(Double.init)
+                try await Task.sleep(for: .seconds(min(after ?? 0.5 * Double(attempt + 1), 4)))
+            } catch let error as URLError where error.code == .networkConnectionLost && attempt < retries {
+                try await Task.sleep(for: .seconds(0.5 * Double(attempt + 1)))
+            }
         }
-        return data
+        throw TMDBError.missing
     }
+
+    /// A rate-limited or dropped request's further tries (`fetchData`).
+    private static let retries = 3
 
     /// Check a key before saving it, so a typo says so on the spot instead of
     /// silently emptying every TMDB-backed row. `/configuration` is the
@@ -919,22 +935,12 @@ enum TMDBService {
         }
         let path = useTV ? "/discover/tv" : "/discover/movie"
         let genreMap = useTV ? tvGenres : movieGenres
-        // Retries a page on a 429 (brief backoff, a few attempts) since we now
-        // routinely issue far more requests than before; any other failure
-        // just skips that page rather than blocking the whole fetch.
+        // A failed page is skipped rather than blocking the whole fetch (a
+        // 429 is retried in `fetchData`).
         func fetchPage(_ page: Int) async -> DiscoverResponse? {
             var q = baseQuery
             q["page"] = String(page)
-            for attempt in 0..<3 {
-                do {
-                    return try await get(path, query: q) as DiscoverResponse
-                } catch TMDBError.badResponse(429) {
-                    try? await Task.sleep(nanoseconds: UInt64(400_000_000 * (attempt + 1)))
-                } catch {
-                    return nil
-                }
-            }
-            return nil
+            return try? await get(path, query: q) as DiscoverResponse
         }
 
         // TMDB paginates discover results at 20/page and hard-caps the
@@ -2349,7 +2355,9 @@ extension TMDBService {
     private static var languageCode: String { String(preferredLanguage.prefix(2)) }
 
     /// `pictures`: asked again where what's kept has none (`cueTitle`).
-    static func traits(tmdbID: Int, isMovie: Bool, pictures: Bool = false) async -> TitleTraits? {
+    /// `bulk`: one of many (a list's titles): the network asked through
+    /// `bulkGate`, so a rows build can't put hundreds in flight at once.
+    static func traits(tmdbID: Int, isMovie: Bool, pictures: Bool = false, bulk: Bool = false) async -> TitleTraits? {
         let language = languageCode
         let key = "\(isMovie ? "m" : "t"):\(tmdbID):\(language)"
         if let hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil,
@@ -2391,11 +2399,15 @@ extension TMDBService {
             let overview: String?
         }
         let path = isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)"
-        guard let body: Body = try? await get(path, query: [
+        let query = [
             "language": preferredLanguage,
             "append_to_response": "external_ids,images,keywords,credits",
             "include_image_language": "\(language),en,null",
-        ]) else { return nil }
+        ]
+        if bulk { await bulkGate.enter() }
+        let fetched: Body? = try? await get(path, query: query)
+        if bulk { await bulkGate.leave() }
+        guard let body = fetched else { return nil }
         // The best-voted logo in the language, else English, else one with
         // no text; PNGs only (an SVG doesn't decode).
         let logos = (body.images?.logos ?? []).filter { !$0.file_path.hasSuffix(".svg") }
@@ -2456,12 +2468,40 @@ extension TMDBService {
 
     private struct TraitsBox: Sendable { let facts: TitleTraits? }
 
+    /// Title lookups for lists in flight at once, across every list: a rows
+    /// build asks for 40 lists together, and 24 per list (the old window)
+    /// was a thousand requests — past TMDB's limit, and a cold build on the
+    /// Apple TV lost most of its lists to it.
+    static let bulkGate = Gate(48)
+
+    /// At most `count` callers between `enter` and `leave`; the rest wait
+    /// in turn.
+    actor Gate {
+        private var free: Int
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        init(_ count: Int) { free = count }
+        func enter() async {
+            if free > 0 { free -= 1; return }
+            await withCheckedContinuation { waiting.append($0) }
+        }
+        func leave() {
+            if waiting.isEmpty { free += 1 } else { waiting.removeFirst().resume() }
+        }
+    }
+
+    /// A list as Cue's rows take it: its titles, and whether TMDB really
+    /// answered (the list itself, and three in four of its titles' lookups).
+    struct CueList: Sendable {
+        var titles: [CueTitle] = []
+        var failed = false
+    }
+
     /// A list's titles as rows show them: TMDB's poster (in the language),
     /// backdrop and logo; only those with an IMDb id and both pictures.
-    private static func cueTitles(_ raw: [TMDBRawItem], limit: Int) async -> [CueTitle] {
+    private static func cueTitles(_ raw: [TMDBRawItem], limit: Int) async -> CueList {
         let pictured = raw.filter { $0.poster != nil && $0.background != nil }
-        let all = await boundedConcurrentMap(pictured, limit: imdbResolveWindow) { item in
-            TraitsBox(facts: await traits(tmdbID: item.tmdbID, isMovie: item.isMovie))
+        let all = await boundedConcurrentMap(pictured, limit: pictured.count) { item in
+            TraitsBox(facts: await traits(tmdbID: item.tmdbID, isMovie: item.isMovie, bulk: true))
         }
         var seen = Set<String>()
         var titles: [CueTitle] = []
@@ -2479,17 +2519,18 @@ extension TMDBService {
                 genres: item.genres)
             titles.append(CueTitle(item: meta, tmdbID: item.tmdbID, isMovie: item.isMovie, traits: facts))
         }
-        return titles
+        let missed = all.filter { $0.facts == nil }.count
+        return CueList(titles: titles, failed: missed * 4 > pictured.count)
     }
 
     /// One of TMDB's lists (trending, popular, top rated, now playing,
     /// upcoming, on the air, discover, recommendations) as a row's titles.
     /// `isMovie`: what a list without media types holds.
     static func cueList(_ path: String, query: [String: String] = [:], isMovie: Bool,
-                        limit: Int = 20) async -> [CueTitle] {
+                        limit: Int = 20) async -> CueList {
         var query = query
         query["language"] = preferredLanguage
-        guard let body: PickList = try? await get(path, query: query) else { return [] }
+        guard let body: PickList = try? await get(path, query: query) else { return CueList(failed: true) }
         return await cueTitles(body.raw(defaultMovie: isMovie, limit: limit * 2), limit: limit)
     }
 
@@ -2538,7 +2579,7 @@ extension TMDBService {
                     description: credit.overview, releaseInfo: date.map { String($0.prefix(4)) },
                     rating: credit.vote_average, genres: genres.isEmpty ? nil : genres)
             }
-        return await cueTitles(Array(raw.prefix(limit * 2)), limit: limit)
+        return await cueTitles(Array(raw.prefix(limit * 2)), limit: limit).titles
     }
 
     /// A title you watched as a row shows it (Pick Back Up, Watch Again):
