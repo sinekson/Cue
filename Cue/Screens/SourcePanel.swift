@@ -190,6 +190,7 @@ struct SourcePanel: View {
             .padding(.top, ShelfShape.top)
             .frame(width: 1920, height: 1080, alignment: .top)
             .ignoresSafeArea()
+            .environment(\.colorScheme, .dark)
             .onExitCommand(perform: onClose)
             .onChange(of: picker.picked) { _, picked in
                 if !picked, let pickedID { focusRequest = .init(entry: pickedID) }

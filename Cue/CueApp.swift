@@ -833,6 +833,9 @@ struct RootView: View {
                       onShown: { sourcePicker.close() },
                       onClose: { setPlayback(nil) })
                 .ignoresSafeArea()
+                // Dark in both appearances: SwiftUI's scheme reaches the
+                // controller past its own `overrideUserInterfaceStyle`.
+                .environment(\.colorScheme, .dark)
                 .presentationBackground(.clear)
         }
         // Deep-link add-on install confirmation. A tvOS alert is fully

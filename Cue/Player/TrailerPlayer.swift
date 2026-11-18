@@ -1150,6 +1150,9 @@ struct TrailerFullScreen: View {
         }
         // Not over the controls: SwiftUI's took Back before `TrailerController`.
         .interactiveDismissDisabled()
+        // On the picture: dark in both appearances. SwiftUI hands its own
+        // scheme down to the controller, past its `overrideUserInterfaceStyle`.
+        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -1275,7 +1278,7 @@ final class TrailerController: UIViewController, UIGestureRecognizerDelegate, Tr
             if up, press.type == .upArrow {
                 transport.dismiss()
             } else if up, press.type == .downArrow {
-                return close()
+                return leave()
             } else if press.type == .downArrow, transport.inBackGrace {
                 // Just after they went by themselves, as Back: meant for them.
                 return
@@ -1309,8 +1312,16 @@ final class TrailerController: UIViewController, UIGestureRecognizerDelegate, Tr
             transport.dismiss()
             tick()
         } else if !transport.inBackGrace {
-            close()
+            leave()
         }
+    }
+
+    /// Closing pauses the trailer (unless it rests on the card): the tick
+    /// stops first, or it would bring the controls up for the pause.
+    private func leave() {
+        timer?.invalidate()
+        timer = nil
+        close()
     }
 
     /// Paused, a sideways swipe scrubs; nothing else does anything.
