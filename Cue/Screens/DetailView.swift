@@ -1360,7 +1360,7 @@ struct DetailView: View {
                     let meta = viewModel.meta
                     DetailActionButton(
                         icon: rating == .love ? "heart.fill" : "heart",
-                        title: rating == .love ? "Loved" : "Love",
+                        title: rating == .love ? "Liked" : "Like",
                         isPrimary: false, lit: litAction == .love, bare: true, untintedGlass: true,
                         action: { TitleRatings.shared.rate(meta, .love) }
                     )

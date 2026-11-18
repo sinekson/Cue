@@ -438,7 +438,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Application
   Support, not a cache), decided 2026-11-18: watching already teaches
   the taste, so only the two ends are asked. Love: Details' fourth button
-  (after About), a heart, Select toggles it ("Love" / "Loved").
+  (after About), a heart, Select toggles it, named "Like" / "Liked" (the rating stays Love).
   Not for Me: a hold menu entry, the cards' only (a crossed heart; ✕ was
   disliked; on Details, under a held Love, was not wanted: Details is for
   what you're curious about), checked while it holds, Select again

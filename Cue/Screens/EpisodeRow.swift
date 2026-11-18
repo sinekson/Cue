@@ -118,6 +118,16 @@ struct SeasonProgressMap: View {
     }
     static let labelSize: CGFloat = 21
 
+    /// On the page: its ink, white on dark, black on light (white ticks
+    /// on a light page didn't read).
+    private static func ink(dark: CGFloat, light: CGFloat) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .light
+            ? UIColor.black.withAlphaComponent(light) : UIColor.white.withAlphaComponent(dark) })
+    }
+    private static let trackInk = ink(dark: 0.2, light: 0.12)
+    private static let watchedInk = ink(dark: 0.62, light: 0.45)
+    private static let currentInk = ink(dark: 1, light: 0.85)
+
     var body: some View {
         Group {
             if inline {
@@ -149,7 +159,7 @@ struct SeasonProgressMap: View {
         return HStack(spacing: Self.gap) {
             ForEach(ticks, id: \.id) { t in
                 Capsule()
-                    .fill(Color.white.opacity(t.current ? 1 : t.watched ? 0.62 : 0.2))
+                    .fill(t.current ? Self.currentInk : t.watched ? Self.watchedInk : Self.trackInk)
                     // (Inline: always the full width — the label stays put
                     // from season to season.)
                     .frame(width: inline ? max(tick, 3) : max(min(tick, 44), 3),
@@ -166,11 +176,11 @@ struct SeasonProgressMap: View {
         let watched = CGFloat(ticks.filter(\.watched).count) / CGFloat(max(ticks.count, 1))
         let at = CGFloat(ticks.firstIndex(where: \.current) ?? 0) / CGFloat(max(ticks.count - 1, 1))
         return ZStack(alignment: .leading) {
-            Capsule().fill(Color.white.opacity(0.2))
+            Capsule().fill(Self.trackInk)
                 .frame(width: width, height: Self.height)
-            Capsule().fill(Color.white.opacity(0.62))
+            Capsule().fill(Self.watchedInk)
                 .frame(width: max(width * watched, Self.height), height: Self.height)
-            Capsule().fill(Color.white)
+            Capsule().fill(Self.currentInk)
                 .frame(width: 6, height: Self.height + 8)
                 .offset(x: (width - 6) * at)
         }
