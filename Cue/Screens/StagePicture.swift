@@ -104,6 +104,8 @@ final class StagePictureView: UIView {
         /// Copies riding on it (the buttons going out with it).
         var carried: [UIView] = []
         private var textHost: UIHostingController<AnyView>?
+        /// Its text (the trailer full screen: out).
+        var textView: UIView? { textHost?.view }
 
         func setText(_ content: AnyView?) {
             guard let content else {
@@ -265,13 +267,57 @@ final class StagePictureView: UIView {
             card.band = cardFrame?.offsetBy(dx: Self.drift, dy: 0)
         }
         if let cardFrame {
-            cardMask.frame = cardFrame
+            if cardMask.layer.animationKeys()?.isEmpty ?? true {
+                cardMask.frame = fullScreen ? CGRect(origin: .zero, size: Self.pictureSize) : cardFrame
+                cardMask.layer.cornerRadius = fullScreen ? 0 : Spotlight.cornerRadius
+            }
             cardMask.backgroundColor = .black
-            cardMask.layer.cornerRadius = Spotlight.cornerRadius
             cardMask.layer.cornerCurve = .continuous
             if mask !== cardMask { mask = cardMask }
         } else if mask != nil {
             mask = nil
+        }
+    }
+
+    /// Details' trailer full screen: the card's window opens to the
+    /// screen, the trailer staying where it is (it's laid out on the whole
+    /// screen; the card only shows part of it), on the opening's grow
+    /// (`DetailTransition.pictureSettle`, `zoomInCurve`); back, closing
+    /// as Back's shrink (`shrinkTime`, `shrinkCurve`). The text and shade
+    /// fade out first and come back at the end.
+    private(set) var fullScreen = false
+    static let fullPartsFade: Double = 0.25
+
+    func setFullScreen(_ full: Bool) {
+        guard full != fullScreen, let cardFrame else { return }
+        fullScreen = full
+        let screen = CGRect(origin: .zero, size: Self.pictureSize)
+        let (from, to) = full ? (cardFrame, screen) : (screen, cardFrame)
+        let duration = full ? DetailTransition.pictureSettle : DetailTransition.shrinkTime
+        let curve = full ? DetailTransition.zoomInCurve : DetailTransition.shrinkCurve
+        let layer = cardMask.layer
+        let current = layer.presentation()
+        let start = current?.bounds ?? CGRect(origin: .zero, size: from.size)
+        let startPosition = current?.position ?? CGPoint(x: from.midX, y: from.midY)
+        let startRadius = current?.cornerRadius ?? (full ? Spotlight.cornerRadius : 0)
+        cardMask.frame = to
+        layer.cornerRadius = full ? 0 : Spotlight.cornerRadius
+        let group = CAAnimationGroup()
+        let bounds = CABasicAnimation(keyPath: "bounds")
+        bounds.fromValue = start
+        let position = CABasicAnimation(keyPath: "position")
+        position.fromValue = startPosition
+        let radius = CABasicAnimation(keyPath: "cornerRadius")
+        radius.fromValue = startRadius
+        group.animations = [bounds, position, radius]
+        group.duration = duration
+        group.timingFunction = curve
+        layer.add(group, forKey: "full")
+        // The text and shade: out at the start, back over the end.
+        let parts = zoom.subviews.compactMap { $0 as? Page }.flatMap { [$0.shade, $0.textView].compactMap { $0 } }
+        UIView.animate(withDuration: Self.fullPartsFade, delay: full ? 0 : duration - Self.fullPartsFade,
+                       options: [.curveEaseInOut, .beginFromCurrentState]) {
+            for part in parts { part.alpha = full ? 0 : (part is UIImageView ? self.shadeAlpha : 1) }
         }
     }
 

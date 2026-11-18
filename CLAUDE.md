@@ -792,8 +792,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   buttons, shelf or stills; with the controls up, Up hides them and Down
   closes ("Back to Details" with a chevron where the shelf's tabs peek).
   It has no picture of its own: a clear cover, at once, over Details'
-  picture where the trailer plays; Details' text, buttons and shade fade
-  out under it and back as it goes (0.45 s), the sound rising from silence
+  card; the trailer is laid out on the whole screen (the card a window
+  onto it), so the card's window grows to the screen, corners easing
+  off, the video not moving (the opening's 0.55 s, `zoomInCurve`), and
+  closes back as Back's shrink (0.4 s); the card's text and shade, the
+  buttons and the rows fade out at the start (0.25 s) and back over the
+  end (`StagePictureView.setFullScreen`; a crossfade to a second
+  full-screen view, and a 16:9 card, were talked over), the sound rising from silence
   (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer`.

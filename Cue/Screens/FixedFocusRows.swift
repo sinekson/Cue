@@ -157,6 +157,9 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     /// The pinned picture as a card here (screen points; nil: the whole
     /// picture): Home's billboard card, Details' card.
     var billboardCard: CGRect? = nil
+    /// Details' trailer full screen: the card opens to the screen, the rows
+    /// and the buttons fade (`StagePictureView.setFullScreen`).
+    var billboardFull = false
     /// The card takes focus (Home): grown, its shadow, the top bar on it.
     /// Off: a card on the page (Details, its buttons under it).
     var billboardCardFocus = false
@@ -262,6 +265,7 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.billboardOverlayBelowRows = billboardOverlayBelowRows
         controller.rigidBillboardTravel = rigidBillboardTravel
         controller.billboardCard = billboardCard
+        controller.billboardFull = billboardFull
         controller.billboardCardFocus = billboardCardFocus
         controller.billboardPicture = billboardPicture
         controller.pinnedBillboardPicture = pinnedBillboardPicture
@@ -1652,6 +1656,21 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var rigidBillboardTravel: CGFloat?
     var billboardCard: CGRect?
     var billboardCardFocus = false
+    var billboardFull = false {
+        didSet {
+            guard billboardFull != oldValue, isViewLoaded, let stage = pinnedStage else { return }
+            let full = billboardFull
+            stage.setFullScreen(full)
+            let fade = StagePictureView.fullPartsFade
+            let shrink = DetailTransition.shrinkTime
+            UIView.animate(withDuration: fade, delay: full ? 0 : shrink - fade,
+                           options: [.curveEaseInOut, .beginFromCurrentState]) {
+                for part in [self.outer, self.overlayHost?.view, self.controlsHost?.view].compactMap({ $0 }) {
+                    part.alpha = full ? 0 : 1
+                }
+            }
+        }
+    }
     var billboardPicture: String? {
         didSet {
             guard billboardPicture != oldValue, let stage = pinnedStage, let featured = featuredIndex,

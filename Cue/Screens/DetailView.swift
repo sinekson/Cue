@@ -854,6 +854,8 @@ struct DetailView: View {
                            billboardTrailer: trailer,
                            rigidBillboardTravel: HomeUIKitView.rigidBillboardTravel,
                            billboardCard: StagePictureView.detailsCard,
+                           // The trailer full screen: the card opens to it.
+                           billboardFull: trailerFull,
                            billboardPicture: viewModel.backdropURL,
                            // The episode in focus always at the first card's
                            // spot.
@@ -873,8 +875,6 @@ struct DetailView: View {
                 if item.type == "episode" { focusedRowEpisode = item.id }
             }
             .ignoresSafeArea()
-            // Under the full-screen trailer: out, the picture alone.
-            .opacity(trailerFull ? 0 : 1)
             // (Again once the episode list is in: opened from a card, the page
             // starts with the card's data — no seasons yet.)
             .task(id: "\(viewModel.meta.id)|\(viewModel.meta.seasons.count)") {
@@ -943,14 +943,9 @@ struct DetailView: View {
     @State private var rowCommand: FixedFocusRowsCommand?
 
     /// Behind the page: the app's background (the picture is the card,
-    /// the rows'); the trailer full screen over it while it's up there.
+    /// the rows'; the trailer full screen is the card opened).
     private var rowsBackdrop: some View {
-        ZStack {
-            TitleBandsBackground(url: viewModel.backdropURL)
-            StageTrailerView(trailer: trailer)
-                .frame(width: 1920, height: 1080)
-                .opacity(trailerFull ? 1 : 0)
-        }
+        TitleBandsBackground(url: viewModel.backdropURL)
         .frame(width: 1920, height: 1080)
         .allowsHitTesting(false)
         .ignoresSafeArea()

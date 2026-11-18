@@ -710,7 +710,7 @@ final class StageTrailer: ObservableObject {
     @Published private(set) var fullPlayer: AVPlayer?
     @Published private(set) var fullFailed = false
     /// The video, wherever the picture is (Home: moved onto the current
-    /// card — `StagePictureView.attachTrailer`; Details: `StageTrailerView`).
+    /// card — `StagePictureView.attachTrailer`; Details': its card's).
     let surface = TrailerSurface()
     weak var stage: TrailerHost?
     /// Played to their end: Home follows it, with its state of that moment.
@@ -1427,17 +1427,3 @@ private final class TrailerDownHint: UIView {
     }
 }
 
-/// Details' trailer: the surface, where its picture is.
-struct StageTrailerView: UIViewRepresentable {
-    let trailer: StageTrailer
-    func makeUIView(context: Context) -> UIView {
-        let host = UIView()
-        host.isUserInteractionEnabled = false
-        host.addSubview(trailer.surface)
-        trailer.surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        return host
-    }
-    func updateUIView(_ view: UIView, context: Context) {
-        trailer.surface.frame = view.bounds
-    }
-}
