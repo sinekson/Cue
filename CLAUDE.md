@@ -599,7 +599,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`StagePictureView.detailsCard`: 24 pt from the screen's top and
   sides, `detailsInset` (the rows' edges, 84, was before), its foot
   40 pt above the episodes' name, as Home's card's), the text in it as Home's card (`cardText`: logo, facts,
-  tagline, the trailer line over the logo), its badges as the card's
+  tagline; the trailer line, "Watch the trailer", is over the buttons, right-aligned, 24 pt above them, only while focus is on them, as Up from them opens it (over the logo, in Home's reason's place, was before)), its badges as the card's
   (`BillboardCorners(details:)`: status and one fact top left, all its
   ratings top right), the card's bottom fade (`StageArt.cardShade`); the
   buttons in it bottom right where Home's dots are, their foot on the

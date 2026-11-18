@@ -538,6 +538,10 @@ struct DetailView: View {
     /// Focus going back onto Info as its panel closes: not redirected to
     /// Play.
     @State private var returningTo: ActionControl?
+    /// Focus on the buttons: the trailer's line shows over them.
+    @State private var onButtons = true
+    /// The trailer's line to the buttons' top.
+    private static let trailerHintGap: CGFloat = 24
     @State private var litAction: ActionControl? = MainActor.assumeIsolated {
         ModeSwap.shared.billboardItemID != nil ? .play : nil
     }
@@ -1065,6 +1069,17 @@ struct DetailView: View {
         headerExtras
             .environment(\.colorScheme, .dark)
             .frame(height: TitleBlock.buttonHeight)
+            // The trailer's line right above them, right-aligned: Up from
+            // the buttons opens it, so it points where Up goes; gone with
+            // focus off them (Up does nothing there).
+            .overlay(alignment: .topTrailing) {
+                DetailTrailerHint(model: viewModel, trailer: trailer)
+                    .environment(\.colorScheme, .dark)
+                    .opacity(onButtons ? 1 : 0)
+                    .animation(.linear(duration: Motion.fadeDuration), value: onButtons)
+                    .alignmentGuide(.top) { $0[.bottom] + Self.trailerHintGap }
+                    .allowsHitTesting(false)
+            }
             .padding(.top, StagePictureView.detailsButtonsY)
             .padding(.trailing, StagePictureView.detailsButtonsTrailing)
             // (Its host's size — see `overlayHeight` — from the screen's top.)
@@ -1081,7 +1096,6 @@ struct DetailView: View {
             FixedFocusBillboardText(item: viewModel.meta, info: showInfo, ratings: nil,
                                     tagline: billboardTagline ?? TitleRecords.shared.tagline(viewModel.meta),
                                     logo: viewModel.shownLogo,
-                                    lead: AnyView(DetailTrailerHint(model: viewModel, trailer: trailer)),
                                     corners: true)
                 .frame(height: StagePictureView.textBottom(card), alignment: .bottomLeading)
                 .padding(.leading, FixedFocusMetrics.titleInset + StagePictureView.textIn(card))
@@ -1392,6 +1406,7 @@ struct DetailView: View {
     ///   while the row previously held NOTHING gets moved to Play. Moves
     ///   WITHIN the row (old != nil) are left alone.
     private func actionFocusChanged(from old: ActionControl?, to new: ActionControl?) {
+        onButtons = new != nil
         // The trailer plays on between the buttons; leaving them, it fades out.
         restTrailer()
         // (Back from Info's panel: on Info, as asked — once.)
@@ -2266,15 +2281,15 @@ struct DetailsBackdropBackground: View {
     }
 }
 
-/// Over Details' logo, where Home's billboard says why it picked a title:
-/// Up opens the trailer full screen — "Watch full screen" while it plays
+/// Over Details' buttons, right-aligned (over the logo, in Home's reason's
+/// place, was before): Up from them opens the trailer full screen — "Watch full screen" while it plays
 /// on the picture, else "Watch the trailer". Only once one is known to
 /// play; the chevron bobs now and then (`SectionHint`).
 struct DetailTrailerHint: View {
     @ObservedObject var model: DetailViewModel
     @ObservedObject var trailer: StageTrailer
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack(alignment: .trailing) {
             if model.trailerReady || trailer.shown {
                 SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
                     .transition(FixedFocusBillboardText.leadSwap)
