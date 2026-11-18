@@ -2010,9 +2010,62 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// HOME'S BILLBOARD CARD focused: grown as every card (the wide ones'
     /// growth on its width), its dots with it.
     private var billboardLit = false
+    /// Held (its hold menu open): half its focus growth more, as every card.
+    private var billboardHeld = false
+    /// Select down on it: a little less grown, as every card (the press
+    /// reaches the hidden focus cell, not the card).
+    private var billboardPressed = false
     private var cardScale: CGFloat {
         guard billboardLit, let card = pinnedStage?.cardFrame else { return 1 }
         return 1 + FixedFocusMetrics.focusLift(card.size)
+            - (billboardPressed ? FixedFocusMetrics.pressDrop(card.size) : 0)
+            + (billboardHeld ? FixedFocusMetrics.heldGrowth(card.size) : 0)
+    }
+
+    /// The cards' press timing (`FixedFocusDestinationCell.setPressed`).
+    private func setBillboardPressed(_ pressed: Bool) {
+        guard pressed != billboardPressed, !pressed || (billboardLit && isFeatured(focusedRow)) else { return }
+        billboardPressed = pressed
+        UIView.animate(withDuration: pressed ? 0.12 : 0.2, delay: 0,
+                       options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            self.applyOverlayPosition()
+        }
+    }
+
+    /// Home's card at `scale` (window points), where it is now.
+    private func billboardCardRect(scale: CGFloat) -> CGRect? {
+        guard let stage = pinnedStage, let card = stage.cardFrame, let featured = featuredIndex else { return nil }
+        let up = billboardUp(depth: max(focusedRow - featured, 0))
+        func place(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: stage.center.x + (p.x - stage.bounds.midX) * scale,
+                    y: stage.center.y - up + (p.y - stage.bounds.midY) * scale)
+        }
+        let a = place(card.origin), b = place(CGPoint(x: card.maxX, y: card.maxY))
+        return view.convert(CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y), to: nil)
+    }
+
+    /// Its hold menu: the card itself held (not the hidden focus cell), the
+    /// panel over its right as Today's Pick's (too wide for a side).
+    fileprivate func billboardHoldMenu(_ entries: [MenuEntry]) -> HoldMenuRequest? {
+        guard billboardLit, let size = pinnedStage?.cardFrame?.size else { return nil }
+        let lit = 1 + FixedFocusMetrics.focusLift(size)
+        guard let held = billboardCardRect(scale: lit + FixedFocusMetrics.heldGrowth(size)),
+              let now = billboardCardRect(scale: cardScale),
+              let rest = billboardCardRect(scale: lit) else { return nil }
+        return HoldMenuRequest(entries: entries, anchor: held, from: now, rest: rest,
+                               onHeld: { [weak self] in self?.setBillboardHeld($0) },
+                               inside: Self.billboardMenuInset)
+    }
+    static let billboardMenuInset: CGFloat = 32
+
+    private func setBillboardHeld(_ held: Bool) {
+        guard held != billboardHeld else { return }
+        billboardHeld = held
+        billboardPressed = false
+        UIView.animate(withDuration: FixedFocusMetrics.heldDuration, delay: 0,
+                       options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.applyOverlayPosition()
+        }
     }
 
     /// A page on Home's card: it dips to its resting size, its
@@ -2069,6 +2122,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func setBillboardLit(_ lit: Bool, inScroll: Bool = false) {
         guard lit != billboardLit, billboardCardFocus, pinnedStage?.cardFrame != nil else { return }
         billboardLit = lit
+        if !lit { billboardPressed = false; billboardHeld = false }
         // The scroll's move places it (`applyOverlayPosition`), grown or not.
         if inScroll { return }
         UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
@@ -2206,6 +2260,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setBillboardPressed(true) }
         if let step = arrow(presses), billboardFocusOutside {
             holdTimer?.invalidate()
             holdTimer = Timer.scheduledTimer(withTimeInterval: Self.holdInterval, repeats: true) { [weak self] _ in
@@ -2221,11 +2276,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setBillboardPressed(false) }
         if arrow(presses) != nil { holdTimer?.invalidate(); holdTimer = nil }
         super.pressesEnded(presses, with: event)
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.type == .select }) { setBillboardPressed(false) }
         if arrow(presses) != nil { holdTimer?.invalidate(); holdTimer = nil }
         super.pressesCancelled(presses, with: event)
     }
@@ -4664,6 +4721,7 @@ extension FixedFocusRowsController: HoldMenuProviding {
         if isDestination(rowIndex), let cell = focused as? FixedFocusDestinationCell {
             return cell.holdMenu(entries)
         }
+        if isFeatured(rowIndex), let request = billboardHoldMenu(entries) { return request }
         if let cell = focused as? FixedFocusShowcaseCell { return cell.holdMenu(entries) }
         return HoldMenuRequest(entries: entries, anchor: focused.convert(focused.bounds, to: nil))
     }

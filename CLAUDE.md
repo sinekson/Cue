@@ -822,7 +822,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
   A held card grows half its focus growth more, a press takes half back
   (3 % of 6 % before; 2, 4, 5 tried); the menu sits 16 pt
-  beside it (Today's Pick, too wide for a side: over its right, 32 pt in
+  beside it (Today's Pick and Home's billboard card, too wide for a side: over its right, 32 pt in
   from its top and right, where its picture is; centred on screen, or
   above or below it, were talked over) (24, and aligned to the next card, were tried).
 - **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
