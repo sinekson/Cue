@@ -3371,7 +3371,15 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private var captionsShown: Bool { isFocusRow && controller?.hasCaptions(rowIndex) == true }
     func applyCaptions() {
         guard let destinationStrip else { return }
-        for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells { card.setCaptionShown(captionsShown) }
+        for case let card as FixedFocusDestinationCell in destinationStrip.visibleCells {
+            card.setCaptionShown(captionsShown)
+            card.setDetailsShown(isFocusRow, animated: true)
+        }
+        // The cards' badges, rating and facts only in the focused row.
+        for case let card as FixedFocusShowcaseCell in destinationStrip.visibleCells {
+            card.setDetailsShown(isFocusRow, animated: true)
+        }
+        box?.setDetailsShown(isFocusRow, animated: true)
     }
 
 
@@ -4125,6 +4133,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "showcase", for: indexPath) as! FixedFocusShowcaseCell
             if let row, row.items.indices.contains(indexPath.item) {
                 configureShowcase(cell, row.items[indexPath.item], index: indexPath.item)
+                cell.setDetailsShown(isFocusRow, animated: false)
                 if controller.isFeature(rowIndex) {
                     showFeature(cell, animated: false)
                     // The focused one under the box.
@@ -4150,6 +4159,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                                isLogo: controller.isLogo(rowIndex),
                                captionOnCard: controller.captionsOnCards(rowIndex))
                 cell.setCaptionShown(captionsShown)
+                cell.setDetailsShown(isFocusRow, animated: false)
                 cell.alpha = controller.gridAlpha(rowIndex, item: indexPath.item)
             }
             return cell
@@ -4397,6 +4407,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             let new = FixedFocusShowcaseCell()
             new.isUserInteractionEnabled = false
             configureShowcase(new, item, index: index)
+            new.setDetailsShown(isFocusRow, animated: false)
             stripHost.addSubview(new)
             made = new
         }

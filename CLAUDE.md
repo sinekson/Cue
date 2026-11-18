@@ -460,7 +460,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   over "Added 3 days ago"), in the focused row (`hasCaptions`; tried
   inside the box's caption before, back under the card 2026-11-15):
   tall cards and the open large card carry
-  at their foot, left, the badges over the logo over the facts line,
+  at their foot, left, the badges over the logo over the facts line
+  (badges, rating, facts and Today's Pick's tagline only in the focused
+  row, trying 2026-11-18, `setDetailsShown`: out of focus the logo
+  lowered to the facts' baseline; all on the captions' timing, the rows'
+  move spring, the text fading as the scroll runs, the logo on a shorter
+  0.35 s spring of its own (on the rows' it moved on after the fade) (tried:
+  the text in after 0.12 s over 0.2 s and out in 0.15 s, the logo on
+  focus's 0.3 s);
+  Top 10's facts too, its place stays; the landscape cards' plates, Continue
+  Watching's, the episode rows' and Details' episodes, the same way, their
+  bar staying: `FixedFocusDetails`),
   over a bottom fade (`FixedFocusShade`: clear to the middle, then eased
   to 85 % black at the foot, Apple TV's; from the upper third dimmed the
   whole card); Continue

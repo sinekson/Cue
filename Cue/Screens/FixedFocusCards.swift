@@ -245,6 +245,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     }()
     /// The words: they go while a trailer plays.
     private let words = UIView()
+    /// The logo (or the name): lowered to the foot while its row is out of
+    /// focus, the facts' room closed (`setDetailsShown`).
+    private let title = UIView()
     private let badges = FixedFocusBadges()
     private let logo = FixedFocusLogo()
     private let name = UILabel()
@@ -337,7 +340,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         tagline.font = UIFont.italicSystemFont(ofSize: FixedFocusMetrics.captionSize)
         tagline.textColor = CueInk.ui(FixedFocusText.secondary)
         tagline.lineBreakMode = .byTruncatingTail
-        for view: UIView in [corner, place, badges, logo, name, facts, tagline] { words.addSubview(view) }
+        for view: UIView in [corner, place, badges, title, facts, tagline] { words.addSubview(view) }
+        title.addSubview(logo)
+        title.addSubview(name)
         logo.isHidden = true
         edge.isUserInteractionEnabled = false
         card.addSubview(edge)
@@ -590,6 +595,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         edge.frame = card.bounds
         loadingCard.frame = feature ? CGRect(origin: .zero, size: FixedFocusFeatureLayout.poster) : card.bounds
         words.frame = CGRect(origin: .zero, size: face)
+        // (Bounds and centre: it may be lowered, transformed.)
+        title.bounds = CGRect(origin: .zero, size: face)
+        title.center = CGPoint(x: face.width / 2, y: face.height / 2)
         // From the foot up: the facts, the logo (or the name); the badges top left.
         corner.frame = CGRect(origin: .zero, size: Self.cornerShade.size)
         place.sizeToFit()
@@ -610,6 +618,11 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         facts.frame = CGRect(x: sideInset, y: y, width: width, height: Self.lineHeight)
         fitFacts()
         let titleBottom = y - logoGap + 6
+        // Out of focus, the logo's foot where the facts' baseline is.
+        titleDrop = face.height - footPad - Self.lowFoot - titleBottom
+        UIView.performWithoutAnimation {
+            title.transform = detailsShown ? .identity : CGAffineTransform(translationX: 0, y: titleDrop)
+        }
         if !logo.isHidden, logo.image != nil {
             // Sized by its area, its foot on the line, at the left.
             logo.room = CGRect(x: sideInset, y: titleBottom - logoBox.height,
@@ -619,6 +632,40 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             name.frame = CGRect(x: sideInset, y: titleBottom - fitted, width: width, height: fitted)
         }
         sizeOutline()
+    }
+
+    // MARK: Its row in focus or not
+
+    /// Badges, rating, facts and tagline only while its row has focus; the
+    /// logo lowered into their room while it hasn't, all in the rows' move.
+    private(set) var detailsShown = true
+    private var titleDrop: CGFloat = 0
+    /// The lowered logo's foot above the card's text foot.
+    private static let lowFoot: CGFloat = 6
+    /// The logo's rise and settle (the rows' move is 0.5 s).
+    private static let titleMove: Double = 0.35
+
+    func setDetailsShown(_ shown: Bool, animated: Bool) {
+        guard shown != detailsShown else { return }
+        detailsShown = shown
+        let texts: [UIView] = [badges, facts, tagline]
+        let lowered = CGAffineTransform(translationX: 0, y: titleDrop)
+        // The text in the rows' move (its spring), as the captions. The
+        // logo on a shorter spring of its own: on the rows' 0.5 s its
+        // movement went on after the fade read as done.
+        let from = title.layer.presentation()?.transform ?? title.layer.transform
+        UIView.performWithoutAnimation { title.transform = shown ? .identity : lowered }
+        if animated, window != nil {
+            let move = CASpringAnimation(perceptualDuration: Self.titleMove, bounce: 0)
+            move.keyPath = "transform"
+            move.fromValue = from
+            move.toValue = title.layer.transform
+            move.duration = move.settlingDuration
+            title.layer.add(move, forKey: "transform")
+        } else {
+            title.layer.removeAnimation(forKey: "transform")
+        }
+        FixedFocusDetails.fade(texts, shown: shown, animated: animated)
     }
 
     // MARK: The trailer
@@ -999,6 +1046,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     /// `FlatControl.rest`, in UIKit.
     private static let logoPlate = UIColor { $0.userInterfaceStyle == .light
         ? UIColor.white.withAlphaComponent(0.32) : UIColor.white.withAlphaComponent(0.13) }
+
+    /// The plates on a landscape card (episode, time left, day) only in
+    /// the focused row (`FixedFocusDetails`).
+    func setDetailsShown(_ shown: Bool, animated: Bool) {
+        state.setPlatesShown(shown, animated: animated)
+    }
 
     /// The name and second line under the card (its row focused).
     func setCaptionShown(_ shown: Bool) {
@@ -1828,6 +1881,17 @@ final class FixedFocusPanelView: UIView {
 /// "Yesterday" top right, readable on any picture (words on the picture
 /// over the bar needed the bar under them); the player's bar
 /// (`Spotlight.stateBarHeight`) alone at the foot, only while in progress.
+/// A card's details (badges, rating, facts; a landscape card's plates)
+/// only while its row has focus, on the captions' timing: set in the rows'
+/// move, they take its spring (tried: in after a beat over 0.2 s, out in
+/// 0.15 s, in Core Animation: the captions' felt better).
+enum FixedFocusDetails {
+    static func fade(_ views: [UIView], shown: Bool, animated: Bool) {
+        let apply = { for view in views { view.alpha = shown ? 1 : 0 } }
+        if animated { apply() } else { UIView.performWithoutAnimation(apply) }
+    }
+}
+
 final class FixedFocusProgressView: UIView {
     private let plates = FixedFocusBadges()
     private let barShadow = UIView()
@@ -1854,6 +1918,15 @@ final class FixedFocusProgressView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The plates only while the row has focus (the bar stays: where you
+    /// are reads at a glance, as the logo).
+    private var platesShown = true
+    func setPlatesShown(_ shown: Bool, animated: Bool) {
+        guard shown != platesShown else { return }
+        platesShown = shown
+        FixedFocusDetails.fade([plates], shown: shown, animated: animated)
+    }
 
     /// A state given as such (Details' episodes): the label and the text,
     /// a bar (in progress) or nothing.
