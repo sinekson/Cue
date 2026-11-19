@@ -184,9 +184,7 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         let focused = isFocused
-        FixedFocusMotion.run(duration: Motion.moveDuration) {
-            self.applyFocus(focused)
-        } completion: { _ in }
+        _ = FixedFocusMotion.focusChange(context) { self.applyFocus(focused) }
     }
 
     /// (No lift: the window stays exactly where the picture is.)
@@ -698,9 +696,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             pressed = false
             return
         }
-        FixedFocusMotion.run(duration: Motion.moveDuration) {
-            self.applyFocus(focused)
-        } completion: { _ in }
+        _ = FixedFocusMotion.focusChange(context) { self.applyFocus(focused) }
     }
 
     /// Focused, grown. Wider cards (a large row's open card, Today's Pick)
@@ -1437,12 +1433,12 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             return
         }
         // On Home's curve and timing, with the row's scroll.
-        FixedFocusMotion.run(duration: Motion.moveDuration) {
+        let animated = FixedFocusMotion.focusChange(context) {
             self.applyFocus(focused)
             self.layoutIfNeeded()
-        } completion: { _ in }
+        }
         // (Its own timing: outside the move's spring.)
-        setOnCardFull(focused, animated: true)
+        setOnCardFull(focused, animated: animated)
     }
 
     /// Select pressed / held: the card sinks a little (back on release, or
@@ -2014,6 +2010,20 @@ enum FixedFocusMotion {
     /// its speed on instead of starting from rest. (Always UIView.animate:
     /// collection views only animate their cells' size changes inside it —
     /// under a property animator they jumped.)
+    /// A card's focus coming or going: on the move's spring, but at once
+    /// under a page's fade when no press moved it (focus leaving as a
+    /// page goes in, coming back on Back): the page's still shows the card
+    /// as it was, and the live one growing or shrinking under it read as
+    /// a grow and a shrink, flickering.
+    static func focusChange(_ context: UIFocusUpdateContext, _ animations: @escaping () -> Void) -> Bool {
+        if PageFade.shared.busy, context.focusHeading.isEmpty {
+            UIView.performWithoutAnimation(animations)
+            return false
+        }
+        run(duration: Motion.moveDuration, animations: animations) { _ in }
+        return true
+    }
+
     static func run(duration: Double,
                     animations: @escaping () -> Void,
                     completion: @escaping (Bool) -> Void) {

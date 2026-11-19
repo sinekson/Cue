@@ -4,8 +4,8 @@ import UIKit
 /// Holding Select on a title's card, anywhere — Home's rows, Search, Library,
 /// folders, See All, Details' More page: Cue's hold menu (`HoldMenu`), with
 /// the same items in the same order everywhere (SwiftUI cards:
-/// `.titleMenu(_:)`): the watched mark, Library, Not for Me, Use as
-/// Background. No Play or Choose Source: Details is the way to play
+/// `.titleMenu(_:)`): Discover (its genre, style and theme filled in), the
+/// watched mark, Library, Not for Me, Use as Background. No Play or Choose Source: Details is the way to play
 /// (Continue Watching's menu puts its own round these). Red only for what
 /// the menu can't undo: none here (Remove from Library turns into Add).
 @MainActor
@@ -18,6 +18,9 @@ final class TitleMenu {
     private weak var watched: WatchedStore?
     private weak var progress: ProgressStore?
     private weak var addonManager: AddonManager?
+    /// Discover filled in from the title, a page on the tab showing
+    /// (`RootView` sets it).
+    var openDiscover: ((MetaItem) -> Void)?
 
     func configure(library: LibraryStore, watched: WatchedStore, progress: ProgressStore,
                    addonManager: AddonManager) {
@@ -30,6 +33,10 @@ final class TitleMenu {
     func entries(for item: MetaItem) -> [Entry] {
         guard let library, let watched else { return [] }
         var entries: [Entry] = []
+        // Where it takes you, as Continue Watching's Go to (first there).
+        if let openDiscover {
+            entries.append(Entry(title: "Discover", icon: "safari") { openDiscover(item) })
+        }
         if item.isSeries {
             if let aired = airedEpisodes(item), !aired.isEmpty, aired.allSatisfy({ isWatched(item.id, $0) }) {
                 entries.append(Entry(title: "Mark Series as Unwatched", icon: "eye.slash") {

@@ -944,7 +944,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   newest, no commas), a name past 760 pt running while focused. Details' genres and tags open it filled in (`Route.genre`,
   `.keyword`: a pushed page on Details' bands, its sentence not kept; a
   genre or tag the lists lack added to that word's choices); the browse
-  page keeps only people, studios and networks. The bar is on the page,
+  page keeps only people, studios and networks. A card's hold menu has
+  Discover (`safari`, every title card but Continue Watching): the same
+  pushed page filled from the title (`DiscoverModel.like`, `Route.discover`):
+  its genre (a specific one over action, adventure, drama, comedy), style
+  (anime, animated, live action), films or shows, a theme where one of its
+  keywords is on the list; the rest open (jumping to the tab and replacing
+  its sentence was talked over: no). A filled-in page (a card's, Details'
+  genre or tag) opens on the first title (the sentence is written: the
+  titles are what you came for; the words out of focus's way until they're
+  in), Back leaving from the first line (below it: up to the first title
+  first), never through the words; the tab opens on the first word. The bar is on the page,
   scrolling away with it (`TopBarFollow` per page); the grid's frame
   starts under the bar (`bleedTop`: SwiftUI took a whole-screen grid for
   the bar's neighbour, Left/Right fell into it). Add to Home (a pill
@@ -968,7 +978,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (the SwiftUI hold menu is gone). One order everywhere, what doesn't
   apply left out (decided 2026-11-19): play (Start Over, only once
   started; Choose Source: Continue Watching and Details' episodes only),
-  Go to Show / Movie (Continue Watching), the watched marks narrow to
+  Go to Show / Movie (Continue Watching), Discover (title cards: below),
+  the watched marks narrow to
   wide (episode, earlier episodes, season, series), Add to / Remove from
   Library, Not for Me, Use as Background, then Remove from Continue
   Watching. A menu never repeats Select (no Play or Resume: Select plays

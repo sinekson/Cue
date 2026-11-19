@@ -118,6 +118,11 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
 
     fileprivate func closed() { isOpen = false }
 
+    /// From a pick to a still screen: the panel faded, the card back at its
+    /// focus size. A page a pick opens goes in then (`PageFade`'s still
+    /// is Back's: taken at once, it kept the menu and the held card).
+    static var settle: Double { max(HoldMenuController.closeDuration, FixedFocusMetrics.heldDuration) }
+
     func setFocused(_ id: UUID, _ request: @escaping () -> HoldMenuRequest?) { swiftUI = (id, request) }
     func clearFocused(_ id: UUID) { if swiftUI?.id == id { swiftUI = nil } }
 

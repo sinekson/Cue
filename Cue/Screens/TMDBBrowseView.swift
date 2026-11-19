@@ -646,6 +646,49 @@ final class DiscoverModel: ObservableObject {
         return DiscoverModel(picks: [.type: type, .theme: own.id], extras: known == nil ? [.theme: [own]] : [:])
     }
 
+    /// What a card's Discover opens: the title's own words — its most
+    /// telling genre (a specific one over action, adventure, drama or
+    /// comedy), its style (anime, animated, live action), films or shows,
+    /// and a theme where one of its keywords is on the list. The rest
+    /// open ("Fantasy anime shows about isekai").
+    static func like(_ traits: TMDBService.TitleTraits, isMovie: Bool) -> [Slot: String] {
+        var picks: [Slot: String] = [.type: isMovie ? "movies" : "shows"]
+        let animated = traits.genres.contains(16)
+        picks[.style] = !animated ? "live" : traits.language == "ja" ? "anime" : "animation"
+        let fantasy = Set(fantasyKeywords.split(separator: "|").compactMap { Int($0) })
+        let names: [String] = traits.genres.compactMap { id in
+            switch id {
+            case 28, 10759: "Action"
+            case 12: "Adventure"
+            case 35: "Comedy"
+            case 80: "Crime"
+            case 99: "Documentary"
+            case 18: "Drama"
+            case 10751: "Family"
+            case 14: "Fantasy"
+            case 36: "History"
+            case 27: "Horror"
+            case 9648: "Mystery"
+            case 10749: "Romance"
+            case 878: "Science Fiction"
+            case 10765: traits.keywords.contains(where: fantasy.contains) ? "Fantasy" : "Science Fiction"
+            case 53: "Thriller"
+            case 10752, 10768: "War"
+            case 37: "Western"
+            default: nil
+            }
+        }
+        let broad: Set<String> = ["Action", "Adventure", "Drama", "Comedy"]
+        if let genre = names.first(where: { !broad.contains($0) }) ?? names.first { picks[.genre] = genre }
+        let keywords = Set(traits.keywords)
+        if let theme = options(.theme).dropFirst().first(where: { option in
+            option.id.dropFirst().split(separator: "|").contains { Int($0).map(keywords.contains) ?? false }
+        }) {
+            picks[.theme] = theme.id
+        }
+        return picks
+    }
+
     /// The sentence as a name, in sentence case: "Well rated fantasy anime
     /// movies about isekai from the 2010s" (the order only when it's
     /// popular or newest; anime's Japanese not said again).
@@ -1261,7 +1304,10 @@ struct DiscoverView: View {
         ZStack(alignment: .topLeading) {
             if opened { TitleBandsBackground(url: backdrop) } else { ATVBackground() }
             FolderPosterGrid(
-                header: AnyView(DiscoverSentence(model: model)),
+                // Filled in: focus starts on the first title (the sentence
+                // is written; the titles are what you came for), the words
+                // out of focus's way until they're in.
+                header: AnyView(DiscoverSentence(model: model, waitsForTitles: opened)),
                 headerHeight: DiscoverSentence.height,
                 items: model.loadedOnce ? model.items : FolderPosterGrid.placeholderItems,
                 subtitles: Dictionary(model.items.compactMap { item in item.year.map { (item.id, $0) } },
@@ -1271,7 +1317,9 @@ struct DiscoverView: View {
                 onDisplay: { item in Task { await model.loadMore(after: item) } },
                 placeholder: !model.loadedOnce,
                 back: gridBack,
-                headerFirst: true,
+                // The tab: the words first, and Back's way up; filled in,
+                // the titles, Back leaving from their first line.
+                headerFirst: !opened,
                 headerTop: headerTop,
                 // The bar is on the page: it goes up with it, as Home's.
                 onScroll: opened ? nil : { TopBarFollow.shared.set(-$0, for: "discover") },
@@ -1306,6 +1354,9 @@ struct DiscoverView: View {
 /// pill (set ones on the selected grey), then the starting points.
 private struct DiscoverSentence: View {
     @ObservedObject var model: DiscoverModel
+    /// Filled in: out of focus's way until the titles are in (they take
+    /// it first). Here, not on the grid's side: its header is made once.
+    var waitsForTitles = false
     @ObservedObject private var pins = DiscoverPins.shared
     /// Each word's place on the screen: its list opens under it.
     @State private var anchors = DiscoverAnchors()
@@ -1373,6 +1424,7 @@ private struct DiscoverSentence: View {
             .focusSection()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .disabled(waitsForTitles && !model.loadedOnce)
         .defaultFocus($focused, .genre)
     }
 

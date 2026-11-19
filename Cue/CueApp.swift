@@ -174,6 +174,7 @@ extension Route {
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
         case .keyword: return "Tag"
+        case .discover: return "Discover"
         }
     }
 
@@ -185,6 +186,7 @@ extension Route {
         case .tmdbCompany(_, let name, _, _): return name
         case .genre(_, let name, _, _): return name
         case .keyword(_, let name, _, _): return name
+        case .discover(let name, _, _): return name
         default: return ""
         }
     }
@@ -209,7 +211,7 @@ extension Route {
     /// source list.
     var isTrailPage: Bool {
         switch self {
-        case .detail, .person, .tmdbCompany, .genre, .keyword: return true
+        case .detail, .person, .tmdbCompany, .genre, .keyword, .discover: return true
         default: return false
         }
     }
@@ -234,6 +236,9 @@ enum Route: Hashable {
     case genre(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
     /// A tag's (TMDB keyword's) titles.
     case keyword(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
+    /// Discover filled in from a title (a card's hold menu): its sentence's
+    /// words by slot, `name` the title's.
+    case discover(name: String, picks: [String: String], backdrop: String? = nil)
 
     /// What a pushed page draws behind itself, shown at the press
     /// (`PageFade.push`).
@@ -241,7 +246,7 @@ enum Route: Hashable {
         switch self {
         case .folder: AnyView(ATVBackground())
         case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
-             .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop):
+             .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop), .discover(_, _, let backdrop):
             AnyView(TitleBandsBackground(url: backdrop))
         default: nil
         }
@@ -389,6 +394,7 @@ struct RootView: View {
                     }))
                 TitleMenu.shared.configure(library: library, watched: watched, progress: progressStore,
                                            addonManager: addonManager)
+                TitleMenu.shared.openDiscover = { discoverLike($0) }
                 TitleRecords.shared.watched = watched
             }
             .task {
@@ -1599,6 +1605,35 @@ struct RootView: View {
             .id(route)
     }
 
+    /// A card's Discover: the title's words (`DiscoverModel.like`; only
+    /// films or shows where TMDB doesn't know it), pushed on the tab
+    /// showing, over its Details where that's up.
+    private func discoverLike(_ item: MetaItem) {
+        let settled = ContinuousClock.now + .seconds(HoldMenu.settle)
+        Task { @MainActor in
+            var picks: [DiscoverModel.Slot: String] = [.type: item.isSeries ? "shows" : "movies"]
+            if let (id, isMovie) = await TMDBService.resolveTMDBID(from: item.id, type: item.type),
+               let traits = await TMDBService.traits(tmdbID: id, isMovie: isMovie) {
+                picks = DiscoverModel.like(traits, isMovie: isMovie)
+            }
+            // Picked from the hold menu: in once it's gone (`HoldMenu.settle`).
+            try? await Task.sleep(until: settled, clock: .continuous)
+            let path: Binding<[Route]>
+            switch AppTab(rawValue: selectedTab) {
+            case .home:
+                path = detailLayers[AppTab.home.rawValue].map { !$0.leaving } == true
+                    ? detailLayerPath(.home) : trail($homePath)
+            case .search: path = trail($searchPath)
+            case .library: path = trail($libraryPath)
+            case .discover: path = trail($discoverPath)
+            default: return
+            }
+            pushPage(Route.discover(name: item.name,
+                                    picks: Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }),
+                                    backdrop: item.background ?? item.poster), path)
+        }
+    }
+
     /// A page (folder, browse page) in: `PageFade`'s crossfade, no slide.
     private func pushPage(_ route: Route, _ path: Binding<[Route]>) {
         PageFade.shared.push(key: route, background: route.pageBackground) { path.wrappedValue.append(route) }
@@ -1673,6 +1708,10 @@ struct RootView: View {
         case .keyword(let id, let name, let isMovie, let backdrop):
             DiscoverView(DiscoverModel.keyword(id: id, name: name, isMovie: isMovie), backdrop: backdrop,
                          onOpenInPlace: openInPlace(path))
+        case .discover(_, let picks, let backdrop):
+            DiscoverView(DiscoverModel(picks: Dictionary(uniqueKeysWithValues: picks.compactMap { key, value in
+                DiscoverModel.Slot(rawValue: key).map { ($0, value) }
+            }), extras: [:]), backdrop: backdrop, onOpenInPlace: openInPlace(path))
         case .tmdbCompany(let id, let name, let network, let backdrop):
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
