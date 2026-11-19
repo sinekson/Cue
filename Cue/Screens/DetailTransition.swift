@@ -208,6 +208,10 @@ final class DetailTransition {
             var moves: [Task<Void, Never>] = []
             let known = DetailPreparer.shared.peek(item.id)?.picture
             self.overlay.backdrop(TitleBands.shared.cached(known))
+            // The colours started at the press, beside the picture (after
+            // it, they came late).
+            let bandsReady = TitleBands.shared.cached(known) != nil
+            if let known, !bandsReady { Task { await TitleBands.shared.image(for: known) } }
             // The page goes with the window's start (going at the press, a
             // picture still loading left the background alone a moment).
             let pageGoes = {
@@ -225,17 +229,25 @@ final class DetailTransition {
                     group.cancelAll()
                 }
             }
-            // The bands drawn late (focus didn't rest on the title): faded in
-            // over the app's while the card waits — before the reveal, so
-            // Details opens on the same.
+            // Not drawn yet: faded in over the app's when they're in (before
+            // the reveal, so Details opens on the same). Never waited on:
+            // a press that hung read clunkier than colour coming late.
+            let bandsIn = (CACurrentMediaTime() - start) * 1000
+            // (In the system log too: Xcode's console on the TV.)
+            let bandsLine = String(format: "details bands: %@, %.0f ms after the press",
+                                   bandsReady && known == url ? "ready" : TitleBands.shared.cached(url) != nil
+                                       ? "drawn at the press" : "late", bandsIn)
+            AppProbe.data(bandsLine)
+            NSLog("[CueBands] %@", bandsLine)
             if let url, TitleBands.shared.cached(url) == nil {
                 Task { @MainActor in
                     if let bands = await TitleBands.shared.image(for: url), self.busy {
                         self.overlay.backdrop(bands, fade: Motion.fadeDuration)
                     }
                 }
-            } else if let url, known != url {
-                self.overlay.backdrop(TitleBands.shared.cached(url), fade: Motion.fadeDuration)
+            } else if let url, !(bandsReady && known == url) {
+                // In before the window starts: the page goes into them.
+                self.overlay.backdrop(TitleBands.shared.cached(url))
             }
             let wait = Self.pictureDelay * k - (CACurrentMediaTime() - start)
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }

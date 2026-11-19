@@ -665,7 +665,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
   bands from its picture, stronger — each colour's saturation 1.8× the picture's (k-means and the blur greyed them: barely noticeable), dimmed 30 % (40 % before), ceiling 0.34; light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
-  the press finds them; without it Details read as Home) (the blurred
+  the press finds them; without it Details read as Home; each picture's
+  colours (`palette`, a few numbers) kept for 300 titles, worked out as
+  its picture is decoded at the screen's size, so the press only
+  renders, on the GPU with one shared context (a per-pixel grain loop on
+  the CPU took seconds in Debug on the TV); started at the press, never
+  waited on, faded in if late (a 0.15 s wait for them felt clunky);
+  each press logs "[CueBands]") (the blurred
   picture and the title's tint behind the rows went before). Down
   scrolls the card away with the rows. (Full screen with the screen-wide
   bottom fade was just before; the strong left fade, `BillboardShade`,
@@ -1009,6 +1015,10 @@ mid-move).
   the scroll's 0.6 s when the rows scroll was tried, back to focus's 0.3).
 - Held Up/Down scrolling faster past a moment's hold, Home and Details
   (talked over 2026-11-17, not built).
+- Preloading, looked at again: prepare more under the launch's
+  curtain, so the first presses (Details, its colours and faces, the
+  stage) find everything ready (felt 2026-11-19: right after launch the
+  first openings still waited a little).
 - Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).

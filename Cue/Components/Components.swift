@@ -479,6 +479,11 @@ final class ImageCache: @unchecked Sendable {
     /// trimmed ahead too, off the main thread, so `RemoteImage` shows it
     /// from its first frame.
     private func trimLogo(_ image: UIImage, _ value: String, _ size: CGFloat?) async -> Bool {
+        // Details' picture: its colours worked out ahead too (`TitleBands`).
+        if let size, await size == PictureSize.screen, let cg = image.cgImage {
+            await TitleBands.shared.prepare(value, from: cg)
+            return true
+        }
         guard let size, await size == PictureSize.logo, LogoFit.cachedTrim(key: value) == nil else { return true }
         _ = await LogoFit.trimmedInBackground(image, key: value)
         return true

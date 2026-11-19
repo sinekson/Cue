@@ -11,6 +11,8 @@ extension View {
 /// grain also keeps the dark gradients from banding on a TV). Drawn once
 /// with Core Image at 1080p.
 enum BandsPicture {
+    /// A picture's main colour and its share of it (`palette`).
+    typealias Colour = (r: Double, g: Double, b: Double, share: Double)
     struct Pool {
         /// sRGB, 0–1.
         let r: CGFloat, g: CGFloat, b: CGFloat
@@ -50,36 +52,29 @@ enum BandsPicture {
     /// `image` read back at 16 bits, then grained going down to 8: each
     /// channel the same random offset (grey grain), from two dice
     /// (triangular — dithers dark gradients without banding on a TV).
+    /// The grain added on the GPU before the picture goes to 8 bits (it
+    /// keeps the dark gradients from banding): two noises summed, a
+    /// triangular ±`grain`/2, the same in each channel. (A per-pixel loop
+    /// on the CPU took seconds in a Debug build on the TV: Details' colours
+    /// came late.)
     static func grained(_ image: CIImage, in rect: CGRect, context: CIContext) -> CGImage? {
-        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
-        let width = Int(rect.width), height = Int(rect.height)
-        var smooth = [Float16](repeating: 0, count: width * height * 4)
-        smooth.withUnsafeMutableBytes {
-            context.render(image, toBitmap: $0.baseAddress!, rowBytes: width * 8,
-                           bounds: rect, format: .RGBAh, colorSpace: srgb)
-        }
-        var pixels = [UInt8](repeating: 255, count: width * height * 4)
-        var seed: UInt32 = 0x9E3779B9
-        let amplitude = Float(Self.grain) * 255 / 2
-        smooth.withUnsafeBufferPointer { src in
-            pixels.withUnsafeMutableBufferPointer { dst in
-                for i in stride(from: 0, to: src.count, by: 4) {
-                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
-                    let dice = Float(seed & 0xFFFF) + Float(seed >> 16)
-                    let offset = (dice / 65535 - 1) * amplitude
-                    for c in 0..<3 {
-                        let v = Float(src[i + c]) * 255 + offset + 0.5
-                        dst[i + c] = UInt8(max(0, min(255, v)))
-                    }
-                }
-            }
-        }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
-        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                       bytesPerRow: width * 4, space: srgb,
-                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        let a = grain / 2
+        let noise = CIFilter(name: "CIRandomGenerator")!.outputImage!.cropped(to: rect)
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: a, y: a, z: 0, w: 0),
+                "inputGVector": CIVector(x: a, y: a, z: 0, w: 0),
+                "inputBVector": CIVector(x: a, y: a, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: -a, y: -a, z: -a, w: 0),
+            ])
+        let out = image.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: noise])
+            .cropped(to: rect)
+        return context.createCGImage(out, from: rect, format: .RGBA8,
+                                     colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
     }
+
+    /// One for every drawing (making one each time cost tens of ms).
+    static let shared = context()
 
     static func context() -> CIContext {
         CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -120,7 +115,7 @@ enum BandsPicture {
     /// the CPU).
     static func render(base: (CGFloat, CGFloat, CGFloat), pools: [Pool]) -> CGImage? {
         let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
-        let context = Self.context()
+        let context = Self.shared
         let w = Self.size.width, h = Self.size.height
         let rect = CGRect(origin: .zero, size: Self.size)
         func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ alpha: CGFloat = 1) -> CIColor {
@@ -693,6 +688,28 @@ final class TitleBands {
         url.flatMap { images[Self.key($0, saturation)] }
     }
 
+    /// Each picture's colours (a few numbers), for many more titles than
+    /// the drawings kept: the press only renders (`image`). Worked out as
+    /// a picture is decoded at the screen's size (`ImageCache.preload`).
+    private var palettes: [String: [BandsPicture.Colour]] = [:]
+    private var paletteOrder: [String] = []
+    private static let palettesKept = 300
+
+    /// The colours worked out ahead from a decoded picture.
+    func prepare(_ url: String, from picture: CGImage) async {
+        guard palettes[url] == nil else { return }
+        let palette = await Task.detached(priority: .utility) {
+            Self.shrunk(picture, to: 160).map { BandsPicture.palette($0) }
+        }.value
+        if let palette { keep(palette, for: url) }
+    }
+
+    private func keep(_ palette: [BandsPicture.Colour], for url: String) {
+        if palettes[url] == nil { paletteOrder.append(url) }
+        palettes[url] = palette
+        while paletteOrder.count > Self.palettesKept { palettes[paletteOrder.removeFirst()] = nil }
+    }
+
     /// Drawn (or being drawn) for `url`; nil if it can't be.
     @discardableResult
     func image(for url: String, saturation: Double? = nil) async -> UIImage? {
@@ -706,17 +723,25 @@ final class TitleBands {
         // download first (it came seconds late at times).
         let decoded = ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: PictureSize.screen,
                                                                         maxPixels: nil))?.cgImage
+        let known = palettes[url]
         let task = Task<UIImage?, Never> {
             var data: Data?
-            if decoded == nil {
+            if known == nil, decoded == nil {
                 guard let remote = URL(string: small),
                       let downloaded = try? await ImageCache.shared.download(remote) else { return nil }
                 data = downloaded
             }
-            return await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            let palette = await Task.detached(priority: .userInitiated) { () -> [BandsPicture.Colour]? in
+                if let known { return known }
                 guard let source = decoded.flatMap({ Self.shrunk($0, to: 160) })
-                        ?? data.flatMap({ ImageCache.decodeDownsampled($0, budget: 160)?.cgImage }),
-                      let bands = BandsPicture.pools(from: BandsPicture.palette(source), dim: Self.dim,
+                        ?? data.flatMap({ ImageCache.decodeDownsampled($0, budget: 160)?.cgImage })
+                else { return nil }
+                return BandsPicture.palette(source)
+            }.value
+            guard let palette else { return nil }
+            if known == nil { self.keep(palette, for: url) }
+            return await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let bands = BandsPicture.pools(from: palette, dim: Self.dim,
                                                      brightest: Self.brightest, light: light, strong: true,
                                                      saturation: saturation,
                                                      seed: seed),
