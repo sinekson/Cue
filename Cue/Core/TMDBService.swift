@@ -1943,7 +1943,7 @@ enum TMDBService {
     static func browse(filter: [String: String], isMovie: Bool, page: Int,
                        language: String = preferredLanguage) async -> BrowsePage {
         var query = filter
-        query["sort_by"] = "vote_count.desc"
+        query["sort_by"] = filter["sort_by"] ?? "vote_count.desc"
         query["page"] = String(page)
         let result = await discoverPage(path: isMovie ? "/discover/movie" : "/discover/tv", with: query,
                                         isMovie: isMovie, language: language)

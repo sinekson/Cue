@@ -273,6 +273,7 @@ struct RootView: View {
     @State private var homePath: [Route] = []
     @State private var searchPath: [Route] = []
     @State private var libraryPath: [Route] = []
+    @State private var discoverPath: [Route] = []
     @State private var moviesPath: [Route] = []
     @State private var seriesPath: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
@@ -871,6 +872,7 @@ struct RootView: View {
         case 0: return homePath.isEmpty && detailLayers[0]?.leaving != false
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
+        case 6: return discoverPath.isEmpty
         case 4: return moviesPath.isEmpty && detailLayers[4]?.leaving != false
         case 5: return seriesPath.isEmpty && detailLayers[5]?.leaving != false
         default: return true   // Settings keeps the rail
@@ -1151,7 +1153,17 @@ struct RootView: View {
             homeLikeStack(.series, path: $seriesPath, active: active)
         case .home:
             homeLikeStack(.home, path: $homePath, active: active)
-        case .discover, .placeholder:
+        case .discover:
+            NavigationStack(path: $discoverPath) {
+                DiscoverView(onOpenInPlace: { item in
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { discoverPath.append(Route.detail(item)) }
+                }, onBack: { focusSidebar(tab.rawValue) })
+                .probeScreen("Discover")
+                .navigationDestination(for: Route.self) { destination(for: $0, path: trail($discoverPath)) }
+            }
+        case .placeholder:
             // Empty for now (`EmptyTabPage`).
             EmptyTabPage(title: tab.label) { focusSidebar(tab.rawValue) }
         }

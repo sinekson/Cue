@@ -133,7 +133,7 @@ private struct DropdownTrigger: View {
 }
 
 /// The full-screen option list. Initial focus lands on the current selection.
-private struct DropdownPicker: View {
+struct DropdownPicker: View {
     let title: String
     let selection: String
     let options: [CueDropdownOption]
@@ -147,47 +147,18 @@ private struct DropdownPicker: View {
     /// separated by, so nothing moves — the space is just painted now.
     private static let headerFade = CueSpacing.xl
 
-    /// The title, with the stage painted solid behind it and fading out
-    /// underneath.
-    ///
-    /// The list below is `scrollClipDisabled` — it has to be, or a focused
-    /// row's ring and lift are cut off at the scroll view's edges — so its
-    /// rows draw right out of the top of the list and across the title. They
-    /// were doing it in front, and an option row is a 50%-opaque card, so the
-    /// title stayed legible straight through the row riding over it. `zIndex`
-    /// puts this in front instead, and the solid block gives the rows
-    /// something to disappear behind rather than merely covering them.
+    /// The title on the page, in its ink.
     private var header: some View {
         Text(title)
             .font(.system(size: 40, weight: .bold))
-            .foregroundStyle(CuePalette.textPrimary)
+            .foregroundStyle(CueInk.primary)
             .frame(maxWidth: .infinity)
             .padding(.bottom, Self.headerFade)
-            .background(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    // Up past the top of the screen, not merely behind the
-                    // title: the list overflows the WHOLE way up, so a block
-                    // that stopped at the title's own line just left the rows
-                    // above it on show. A background never affects the layout
-                    // it is attached to, so the height only has to be "more
-                    // than the title's distance from the top edge".
-                    CuePalette.background
-                        .frame(height: 1200)
-                    LinearGradient(
-                        colors: [CuePalette.background, CuePalette.background.opacity(0)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(height: Self.headerFade)
-                }
-            }
-            // Siblings composite in order, so the list — declared after this —
-            // would otherwise always win.
-            .zIndex(1)
     }
 
     var body: some View {
         ZStack {
-            CuePalette.background.ignoresSafeArea()
+            ATVBackground().ignoresSafeArea()
             // `spacing: 0`: the gap that used to be here is now the header's
             // own bottom padding, which is what the fade is drawn over.
             VStack(spacing: 0) {
@@ -205,10 +176,9 @@ private struct DropdownPicker: View {
                     }
                     // Room for the focus ring + scale so rows aren't clipped
                     // at the scroll view's edges.
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 16)
                 }
-                .scrollClipDisabled()
                 .frame(maxWidth: 800, maxHeight: 760)
             }
             .padding(CueSpacing.huge)
@@ -224,15 +194,16 @@ private struct DropdownOptionRow: View {
     let selected: Bool
 
     var body: some View {
+        let ink = isFocused ? FlatControl.contentOnFocus : FlatControl.content
         HStack {
             Text(label)
                 .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(CuePalette.textPrimary)
+                .foregroundStyle(ink)
             Spacer()
             if selected {
                 Image(systemName: "checkmark")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(CuePalette.secondary)
+                    .foregroundStyle(ink)
             }
         }
         .padding(.horizontal, CueSpacing.lg)
@@ -240,13 +211,9 @@ private struct DropdownOptionRow: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .fill(isFocused ? CuePalette.focusBackground : CuePalette.backgroundCard.opacity(0.5))
+                .fill(isFocused ? FlatControl.focus : selected ? FlatControl.selected : FlatControl.rest)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: CueRadius.md, style: .continuous)
-                .strokeBorder(isFocused ? CuePalette.focusRing : (selected ? CuePalette.secondary.opacity(0.5) : .clear),
-                              lineWidth: isFocused ? 4 : 2)
-        )
-        .focusLift(CueFocus.row, isFocused)
+        .scaleEffect(isFocused ? 1.03 : 1)
+        .animation(FlatControl.focusChange, value: isFocused)
     }
 }

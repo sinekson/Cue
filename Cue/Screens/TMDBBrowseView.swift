@@ -217,7 +217,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
 
     /// TMDB numbers a genre differently for movies and for shows, and a few
     /// are one genre on one side and two on the other.
-    private static func genreID(id: Int, name: String, from: Bool, to: Bool) -> Int? {
+    static func genreID(id: Int, name: String, from: Bool, to: Bool) -> Int? {
         if from == to { return id }
         let aliases: [String: [String]] = [
             "Action": ["Action & Adventure"], "Adventure": ["Action & Adventure"],
@@ -599,5 +599,424 @@ private struct BrandLogo: UIViewRepresentable {
                   !FixedFocusDestinationCell.boxed(image), !FixedFocusDestinationCell.colourful(image) else { return }
             view.image = image.withRenderingMode(.alwaysTemplate)
         })
+    }
+}
+
+// MARK: - Discover (rough prototype)
+
+/// Discover: one sentence of words to change ("Show me fantasy anime movies
+/// about anything…"), TMDB's titles under it. A prototype, to see the idea
+/// in action before it's made properly.
+@MainActor
+final class DiscoverModel: ObservableObject {
+    enum Slot: String, CaseIterable, Identifiable {
+        case genre, style, type, theme, origin, era, rating, order, watched
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .genre: "Genre"
+            case .style: "Style"
+            case .type: "Movies or Shows"
+            case .theme: "Theme"
+            case .origin: "Language"
+            case .era: "Year"
+            case .rating: "Rating"
+            case .order: "Order"
+            case .watched: "Watched"
+            }
+        }
+    }
+
+    /// One choice in a slot: its word in the sentence, its name in the list,
+    /// what it asks TMDB (films' and shows' query, `isMovie`); false: this
+    /// side has nothing for it.
+    struct Option {
+        let id: String
+        let word: String
+        var name: String? = nil
+        var apply: (inout [String: String], Bool) -> Bool = { _, _ in true }
+    }
+
+    @Published private(set) var picks: [Slot: String] = [:]
+    @Published private(set) var items: [MetaItem] = []
+    @Published private(set) var total = 0
+    @Published private(set) var loadedOnce = false
+    @Published private(set) var isLoading = false
+
+    private var page = 1
+    private var hasMore = false
+    private var isLoadingMore = false
+    private var generation = 0
+    private var started = false
+    var hideWatched: (MetaItem) -> Bool = { _ in false }
+
+    var isMovie: Bool { pick(.type) != "shows" }
+
+    func pick(_ slot: Slot) -> String { picks[slot] ?? Self.options(slot)[0].id }
+    func option(_ slot: Slot) -> Option {
+        let id = pick(slot)
+        return Self.options(slot).first { $0.id == id } ?? Self.options(slot)[0]
+    }
+    func isSet(_ slot: Slot) -> Bool { pick(slot) != Self.options(slot)[0].id }
+
+    func set(_ slot: Slot, _ id: String) {
+        guard pick(slot) != id else { return }
+        picks[slot] = id
+        Task { await reload() }
+    }
+
+    func apply(preset: [Slot: String]) {
+        picks = preset
+        Task { await reload() }
+    }
+
+    func start() async {
+        guard !started else { return }
+        started = true
+        await reload()
+    }
+
+    private func reload() async {
+        generation += 1
+        let mine = generation
+        isLoading = true
+        let result = await fetch(page: 1)
+        guard mine == generation else { return }
+        await FixedFocusImages.prefetch(result.items.prefix(12).map {
+            (url: $0.poster ?? $0.background, maxDimension: PictureSize.poster)
+        }, within: .milliseconds(700))
+        guard mine == generation else { return }
+        page = 1
+        items = result.items
+        total = result.total
+        hasMore = result.hasMore
+        isLoading = false
+        loadedOnce = true
+    }
+
+    func loadMore(after item: MetaItem) async {
+        guard hasMore, !isLoadingMore, let index = items.firstIndex(where: { $0.id == item.id }),
+              index >= items.count - 10 else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        let mine = generation
+        let result = await fetch(page: page + 1)
+        guard mine == generation else { return }
+        page += 1
+        hasMore = result.hasMore
+        let known = Set(items.map(\.id))
+        items += result.items.filter { !known.contains($0.id) }
+    }
+
+    private func fetch(page: Int) async -> TMDBService.BrowsePage {
+        let isMovie = isMovie
+        var query: [String: String] = [:]
+        // Order first: a rating's vote floor may raise its own.
+        for slot in [Slot.order] + Slot.allCases.filter({ $0 != .order }) {
+            guard option(slot).apply(&query, isMovie) else {
+                return TMDBService.BrowsePage(items: [], total: 0, hasMore: false)
+            }
+        }
+        // "16,14": every genre asked (Style's Animation and the Genre slot).
+        if let genres = query["with_genres"] {
+            query["with_genres"] = genres.split(separator: ",").map(String.init).uniqued().joined(separator: ",")
+        }
+        let result = await TMDBService.browse(filter: query, isMovie: isMovie, page: page)
+        guard pick(.watched) == "hidden" else { return result }
+        return TMDBService.BrowsePage(items: result.items.filter { !hideWatched($0) },
+                                      total: result.total, hasMore: result.hasMore)
+    }
+
+    // MARK: The choices
+
+    private static func addGenre(_ id: Int, _ query: inout [String: String]) {
+        query["with_genres"] = [query["with_genres"], String(id)].compactMap { $0 }.joined(separator: ",")
+    }
+
+    private static func genre(_ name: String, _ word: String) -> Option {
+        Option(id: name, word: word, name: name) { query, isMovie in
+            let id: Int
+            if let own = TMDBService.genre(named: name, isMovie: isMovie) {
+                id = own.id
+            } else if let other = TMDBService.genre(named: name, isMovie: !isMovie),
+                      let mapped = TMDBBrowseViewModel.genreID(id: other.id, name: name, from: !isMovie, to: isMovie) {
+                id = mapped
+            } else {
+                return false
+            }
+            addGenre(id, &query)
+            return true
+        }
+    }
+
+    private static func keyword(_ id: String, _ word: String, _ name: String) -> Option {
+        Option(id: "k\(id)", word: word, name: name) { query, _ in
+            query["with_keywords"] = id
+            return true
+        }
+    }
+
+    private static func language(_ code: String, _ word: String) -> Option {
+        Option(id: code, word: word) { query, _ in
+            if query["with_original_language"] == nil { query["with_original_language"] = code }
+            return true
+        }
+    }
+
+    private static func years(_ id: String, _ word: String, _ from: Int?, _ to: Int?) -> Option {
+        Option(id: id, word: word) { query, isMovie in
+            let key = isMovie ? "primary_release_date" : "first_air_date"
+            if let from { query["\(key).gte"] = "\(from)-01-01" }
+            if let to { query["\(key).lte"] = "\(to)-12-31" }
+            return true
+        }
+    }
+
+    private static func floor(_ votes: Int, _ query: inout [String: String]) {
+        query["vote_count.gte"] = String(max(votes, Int(query["vote_count.gte"] ?? "0") ?? 0))
+    }
+
+    static func options(_ slot: Slot) -> [Option] {
+        let year = Calendar.current.component(.year, from: Date())
+        switch slot {
+        case .type:
+            return [Option(id: "movies", word: "movies", name: "Movies"),
+                    Option(id: "shows", word: "shows", name: "Shows")]
+        case .style:
+            return [
+                Option(id: "any", word: "any style", name: "Any Style"),
+                Option(id: "live", word: "live-action", name: "Live Action") { query, _ in
+                    query["without_genres"] = "16"; return true
+                },
+                Option(id: "animation", word: "animated", name: "Animation") { query, _ in
+                    addGenre(16, &query); return true
+                },
+                Option(id: "anime", word: "anime", name: "Anime") { query, _ in
+                    addGenre(16, &query); query["with_original_language"] = "ja"; return true
+                },
+            ]
+        case .genre:
+            return [Option(id: "any", word: "any genre", name: "Any Genre")] + [
+                ("Action", "action"), ("Adventure", "adventure"), ("Comedy", "comedy"), ("Crime", "crime"),
+                ("Documentary", "documentary"), ("Drama", "drama"), ("Family", "family"),
+                ("Fantasy", "fantasy"), ("History", "historical"), ("Horror", "horror"),
+                ("Mystery", "mystery"), ("Romance", "romance"), ("Science Fiction", "sci-fi"),
+                ("Thriller", "thriller"), ("War", "war"), ("Western", "western"),
+            ].map { genre($0.0, $0.1) }
+        case .theme:
+            return [Option(id: "any", word: "anything", name: "Anything")] + [
+                ("237451", "isekai", "Isekai"), ("10046", "mecha", "Mecha"), ("9914", "slice of life", "Slice of Life"),
+                ("291483", "gentle things", "Iyashikei"), ("4379", "time travel", "Time Travel"),
+                ("10854", "time loops", "Time Loops"), ("33465|336874", "parallel worlds", "Parallel Worlds"),
+                ("9882", "space", "Set in Space"), ("4565", "dystopias", "Dystopias"),
+                ("4458|359337|12332", "the apocalypse", "After the Apocalypse"), ("12190", "cyberpunk", "Cyberpunk"),
+                ("2343", "magic", "Magic"), ("12554", "dragons", "Dragons"), ("616", "witches", "Witches"),
+                ("2035", "myths & legends", "Myths & Legends"), ("9715", "superheroes", "Superheroes"),
+                ("12377", "zombies", "Zombies"), ("3133", "vampires", "Vampires"), ("162846", "ghosts", "Ghosts"),
+                ("10051", "heists", "Heists"), ("470|383851", "spies", "Spies"), ("10714", "serial killers", "Serial Killers"),
+                ("9748", "revenge", "Revenge"), ("1462", "samurai", "Samurai"), ("779", "martial arts", "Martial Arts"),
+                ("10683", "growing up", "Coming of Age"), ("10349", "survival", "Survival"),
+                ("9672", "true stories", "Based on a True Story"), ("818", "books", "Based on a Book"),
+                ("326438", "twist endings", "Twist Endings"),
+            ].map { keyword($0.0, $0.1, $0.2) }
+        case .origin:
+            return [Option(id: "any", word: "any language", name: "Any Language")] + [
+                ("en", "English"), ("ja", "Japanese"), ("ko", "Korean"), ("zh", "Chinese"), ("hi", "Hindi"),
+                ("fr", "French"), ("es", "Spanish"), ("de", "German"), ("it", "Italian"), ("tr", "Turkish"),
+                ("sv|da|no", "Scandinavian"),
+            ].map { language($0.0, $0.1) }
+        case .era:
+            return [
+                years("any", "any year", nil, nil),
+                years("now", "this year", year, nil),
+                years("recent", "the last 5 years", year - 4, nil),
+                years("2020s", "the 2020s", 2020, 2029), years("2010s", "the 2010s", 2010, 2019),
+                years("2000s", "the 2000s", 2000, 2009), years("1990s", "the '90s", 1990, 1999),
+                years("1980s", "the '80s", 1980, 1989), years("1970s", "the '70s", 1970, 1979),
+                years("older", "before 1970", nil, 1969),
+            ]
+        case .rating:
+            return [
+                Option(id: "any", word: "any rating", name: "Any Rating"),
+                Option(id: "good", word: "well rated", name: "Well Rated (7+)") { query, _ in
+                    query["vote_average.gte"] = "7"; floor(100, &query); return true
+                },
+                Option(id: "acclaimed", word: "acclaimed", name: "Acclaimed (8+)") { query, _ in
+                    query["vote_average.gte"] = "8"; floor(500, &query); return true
+                },
+                Option(id: "gems", word: "hidden gems", name: "Hidden Gems") { query, _ in
+                    query["vote_average.gte"] = "7.3"; floor(50, &query); query["vote_count.lte"] = "1500"; return true
+                },
+            ]
+        case .order:
+            return [
+                Option(id: "known", word: "best known first", name: "Best Known") { query, _ in
+                    query["sort_by"] = "vote_count.desc"; return true
+                },
+                Option(id: "popular", word: "popular now first", name: "Popular Now") { query, _ in
+                    query["sort_by"] = "popularity.desc"; floor(20, &query); return true
+                },
+                Option(id: "top", word: "top rated first", name: "Top Rated") { query, _ in
+                    query["sort_by"] = "vote_average.desc"; floor(300, &query); return true
+                },
+                Option(id: "new", word: "newest first", name: "Newest") { query, isMovie in
+                    let key = isMovie ? "primary_release_date" : "first_air_date"
+                    query["sort_by"] = "\(key).desc"
+                    if query["\(key).lte"] == nil { query["\(key).lte"] = Date().formatted(.iso8601.year().month().day()) }
+                    floor(10, &query)
+                    return true
+                },
+            ]
+        case .watched:
+            return [Option(id: "shown", word: "watched included", name: "Include Watched"),
+                    Option(id: "hidden", word: "watched hidden", name: "Hide Watched")]
+        }
+    }
+
+    /// Starting points: the sentence filled in.
+    static let presets: [(name: String, picks: [Slot: String])] = [
+        ("Fantasy anime films", [.type: "movies", .style: "anime", .genre: "Fantasy"]),
+        ("Isekai", [.type: "shows", .style: "anime", .theme: "k237451"]),
+        ("Korean thrillers", [.type: "movies", .genre: "Thriller", .origin: "ko"]),
+        ("'80s classics", [.type: "movies", .era: "1980s", .rating: "good"]),
+        ("Hidden gems", [.type: "movies", .rating: "gems", .order: "top"]),
+        ("New sci-fi shows", [.type: "shows", .genre: "Science Fiction", .era: "recent", .order: "popular"]),
+    ]
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] { var seen = Set<Element>(); return filter { seen.insert($0).inserted } }
+}
+
+struct DiscoverView: View {
+    @StateObject private var model = DiscoverModel()
+    @EnvironmentObject private var watched: WatchedStore
+    @State private var gridBack = GridBack()
+    @State private var open: DiscoverModel.Slot?
+    let onOpenInPlace: (MetaItem) -> Void
+    let onBack: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ATVBackground()
+            FolderPosterGrid(
+                header: AnyView(DiscoverSentence(model: model, open: { open = $0 })),
+                headerHeight: DiscoverSentence.height,
+                items: model.loadedOnce ? model.items : FolderPosterGrid.placeholderItems,
+                subtitles: Dictionary(model.items.compactMap { item in item.year.map { (item.id, $0) } },
+                                      uniquingKeysWith: { first, _ in first }),
+                onSelect: { _ in },
+                onOpenDetails: { item in DetailTransition.shared.open(item) { onOpenInPlace(item) } },
+                onDisplay: { item in Task { await model.loadMore(after: item) } },
+                placeholder: !model.loadedOnce,
+                back: gridBack,
+                headerFirst: true)
+                .ignoresSafeArea()
+            if model.loadedOnce, !model.isLoading, model.items.isEmpty {
+                Text("Nothing matches all of that. Try changing a word.")
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(CueInk.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, DiscoverSentence.height + 120)
+            }
+        }
+        .task {
+            model.hideWatched = { [weak watched] item in
+                guard let watched else { return false }
+                return watched.items.values.contains { $0.contentID == item.id }
+            }
+            await model.start()
+        }
+        .onExitCommand { if !gridBack.handle() { onBack() } }
+        .fullScreenCover(item: $open) { slot in
+            let options = DiscoverModel.options(slot)
+            DropdownPicker(title: slot.title, selection: model.pick(slot),
+                           options: options.map { CueDropdownOption($0.id, $0.name ?? $0.word.capitalized) },
+                           onSelect: { model.set(slot, $0); open = nil },
+                           onCancel: { open = nil })
+        }
+    }
+}
+
+/// The sentence: plain words joining the slots' words, each slot a flat
+/// pill (set ones on the selected grey), then the starting points.
+private struct DiscoverSentence: View {
+    @ObservedObject var model: DiscoverModel
+    let open: (DiscoverModel.Slot) -> Void
+
+    static let top: CGFloat = GlassSidebar.topBarClearance + 70
+    static let line: CGFloat = 72
+    static let height: CGFloat = top + line * 3 + 24 + 40
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            line([.word("Show me"), .slot(.genre), .slot(.style), .slot(.type), .word("about"), .slot(.theme)])
+            line([.word("in"), .slot(.origin), .word("from"), .slot(.era), .word("·"), .slot(.rating),
+                  .word("·"), .slot(.order), .word("·"), .slot(.watched)])
+            HStack(spacing: 14) {
+                Text(count)
+                    .font(.system(size: 24))
+                    .foregroundStyle(CueInk.tertiary)
+                    .frame(width: 220, alignment: .leading)
+                ForEach(DiscoverModel.presets, id: \.name) { preset in
+                    Button { model.apply(preset: preset.picks) } label: {
+                        FlatChip(label: preset.name)
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                }
+            }
+            .frame(height: Self.line)
+            .padding(.top, 24)
+            .focusSection()
+        }
+        .padding(.top, Self.top)
+        .padding(.leading, FixedFocusMetrics.titleInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var count: String {
+        guard model.loadedOnce else { return " " }
+        if model.isLoading { return "Looking…" }
+        return "\(model.total.formatted(.number)) \(model.isMovie ? "movies" : "shows")"
+    }
+
+    enum Part: Hashable { case word(String), slot(DiscoverModel.Slot) }
+
+    private func line(_ parts: [Part]) -> some View {
+        HStack(spacing: 12) {
+            ForEach(parts, id: \.self) { part in
+                switch part {
+                case let .word(text):
+                    Text(text)
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(CueInk.secondary)
+                case let .slot(slot):
+                    Button { open(slot) } label: {
+                        SentenceWord(text: model.option(slot).word, set: model.isSet(slot))
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                }
+            }
+        }
+        .frame(height: Self.line)
+        .focusSection()
+    }
+}
+
+private struct SentenceWord: View {
+    @Environment(\.isFocused) private var isFocused
+    let text: String
+    let set: Bool
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 34, weight: set ? .semibold : .regular))
+            .lineLimit(1)
+            .padding(.horizontal, 20)
+            .frame(height: 58)
+            .foregroundStyle(isFocused ? FlatControl.contentOnFocus : set ? CueInk.primary : CueInk.tertiary)
+            .background(Capsule().fill(isFocused ? FlatControl.focus : set ? FlatControl.selected : FlatControl.rest))
+            .scaleEffect(isFocused ? 1.05 : 1)
+            .animation(FlatControl.focusChange, value: isFocused)
     }
 }
