@@ -3942,8 +3942,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         guard title.text != text else { return }
         UIView.transition(with: title, duration: Motion.fadeDuration,
                           options: [.transitionCrossDissolve, .allowUserInteraction],
-                          animations: { self.title.text = text })
+                          animations: { self.setTitle(text) })
         setNeedsLayout()
+    }
+
+    /// The row's name; a Discover sentence on Home has the Discover
+    /// compass before it, in the name's ink (no colour).
+    private func setTitle(_ text: String?) {
+        guard let text, row?.id.hasPrefix(DiscoverPins.rowPrefix) == true, let font = title.font else {
+            title.text = text
+            return
+        }
+        let symbol = UIImage(systemName: "safari.fill",
+                             withConfiguration: UIImage.SymbolConfiguration(font: font.withSize(font.pointSize * 0.85)))?
+            .withTintColor(title.textColor, renderingMode: .alwaysOriginal)
+        let attachment = NSTextAttachment()
+        attachment.image = symbol
+        if let size = symbol?.size {
+            attachment.bounds = CGRect(x: 0, y: (font.capHeight - size.height) / 2, width: size.width, height: size.height)
+        }
+        let line = NSMutableAttributedString(attachment: attachment)
+        line.append(NSAttributedString(string: "  " + text))
+        title.attributedText = line
     }
 
     func showProgress() {
@@ -3959,7 +3979,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {
         self.rowIndex = rowIndex
         self.controller = controller
-        title.text = row?.title
+        setTitle(row?.title)
         title.isHidden = isFeatured
         titleBar.isHidden = row?.id.hasPrefix("placeholder-") != true
         setNeedsLayout()

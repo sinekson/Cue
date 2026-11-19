@@ -936,9 +936,23 @@ struct HomeView: View {
         var rows = featured
         if let continueRow { rows.append(continueRow) }
         rows += libraryRow
-        rows += pins.rows
-        rows += spotlightRows
+        rows += Self.placing(pins.rows, in: spotlightRows)
         return withoutWatched(rows)
+    }
+
+    /// Discover's pins in Cue's own rows: large-row slots 2–4 (the first
+    /// stays Because You Watched), the catalogue's large rows moving down,
+    /// the slots where they were, so large rows still take turns with the
+    /// fixed ones. With the add-ons' rows (no slots): first.
+    private static func placing(_ pinned: [HomeRow], in rows: [HomeRow]) -> [HomeRow] {
+        guard !pinned.isEmpty else { return rows }
+        let slots = rows.indices.filter { rows[$0].tabs != nil && rows[$0].shape == .poster }
+        guard !slots.isEmpty else { return pinned + rows }
+        var large = slots.map { rows[$0] }
+        large.insert(contentsOf: pinned, at: 1)
+        var out = rows
+        for (slot, row) in zip(slots, large) { out[slot] = row }
+        return out
     }
 
     /// Hide watched titles: the catalog rows without watched films and

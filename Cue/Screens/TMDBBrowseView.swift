@@ -665,12 +665,17 @@ final class DiscoverModel: ObservableObject {
     /// Only a sentence of the lists' own words can go on Home (a genre or
     /// tag added from Details isn't kept).
     var pinnable: Bool { extras.isEmpty }
-    var pinned: Bool { DiscoverPins.shared.contains(picks) }
+    var pinned: Bool { DiscoverPins.shared.pin(for: picks) != nil }
 
-    func togglePin() {
-        DiscoverPins.shared.toggle(picks, title: title)
-        objectWillChange.send()
+    /// On Home, in place of `replacing` (a pin's id) when three are there.
+    func pin(replacing: String? = nil) {
+        DiscoverPins.shared.add(picks, title: title, replacing: replacing)
     }
+
+    func picksMatch(_ pin: DiscoverPins.Pin) -> Bool { DiscoverPins.Pin.id(of: picks) == pin.id }
+
+    /// A pin's sentence, loaded.
+    func load(_ pin: DiscoverPins.Pin) { apply(preset: pin.slots) }
 
     /// The first titles, for a Home row.
     static func titles(for picks: [Slot: String]) async -> [MetaItem] {
@@ -1174,10 +1179,13 @@ struct DiscoverView: View {
 /// pill (set ones on the selected grey), then the starting points.
 private struct DiscoverSentence: View {
     @ObservedObject var model: DiscoverModel
+    @ObservedObject private var pins = DiscoverPins.shared
     /// Each word's place on the screen: its list opens under it.
     @State private var anchors = DiscoverAnchors()
     /// Coming in: the sentence's first word.
     @FocusState private var focused: DiscoverModel.Slot?
+    /// The pin with focus (its hold menu).
+    @FocusState private var focusedPin: String?
 
     /// From the screen's top to the first line (the grid's room above
     /// the header).
@@ -1197,13 +1205,25 @@ private struct DiscoverSentence: View {
                     .font(.system(size: 24))
                     .foregroundStyle(CueInk.tertiary)
                     .frame(width: 220, alignment: .leading)
-                if model.pinnable {
-                    Button { model.togglePin() } label: {
-                        PinChip(pinned: model.pinned)
+                // Yours on Home first: Select loads one, held it can go.
+                ForEach(pins.pins, id: \.id) { pin in
+                    Button { model.load(pin) } label: {
+                        PinnedChip(pin: pin, current: model.picksMatch(pin))
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                    .focused($focusedPin, equals: pin.id)
+                    .holdMenu(focused: focusedPin == pin.id) {
+                        [MenuEntry(title: "Remove from Home", icon: "minus.circle") { pins.remove(pin.id) }]
+                    }
+                }
+                if model.pinnable, !model.pinned {
+                    Button { addToHome() } label: {
+                        FlatChip(label: "＋ Add to Home")
+                            .background { AnchorView(anchors: anchors, key: "add") }
                     }
                     .buttonStyle(PlainCardButtonStyle())
                 }
-                ForEach(model.presets, id: \.name) { preset in
+                ForEach(model.presets.prefix(max(2, 5 - pins.pins.count)), id: \.name) { preset in
                     Button { model.apply(preset: preset.picks) } label: {
                         FlatChip(label: preset.name)
                     }
@@ -1226,10 +1246,24 @@ private struct DiscoverSentence: View {
         return "\(model.total.formatted(.number)) \(model.countLabel)"
     }
 
+    /// On Home; with three there, which one it takes the place of, in the
+    /// menus' glass panel under the pill.
+    private func addToHome() {
+        guard pins.pins.count >= DiscoverPins.limit else { return model.pin() }
+        guard let view = anchors.views["add"], view.window != nil else { return }
+        let entries = pins.pins.map { pin in
+            MenuEntry(title: "Replace \u{201C}\(pin.short)\u{201D}", icon: "arrow.triangle.2.circlepath") {
+                model.pin(replacing: pin.id)
+            }
+        }
+        HoldMenu.shared.open(HoldMenuRequest(entries: entries, anchor: view.convert(view.bounds, to: nil),
+                                             below: true))
+    }
+
     /// The word's choices in the menus' glass panel, under it; a pick
     /// changes the sentence and the titles under it, the page staying.
     private func open(_ slot: DiscoverModel.Slot) {
-        guard let view = anchors.views[slot], view.window != nil else { return }
+        guard let view = anchors.views[slot.rawValue], view.window != nil else { return }
         let current = model.pick(slot)
         let entries = model.choices(slot).map { option in
             MenuEntry(title: option.name ?? option.word.capitalized, icon: "", checked: option.id == current) {
@@ -1253,7 +1287,7 @@ private struct DiscoverSentence: View {
                 case let .slot(slot):
                     Button { open(slot) } label: {
                         SentenceWord(text: model.option(slot).word, set: model.isSet(slot))
-                            .background { AnchorView(anchors: anchors, slot: slot) }
+                            .background { AnchorView(anchors: anchors, key: slot.rawValue) }
                     }
                     .buttonStyle(PlainCardButtonStyle())
                     .focused($focused, equals: slot)
@@ -1287,12 +1321,12 @@ private struct SentenceWord: View {
 /// pressed, in window points).
 @MainActor
 private final class DiscoverAnchors {
-    var views: [DiscoverModel.Slot: UIView] = [:]
+    var views: [String: UIView] = [:]
 }
 
 private struct AnchorView: UIViewRepresentable {
     let anchors: DiscoverAnchors
-    let slot: DiscoverModel.Slot
+    let key: String
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -1300,42 +1334,89 @@ private struct AnchorView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: UIView, context: Context) { anchors.views[slot] = view }
+    func updateUIView(_ view: UIView, context: Context) { anchors.views[key] = view }
 }
 
-/// "Add to Home" / "On Home": the sentence as a Home row.
-private struct PinChip: View {
+/// A sentence on Home, in Discover's line: a check and the name's first
+/// part (up to its first comma), the rest running while focused.
+private struct PinnedChip: View {
     @Environment(\.isFocused) private var isFocused
-    let pinned: Bool
+    let pin: DiscoverPins.Pin
+    /// The sentence showing now.
+    let current: Bool
 
     var body: some View {
+        let ink = isFocused ? FlatControl.contentOnFocus : FlatControl.content
         HStack(spacing: 10) {
-            Image(systemName: pinned ? "checkmark" : "plus")
+            Image(systemName: "checkmark")
                 .font(.system(size: 22, weight: .semibold))
-            Text(pinned ? "On Home" : "Add to Home")
+            Text(pin.short)
                 .font(.system(size: 24, weight: .medium))
+                .lineLimit(1)
+                .opacity(isFocused && pin.short != pin.title ? 0 : 1)
+                .overlay {
+                    if isFocused, pin.short != pin.title {
+                        RunningText(text: pin.title, color: UIColor(ink))
+                    }
+                }
         }
-        .lineLimit(1)
         .padding(.horizontal, 22)
         .frame(height: 52)
-        .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
-        .background(Capsule().fill(isFocused ? FlatControl.focus : pinned ? FlatControl.selected : FlatControl.rest))
+        .foregroundStyle(ink)
+        .background(Capsule().fill(isFocused ? FlatControl.focus : current ? FlatControl.selected : FlatControl.rest))
         .scaleEffect(isFocused ? 1.06 : 1)
         .animation(FlatControl.focusChange, value: isFocused)
     }
 }
 
-/// Discover's sentences put on Home (per profile): each a row of plain
-/// posters after Saved for Later, named after its sentence, its titles
-/// fetched at launch and when one is added.
+/// The player's running line (`RunningLine`) in SwiftUI: too long for its
+/// place, it runs after a short rest.
+private struct RunningText: UIViewRepresentable {
+    let text: String
+    let color: UIColor
+
+    func makeUIView(context: Context) -> RunningLine {
+        let line = RunningLine(font: .systemFont(ofSize: 24, weight: .medium), rest: 0.8)
+        line.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return line
+    }
+
+    func updateUIView(_ line: RunningLine, context: Context) {
+        line.text = text
+        line.color = color
+        line.running = true
+    }
+}
+
+/// Discover's sentences put on Home (per profile, three at most): each a
+/// large row in Home's large-row slots 2–4 (after Because You Watched),
+/// its name in title case after the Discover compass; with the add-ons'
+/// rows, after Saved for Later. Their titles are fetched at launch and when
+/// one is added.
 @MainActor
 final class DiscoverPins: ObservableObject {
     static let shared = DiscoverPins()
+    static let limit = 3
+    static let rowPrefix = "discover.pin."
 
     struct Pin: Codable, Equatable {
         let picks: [String: String]
+        /// The sentence, in its own case ("Fantasy anime movies, in Japanese").
         let title: String
-        var id: String { picks.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&") }
+
+        var id: String { Self.id(of: slots) }
+        static func id(of picks: [DiscoverModel.Slot: String]) -> String {
+            picks.sorted { $0.key.rawValue < $1.key.rawValue }.map { "\($0.key.rawValue)=\($0.value)" }
+                .joined(separator: "&")
+        }
+        var slots: [DiscoverModel.Slot: String] {
+            Dictionary(uniqueKeysWithValues: picks.compactMap { key, value in
+                DiscoverModel.Slot(rawValue: key).map { ($0, value) }
+            })
+        }
+        /// Up to its first comma: the pill's name.
+        var short: String { title.components(separatedBy: ", ").first ?? title }
     }
 
     @Published private(set) var pins: [Pin] = []
@@ -1360,25 +1441,34 @@ final class DiscoverPins: ObservableObject {
         UserDefaults.standard.set(try? JSONEncoder().encode(pins), forKey: key)
     }
 
-    private static func raw(_ picks: [DiscoverModel.Slot: String]) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) })
+    func pin(for picks: [DiscoverModel.Slot: String]) -> Pin? {
+        load()
+        let id = Pin.id(of: picks)
+        return pins.first { $0.id == id }
     }
 
-    func contains(_ picks: [DiscoverModel.Slot: String]) -> Bool {
+    /// On Home, in `replacing`'s place (its slot) when given; never past
+    /// the limit.
+    func add(_ picks: [DiscoverModel.Slot: String], title: String, replacing: String? = nil) {
         load()
-        let id = Pin(picks: Self.raw(picks), title: "").id
-        return pins.contains { $0.id == id }
-    }
-
-    func toggle(_ picks: [DiscoverModel.Slot: String], title: String) {
-        load()
-        let pin = Pin(picks: Self.raw(picks), title: title)
-        if let index = pins.firstIndex(where: { $0.id == pin.id }) {
-            pins.remove(at: index)
+        let pin = Pin(picks: Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }),
+                      title: title)
+        guard !pins.contains(where: { $0.id == pin.id }) else { return }
+        if let replacing, let index = pins.firstIndex(where: { $0.id == replacing }) {
+            pins[index] = pin
+            titles[replacing] = nil
         } else {
+            guard pins.count < Self.limit else { return }
             pins.append(pin)
-            Task { await fetch(pin) }
         }
+        save()
+        Task { await fetch(pin) }
+    }
+
+    func remove(_ id: String) {
+        load()
+        pins.removeAll { $0.id == id }
+        titles[id] = nil
         save()
     }
 
@@ -1389,21 +1479,28 @@ final class DiscoverPins: ObservableObject {
     }
 
     private func fetch(_ pin: Pin) async {
-        let picks = Dictionary(uniqueKeysWithValues: pin.picks.compactMap { key, value in
-            DiscoverModel.Slot(rawValue: key).map { ($0, value) }
-        })
-        titles[pin.id] = Array(await DiscoverModel.titles(for: picks).prefix(25))
+        titles[pin.id] = Array(await DiscoverModel.titles(for: pin.slots).prefix(25))
     }
 
-    /// Home's rows.
+    /// Home's rows: large rows.
     var rows: [HomeRow] {
         load()
         return pins.compactMap { pin in
             guard let items = titles[pin.id], !items.isEmpty else { return nil }
-            return HomeRow(id: "discover.pin." + pin.id, title: pin.title, items: items,
-                           subtitles: Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } },
-                                                 uniquingKeysWith: { first, _ in first }),
-                           shape: .plain)
+            return HomeRow(id: Self.rowPrefix + pin.id, title: Self.titleCase(pin.title), items: items)
         }
+    }
+
+    /// Home's rows' names: title case, small words lower but first
+    /// ("Fantasy Anime Movies About Isekai, in Japanese, from the 2010s").
+    static func titleCase(_ text: String) -> String {
+        let small: Set<String> = ["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of",
+                                  "on", "or", "the", "to", "with", "&"]
+        return text.split(separator: " ", omittingEmptySubsequences: false).enumerated().map { index, word in
+            let bare = word.lowercased().trimmingCharacters(in: .punctuationCharacters)
+            if index > 0, small.contains(bare) { return word.lowercased() }
+            return word.split(separator: "-", omittingEmptySubsequences: false)
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: "-")
+        }.joined(separator: " ")
     }
 }
