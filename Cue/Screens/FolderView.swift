@@ -423,9 +423,14 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// grid for the bar's neighbour, and Left and Right along the bar fell
     /// into it), its titles still scroll up to the screen's top.
     var bleedTop: CGFloat = 0
-    /// How close to the screen's top or bottom a focused line may come before
-    /// the page moves.
-    static let edgeMargin: CGFloat = 60
+    /// Scrolled, the line before the focused one: its top this far below
+    /// the screen's — the line above it peeking as much as the next one
+    /// at the foot (two lines, one caption and the gaps between them: the
+    /// rest of the screen, halved).
+    static var pairTop: CGFloat {
+        let shown = card.height * 2 + FixedFocusMetrics.captionRoom + FixedFocusMetrics.gap * 3
+        return FixedFocusMetrics.gap + (DetailTransition.screen.height - shown) / 2
+    }
     /// Between the header and the first line.
     static let firstLineGap: CGFloat = 12
 
@@ -434,7 +439,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         view.backgroundColor = .clear
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = FixedFocusMetrics.gap
-        layout.minimumLineSpacing = 24
+        // The cards' one gap, both ways: only the focused line has its
+        // caption's room (`captionLine`).
+        layout.minimumLineSpacing = FixedFocusMetrics.gap
         layout.sectionInset = UIEdgeInsets(top: Self.firstLineGap, left: FixedFocusMetrics.inset, bottom: 48,
                                            right: FixedFocusMetrics.inset)
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
@@ -529,29 +536,26 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         onScroll?(max(0, scrollView.contentOffset.y + scrollView.contentInset.top))
     }
 
-    /// Where focus scrolls the page (tvOS asks here for focus moves too): the
-    /// first line — or the header's controls — the page at its top, the
-    /// header whole; any other line only moves the page once it would reach
-    /// the screen's edge, then just far enough to show it whole. Within what
-    /// shows: still.
+    /// Where focus scrolls the page (tvOS asks here for focus moves too).
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
                                    targetContentOffset: UnsafeMutablePointer<CGPoint>) {
         let top = -collectionView.contentInset.top
-        guard let path = focusedPath, path.item >= Self.columns,
-              let frame = collectionView.layoutAttributesForItem(at: path)?.frame else {
+        // The first line: the page at its top, header whole. Any other: the
+        // line before it near the top (`pairTop`), it under it with its
+        // caption, the lines past them peeking alike; a press moves one
+        // line, both ways. By the layout to come (the caption's room moves
+        // with focus, in the same move), not the one on screen.
+        guard let path = focusedPath, path.item >= Self.columns else {
             targetContentOffset.pointee.y = top
             return
         }
-        let maxY = max(top, collectionView.contentSize.height + collectionView.contentInset.bottom
-                       - collectionView.bounds.height)
-        let current = scrollView.contentOffset.y
-        var y = current
-        if frame.maxY > current + scrollView.bounds.height - Self.edgeMargin {
-            y = frame.maxY - scrollView.bounds.height + Self.edgeMargin
-        } else if frame.minY < current + Self.edgeMargin {
-            y = frame.minY - Self.edgeMargin
-        }
-        targetContentOffset.pointee.y = min(maxY, max(top, y))
+        let line = path.item / Self.columns
+        let upper = Self.firstLineGap + CGFloat(line - 1) * (Self.card.height + FixedFocusMetrics.gap)
+        let lines = (items.count + Self.columns - 1) / Self.columns
+        let content = Self.firstLineGap + CGFloat(lines) * (Self.card.height + FixedFocusMetrics.gap)
+            + FixedFocusMetrics.captionRoom + 48
+        let maxY = max(top, content + collectionView.contentInset.bottom - collectionView.bounds.height)
+        targetContentOffset.pointee.y = min(maxY, max(top, upper - Self.pairTop))
     }
 
     override func viewDidLayoutSubviews() {
@@ -665,12 +669,15 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath)
             as! FixedFocusDestinationCell
         cell.configure(item, subtitle: subtitles[item.id], index: indexPath.item, rowCell: nil, card: Self.card)
+        cell.setCaptionShown(captionLine == indexPath.item / Self.columns)
         return cell
     }
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        return CGSize(width: Self.card.width, height: Self.card.height + FixedFocusMetrics.captionRoom)
+        // Only the focused line with its caption's room.
+        return CGSize(width: Self.card.width, height: Self.card.height
+                      + (indexPath.item / Self.columns == captionLine ? FixedFocusMetrics.captionRoom : 0))
     }
 
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
@@ -770,6 +777,23 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     private var focusedPath: IndexPath?
+    /// The focused line: only it has its captions and their room (Home's
+    /// rows' way: the others are only their posters, a gap apart), on the
+    /// move's spring with the scroll.
+    private var captionLine: Int?
+
+    private func showCaptions(on line: Int?, _ context: UIFocusUpdateContext) {
+        guard line != captionLine else { return }
+        captionLine = line
+        _ = FixedFocusMotion.focusChange(context) { [self] in
+            for path in collectionView.indexPathsForVisibleItems {
+                (collectionView.cellForItem(at: path) as? FixedFocusDestinationCell)?
+                    .setCaptionShown(line == path.item / Self.columns)
+            }
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
+        }
+    }
     /// Focus somewhere in `view` (SwiftUI's controls aren't views: by
     /// their environments).
     private static func focus(in view: UIView) -> Bool {
@@ -785,6 +809,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
+        showCaptions(on: focusedPath.map { $0.item / Self.columns }, context)
         TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
         // `headerFirst`, the page at its top: Down from a tab's bar, on to the
         // header's controls, as Back's way up (the header sits in the scroll

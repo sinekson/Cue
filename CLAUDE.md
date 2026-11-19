@@ -531,8 +531,19 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the box's stretched morph from poster to wide card; the strip under moving focus
   made the eyes wander. Tried: one caption line
   under the box and tall cards: inside was better; before that
-  the facts and a 4-line description under the box.) Details' rows,
-  Search and grids keep name and second line, 24 pt. The focused row's
+  the facts and a 4-line description under the box.) Details' rows
+  and Search keep name and second line, 24 pt, on every card. The browsing
+  grids (`FolderPosterGrid`: Discover, browse pages, folders; trying
+  2026-11-19): captions only on the focused line (Home's moving-focus rows'
+  way, on the move's spring), and only it keeps their room: the other lines
+  the cards' 40 pt gap apart, the room moving with focus in the scroll's
+  move. Their scroll: the first line, the page at its top; any other, the
+  line before it whole near the top (`pairTop`), the focused line with its
+  caption under it, the lines past them peeking alike (~48 pt), a press one
+  line either way. (Tried 2026-11-19: no captions at all, the pair centred:
+  overwhelming; every line's caption room kept, one peek at the foot:
+  roomy; scrolling only near the edge left lines at different places going
+  up and down.) The focused row's
   cards centred on the screen (captions not counted), Apple TV's (`FixedFocusRows.centred`, Home
   and Details; centring name and cards together sat the cards 31 pt low), the
   rows above and below the same 64 pt gap from it (`centredGap`; 56, the
