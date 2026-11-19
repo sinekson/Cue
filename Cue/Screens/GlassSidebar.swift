@@ -70,18 +70,20 @@ enum TopBarAvatar {
 final class TopBarFollow {
     static let shared = TopBarFollow()
     weak var view: UIView? { didSet { apply() } }
-    /// On Home (and Movies / Series): on the card; elsewhere at its spot.
-    var lifted = false {
-        didSet { if lifted != oldValue { UIView.performWithoutAnimation(apply) } }
+    /// The page it goes with ("home": Home and Movies / Series, on the
+    /// card; "discover": scrolled away with its page); nil: at its spot.
+    var page: String? {
+        didSet { if page != oldValue { UIView.performWithoutAnimation(apply) } }
     }
-    private var y: CGFloat = 0
+    /// Each page's own place for it (a tab switch shows the new page's).
+    private var ys: [String: CGFloat] = [:]
     /// In the caller's animation, if any.
-    func set(_ value: CGFloat) {
-        y = value
-        apply()
+    func set(_ value: CGFloat, for page: String = "home") {
+        ys[page] = value
+        if page == self.page { apply() }
     }
     /// Where it's drawn, from its spot.
-    var offset: CGFloat { lifted ? y : 0 }
+    var offset: CGFloat { page.flatMap { ys[$0] } ?? 0 }
     private func apply() {
         view?.transform = CGAffineTransform(translationX: 0, y: offset)
     }
@@ -331,7 +333,8 @@ struct TopBarFace: UIViewRepresentable {
     let focused: Int?
     let pressed: Int?
     let hidden: Bool
-    let lifted: Bool
+    /// The page it goes with (`TopBarFollow.page`).
+    let follows: String?
 
     final class Coordinator {
         var host: UIHostingController<Content>?
@@ -354,13 +357,13 @@ struct TopBarFace: UIViewRepresentable {
         moved.addSubview(host.view)
         context.coordinator.host = host
         TopBarFollow.shared.view = moved
-        TopBarFollow.shared.lifted = lifted
+        TopBarFollow.shared.page = follows
         return container
     }
 
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.host?.rootView = content
-        TopBarFollow.shared.lifted = lifted
+        TopBarFollow.shared.page = follows
     }
 
     private var content: Content {

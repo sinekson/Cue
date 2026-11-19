@@ -961,7 +961,9 @@ struct RootView: View {
                 // billboard card (`TopBarFollow`); the bar below holds focus.
                 TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
                            pressed: topBarPressed, hidden: !atTabRoot,
-                           lifted: AppTab(rawValue: selectedTab)?.isHomeLike == true)
+                           follows: AppTab(rawValue: selectedTab).flatMap {
+                               $0.isHomeLike ? "home" : $0 == .discover ? "discover" : nil
+                           })
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                 // (Focus moving along it switches — `switchTab`.)

@@ -357,6 +357,11 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
     /// Focus lands on the header's controls, not the first title, and Back
     /// from any line goes up to them (a browse page's Movies | Series).
     var headerFirst = false
+    /// Room above the header (`FolderGridController.headerTopMargin`).
+    var headerTop = FolderGridController.defaultHeaderTop
+    var onScroll: ((CGFloat) -> Void)? = nil
+    /// Room above the grid's frame (`FolderGridController.bleedTop`).
+    var bleedTop: CGFloat = 0
 
     func makeUIViewController(context: Context) -> FolderGridController { FolderGridController() }
 
@@ -366,6 +371,9 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
         controller.onOpenDetails = onOpenDetails
         controller.onDisplay = onDisplay
         controller.headerFirst = headerFirst
+        controller.headerTopMargin = headerTop
+        controller.onScroll = onScroll
+        controller.bleedTop = bleedTop
         controller.show(header: header, headerHeight: headerHeight, items: items,
                         subtitles: subtitles, placeholder: placeholder)
     }
@@ -404,7 +412,19 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     private var headerHost: UIHostingController<AnyView>?
     private var headerPositioned = false
     /// Above the header, in the inset.
-    static let headerTopMargin: CGFloat = 60
+    static let defaultHeaderTop: CGFloat = 60
+    /// Above the header, in the inset (`FolderPosterGrid.headerTop`): the
+    /// header's own view covers only its content, so nothing above it (a
+    /// tab's bar) reads as part of it to the focus engine.
+    var headerTopMargin = FolderGridController.defaultHeaderTop
+    /// How far the page has scrolled from its top (a tab's page moves its
+    /// bar with it, `TopBarFollow`).
+    var onScroll: ((CGFloat) -> Void)?
+    /// The page's room above its frame, under a tab's bar (Discover): the
+    /// grid's frame starts below the bar (SwiftUI took the whole-screen
+    /// grid for the bar's neighbour, and Left and Right along the bar fell
+    /// into it), its titles still scroll up to the screen's top.
+    var bleedTop: CGFloat = 0
     /// How close to the screen's top or bottom a focused line may come before
     /// the page moves.
     static let edgeMargin: CGFloat = 60
@@ -447,7 +467,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                 host.removeFromParent()
                 headerHost = nil
             }
-            applyTopInset(Self.headerTopMargin)
+            applyTopInset(headerTopMargin)
             return
         }
         let host: UIHostingController<AnyView>
@@ -475,9 +495,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
             controlsGuideTop = guideTop
             headerHost = host
         }
-        applyTopInset(headerHeight + Self.headerTopMargin)
+        applyTopInset(headerHeight + headerTopMargin)
         host.view.frame = CGRect(x: 0, y: -headerHeight, width: collectionView.bounds.width, height: headerHeight)
-        controlsGuideTop?.constant = Self.headerTopMargin + headerHeight - 8
+        controlsGuideTop?.constant = headerTopMargin + headerHeight - 8 - bleedTop
         syncControlsGuide()
     }
 
@@ -508,6 +528,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         syncControlsGuide()
+        onScroll?(max(0, scrollView.contentOffset.y + scrollView.contentInset.top))
     }
 
     /// Where focus scrolls the page (tvOS asks here for focus moves too): the
@@ -537,6 +558,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        view.clipsToBounds = false
+        let frame = CGRect(x: 0, y: -bleedTop, width: view.bounds.width, height: view.bounds.height + bleedTop)
+        if collectionView.frame != frame { collectionView.frame = frame }
         syncHeaderHost()
     }
 
@@ -756,10 +780,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
         TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
-        // `headerFirst`, the page at its top: an arrival from outside (Down
-        // from a tab's bar) goes on to the header's controls, as Back's way up
-        // (the header sits in the scroll view, where the engine never looks).
-        if headerFirst, context.previouslyFocusedView.map({ !$0.isDescendant(of: view) }) ?? true,
+        // `headerFirst`, the page at its top: Down from a tab's bar, on to the
+        // header's controls, as Back's way up (the header sits in the scroll
+        // view, where the engine never looks). Not a return (from Details):
+        // that keeps its title.
+        if headerFirst, context.focusHeading.contains(.down),
+           context.previouslyFocusedView.map({ !$0.isDescendant(of: view) }) ?? true,
            collectionView.contentOffset.y <= -collectionView.contentInset.top + 1, headerHost != nil {
             backToTop = true
             DispatchQueue.main.async { [weak self] in self?.focusFirst() }

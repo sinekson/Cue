@@ -1032,14 +1032,19 @@ struct DiscoverView: View {
                 onDisplay: { item in Task { await model.loadMore(after: item) } },
                 placeholder: !model.loadedOnce,
                 back: gridBack,
-                headerFirst: true)
+                headerFirst: true,
+                headerTop: DiscoverSentence.top,
+                // The bar is on the page: it goes up with it, as Home's.
+                onScroll: { TopBarFollow.shared.set(-$0, for: "discover") },
+                bleedTop: DiscoverSentence.barRoom)
+                .padding(.top, DiscoverSentence.barRoom)
                 .ignoresSafeArea()
             if model.loadedOnce, !model.isLoading, model.items.isEmpty {
                 Text("Nothing matches all of that. Try changing a word.")
                     .font(.system(size: 28, weight: .medium))
                     .foregroundStyle(CueInk.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, DiscoverSentence.height + 120)
+                    .padding(.top, DiscoverSentence.top + DiscoverSentence.height + 120)
             }
         }
         .task {
@@ -1062,9 +1067,13 @@ private struct DiscoverSentence: View {
     /// Coming in: the sentence's first word.
     @FocusState private var focused: DiscoverModel.Slot?
 
-    static let top: CGFloat = GlassSidebar.topBarClearance + 70
+    /// From the screen's top to the first line (the grid's room above
+    /// the header).
+    static let top: CGFloat = 60 + GlassSidebar.topBarClearance + 70
     static let line: CGFloat = 72
-    static let height: CGFloat = top + line * 3 + 24 + 40
+    /// The top bar's room: the grid's frame starts under it.
+    static let barRoom: CGFloat = 110
+    static let height: CGFloat = line * 3 + 24 + 40
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1087,7 +1096,6 @@ private struct DiscoverSentence: View {
             .padding(.top, 24)
             .focusSection()
         }
-        .padding(.top, Self.top)
         .padding(.leading, FixedFocusMetrics.titleInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .defaultFocus($focused, .genre)
