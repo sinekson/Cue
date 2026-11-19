@@ -911,7 +911,7 @@ struct TitleChipsLine: View {
 
 /// Holding Select on a Continue Watching card: the system's context menu
 /// (lifting the card, blurring the rest, in Liquid Glass), with these.
-enum ContinueMenuAction: CaseIterable {
+enum ContinueMenuAction {
     case details, startOver, chooseSource, markWatched, remove
 
     /// `series`: the card is an episode, so Details is the show's.
@@ -920,7 +920,7 @@ enum ContinueMenuAction: CaseIterable {
         case .details: return series ? "Go to Show" : "Go to Movie"
         case .startOver: return "Start Over"
         case .chooseSource: return "Choose Source"
-        case .markWatched: return "Mark as Watched"
+        case .markWatched: return series ? "Mark Episode as Watched" : "Mark as Watched"
         case .remove: return "Remove from Continue Watching"
         }
     }

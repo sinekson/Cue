@@ -1580,11 +1580,18 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let item = row.items[itemIndex]
         if isContinue(rowIndex) {
             guard let onContinueMenu, let entry = progress[item.id] else { return nil }
-            return (entry.name, ContinueMenuAction.allCases.map { action in
-                MenuEntry(title: action.title(series: entry.season != nil), icon: action.icon, destructive: action == .remove) {
-                    onContinueMenu(action, entry)
-                }
-            })
+            // Its own, short (the title's entries are in Details): play
+            // (Start Over only once started; Select resumes), Go to, the
+            // mark, the removal last (red: no menu brings it back).
+            let series = entry.season != nil
+            let own = { (action: ContinueMenuAction) in
+                MenuEntry(title: action.title(series: series), icon: action.icon,
+                          destructive: action == .remove) { onContinueMenu(action, entry) }
+            }
+            var entries: [MenuEntry] = []
+            if entry.isStarted { entries.append(own(.startOver)) }
+            entries += [own(.chooseSource), own(.details), own(.markWatched), own(.remove)]
+            return (entry.name, entries)
         }
         // Not the billboards (Search's Top Result; Home's as a card has
         // one, as every card) or folders.

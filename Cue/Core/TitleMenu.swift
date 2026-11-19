@@ -3,16 +3,14 @@ import UIKit
 
 /// Holding Select on a title's card, anywhere — Home's rows, Search, Library,
 /// folders, See All, Details' More page: Cue's hold menu (`HoldMenu`), with
-/// the same items everywhere, shown by `HoldMenu` (SwiftUI cards:
-/// `.titleMenu(_:)`). No Play or Choose Source: Details is the way to play
-/// (Continue Watching's own menu keeps them).
+/// the same items in the same order everywhere (SwiftUI cards:
+/// `.titleMenu(_:)`): the watched mark, Library, Not for Me, Use as
+/// Background. No Play or Choose Source: Details is the way to play
+/// (Continue Watching's menu puts its own round these). Red only for what
+/// the menu can't undo: none here (Remove from Library turns into Add).
 @MainActor
 final class TitleMenu {
     static let shared = TitleMenu()
-
-    /// Where the card is. In Library, removing it is what you'd hold for: it
-    /// goes last, in red.
-    enum Place { case standard, library }
 
     typealias Entry = MenuEntry
 
@@ -29,15 +27,9 @@ final class TitleMenu {
         self.addonManager = addonManager
     }
 
-    func entries(for item: MetaItem, in place: Place = .standard) -> [Entry] {
+    func entries(for item: MetaItem) -> [Entry] {
         guard let library, let watched else { return [] }
         var entries: [Entry] = []
-        let saved = library.contains(item)
-        let libraryEntry = Entry(title: saved ? "Remove from Library" : "Add to Library",
-                                 icon: saved ? "bookmark.slash" : "bookmark",
-                                 destructive: saved && place == .library) { library.toggle(item) }
-        if place == .standard { entries.append(libraryEntry) }
-
         if item.isSeries {
             if let aired = airedEpisodes(item), !aired.isEmpty, aired.allSatisfy({ isWatched(item.id, $0) }) {
                 entries.append(Entry(title: "Mark Series as Unwatched", icon: "eye.slash") {
@@ -58,13 +50,16 @@ final class TitleMenu {
             })
         }
 
+        let saved = library.contains(item)
+        entries.append(Entry(title: saved ? "Remove from Library" : "Add to Library",
+                             icon: saved ? "bookmark.slash" : "bookmark") { library.toggle(item) })
+
         entries.append(TitleRatings.notForMeEntry(item))
 
         entries.append(Entry(title: "Use as Background", icon: "photo") {
             BackgroundStore.shared.use(item)
         })
 
-        if place == .library { entries.append(libraryEntry) }
         return entries
     }
 
@@ -108,20 +103,19 @@ final class TitleMenu {
 
 extension View {
     /// Holding Select on a title's card: `TitleMenu` (see `HoldMenu`).
-    func titleMenu(_ item: MetaItem, in place: TitleMenu.Place = .standard) -> some View {
-        modifier(TitleHoldMenu(item: item, place: place))
+    func titleMenu(_ item: MetaItem) -> some View {
+        modifier(TitleHoldMenu(item: item))
     }
 }
 
 /// `.titleMenu`: the card's own focus, for its hold menu.
 private struct TitleHoldMenu: ViewModifier {
     let item: MetaItem
-    let place: TitleMenu.Place
     @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         content
             .focused($focused)
-            .holdMenu(focused: focused) { TitleMenu.shared.entries(for: item, in: place) }
+            .holdMenu(focused: focused) { TitleMenu.shared.entries(for: item) }
     }
 }

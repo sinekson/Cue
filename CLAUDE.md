@@ -916,10 +916,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Hold menus** are Cue's own `HoldMenu`: the system's ate the next press.
   One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
   menus and the player's Audio and Subtitles; a change there reaches all
-  (the SwiftUI hold menu is gone). Entries: Library (Continue Watching's
-  Go to Show, Start Over and Choose Source first),
-  watched (narrow to wide), Not for Me, Use as Background, red last; one name per action (Start Over, Go to
-  Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
+  (the SwiftUI hold menu is gone). One order everywhere, what doesn't
+  apply left out (decided 2026-11-19): play (Start Over, only once
+  started; Choose Source: Continue Watching and Details' episodes only),
+  Go to Show / Movie (Continue Watching), the watched marks narrow to
+  wide (episode, earlier episodes, season, series), Add to / Remove from
+  Library, Not for Me, Use as Background, then Remove from Continue
+  Watching. A menu never repeats Select (no Play or Resume: Select plays
+  an episode, resumes Continue Watching). Continue Watching's is its own,
+  short: Start Over (once started), Choose Source, Go to Show / Movie,
+  Mark Episode as Watched (a film's Mark as Watched), Remove from
+  Continue Watching (the title's entries as well were too many). An
+  episode's mark says "Episode" beside the season's and series'. Red only
+  for what no menu undoes (Remove from Continue Watching); Remove from
+  Library turns into Add, so it's plain and in its place everywhere,
+  Saved for Later and Library too (last and red there was before). One
+  name and one icon per action (Start Over `gobackward`, Choose Source
+  `list.and.film`, watched `checkmark.circle`, unwatched `eye.slash`,
+  Go to `info.circle`). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).
   A held card grows half its focus growth more, a press takes half back
   (3 % of 6 % before; 2, 4, 5 tried); the menu sits 16 pt

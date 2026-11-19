@@ -1516,8 +1516,8 @@ struct DetailView: View {
         let episode = list[index]
         let season = episode.season ?? 0
         var entries: [MenuEntry] = []
+        // No Play: Select plays it. Then the marks, narrow to wide.
         let started = progressStore.progress(for: episode.id)?.isStarted ?? false
-        entries.append(MenuEntry(title: started ? "Resume" : "Play", icon: "play.fill") { play(episode) })
         if started {
             entries.append(MenuEntry(title: "Start Over", icon: "gobackward") {
                 play(episode, fromStart: true)
@@ -1525,7 +1525,7 @@ struct DetailView: View {
         }
         entries.append(MenuEntry(title: "Choose Source", icon: "list.and.film") { openSources(episode) })
         let done = isWatched(episode, season: season)
-        entries.append(MenuEntry(title: done ? "Mark as Unwatched" : "Mark as Watched",
+        entries.append(MenuEntry(title: done ? "Mark Episode as Unwatched" : "Mark Episode as Watched",
                                  icon: done ? "eye.slash" : "checkmark.circle") {
             toggleWatched(episode, season: season)
         })
@@ -1543,7 +1543,7 @@ struct DetailView: View {
                 })
             })
         } else {
-            entries.append(MenuEntry(title: "Mark \(part) as Watched", icon: "checkmark.circle.fill") {
+            entries.append(MenuEntry(title: "Mark \(part) as Watched", icon: "checkmark.circle") {
                 markSeasonWatched(season)
             })
         }
@@ -1766,7 +1766,7 @@ struct DetailActionButton: View {
                       held = now
                       if !now { pressGeneration += 1 }
                   }) {
-            holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.bullet", run: $0)] } ?? []
+            holdEntries ?? onHold.map { [MenuEntry(title: "Choose Source", icon: "list.and.film", run: $0)] } ?? []
         }
     }
 }

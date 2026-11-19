@@ -1410,8 +1410,6 @@ struct GridPosterCell: View {
     let captionWidth: CGFloat
     let onSelect: (MetaItem) -> Void
     var onPlayManually: (MetaItem, MetaVideo?) -> Void = { _, _ in }
-    /// Where the card is, for its hold menu (`TitleMenu`).
-    var menuPlace: TitleMenu.Place = .standard
     /// Optional external focus tracking (Discover's back-to-top uses it).
     var gridFocus: FocusState<String?>.Binding? = nil
     @State private var focused = false
@@ -1444,7 +1442,7 @@ struct GridPosterCell: View {
                 }
         }
         .mediaCardButtonStyle()
-        .titleMenu(item, in: menuPlace)
+        .titleMenu(item)
         .onPlayPauseCommand { onPlayManually(item, nil) }
 
         if let gridFocus {

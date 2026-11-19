@@ -1873,8 +1873,7 @@ struct HomeUIKitView: View {
                            },
                            onContinueMenu: { act($0, on: $1) },
                            titleMenu: { item, rowID in
-                               TitleMenu.shared.entries(for: item,
-                                                        in: rowID == HomeView.libraryRowID ? .library : .standard)
+                               TitleMenu.shared.entries(for: item)
                            },
                            onDepth: {
                                depth = $0

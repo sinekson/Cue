@@ -104,8 +104,8 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [self] in
                 let entry = { (title: String, icon: String) in MenuEntry(title: title, icon: icon) {} }
                 let demo = HoldMenuRequest(
-                    entries: [entry("Details", "info.circle"), entry("Start Over", "backward.end"),
-                              entry("Choose Source", "list.bullet"), entry("Mark as Watched", "checkmark.circle"),
+                    entries: [entry("Start Over", "gobackward"), entry("Choose Source", "list.and.film"),
+                              entry("Go to Show", "info.circle"), entry("Mark Episode as Watched", "checkmark.circle"),
                               MenuEntry(title: "Remove from Continue Watching", icon: "minus.circle",
                                         destructive: true) {}],
                     anchor: CGRect(x: FixedFocusMetrics.inset, y: FixedFocusMetrics.boxFrame.minY,

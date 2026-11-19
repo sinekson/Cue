@@ -94,7 +94,6 @@ struct LibraryView: View {
                                     item: item.metaItem,
                                     captionWidth: GridPoster.width,
                                     onSelect: onSelect,
-                                    menuPlace: .library,
                                     gridFocus: $focusedID
                                 )
                                 .id(item.id)
