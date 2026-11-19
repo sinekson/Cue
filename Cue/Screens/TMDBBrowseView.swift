@@ -301,7 +301,8 @@ struct TMDBBrowseView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            DetailsBackdropBackground(url: backdrop)
+            // Details' page: the title's bands, following the setting.
+            TitleBandsBackground(url: backdrop)
             // Until the titles are in (the first, or after a Movies | Series
             // change): two lines of empty posters, out of focus's way
             // (`FolderPosterGrid.placeholder`).
@@ -448,7 +449,8 @@ private struct BrowseHeader: View {
 
     // MARK: Emblem
 
-    /// A person's portrait, a studio's or network's logo on its light plate.
+    /// A person's portrait, a studio's or network's logo as Details' grid
+    /// shows it (`BrandLogo`).
     @ViewBuilder
     private var emblem: some View {
         switch viewModel.source {
@@ -465,11 +467,11 @@ private struct BrowseHeader: View {
                 if let url = viewModel.person?.photoURL {
                     RemoteImage(url: url, maxDimension: Self.portrait.height)
                 } else {
-                    Color.white.opacity(0.14)
+                    Color(uiColor: FixedFocusDestinationCell.logoPlate)
                         .overlay {
                             Text(initials)
                                 .font(.system(size: 64, weight: .semibold))
-                                .foregroundStyle(Color.white.opacity(0.7))
+                                .foregroundStyle(CueInk.body)
                         }
                 }
             }
@@ -479,10 +481,10 @@ private struct BrowseHeader: View {
         case .company, .network:
             if let url = viewModel.brand?.logoURL {
                 let size = Self.logoPlate
-                RemoteImage(url: url, contentMode: .fit, maxDimension: size.width)
+                BrandLogo(url: url)
                     .padding(24)
                     .frame(width: size.width, height: size.height)
-                    .background(Color.white.opacity(0.92))
+                    .background(Color(uiColor: FixedFocusDestinationCell.logoPlate))
                     .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
                     .overlay { CardRim() }
             }
@@ -571,3 +573,31 @@ private struct CardRim: View {
     }
 }
 
+
+/// A studio's or network's logo as Details' Network & Studios cards draw
+/// it: in the page's ink, unless it's on a box of its own or has a clear
+/// colour of its own (`FixedFocusDestinationCell.boxed`, `.colourful`).
+private struct BrandLogo: UIViewRepresentable {
+    let url: String
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        view.tintColor = CueInk.ui(FixedFocusText.primary)
+        guard view.accessibilityIdentifier != url else { return }
+        view.accessibilityIdentifier = url
+        FixedFocusImages.load(url, into: view, maxDimension: PictureSize.landscape, waiting: { [weak view] waiting in
+            guard let view, !waiting, let image = view.image,
+                  !FixedFocusDestinationCell.boxed(image), !FixedFocusDestinationCell.colourful(image) else { return }
+            view.image = image.withRenderingMode(.alwaysTemplate)
+        })
+    }
+}

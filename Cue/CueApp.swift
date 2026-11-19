@@ -243,7 +243,7 @@ enum Route: Hashable {
         case .folder: AnyView(ATVBackground())
         case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
              .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop):
-            AnyView(DetailsBackdropBackground(url: backdrop))
+            AnyView(TitleBandsBackground(url: backdrop))
         default: nil
         }
     }

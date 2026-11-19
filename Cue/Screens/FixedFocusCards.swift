@@ -1020,7 +1020,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let logo = UIImageView()
     static let logoInset = CGSize(width: 34, height: 30)
     /// Most of the logo's picture opaque: drawn on a box of its own.
-    private static func boxed(_ image: UIImage) -> Bool {
+    static func boxed(_ image: UIImage) -> Bool {
         guard let cg = image.cgImage else { return false }
         let side = 24
         var alpha = [UInt8](repeating: 0, count: side * side)
@@ -1032,7 +1032,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
     /// A logo with a colour of its own: a sixth of its drawn pixels
     /// clearly coloured (saturated, not dark).
-    private static func colourful(_ image: UIImage) -> Bool {
+    static func colourful(_ image: UIImage) -> Bool {
         guard let cg = image.cgImage else { return false }
         let side = 32
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
@@ -1052,7 +1052,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         return drawn > 0 && Double(coloured) / Double(drawn) > 1.0 / 6
     }
     /// `FlatControl.rest`, in UIKit.
-    private static let logoPlate = UIColor { $0.userInterfaceStyle == .light
+    static let logoPlate = UIColor { $0.userInterfaceStyle == .light
         ? UIColor.white.withAlphaComponent(0.32) : UIColor.white.withAlphaComponent(0.13) }
 
     /// The plates on a landscape card (episode, time left, day) only in

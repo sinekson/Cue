@@ -679,8 +679,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture and the title's tint behind the rows went before). Down
   scrolls the card away with the rows. (Full screen with the screen-wide
   bottom fade was just before; the strong left fade, `BillboardShade`,
-  was disliked beside the card's.) Pages opened from Details still draw its picture blurred
-  (`DetailsBackdropBackground`). Into Details is
+  was disliked beside the card's.) Pages opened from Details (a person, a studio or network,
+  a genre, a tag: `TMDBBrowseView`) on Details' bands, following the
+  setting; a studio's logo and a person's initials on the page's grey
+  plate in its ink, as Details' Network & Studios cards (`BrandLogo`;
+  the blurred picture and a white plate were before). Its layout, and its
+  background opened from Discover, wait for Discover (the same page). Into Details is
   `DetailTransition`, all Core Animation, the same from every card: the
   page goes into Details' background (the title's bands, 0.3 s, with
   the window's start, not the press: a picture still loading left the

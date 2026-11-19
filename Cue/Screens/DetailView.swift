@@ -2243,48 +2243,6 @@ final class DetailPreparer {
     }
 }
 
-/// Behind a page opened from Details (a person, a studio, a genre, a tag):
-/// whatever the Background setting, that title's page as it is below
-/// the billboard — its picture blurred and dimmed (`DetailView.rowsBackdrop`). Without a picture: the
-/// app's background.
-struct DetailsBackdropBackground: View {
-    let url: String?
-    /// Details made it: there from the first frame.
-    @State private var blurred: UIImage?
-
-    init(url: String?) {
-        self.url = url
-        _blurred = State(initialValue: BlurredBackdrop.cached(for: url))
-    }
-
-    var body: some View {
-        ZStack {
-            ATVBackground()
-            if url != nil {
-                ZStack {
-                    Color.black
-                    if let blurred {
-                        Image(uiImage: blurred)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 1920, height: 1080)
-                            .clipped()
-                    }
-                    Color.black.opacity(StageArt.dimBelow(for: url))
-                }
-                .frame(width: 1920, height: 1080)
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .task(id: url ?? "") {
-            guard blurred == nil else { return }
-            let image = await BlurredBackdrop.image(for: url)
-            withAnimation(Motion.fade) { blurred = image }
-        }
-    }
-}
-
 /// Over Details' buttons, right-aligned (over the logo, in Home's reason's
 /// place, was before): Up from them opens the trailer full screen — "Watch full screen" while it plays
 /// on the picture, else "Watch the trailer". Only once one is known to
