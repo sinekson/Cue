@@ -637,20 +637,57 @@ final class DiscoverModel: ObservableObject {
         var apply: (inout [String: String], Bool) -> Bool = { _, _ in true }
     }
 
-    @Published private(set) var picks: [Slot: String] = [:]
+    /// The sentence, kept per profile: Discover opens on the last one.
+    @Published private(set) var picks: [Slot: String] = DiscoverModel.saved() {
+        didSet { save() }
+    }
+
+    private static var savedKey: String {
+        ProfileScopedDefaults.key("cue.discover.sentence", ProfileScopedDefaults.activeProfileID)
+    }
+
+    private static func saved() -> [Slot: String] {
+        let raw = UserDefaults.standard.dictionary(forKey: savedKey) as? [String: String] ?? [:]
+        return Dictionary(uniqueKeysWithValues: raw.compactMap { key, value in
+            Slot(rawValue: key).flatMap { slot in
+                options(slot).contains { $0.id == value } ? (slot, value) : nil
+            }
+        })
+    }
+
+    private func save() {
+        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }),
+                                  forKey: Self.savedKey)
+    }
     @Published private(set) var items: [MetaItem] = []
     @Published private(set) var total = 0
     @Published private(set) var loadedOnce = false
     @Published private(set) var isLoading = false
 
-    private var page = 1
+    /// The next TMDB page to read (a chunk can read several).
+    private var nextPage = 1
     private var hasMore = false
     private var isLoadingMore = false
     private var generation = 0
     private var started = false
     var hideWatched: (MetaItem) -> Bool = { _ in false }
 
-    var isMovie: Bool { pick(.type) != "shows" }
+    /// The sides asked: films, shows, or both.
+    var sides: [Bool] {
+        switch pick(.type) {
+        case "shows": [false]
+        case "both": [true, false]
+        default: [true]
+        }
+    }
+
+    var countLabel: String {
+        switch pick(.type) {
+        case "shows": "shows"
+        case "both": "titles"
+        default: "movies"
+        }
+    }
 
     func pick(_ slot: Slot) -> String { picks[slot] ?? Self.options(slot)[0].id }
     func option(_ slot: Slot) -> Option {
@@ -680,13 +717,13 @@ final class DiscoverModel: ObservableObject {
         generation += 1
         let mine = generation
         isLoading = true
-        let result = await fetch(page: 1)
+        let (result, next) = await chunk(from: 1)
         guard mine == generation else { return }
         await FixedFocusImages.prefetch(result.items.prefix(12).map {
             (url: $0.poster ?? $0.background, maxDimension: PictureSize.poster)
         }, within: .milliseconds(700))
         guard mine == generation else { return }
-        page = 1
+        nextPage = next
         items = result.items
         total = result.total
         hasMore = result.hasMore
@@ -700,16 +737,91 @@ final class DiscoverModel: ObservableObject {
         isLoadingMore = true
         defer { isLoadingMore = false }
         let mine = generation
-        let result = await fetch(page: page + 1)
+        let (result, next) = await chunk(from: nextPage)
         guard mine == generation else { return }
-        page += 1
+        nextPage = next
         hasMore = result.hasMore
         let known = Set(items.map(\.id))
         items += result.items.filter { !known.contains($0.id) }
     }
 
+    /// TMDB's total is the count only while Cue drops nothing itself.
+    var countIsExact: Bool { pick(.rating) == "any" && pick(.watched) != "hidden" }
+
+    /// The next titles from `start`: TMDB's pages until a screenful is
+    /// kept (IMDb's ratings and watched titles are Cue's to drop), at most
+    /// five; "best for you" ranks three pages of the best known at a time.
+    private func chunk(from start: Int) async -> (page: TMDBService.BrowsePage, next: Int) {
+        await IMDbRatings.ready()
+        let model = pick(.order) == "foryou" ? await CueRows.tasteModel() : nil
+        let least = model == nil ? 1 : 3
+        let rating = pick(.rating)
+        let hideSeen = pick(.watched) == "hidden"
+        var items: [MetaItem] = []
+        var known = Set<String>()
+        var total = 0
+        var more = true
+        var page = start
+        while more, page < start + 5, page - start < least || items.count < 18 {
+            let result = await fetch(page: page)
+            if page == start { total = result.total }
+            for item in result.items where !known.contains(item.id) {
+                guard Self.passes(item, rating: rating), !(hideSeen && hideWatched(item)) else { continue }
+                known.insert(item.id)
+                items.append(item)
+            }
+            more = result.hasMore
+            page += 1
+        }
+        if let model { items = await Self.rank(items, by: model) }
+        return (TMDBService.BrowsePage(items: items, total: total, hasMore: more), page)
+    }
+
+    /// The rating word by IMDb's own numbers, the badges' rules.
+    private static func passes(_ item: MetaItem, rating: String) -> Bool {
+        guard rating != "any" else { return true }
+        guard let imdb = IMDbRatings.rating(item.id) else { return false }
+        switch rating {
+        case "good": return imdb.value >= 7 && imdb.votes >= 1_000
+        case "acclaimed": return imdb.value >= 8 && imdb.votes >= 50_000
+        case "gems": return imdb.value >= 7.5 && (1_000...20_000).contains(imdb.votes)
+        default: return true
+        }
+    }
+
+    /// Best for you: the rows' fit for your taste, a little of the quality.
+    private static func rank(_ items: [MetaItem], by model: CueRows.Model) async -> [MetaItem] {
+        let keys = items.map { [$0.id, $0.type] }
+        let scores = await boundedConcurrentMap(keys, limit: 8) { key -> Double in
+            guard let found = await TMDBService.cueTraits(imdbID: key[0], type: key[1]) else { return -1 }
+            let title = TMDBService.CueTitle(item: MetaItem(id: key[0], type: key[1], name: "", poster: nil, background: nil),
+                                             tmdbID: found.tmdbID, isMovie: found.isMovie, traits: found.traits)
+            return 0.7 * model.affinity(title) + 0.3 * CueRows.quality(found.traits)
+        }
+        return zip(items, scores).enumerated()
+            .sorted { $0.element.1 != $1.element.1 ? $0.element.1 > $1.element.1 : $0.offset < $1.offset }
+            .map(\.element.0)
+    }
+
+    /// A page of each side asked, mixed: one of each in turn (TMDB orders
+    /// each side alone).
     private func fetch(page: Int) async -> TMDBService.BrowsePage {
-        let isMovie = isMovie
+        let pages = await withTaskGroup(of: (Bool, TMDBService.BrowsePage).self) { group in
+            for side in sides { group.addTask { await (side, self.fetch(page: page, isMovie: side)) } }
+            var all: [Bool: TMDBService.BrowsePage] = [:]
+            for await (side, result) in group { all[side] = result }
+            return all
+        }
+        let lists = sides.compactMap { pages[$0] }
+        var items: [MetaItem] = []
+        for index in 0..<(lists.map(\.items.count).max() ?? 0) {
+            for list in lists where index < list.items.count { items.append(list.items[index]) }
+        }
+        return TMDBService.BrowsePage(items: items, total: lists.reduce(0) { $0 + $1.total },
+                                      hasMore: lists.contains(where: \.hasMore))
+    }
+
+    private func fetch(page: Int, isMovie: Bool) async -> TMDBService.BrowsePage {
         var query: [String: String] = [:]
         // Order first: a rating's vote floor may raise its own.
         for slot in [Slot.order] + Slot.allCases.filter({ $0 != .order }) {
@@ -721,10 +833,7 @@ final class DiscoverModel: ObservableObject {
         if let genres = query["with_genres"] {
             query["with_genres"] = genres.split(separator: ",").map(String.init).uniqued().joined(separator: ",")
         }
-        let result = await TMDBService.browse(filter: query, isMovie: isMovie, page: page)
-        guard pick(.watched) == "hidden" else { return result }
-        return TMDBService.BrowsePage(items: result.items.filter { !hideWatched($0) },
-                                      total: result.total, hasMore: result.hasMore)
+        return await TMDBService.browse(filter: query, isMovie: isMovie, page: page)
     }
 
     // MARK: The choices
@@ -745,9 +854,17 @@ final class DiscoverModel: ObservableObject {
                 return false
             }
             addGenre(id, &query)
+            // Shows: TMDB has one "Sci-Fi & Fantasy"; its fantasy is the
+            // part with fantasy's keywords, its sci-fi the rest.
+            if !isMovie, id == 10765 {
+                query[name == "Fantasy" ? "with_keywords" : "without_keywords"] = fantasyKeywords
+            }
             return true
         }
     }
+
+    /// Magic, dragons, witches, myths, fairy tales, isekai.
+    private static let fantasyKeywords = "2343|12554|616|2035|3205|237451"
 
     private static func keyword(_ id: String, _ word: String, _ name: String) -> Option {
         Option(id: "k\(id)", word: word, name: name) { query, _ in
@@ -781,7 +898,8 @@ final class DiscoverModel: ObservableObject {
         switch slot {
         case .type:
             return [Option(id: "movies", word: "movies", name: "Movies"),
-                    Option(id: "shows", word: "shows", name: "Shows")]
+                    Option(id: "shows", word: "shows", name: "Shows"),
+                    Option(id: "both", word: "movies & shows", name: "Movies & Shows")]
         case .style:
             return [
                 Option(id: "any", word: "any style", name: "Any Style"),
@@ -838,18 +956,23 @@ final class DiscoverModel: ObservableObject {
         case .rating:
             return [
                 Option(id: "any", word: "any rating", name: "Any Rating"),
+                // IMDb decides (`passes`); TMDB only narrows loosely
+                // first: its votes are far fewer, its scores close.
                 Option(id: "good", word: "well rated", name: "Well Rated (7+)") { query, _ in
-                    query["vote_average.gte"] = "7"; floor(100, &query); return true
+                    query["vote_average.gte"] = "6.5"; floor(50, &query); return true
                 },
                 Option(id: "acclaimed", word: "acclaimed", name: "Acclaimed (8+)") { query, _ in
-                    query["vote_average.gte"] = "8"; floor(500, &query); return true
+                    query["vote_average.gte"] = "7.2"; floor(500, &query); return true
                 },
                 Option(id: "gems", word: "hidden gems", name: "Hidden Gems") { query, _ in
-                    query["vote_average.gte"] = "7.3"; floor(50, &query); query["vote_count.lte"] = "1500"; return true
+                    query["vote_average.gte"] = "6.8"; floor(20, &query); query["vote_count.lte"] = "3000"; return true
                 },
             ]
         case .order:
             return [
+                Option(id: "foryou", word: "best for you first", name: "Best for You") { query, _ in
+                    query["sort_by"] = "vote_count.desc"; return true
+                },
                 Option(id: "known", word: "best known first", name: "Best Known") { query, _ in
                     query["sort_by"] = "vote_count.desc"; return true
                 },
@@ -879,7 +1002,7 @@ final class DiscoverModel: ObservableObject {
         ("Isekai", [.type: "shows", .style: "anime", .theme: "k237451"]),
         ("Korean thrillers", [.type: "movies", .genre: "Thriller", .origin: "ko"]),
         ("'80s classics", [.type: "movies", .era: "1980s", .rating: "good"]),
-        ("Hidden gems", [.type: "movies", .rating: "gems", .order: "top"]),
+        ("Hidden gems", [.type: "movies", .rating: "gems"]),
         ("New sci-fi shows", [.type: "shows", .genre: "Science Fiction", .era: "recent", .order: "popular"]),
     ]
 }
@@ -892,7 +1015,6 @@ struct DiscoverView: View {
     @StateObject private var model = DiscoverModel()
     @EnvironmentObject private var watched: WatchedStore
     @State private var gridBack = GridBack()
-    @State private var open: DiscoverModel.Slot?
     let onOpenInPlace: (MetaItem) -> Void
     let onBack: () -> Void
 
@@ -900,7 +1022,7 @@ struct DiscoverView: View {
         ZStack(alignment: .topLeading) {
             ATVBackground()
             FolderPosterGrid(
-                header: AnyView(DiscoverSentence(model: model, open: { open = $0 })),
+                header: AnyView(DiscoverSentence(model: model)),
                 headerHeight: DiscoverSentence.height,
                 items: model.loadedOnce ? model.items : FolderPosterGrid.placeholderItems,
                 subtitles: Dictionary(model.items.compactMap { item in item.year.map { (item.id, $0) } },
@@ -928,13 +1050,6 @@ struct DiscoverView: View {
             await model.start()
         }
         .onExitCommand { if !gridBack.handle() { onBack() } }
-        .fullScreenCover(item: $open) { slot in
-            let options = DiscoverModel.options(slot)
-            DropdownPicker(title: slot.title, selection: model.pick(slot),
-                           options: options.map { CueDropdownOption($0.id, $0.name ?? $0.word.capitalized) },
-                           onSelect: { model.set(slot, $0); open = nil },
-                           onCancel: { open = nil })
-        }
     }
 }
 
@@ -942,7 +1057,10 @@ struct DiscoverView: View {
 /// pill (set ones on the selected grey), then the starting points.
 private struct DiscoverSentence: View {
     @ObservedObject var model: DiscoverModel
-    let open: (DiscoverModel.Slot) -> Void
+    /// Each word's place on the screen: its list opens under it.
+    @State private var anchors = DiscoverAnchors()
+    /// Coming in: the sentence's first word.
+    @FocusState private var focused: DiscoverModel.Slot?
 
     static let top: CGFloat = GlassSidebar.topBarClearance + 70
     static let line: CGFloat = 72
@@ -972,12 +1090,28 @@ private struct DiscoverSentence: View {
         .padding(.top, Self.top)
         .padding(.leading, FixedFocusMetrics.titleInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .defaultFocus($focused, .genre)
     }
 
     private var count: String {
         guard model.loadedOnce else { return " " }
         if model.isLoading { return "Looking…" }
-        return "\(model.total.formatted(.number)) \(model.isMovie ? "movies" : "shows")"
+        guard model.countIsExact else { return " " }
+        return "\(model.total.formatted(.number)) \(model.countLabel)"
+    }
+
+    /// The word's choices in the menus' glass panel, under it; a pick
+    /// changes the sentence and the titles under it, the page staying.
+    private func open(_ slot: DiscoverModel.Slot) {
+        guard let view = anchors.views[slot], view.window != nil else { return }
+        let current = model.pick(slot)
+        let entries = DiscoverModel.options(slot).map { option in
+            MenuEntry(title: option.name ?? option.word.capitalized, icon: "", checked: option.id == current) {
+                model.set(slot, option.id)
+            }
+        }
+        HoldMenu.shared.open(HoldMenuRequest(entries: entries, anchor: view.convert(view.bounds, to: nil),
+                                             below: true))
     }
 
     enum Part: Hashable { case word(String), slot(DiscoverModel.Slot) }
@@ -993,8 +1127,10 @@ private struct DiscoverSentence: View {
                 case let .slot(slot):
                     Button { open(slot) } label: {
                         SentenceWord(text: model.option(slot).word, set: model.isSet(slot))
+                            .background { AnchorView(anchors: anchors, slot: slot) }
                     }
                     .buttonStyle(PlainCardButtonStyle())
+                    .focused($focused, equals: slot)
                 }
             }
         }
@@ -1019,4 +1155,24 @@ private struct SentenceWord: View {
             .scaleEffect(isFocused ? 1.05 : 1)
             .animation(FlatControl.focusChange, value: isFocused)
     }
+}
+
+/// The sentence's words as UIKit sees them (the list opens under the one
+/// pressed, in window points).
+@MainActor
+private final class DiscoverAnchors {
+    var views: [DiscoverModel.Slot: UIView] = [:]
+}
+
+private struct AnchorView: UIViewRepresentable {
+    let anchors: DiscoverAnchors
+    let slot: DiscoverModel.Slot
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) { anchors.views[slot] = view }
 }

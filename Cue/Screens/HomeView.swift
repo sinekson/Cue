@@ -300,6 +300,10 @@ final class HomeViewModel: ObservableObject {
         loadError = nil
         let history = cueHistory?()
         let seeds = CueRows.seeds(history)
+        CueRows.modelSource = {
+            await CueRows.model(watches: history?.watches ?? [], standings: await CueRows.standings(history),
+                                ratings: TitleRatings.shared.snapshot())
+        }
         let saved = await CueRows.saved()
         guard loadGeneration == generation else { return }
         if let saved, entries.isEmpty || !entries.allSatisfy(Self.isCueEntry) {

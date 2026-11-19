@@ -791,6 +791,31 @@ enum CueRows {
         }
     }
 
+    /// The taste as the rows read it, for Discover's "best for you": made
+    /// by the last rows build, else once on asking (`modelSource`, set by
+    /// Home with what it builds the rows from).
+    @MainActor static var latestModel: Model?
+    @MainActor static var modelSource: (@MainActor () async -> Model)?
+
+    @MainActor static func tasteModel() async -> Model? {
+        if let latestModel { return latestModel }
+        guard let source = modelSource else { return nil }
+        let model = await source()
+        latestModel = model
+        return model
+    }
+
+    /// The rows build's taste, without the rows.
+    static func model(watches: [Watch], standings full: Standings,
+                      ratings: [String: TitleRatings.Entry]) async -> Model {
+        let standings = full.states
+        let dropped = Set(standings.filter { $0.value == .dropped }.keys).filter { ratings[$0] == nil }
+        async let knownTask = known(watches, ratings: ratings, dropped: dropped, now: Date())
+        async let fixedTask = fixed(region: region)
+        await IMDbRatings.ready()
+        return Model(taste: taste(await knownTask), pool: await fixedTask.pool)
+    }
+
     /// IMDb's rating (`IMDbRatings`), steadied by its votes (few lean to
     /// 6.5), as 0…1; TMDB's only for a title IMDb doesn't have yet.
     static func quality(_ traits: Traits) -> Double {
@@ -1694,6 +1719,7 @@ enum CueRows {
         let fixed = await fixedTask
         let taste = taste(known)
         let model = Model(taste: taste, pool: fixed.pool)
+        await MainActor.run { latestModel = model }
         let previous = last.map { $0.day == day ? $0.previous : $0.picked } ?? []
 
         // The catalogue, scored: how much each row is about you, a share of

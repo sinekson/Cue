@@ -175,6 +175,12 @@ final class HoldMenu: NSObject, UIGestureRecognizerDelegate {
         present(request)
     }
 
+    /// A dropdown's list (`below`), opened by a press, not a hold.
+    func open(_ request: HoldMenuRequest) {
+        guard !isOpen else { return }
+        present(request)
+    }
+
     /// The menu, over whatever is in front.
     private func present(_ request: HoldMenuRequest) {
         guard let window else { return }

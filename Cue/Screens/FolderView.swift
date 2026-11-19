@@ -756,6 +756,14 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
         TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
+        // `headerFirst`, the page at its top: an arrival from outside (Down
+        // from a tab's bar) goes on to the header's controls, as Back's way up
+        // (the header sits in the scroll view, where the engine never looks).
+        if headerFirst, context.previouslyFocusedView.map({ !$0.isDescendant(of: view) }) ?? true,
+           collectionView.contentOffset.y <= -collectionView.contentInset.top + 1, headerHost != nil {
+            backToTop = true
+            DispatchQueue.main.async { [weak self] in self?.focusFirst() }
+        }
         // Moved by the viewer (from something in the page): no longer ours.
         if prefersFirstTitle, context.previouslyFocusedView?.isDescendant(of: collectionView) == true {
             prefersFirstTitle = false

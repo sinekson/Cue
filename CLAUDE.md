@@ -914,6 +914,24 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   all), then the film rises out of the black (0.45 s, easing out) and
   plays, its sound rising from silence over 0.8 s; presses but Back are
   dropped until it has risen; leaving is one fade straight to the page.
+- **Discover** (in progress, 2026-11-19; `DiscoverModel`/`DiscoverView`
+  at the end of `TMDBBrowseView.swift`): finding by kind, not name. One
+  sentence of words to change, "Show me [genre] [style] [movies] about
+  [theme] / in [language] from [year] · [rating] · [order] · [watched]",
+  each word a flat pill (changed ones on the selected grey), Select its
+  choices in the menus' glass panel under it (`HoldMenu.open`, `below`),
+  one value per word; the grid (`FolderPosterGrid`, `headerFirst`) under
+  it, starting points (presets) and the count beside them. TMDB's
+  discover behind it; anime = Animation + Japanese; fantasy / sci-fi
+  shows split TMDB's one genre by fantasy's keywords; movies & shows
+  mixed one of each in turn. Rating by IMDb's own file and the badges'
+  rules (Cue drops, so the count shows only when exact); order "best
+  for you" (the default: the rows' taste, `CueRows.tasteModel`, over
+  three pages of the best known at a time), best known, popular now, top
+  rated, newest; watched included or hidden (a choice). The sentence
+  kept per profile. Search stays its own tab. Next: starting points
+  from your taste, Details' genres and tags opening it filled in, pin a
+  sentence as a Home row, Movies and Series tabs retired.
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.

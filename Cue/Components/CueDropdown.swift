@@ -133,7 +133,7 @@ private struct DropdownTrigger: View {
 }
 
 /// The full-screen option list. Initial focus lands on the current selection.
-struct DropdownPicker: View {
+private struct DropdownPicker: View {
     let title: String
     let selection: String
     let options: [CueDropdownOption]
