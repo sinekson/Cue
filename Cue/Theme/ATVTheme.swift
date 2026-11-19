@@ -241,8 +241,10 @@ enum BandsPicture {
 
     private static let poolCount = 8
     /// The colours' saturation, times the picture's: the app's
-    /// background, Details' (`strong`).
-    static let saturation = 1.4
+    /// background, below the picture's own (1.4, then 1.2 in dark, read
+    /// too colourful on an OLED with tvOS in Dolby Vision, which lifts
+    /// colour far more than light: tuned there), Details' (`strong`).
+    static let saturation = 0.8
     static let strongSaturation = 1.8
     /// The play stage's: a step past Details', the same bands deepening as
     /// it comes in (closer to the film).
@@ -462,7 +464,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands4-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands6-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
     /// A new picture is due: the mode changed, or it's been up 4 h (coming
