@@ -52,7 +52,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
   `-transitionSlowMo` (4×), `-slowMo [speed]` (every animation, 0.1 by
   default, from the curtain's lift; timers keep real time), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
-  `-folderDemo`, `-moviesDemo`, `-homeFocusCollection`, `-homeFocusRow <n|last>`, `-cue.home.billboardAutoPage NO`.
+  `-folderDemo`, `-homeFocusCollection`, `-homeFocusRow <n|last>`, `-cue.home.billboardAutoPage NO`.
 - Settings → Developer holds experiment switches
   (`PerformanceSettingsStore`). Remove options once a decision is made.
 
@@ -243,8 +243,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   grown picture were tried.)
 - **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs,
   each its icon and name (`AppTab.topBarOrder`: Search, Home, Discover,
-  Placeholder, Settings; Movies and Series off it, going away; Discover
-  and the placeholder an empty page with one card, `EmptyTabPage`, so
+  Placeholder, Settings; Movies and Series retired 2026-11-19, Discover
+  replaces them; the placeholder an empty page with one card, `EmptyTabPage`, so
   Down has somewhere to land) from the rows' text edge, where their names
   start (from the cards' edge it read 4 pt left; centred on the screen
   was tried, liked as much: `GlassSidebar.centred`, off) (25 pt medium,
@@ -302,8 +302,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   focus a greyed row): Why These Rows for Made for You, Home Rows (the
   add-ons' rows to hide, order, rename) for From Add-ons. Hide Watched
   Titles works on both; ranked grids keep their ten.
-  **Made for You** (Cue's own rows, branch `tmdb-catalogs`): Home's,
-  Movies' and Series' rows made by Cue from TMDB, no
+  **Made for You** (Cue's own rows, branch `tmdb-catalogs`): Home's
+  rows made by Cue from TMDB, no
   add-on catalogs (`CueRows` at the end of `BillboardPicks.swift`): titles
   only with a poster, a backdrop and an IMDb id (they play by it), TMDB's
   posters and logos (`TMDBService.traits`, 30 days on disk). A taste from
@@ -313,10 +313,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   popular. A catalogue of ~190 named rows (genres, anime, themes by TMDB
   keyword, languages, eras, studios, networks, "for anyone" rows) scored
   65 % fit, 35 % the day's seeded chance, less if up yesterday; at most two
-  of a kind per tab, never side by side; a row that leaves something out
+  of a kind, never side by side; a row that leaves something out
   counts only the watching it keeps (Japanese dramas for an anime watcher:
-  little). New & Notable (`CueRows.showcase`, one mid-page row per tab
-  (Movies films only, Series shows only): new seasons of
+  little). New & Notable (`CueRows.showcase`, one mid-page row: new seasons of
   your shows and premieres of the last 30 days, scored by yours, taste and
   popularity; 8–12. Coming Soon for You (`CueRows.comingSoon`, Home): what
   comes in the next 60 days in your taste (your shows' new seasons
@@ -337,7 +336,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   off, into the screen on the opening's zoom (0.55 s), the picture and
   shade coming in under and over it (`DetailTransitionOverlay.grow`); the
   large rows' open card and Today's Pick too.
-  little). Top 10 (Home "Top 10 Today", Movies, Shows: TMDB's
+  little). Top 10 (Home "Top 10 Today": TMDB's
   trending today, 10 titles, the badge "Top 10" left out there): a grid
   of two lines of five, all ten in view, no scrolling
   (`FixedFocusGridLayout`); Right on the fifth does nothing (no wrap,
@@ -404,9 +403,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`animeStudios`: a title's companies are mostly its production
   committee, TOHO, Shueisha, TOKYO MX), 5,000. Five in one line looked
   lost among the large rows. A grid means a ranked list wherever it is
-  (talked over: portraits opening person pages, as browse may go). Movies and Series (going away) keep their own
-  fixed rows: Top Picks, Top 10, Because You Watched, cinemas, services. Titles in a row
-  ordered for you, a title in two rows at most per tab; rows up to 25
+  (talked over: portraits opening person pages, as browse may go). Titles in a row
+  ordered for you, a title in two rows at most; rows up to 25
   (TMDB's pages until 30 unseen, at most 3), under 10 not shown. Watched titles stay
   in the world's rows (trending, new episodes, airing today, cinemas,
   coming soon, popular, top rated, the services: the list is the point),
@@ -414,7 +412,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   recommend (picks, Because You Watched, the catalogue): finished (a film, a show caught up to its furthest episode watched: a
   season skipped behind it doesn't count) and being watched (Continue
   Watching, or watched in 30 days) are out; a show left 30 days is allowed
-  further back and in Pick Back Up (Home, Series). Dropped (a film stopped
+  further back and in Pick Back Up. Dropped (a film stopped
   before 20 % and left 14 days; a show left 30 days after one or two
   episodes, three or more is Pick Back Up) is out of those rows, not a
   Because You Watched seed, and counts against its traits at half Not for
@@ -721,7 +719,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Today's Pick the same, wherever it is then (`fromSpotlight`,
   `backWindow`). (Opening in place, Home's billboard becoming Details' in two
   phases, `openInPlace`, was before: with the card it only jumped.) From
-  Home, Movies and Series it's a layer over the page
+  Home it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages
   use `PageFade`. `trail`: Back is never more than two pages deep.
 - **Back**: on a tab's page, focus to the top bar in one press; below the

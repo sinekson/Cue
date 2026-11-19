@@ -96,7 +96,7 @@ private struct WhyTheseRowsPage: View {
     @State private var saved: CueRows.Saved?
     @State private var loaded = false
 
-    private static let tabs = [("home", "Home"), ("movie", "Movies"), ("series", "Series")]
+    private static let tabs = [("home", "Home")]
 
     var body: some View {
         SettingsPage(title: "Why These Rows") {

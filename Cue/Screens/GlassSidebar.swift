@@ -3,26 +3,16 @@ import SwiftUI
 /// The primary navigation destinations. The app keys tab state off these raw
 /// ints in many places, so don't renumber them.
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, search, library, settings, movies, series, discover, placeholder
+    case home, search, library, settings
+    // (4 and 5 were Movies and Series.)
+    case discover = 6, placeholder
     var id: Int { rawValue }
 
-    /// The top navigation: Search first, left of Home. Movies and Series
-    /// (Home filtered to one type) are off the bar, going away; Discover
-    /// and the placeholder are empty pages for now. The library is a row
+    /// The top navigation: Search first, left of Home; the placeholder an
+    /// empty page for now. The library is a row
     /// on Home — its old tab stays reachable only from within the app.
     static let topBarOrder: [AppTab] = [.search, .home, .discover, .placeholder, .settings]
 
-    /// Home and its filtered twins: the same page (see `HomeView.typeFilter`).
-    var isHomeLike: Bool { self == .home || self == .movies || self == .series }
-
-    /// Movies / Series: the content type the tab shows (nil: everything).
-    var typeFilter: String? {
-        switch self {
-        case .movies: return "movie"
-        case .series: return "series"
-        default: return nil
-        }
-    }
 
     var label: String {
         switch self {
@@ -30,8 +20,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .search: return "Search"
         case .library: return "Library"
         case .settings: return "Settings"
-        case .movies: return "Movies"
-        case .series: return "Series"
         case .discover: return "Discover"
         case .placeholder: return "Placeholder"
         }
@@ -43,8 +31,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .search: return "magnifyingglass"
         case .library: return "bookmark.fill"
         case .settings: return "gearshape.fill"
-        case .movies: return "film.fill"
-        case .series: return "tv.fill"
         case .discover: return "safari.fill"
         case .placeholder: return "square.dashed"
         }

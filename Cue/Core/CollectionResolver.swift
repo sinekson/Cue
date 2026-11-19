@@ -137,26 +137,15 @@ enum CollectionResolver {
         providers: CollectionProviders,
         tmdbLanguage: String,
         maxTmdbPages: Int = 2,
-        type: String? = nil,
         firstScreen: (@MainActor ([FolderCatalog]) async -> Void)? = nil
     ) async -> [FolderCatalog] {
-        /// Opened from Movies / Series (`type`): only sources of that kind
-        /// (or that don't say), and only titles of that type.
-        func wanted(_ source: CollectionSourceDTO) -> Bool {
-            guard let type, let kind = source.kind else { return true }
-            return kind == type
-        }
-        func wanted(_ item: MetaItem) -> Bool {
-            guard let type else { return true }
-            return type == "series" ? item.isSeries : item.type == type
-        }
-        let tmdbSources = providers.tmdb ? folder.effectiveSources.filter { $0.isTMDBSource && wanted($0) } : []
+        let tmdbSources = providers.tmdb ? folder.effectiveSources.filter(\.isTMDBSource) : []
         let traktSources = (providers.trakt && tmdbSources.isEmpty)
-            ? folder.effectiveSources.filter { $0.isUsableTraktSource && wanted($0) } : []
+            ? folder.effectiveSources.filter(\.isUsableTraktSource) : []
         let isAddonOnly = !folder.effectiveSources.contains(where: \.isTMDBSource)
             && !folder.effectiveSources.contains(where: \.isUsableTraktSource)
         let addonCatalogs = isAddonOnly
-            ? folder.addonSources.filter(wanted).compactMap { addonCatalog(for: $0, addons: addons) } : []
+            ? folder.addonSources.compactMap { addonCatalog(for: $0, addons: addons) } : []
 
         /// A catalog's name: the source's own title, else the add-on's name
         /// for it, else its id made readable.
@@ -208,7 +197,7 @@ enum CollectionResolver {
         await withTaskGroup(of: (Int, [MetaItem]).self) { group in
             for (index, job) in jobs.enumerated() { group.addTask { (index, await job.1()) } }
             for await (index, items) in group {
-                results[index] = items.filter(wanted)
+                results[index] = items
                 done[index] = true
                 // The first screen's rows settled (the catalogs before them
                 // all in, so none above can still come): the page needn't

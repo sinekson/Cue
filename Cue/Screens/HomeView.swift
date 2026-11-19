@@ -23,8 +23,8 @@ struct HomeRow: Identifiable {
     /// Source catalog, so the row can navigate to a paginated "See All".
     var addon: InstalledAddon?
     var catalog: ManifestCatalog?
-    /// Cue's own rows (`CueRows`): the tabs it shows on ("home", "movie",
-    /// "series"); nil: every tab.
+    /// Cue's own rows (`CueRows`): the tabs it shows on ("home"); nil:
+    /// every tab.
     var tabs: [String]? = nil
     /// Badges made with the row (`CueRows.Row.badges`), by title id.
     var badges: [String: CardBadge] = [:]
@@ -84,10 +84,8 @@ struct HomeRow: Identifiable {
         return out
     }
 
-    /// Shown on this tab (Home: no type).
-    func shows(on typeFilter: String?) -> Bool {
-        tabs.map { $0.contains(typeFilter ?? "home") } ?? true
-    }
+    /// Shown on Home (rows saved before Movies and Series went say which).
+    var onHome: Bool { tabs.map { $0.contains("home") } ?? true }
 
     /// This row's key in `HomeCatalogSettingsStore` terms, so a setting that
     /// NAMES a catalog can be matched back to the row it produced.
@@ -226,19 +224,19 @@ final class HomeViewModel: ObservableObject {
         reloadRequest &+= 1
     }
 
-    /// The billboard for a tab: its picks (of that type on Movies / Series),
-    /// filled with the rows' highlights while the picks aren't made yet.
-    func billboard(type: String?, max: Int = BillboardPicks.count) -> [BillboardPick] {
+    /// The billboard: its picks, filled with the rows' highlights while the
+    /// picks aren't made yet.
+    func billboard(max: Int = BillboardPicks.count) -> [BillboardPick] {
         // Today's Pick has its own card below: not on the billboard too.
         let spotlight = Set(entries.compactMap { entry -> String? in
             guard case .catalog(let row) = entry, row.shape == .spotlight else { return nil }
             return row.items.first?.id
         })
         func fits(_ item: MetaItem) -> Bool {
-            !spotlight.contains(item.id) && (type.map { $0 == "series" ? item.isSeries : item.type == $0 } ?? true)
+            !spotlight.contains(item.id)
         }
         let picks = billboardPicks.filter { fits($0.item) }
-        return Array((picks.isEmpty ? highlights(max: max, type: type).filter { fits($0.item) } : picks).prefix(max))
+        return Array((picks.isEmpty ? highlights(max: max).filter { fits($0.item) } : picks).prefix(max))
     }
 
     private var loadedFingerprint: [String] = []
@@ -770,14 +768,13 @@ final class HomeViewModel: ObservableObject {
     /// Movies / Series tabs.
     private static let reasonKinds: Set<CardBadge.Kind> = [.person, .taste, .news, .returns]
 
-    func highlights(max: Int, type: String? = nil) -> [BillboardPick] {
+    func highlights(max: Int) -> [BillboardPick] {
         var seen = Set<String>()
         var picks: [BillboardPick] = []
         for entry in entries {
             guard case .catalog(let row) = entry else { continue }
             let fresh = row.items.filter { item in
                 item.background != nil && !seen.contains(item.id)
-                    && (type.map { $0 == "series" ? item.isSeries : item.type == $0 } ?? true)
             }
             for item in fresh.prefix(2) {
                 seen.insert(item.id)
@@ -813,9 +810,6 @@ struct HomeView: View {
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var library: LibraryStore
-    /// Movies / Series tabs: only this type ("movie" / "series"); nil: Home,
-    /// everything. The same rows, filtered — see `filteredRows`.
-    var typeFilter: String? = nil
     @Environment(\.scenePhase) private var scenePhase
     /// Its tab is in front (Home / Movies / Series stay alive when not).
     var active = true
@@ -916,11 +910,9 @@ struct HomeView: View {
         for entry in viewModel.entries {
             switch entry {
             case .catalog(let row):
-                if !row.items.isEmpty, row.shows(on: typeFilter) { rows.append(row) }
+                if !row.items.isEmpty, row.onHome { rows.append(row) }
             case .collection(let collection):
-                // On Movies / Series: the folders with that type.
-                let items = collection.folders.filter { folder in typeFilter.map(folder.lists) ?? true }
-                    .map { Self.spotlightItem(for: $0, in: collection, type: typeFilter) }
+                let items = collection.folders.map { Self.spotlightItem(for: $0, in: collection) }
                 guard !items.isEmpty else { continue }
                 let key = HomeCatalogSettingsStore.collectionKey(collection.id)
                 rows.append(HomeRow(id: Self.collectionItemPrefix + collection.id,
@@ -943,7 +935,7 @@ struct HomeView: View {
         if let continueRow { rows.append(continueRow) }
         rows += libraryRow
         rows += spotlightRows
-        return withoutWatched(filteredRows(rows))
+        return withoutWatched(rows)
     }
 
     /// Hide watched titles: the catalog rows without watched films and
@@ -990,40 +982,6 @@ struct HomeView: View {
     }
     static let libraryRowID = "spotlight.library"
 
-    /// Movies / Series: every row filtered to the tab's type. A row left with
-    /// only a few titles goes (unless it was that small to begin with);
-    /// collection rows come already filtered (their folders of the type —
-    /// see `spotlightRows`). The billboard, if its catalog
-    /// has none of the type, is made from the tab's own rows.
-    private func filteredRows(_ rows: [HomeRow]) -> [HomeRow] {
-        guard let typeFilter else { return rows }
-        func matches(_ item: MetaItem) -> Bool {
-            typeFilter == "series" ? item.isSeries : item.type == typeFilter
-        }
-        var out: [HomeRow] = []
-        for row in rows {
-            if row.id.hasPrefix(Self.collectionItemPrefix) { out.append(row); continue }
-            let items = row.items.filter(matches)
-            let keep = row.id == Spotlight.featuredRowID || row.id == Spotlight.continueRowID
-                || row.id == Self.libraryRowID || items.count >= min(4, row.items.count)
-            if keep, !items.isEmpty {
-                out.append(row.with(items))
-            }
-        }
-        if !out.contains(where: { $0.id == Spotlight.featuredRowID }) {
-            var seen = Set<String>()
-            let picks = out.filter { $0.id != Spotlight.continueRowID && $0.id != Self.libraryRowID }
-                .flatMap(\.items)
-                .filter { $0.background != nil && seen.insert($0.id).inserted }
-                .prefix(10)
-            if !picks.isEmpty, Spotlight.showFeatured {
-                out.insert(HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: Array(picks)),
-                           at: 0)
-            }
-        }
-        return out
-    }
-
     /// Marks a spotlight card that stands for a collection or folder, not a
     /// title. The rest of the id is looked up again in `selectSpotlight`.
     private static let collectionItemPrefix = "cue-collection:"
@@ -1037,12 +995,8 @@ struct HomeView: View {
 
     /// A folder as a tile: its cover (the art carries its name); the facts
     /// line says how many catalogs it holds.
-    /// `type` (Movies / Series): the count is of that kind's catalogs.
-    private static func spotlightItem(for folder: CueCollectionFolder,
-                                      in collection: CueCollection, type: String? = nil) -> MetaItem {
-        let count = folder.effectiveSources.filter { source in
-            type.map { source.kind == nil || source.kind == $0 } ?? true
-        }.count
+    private static func spotlightItem(for folder: CueCollectionFolder, in collection: CueCollection) -> MetaItem {
+        let count = folder.effectiveSources.count
         return MetaItem(id: collectionItemPrefix + collection.id + "\u{1F}" + folder.id,
                         type: "collection", name: folder.title,
                         poster: folder.tileCoverImageUrl, background: folder.tileCoverImageUrl,
@@ -1067,7 +1021,7 @@ struct HomeView: View {
         Group {
             let cw = spotlightContinue
             // The billboard: Cue's picks (on Movies / Series, of that type).
-            let picks = viewModel.billboard(type: typeFilter)
+            let picks = viewModel.billboard()
             let featured = picks.map(\.item)
             let featuredRow: [HomeRow] = featured.isEmpty || !Spotlight.showFeatured ? [] :
                 [HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: featured)]

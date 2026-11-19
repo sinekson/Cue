@@ -18,8 +18,6 @@ struct FolderView: View {
     @Environment(\.dismiss) private var dismiss
     let collection: CueCollection
     let folder: CueCollectionFolder
-    /// Opened from Movies / Series: only that type ("movie" / "series").
-    var type: String? = nil
     let onSelect: (MetaItem) -> Void
     /// Details pushed without the system's slide (the zoom brings it in).
     var onOpenInPlace: ((MetaItem) -> Void)? = nil
@@ -35,23 +33,22 @@ struct FolderView: View {
     final class RowsDepth { var depth = 0 }
     private var catalogs: [CollectionResolver.FolderCatalog]? { load.value }
 
-    init(collection: CueCollection, folder: CueCollectionFolder, type: String? = nil,
+    init(collection: CueCollection, folder: CueCollectionFolder,
          onSelect: @escaping (MetaItem) -> Void, onOpenInPlace: ((MetaItem) -> Void)? = nil) {
         self.collection = collection
         self.folder = folder
-        self.type = type
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
-        _load = StateObject(wrappedValue: PagePreparer.shared.take(Self.loadKey(collection, folder, type: type))
+        _load = StateObject(wrappedValue: PagePreparer.shared.take(Self.loadKey(collection, folder))
                                 ?? PageLoad())
     }
 
-    static func loadKey(_ collection: CueCollection, _ folder: CueCollectionFolder, type: String?) -> String {
-        "folder|\(collection.id)|\(folder.id)|\(type ?? "")"
+    static func loadKey(_ collection: CueCollection, _ folder: CueCollectionFolder) -> String {
+        "folder|\(collection.id)|\(folder.id)"
     }
 
     @MainActor
-    static func catalogs(of folder: CueCollectionFolder, type: String?, key: String, addonManager: AddonManager,
+    static func catalogs(of folder: CueCollectionFolder, key: String, addonManager: AddonManager,
                          tmdb: TMDBSettingsStore,
                          show: @escaping @MainActor ([CollectionResolver.FolderCatalog]) -> Void)
         async -> [CollectionResolver.FolderCatalog] {
@@ -60,7 +57,7 @@ struct FolderView: View {
         let catalogs = await CollectionResolver.catalogs(
             of: folder, addonManager: addonManager, addons: addonManager.addons,
             providers: CollectionProviders(tmdb: tmdb.isEnabled, trakt: TraktService.isConfigured),
-            tmdbLanguage: tmdb.settings.language, type: type,
+            tmdbLanguage: tmdb.settings.language,
             firstScreen: { first in
                 await FixedFocusImages.prefetch(firstScreen(first), within: .milliseconds(700))
                 show(first)
@@ -147,8 +144,8 @@ struct FolderView: View {
         }
         .onAppear {
             // Opened without a press (a demo): it loads from here.
-            load.start { [collection, folder, type, addonManager, tmdbSettings] show in
-                await Self.catalogs(of: folder, type: type, key: Self.loadKey(collection, folder, type: type),
+            load.start { [collection, folder, addonManager, tmdbSettings] show in
+                await Self.catalogs(of: folder, key: Self.loadKey(collection, folder),
                                     addonManager: addonManager, tmdb: tmdbSettings, show: show)
             }
         }
@@ -160,7 +157,7 @@ struct FolderView: View {
     /// Only the first rows in: the count as last time (it would change).
     private var header: FolderHeader {
         let all = load.whole ? catalogs : nil
-        let shape = all == nil ? Shape.of(Self.loadKey(collection, folder, type: type)) : nil
+        let shape = all == nil ? Shape.of(Self.loadKey(collection, folder)) : nil
         return Self.header(collection, folder, catalogs: all?.count ?? shape?.catalogs,
                            titles: all?.first?.items.count ?? shape?.titles)
     }
@@ -198,7 +195,7 @@ struct FolderView: View {
         // when never opened — most folders are) — the same view the content
         // then fills.
         let gridWhileLoading = catalogs == nil
-            && Shape.of(Self.loadKey(collection, folder, type: type))?.catalogs == 1
+            && Shape.of(Self.loadKey(collection, folder))?.catalogs == 1
         if gridWhileLoading || catalogs?.count == 1 {
             let items = catalogs?.first?.items
             FolderPosterGrid(header: AnyView(header), headerHeight: FolderGridController.defaultHeaderHeight,

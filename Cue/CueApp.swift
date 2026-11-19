@@ -180,7 +180,7 @@ extension Route {
     var probeDetail: String {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
-        case .folder(let c, let f, _): return "\(c.title) → \(f.title)"
+        case .folder(let c, let f): return "\(c.title) → \(f.title)"
         case .person(_, let name, _): return name
         case .tmdbCompany(_, let name, _, _): return name
         case .genre(_, let name, _, _): return name
@@ -223,9 +223,8 @@ extension Route {
 
 enum Route: Hashable {
     case detail(MetaItem)
-    /// A folder of a collection, opened from its Home row — on Movies /
-    /// Series, only that type (`type`).
-    case folder(CueCollection, CueCollectionFolder, type: String? = nil)
+    /// A folder of a collection, opened from its Home row.
+    case folder(CueCollection, CueCollectionFolder)
     /// From Details: `backdrop`, that title's picture (behind the page,
     /// blurred).
     case person(id: Int, name: String, backdrop: String? = nil)
@@ -274,8 +273,6 @@ struct RootView: View {
     @State private var searchPath: [Route] = []
     @State private var libraryPath: [Route] = []
     @State private var discoverPath: [Route] = []
-    @State private var moviesPath: [Route] = []
-    @State private var seriesPath: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -530,7 +527,6 @@ struct RootView: View {
                     if args.contains("-accountDemo") || args.contains("-settingsPage") { selectedTab = 3 }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
-                    if args.contains("-moviesDemo") { selectedTab = AppTab.movies.rawValue }
                     // A collection's folder, opened from Home (the simulator can't
                     // select): `-folderDemo <n>` — the n-th collection's first.
                     if let flag = args.firstIndex(of: "-folderDemo") {
@@ -873,8 +869,6 @@ struct RootView: View {
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
         case 6: return discoverPath.isEmpty
-        case 4: return moviesPath.isEmpty && detailLayers[4]?.leaving != false
-        case 5: return seriesPath.isEmpty && detailLayers[5]?.leaving != false
         default: return true   // Settings keeps the rail
         }
     }
@@ -962,7 +956,7 @@ struct RootView: View {
                 TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
                            pressed: topBarPressed, hidden: !atTabRoot,
                            follows: AppTab(rawValue: selectedTab).flatMap {
-                               $0.isHomeLike ? "home" : $0 == .discover ? "discover" : nil
+                               $0 == .home ? "home" : $0 == .discover ? "discover" : nil
                            })
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
@@ -1074,7 +1068,7 @@ struct RootView: View {
                     // `topBarClearance`: plain padding cut the page off under
                     // the bar, so scrolled rows hit a black band instead of
                     // sliding under the glass.
-                    .safeAreaPadding(.top, !tab.isHomeLike && tab != .search && (showSidebar || !active)
+                    .safeAreaPadding(.top, tab != .home && tab != .search && (showSidebar || !active)
                                      ? GlassSidebar.topBarClearance : 0)
                     // Search and Library draw no background of their own:
                     // the tab gives them one.
@@ -1149,12 +1143,8 @@ struct RootView: View {
                     .probeScreen("Settings")
                     .environmentObject(searchViewModel)
             }
-        case .movies:
-            homeLikeStack(.movies, path: $moviesPath, active: active)
-        case .series:
-            homeLikeStack(.series, path: $seriesPath, active: active)
         case .home:
-            homeLikeStack(.home, path: $homePath, active: active)
+            homeStackWithLayers(path: $homePath, active: active)
         case .discover:
             NavigationStack(path: $discoverPath) {
                 DiscoverView(onOpenInPlace: { item in
@@ -1171,8 +1161,9 @@ struct RootView: View {
         }
     }
 
-    /// Home, or its filtered twins Movies / Series: each in its own stack.
-    private func homeLikeStack(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
+    /// Home in its stack, Details a layer over it.
+    private func homeStackWithLayers(path: Binding<[Route]>, active: Bool) -> some View {
+        let tab = AppTab.home
         let layer = detailLayers[tab.rawValue]
         let covered = layer.map { !$0.leaving } ?? false
         return ZStack {
@@ -1508,10 +1499,8 @@ struct RootView: View {
     // MARK: - Tab roots
 
     private func homeRoot(_ tab: AppTab, path: Binding<[Route]>, active: Bool) -> some View {
-        let filter = tab.typeFilter
         return HomeView(
             viewModel: homeViewModel,
-            typeFilter: filter,
             active: active,
             onSelect: { openDetail($0) { openFromHome($0, tab: tab, path: path) } },
             // From the billboard (`DetailTransition` already running).
@@ -1520,14 +1509,14 @@ struct RootView: View {
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
             onOpenFolder: { collection, folder in
-                let key = FolderView.loadKey(collection, folder, type: filter)
+                let key = FolderView.loadKey(collection, folder)
                 PagePreparer.shared.open(key,
                                          showing: { [addonManager, tmdbSettings] show in
-                                             await FolderView.catalogs(of: folder, type: filter, key: key,
+                                             await FolderView.catalogs(of: folder, key: key,
                                                                        addonManager: addonManager, tmdb: tmdbSettings,
                                                                        show: show)
                                          }) {
-                    pushPage(Route.folder(collection, folder, type: filter), path)
+                    pushPage(Route.folder(collection, folder), path)
                 }
             },
             onContentReady: {
@@ -1616,9 +1605,9 @@ struct RootView: View {
     }
 
     /// A collection's folder.
-    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder, type: String?,
+    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder,
                             path: Binding<[Route]>) -> some View {
-        FolderView(collection: collection, folder: folder, type: type,
+        FolderView(collection: collection, folder: folder,
                    onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                    onOpenInPlace: { item in
                        var transaction = Transaction()
@@ -1671,8 +1660,8 @@ struct RootView: View {
                     }
                 }
             }
-        case .folder(let collection, let folder, let type):
-            folderView(collection, folder, type: type, path: path)
+        case .folder(let collection, let folder):
+            folderView(collection, folder, path: path)
         case .person(let id, let name, let backdrop):
             TMDBBrowseView(personID: id, title: name,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
@@ -2210,7 +2199,7 @@ final class LaunchPreloader: ObservableObject {
         guard current == generation else { return }
         // (Home's own: its first `BillboardPicks.count` — the model holds
         // every tab's.)
-        let picks = home.billboard(type: nil).map(\.item)
+        let picks = home.billboard().map(\.item)
         let rows = catalogRows(home)
         line(String(format: "Picks     %d · %.0f ms", picks.count, (CACurrentMediaTime() - t) * 1000))
 
@@ -2320,7 +2309,7 @@ final class LaunchPreloader: ObservableObject {
         guard let home else { return }
         if !force, let deepAt, Date().timeIntervalSince(deepAt) < 60 * 60 { return }
         deepAt = Date()
-        let picks = home.billboard(type: nil).map(\.item)
+        let picks = home.billboard().map(\.item)
         let rows = catalogRows(home)
         let featured = HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: picks)
         TitlePreloader.shared.focused(rows: [featured] + rows, row: 0, index: 0)
