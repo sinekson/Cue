@@ -1415,7 +1415,27 @@ matching section before changing that part of the UI. Where this differs from
   way, whatever its Nuvio `viewMode` (the value isn't touched). The old
   two-lines-per-catalog blocks, tabs and "See All" pages are gone.
   The header is the rows' `pageHeader`: it moves up with the first row in
-  the rows' own animation. Movies / Series show the collections too, only
-  folders with sources of that kind (`CollectionSourceDTO.kind`; unknown
-  counts), at Home's place; a folder opened there shows only that type
-  (`Route.folder(type:)`).
+  the rows' own animation. (Movies / Series showed only folders with
+  sources of their kind, `CollectionSourceDTO.kind`; gone with those tabs,
+  2026-11-19.)
+- **Discover** (2026-11-19): finding by kind, not by name ("a fantasy
+  anime movie" had no way in: Home recommends, Search needs the name).
+  Brainstormed: a filter bar of labelled pills, drilling down folder by
+  folder, a page of tiles opening browse pages; chosen: one editable
+  sentence of words, "Show me [genre] [style] [movies] about [theme] / in
+  [language] from [year] · [rating] · [order] · [watched]", each word a
+  pill, the poster grid under it. Prototype first: the words' choices in
+  the old full-screen dropdown (unreadable in light: its dark page under
+  tvOS's black text, repainted in the page's colours), then the menus'
+  glass panel under the word, the grid staying in view. One value per
+  word for now (several talked over, left open). Order "best for you"
+  (the rows' taste) the default; watched a choice, not hidden. Search
+  stays its own tab. Starting points: fixed ones, then two from your
+  taste first. Details' genres and tags open it filled in, replacing the
+  browse page's genre and tag pages. Add to Home makes the sentence a
+  Home row; the Movies and Series tabs retired for it. Bugs on the way:
+  the sentence's empty top behind the bar, then the whole-screen grid,
+  read as the bar's neighbours (Left/Right fell into the page): the grid
+  starts under the bar now, its titles still scrolling to the top; the
+  bar stayed over the scrolled grid (now it goes with the page); coming
+  back from Details landed on the first word.
