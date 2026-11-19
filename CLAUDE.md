@@ -936,8 +936,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   page keeps only people, studios and networks. The bar is on the page,
   scrolling away with it (`TopBarFollow` per page); the grid's frame
   starts under the bar (`bleedTop`: SwiftUI took a whole-screen grid for
-  the bar's neighbour, Left/Right fell into it). Next: pin a sentence as
-  a Home row, Movies and Series tabs retired.
+  the bar's neighbour, Left/Right fell into it). Add to Home (a pill
+  before the starting points, "On Home" once there, pressed again it
+  goes; not on a sentence with a genre or tag added from Details): the
+  sentence a Home row after Saved for Later, plain posters with moving
+  focus, named after the sentence ("Fantasy anime movies, in Japanese"),
+  its first 25 in the sentence's order, fetched at launch and when added
+  (`DiscoverPins`, per profile, on the device). It replaces the Movies
+  and Series tabs (retired 2026-11-19).
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.

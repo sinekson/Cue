@@ -645,6 +645,41 @@ final class DiscoverModel: ObservableObject {
         return DiscoverModel(picks: [.type: type, .theme: own.id], extras: known == nil ? [.theme: [own]] : [:])
     }
 
+    /// The sentence as a row's name: "Fantasy anime movies about isekai,
+    /// Japanese, from the 2010s, well rated" (the order isn't said).
+    var title: String {
+        var words: [String] = []
+        if isSet(.genre) { words.append(option(.genre).word) }
+        if isSet(.style) { words.append(option(.style).word) }
+        words.append(pick(.type) == "movies" ? "movies" : pick(.type) == "shows" ? "shows" : "movies & shows")
+        var name = words.joined(separator: " ")
+        if isSet(.theme) { name += " about \(option(.theme).word)" }
+        var more: [String] = []
+        if isSet(.origin) { more.append("in \(option(.origin).word)") }
+        if isSet(.era) { more.append("from \(option(.era).word)") }
+        if isSet(.rating) { more.append(option(.rating).word) }
+        if !more.isEmpty { name += ", " + more.joined(separator: ", ") }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// Only a sentence of the lists' own words can go on Home (a genre or
+    /// tag added from Details isn't kept).
+    var pinnable: Bool { extras.isEmpty }
+    var pinned: Bool { DiscoverPins.shared.contains(picks) }
+
+    func togglePin() {
+        DiscoverPins.shared.toggle(picks, title: title)
+        objectWillChange.send()
+    }
+
+    /// The first titles, for a Home row.
+    static func titles(for picks: [Slot: String]) async -> [MetaItem] {
+        let model = DiscoverModel(picks: picks, extras: [:])
+        model.hideWatched = { _ in false }
+        await model.start()
+        return model.items
+    }
+
     /// A word's choices: the list's, then this sentence's own.
     func choices(_ slot: Slot) -> [Option] { Self.options(slot) + (extras[slot] ?? []) }
 
@@ -1162,6 +1197,12 @@ private struct DiscoverSentence: View {
                     .font(.system(size: 24))
                     .foregroundStyle(CueInk.tertiary)
                     .frame(width: 220, alignment: .leading)
+                if model.pinnable {
+                    Button { model.togglePin() } label: {
+                        PinChip(pinned: model.pinned)
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                }
                 ForEach(model.presets, id: \.name) { preset in
                     Button { model.apply(preset: preset.picks) } label: {
                         FlatChip(label: preset.name)
@@ -1260,4 +1301,109 @@ private struct AnchorView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UIView, context: Context) { anchors.views[slot] = view }
+}
+
+/// "Add to Home" / "On Home": the sentence as a Home row.
+private struct PinChip: View {
+    @Environment(\.isFocused) private var isFocused
+    let pinned: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: pinned ? "checkmark" : "plus")
+                .font(.system(size: 22, weight: .semibold))
+            Text(pinned ? "On Home" : "Add to Home")
+                .font(.system(size: 24, weight: .medium))
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 22)
+        .frame(height: 52)
+        .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
+        .background(Capsule().fill(isFocused ? FlatControl.focus : pinned ? FlatControl.selected : FlatControl.rest))
+        .scaleEffect(isFocused ? 1.06 : 1)
+        .animation(FlatControl.focusChange, value: isFocused)
+    }
+}
+
+/// Discover's sentences put on Home (per profile): each a row of plain
+/// posters after Saved for Later, named after its sentence, its titles
+/// fetched at launch and when one is added.
+@MainActor
+final class DiscoverPins: ObservableObject {
+    static let shared = DiscoverPins()
+
+    struct Pin: Codable, Equatable {
+        let picks: [String: String]
+        let title: String
+        var id: String { picks.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&") }
+    }
+
+    @Published private(set) var pins: [Pin] = []
+    /// Each pin's titles, by its id.
+    @Published private(set) var titles: [String: [MetaItem]] = [:]
+    private var loadedFor: Int?
+
+    private var key: String {
+        ProfileScopedDefaults.key("cue.discover.pins", ProfileScopedDefaults.activeProfileID)
+    }
+
+    /// The profile's pins (read again when the profile changed).
+    private func load() {
+        let profile = ProfileScopedDefaults.activeProfileID
+        guard loadedFor != profile else { return }
+        loadedFor = profile
+        pins = (UserDefaults.standard.data(forKey: key)).flatMap { try? JSONDecoder().decode([Pin].self, from: $0) } ?? []
+        titles = [:]
+    }
+
+    private func save() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(pins), forKey: key)
+    }
+
+    private static func raw(_ picks: [DiscoverModel.Slot: String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) })
+    }
+
+    func contains(_ picks: [DiscoverModel.Slot: String]) -> Bool {
+        load()
+        let id = Pin(picks: Self.raw(picks), title: "").id
+        return pins.contains { $0.id == id }
+    }
+
+    func toggle(_ picks: [DiscoverModel.Slot: String], title: String) {
+        load()
+        let pin = Pin(picks: Self.raw(picks), title: title)
+        if let index = pins.firstIndex(where: { $0.id == pin.id }) {
+            pins.remove(at: index)
+        } else {
+            pins.append(pin)
+            Task { await fetch(pin) }
+        }
+        save()
+    }
+
+    /// Every pin's titles (Home's load).
+    func refresh() async {
+        load()
+        for pin in pins where titles[pin.id] == nil { await fetch(pin) }
+    }
+
+    private func fetch(_ pin: Pin) async {
+        let picks = Dictionary(uniqueKeysWithValues: pin.picks.compactMap { key, value in
+            DiscoverModel.Slot(rawValue: key).map { ($0, value) }
+        })
+        titles[pin.id] = Array(await DiscoverModel.titles(for: picks).prefix(25))
+    }
+
+    /// Home's rows.
+    var rows: [HomeRow] {
+        load()
+        return pins.compactMap { pin in
+            guard let items = titles[pin.id], !items.isEmpty else { return nil }
+            return HomeRow(id: "discover.pin." + pin.id, title: pin.title, items: items,
+                           subtitles: Dictionary(items.compactMap { item in item.year.map { (item.id, $0) } },
+                                                 uniquingKeysWith: { first, _ in first }),
+                           shape: .plain)
+        }
+    }
 }

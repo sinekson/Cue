@@ -810,6 +810,8 @@ struct HomeView: View {
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject private var perf = PerformanceSettingsStore.shared
     @EnvironmentObject private var library: LibraryStore
+    /// Discover's sentences put on Home.
+    @ObservedObject private var pins = DiscoverPins.shared
     @Environment(\.scenePhase) private var scenePhase
     /// Its tab is in front (Home / Movies / Series stay alive when not).
     var active = true
@@ -934,6 +936,7 @@ struct HomeView: View {
         var rows = featured
         if let continueRow { rows.append(continueRow) }
         rows += libraryRow
+        rows += pins.rows
         rows += spotlightRows
         return withoutWatched(rows)
     }
@@ -1069,6 +1072,8 @@ struct HomeView: View {
         .task {
             await reload()
         }
+        // Discover's sentences put on Home: their titles.
+        .task { await pins.refresh() }
         // Catalogs are pulled — add-ons can't push — so Home asks again when
         // its lists are older than an hour: as it comes into view, and as
         // Cue comes back to the front. Not a timer: a handful of refreshes
