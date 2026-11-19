@@ -324,8 +324,9 @@ struct FolderHeader: View {
 @MainActor
 final class GridBack {
     weak var controller: FolderGridController?
-    /// True: handled (the grid goes back up to its top).
-    func handle() -> Bool { controller?.backToTopIfDeep() ?? false }
+    /// True: handled (the grid goes back up to its top). `then`: at the
+    /// top, focus goes there (a tab's bar) instead of the first title.
+    func handle(then: (() -> Void)? = nil) -> Bool { controller?.backToTopIfDeep(then: then) ?? false }
 }
 
 struct FolderPosterGrid: UIViewControllerRepresentable {
@@ -719,11 +720,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// top, the header whole, then focus onto the first title. On the first
     /// line (or the header): false — the page leaves. `headerFirst`: from
     /// any line up to the header's controls; on them, the page leaves.
-    func backToTopIfDeep() -> Bool {
+    func backToTopIfDeep(then: (() -> Void)? = nil) -> Bool {
         guard firstTitle != nil, let focused = focusedPath,
               focused.item >= (headerFirst ? 0 : Self.columns),
               !(headerHost.map { Self.focus(in: $0.view) } ?? false) else { return false }
         backToTop = true
+        afterTop = then
         let top = CGPoint(x: 0, y: -collectionView.contentInset.top)
         if collectionView.contentOffset.y > top.y {
             collectionView.setContentOffset(top, animated: true)
@@ -738,10 +740,17 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     }
 
     private func focusFirst() {
+        if let afterTop {
+            self.afterTop = nil
+            backToTop = false
+            return afterTop()
+        }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
         backToTop = false
     }
+    /// Where focus goes once Back's scroll is at the top (a tab's bar).
+    private var afterTop: (() -> Void)?
 
     /// A move during Back's scroll up (focus still on the card left —
     /// moved, it fought the scroll): dropped, the scroll going on at its

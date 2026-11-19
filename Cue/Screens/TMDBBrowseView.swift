@@ -1294,7 +1294,9 @@ struct DiscoverView: View {
             await model.start()
         }
         .onExitCommand {
-            guard !gridBack.handle() else { return }
+            // The tab: the page up to its top on the way, focus on the bar
+            // (never the sentence), as every tab.
+            guard !gridBack.handle(then: opened ? nil : onBack) else { return }
             if !opened { onBack() } else if let pageBack { pageBack() } else { dismiss() }
         }
     }
