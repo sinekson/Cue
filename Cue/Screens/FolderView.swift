@@ -764,6 +764,15 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// own pace (hurried, a page's way in 0.1 s was a jump; held and run
     /// after it, it came late — an action from the past).
     override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        // Up into the page from outside it: only from a tab's bar (nothing
+        // sits below the grid). Its frame runs up behind the bar, so the
+        // engine found it above, and it sent focus to the title it
+        // remembered — Back's, far down the page.
+        if context.focusHeading.contains(.up),
+           context.previouslyFocusedView.map({ !$0.isDescendant(of: view) }) ?? false,
+           context.nextFocusedView?.isDescendant(of: view) == true {
+            return false
+        }
         guard backToTop, !context.focusHeading.isEmpty else { return super.shouldUpdateFocus(in: context) }
         return false
     }
