@@ -1114,6 +1114,11 @@ mid-move).
   stream badges (Badger/Fusion: not liked; their blob feature is left alone).
 - Removed from the screen: the launch's numbers (the steps still go to the
   probe log, `LaunchPreloader.line`).
+- Anime as seasons instead of shows (a card per season, AniList's split,
+  Details opened on it by air date): prototyped 2026-11-19 and skipped:
+  much work and fragile (recommendations know shows, not seasons). TMDB's
+  bundled show stays the unit everywhere (its poster is mostly the newest
+  season's). Talked over for later: a Seasons row in an anime's Details.
 - Ask before touching the Nuvio sync.
 - Rejected mechanisms: tvOS's own sidebar, the system's context menus, SwiftUI
   scrolling for the rows, the add-ons' catalogs for Search, sorting or
