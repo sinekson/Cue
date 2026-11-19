@@ -927,10 +927,18 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   for you" (the default: the rows' taste, `CueRows.tasteModel`, over
   three pages of the best known at a time), best known, popular now, top
   rated, newest; watched included or hidden (a choice). The sentence
-  kept per profile. Search stays its own tab. Starting points: two from
-  your taste first (a theme of yours; your language beyond English with
-  your genre, Japanese animation as anime), then the fixed ones, six in
-  all. Details' genres and tags open it filled in (`Route.genre`,
+  kept per profile. Search stays its own tab. Under it one side-scrolling
+  line (Search's way): the count, the pins, Add to Home, then 15
+  starting points in three runs, unmarked: five from your taste (your
+  themes, your language with your genre, your genres well rated or
+  from your decade; fixed ones fill in), five from TMDB's trending this
+  week (its films' and shows' biggest genres, anime, a language beyond
+  English: "Popular action movies"), five curveballs, new each day,
+  away from your taste (a theme, a language with your genre, an older
+  decade, a genre you don't watch, well rated or acclaimed). Every
+  pill named by its sentence (`DiscoverModel.name`: "Well rated
+  movies & shows about cyberpunk"; the order said only for popular and
+  newest, no commas), a name past 760 pt running while focused. Details' genres and tags open it filled in (`Route.genre`,
   `.keyword`: a pushed page on Details' bands, its sentence not kept; a
   genre or tag the lists lack added to that word's choices); the browse
   page keeps only people, studios and networks. The bar is on the page,
@@ -945,9 +953,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   ("Anime Shows About Isekai"; sentence case in Discover), its first 25
   in the sentence's order, fetched at launch and when added
   (`DiscoverPins`, per profile, on the device). In Discover they lead
-  the starting points' line, "✓" and the name's first part (to its
-  first comma), the whole name running while focused (no rename: too
-  tedious); Select loads it, held: Remove from Home; with three on
+  the starting points, "✓" and the sentence (no rename: too tedious); Select loads it, held: Remove from Home; with three on
   Home, Add to Home asks "Replace which?". It replaces the Movies
   and Series tabs (retired 2026-11-19).
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;

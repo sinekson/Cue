@@ -2141,6 +2141,34 @@ extension TMDBService {
         return await mapToMetaItems(body.raw(defaultMovie: true, limit: limit))
     }
 
+    /// What's trending this week, as kinds: each title's side, genres (by
+    /// name) and original language. Discover's popular starting points.
+    struct TrendingKind: Sendable {
+        let isMovie: Bool
+        let genres: [String]
+        let language: String?
+    }
+
+    static func trendingKinds() async -> [TrendingKind] {
+        var kinds: [TrendingKind] = []
+        for page in 1...3 {
+            guard let body: PickList = try? await get("/trending/all/week",
+                                                      query: ["language": preferredLanguage, "page": String(page)])
+            else { break }
+            for result in body.results ?? [] {
+                let isMovie: Bool
+                switch result.media_type {
+                case "movie": isMovie = true
+                case "tv": isMovie = false
+                default: continue
+                }
+                let genres = (result.genre_ids ?? []).compactMap { isMovie ? movieGenres[$0] : tvGenres[$0] }
+                kinds.append(TrendingKind(isMovie: isMovie, genres: genres, language: result.original_language))
+            }
+        }
+        return kinds
+    }
+
     /// How well known a title is (TMDB's votes and popularity): Search's
     /// order.
     struct SearchFame: Sendable {
@@ -2281,6 +2309,7 @@ extension TMDBService {
             let first_air_date: String?
             let vote_average: Double?
             let genre_ids: [Int]?
+            let original_language: String?
         }
         let results: [Result]?
 

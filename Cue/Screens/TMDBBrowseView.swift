@@ -605,8 +605,9 @@ final class DiscoverModel: ObservableObject {
     private let persists: Bool
     /// Choices the lists don't have: the genre or tag it was opened with.
     private var extras: [Slot: [Option]] = [:]
-    /// Starting points: from your taste first, then the fixed ones.
-    @Published private(set) var presets: [(name: String, picks: [Slot: String])] = DiscoverModel.fixedPresets
+    /// Starting points, three runs of five: from your taste, from what's
+    /// popular this week, curveballs away from your taste.
+    @Published private(set) var presets: [[Slot: String]] = DiscoverModel.fixedPresets
 
     /// The tab's own sentence.
     init() {
@@ -645,20 +646,30 @@ final class DiscoverModel: ObservableObject {
         return DiscoverModel(picks: [.type: type, .theme: own.id], extras: known == nil ? [.theme: [own]] : [:])
     }
 
-    /// The sentence as a row's name: "Fantasy anime movies about isekai,
-    /// Japanese, from the 2010s, well rated" (the order isn't said).
-    var title: String {
+    /// The sentence as a name, in sentence case: "Well rated fantasy anime
+    /// movies about isekai from the 2010s" (the order only when it's
+    /// popular or newest; anime's Japanese not said again).
+    var title: String { Self.name(of: picks, extras: extras) }
+
+    static func name(of picks: [Slot: String], extras: [Slot: [Option]] = [:]) -> String {
+        func option(_ slot: Slot) -> Option? {
+            guard let id = picks[slot], id != options(slot)[0].id else { return nil }
+            return (options(slot) + (extras[slot] ?? [])).first { $0.id == id }
+        }
         var words: [String] = []
-        if isSet(.genre) { words.append(option(.genre).word) }
-        if isSet(.style) { words.append(option(.style).word) }
-        words.append(pick(.type) == "movies" ? "movies" : pick(.type) == "shows" ? "shows" : "movies & shows")
-        var name = words.joined(separator: " ")
-        if isSet(.theme) { name += " about \(option(.theme).word)" }
-        var more: [String] = []
-        if isSet(.origin) { more.append("in \(option(.origin).word)") }
-        if isSet(.era) { more.append("from \(option(.era).word)") }
-        if isSet(.rating) { more.append(option(.rating).word) }
-        if !more.isEmpty { name += ", " + more.joined(separator: ", ") }
+        switch picks[.order] {
+        case "popular": words.append("popular")
+        case "new": words.append("new")
+        default: break
+        }
+        if let rating = option(.rating) { words.append(rating.id == "gems" ? "hidden gem" : rating.word) }
+        if let genre = option(.genre) { words.append(genre.word) }
+        if let style = option(.style) { words.append(style.word) }
+        words.append((options(.type).first { $0.id == picks[.type] } ?? options(.type)[0]).word)
+        if let theme = option(.theme) { words.append("about \(theme.word)") }
+        if let origin = option(.origin), picks[.style] != "anime" { words.append("in \(origin.word)") }
+        if let era = option(.era) { words.append("from \(era.word)") }
+        let name = words.joined(separator: " ")
         return name.prefix(1).uppercased() + name.dropFirst()
     }
 
@@ -669,7 +680,7 @@ final class DiscoverModel: ObservableObject {
 
     /// On Home, in place of `replacing` (a pin's id) when three are there.
     func pin(replacing: String? = nil) {
-        DiscoverPins.shared.add(picks, title: title, replacing: replacing)
+        DiscoverPins.shared.add(picks, replacing: replacing)
     }
 
     func picksMatch(_ pin: DiscoverPins.Pin) -> Bool { DiscoverPins.Pin.id(of: picks) == pin.id }
@@ -761,41 +772,156 @@ final class DiscoverModel: ObservableObject {
         await tasteful
     }
 
-    /// Two starting points from your taste (the rows' traits you lean to
-    /// most that a word can say), before the fixed ones.
+    /// Fifteen starting points: five from your taste (the fixed ones
+    /// filling in), five from this week's trending, five curveballs; none
+    /// twice.
     private func loadPresets() async {
-        guard persists, let model = await CueRows.tasteModel() else { return }
-        let features = model.taste.shares.keys.sorted { model.pull($0) > model.pull($1) }
-        var mine: [(name: String, picks: [Slot: String])] = []
-        // A theme of yours (isekai, time travel…).
-        if let theme = features.lazy.compactMap({ feature in
-            Self.options(.theme).first { $0.id == "k" + feature.dropFirst(2) }
-        }).first {
-            mine.append((theme.name ?? theme.word, [.theme: theme.id]))
+        guard persists else { return }
+        async let trending = TMDBService.trendingKinds()
+        let model = await CueRows.tasteModel()
+        let runs = [(model.map(Self.forYou) ?? []) + Self.fixedPresets,
+                    Self.popular(await trending),
+                    Self.curveballs(model)]
+        var seen = Set<String>()
+        var out: [[Slot: String]] = []
+        for run in runs {
+            out += run.filter { seen.insert(DiscoverPins.Pin.id(of: $0)).inserted }.prefix(5)
         }
-        // Your language beyond English with your genre in it.
-        let language = features.lazy.compactMap { feature -> Option? in
-            guard feature.hasPrefix("l:"), feature != "l:en" else { return nil }
-            return Self.options(.origin).first { $0.id == String(feature.dropFirst(2)) }
-        }.first
-        let genre = features.lazy.compactMap { feature -> Option? in
+        presets = out
+    }
+
+    /// The options whose ids hold a trait's (`"k:9882"` in `"k9882"`,
+    /// `"l:da"` in `"sv|da|no"`).
+    private static func option(_ slot: Slot, feature: String) -> Option? {
+        let value = feature.split(separator: ":").last.map(String.init) ?? ""
+        return options(slot).dropFirst().first { option in
+            let id = slot == .theme ? String(option.id.dropFirst()) : option.id
+            return id.split(separator: "|").contains { $0 == value }
+        }
+    }
+
+    /// The anime themes: with an anime watcher, anime.
+    private static let animeThemes: Set<String> = ["k237451", "k10046", "k9914", "k291483"]
+
+    /// Your themes, your language with your genre, your genres (well
+    /// rated; from your decade, else new).
+    private static func forYou(_ model: CueRows.Model) -> [[Slot: String]] {
+        let shares = model.taste.shares
+        let features = shares.keys.sorted { model.pull($0) > model.pull($1) }
+        let animeFan = (shares["g:16"] ?? 0) > 0.2 && (shares["l:ja"] ?? 0) > 0.15
+        let type = model.taste.movieShare > 0.65 ? "movies" : model.taste.movieShare < 0.35 ? "shows" : "both"
+        let themes = features.filter { $0.hasPrefix("k:") }.compactMap { option(.theme, feature: $0) }
+        let genres = features.compactMap { feature -> Option? in
             guard feature.hasPrefix("g:"), let id = Int(feature.dropFirst(2)), id != 16,
                   let name = TMDBService.genre(id: id) else { return nil }
-            return Self.options(.genre).first { $0.id == name }
-        }.first
-        if let language {
-            let anime = language.id == "ja" && (model.taste.shares["g:16"] ?? 0) > 0.2
-            var picks: [Slot: String] = anime ? [.style: "anime"] : [.origin: language.id]
-            var name = anime ? "Anime" : language.word + " titles"
-            if let genre {
-                picks[.genre] = genre.id
-                name = anime ? "\(genre.word.capitalized) anime" : "\(language.word) \(genre.word)"
-            }
-            picks[.type] = "both"
-            mine.append((name, picks))
+            return options(.genre).first { $0.id == name }
         }
-        let names = Set(mine.map(\.name))
-        presets = mine + Self.fixedPresets.filter { !names.contains($0.name) }.prefix(6 - mine.count)
+        let language = features.first { $0.hasPrefix("l:") && $0 != "l:en" }.flatMap { option(.origin, feature: $0) }
+        let decade = features.first { $0.hasPrefix("d:") && $0 < "d:2020" }.flatMap { feature -> String? in
+            guard let year = Int(feature.dropFirst(2)) else { return nil }
+            return year < 1970 ? "older" : "\(year)s"
+        }
+
+        var out: [[Slot: String]] = []
+        for theme in themes.prefix(2) {
+            out.append(animeFan && animeThemes.contains(theme.id)
+                       ? [.type: "shows", .style: "anime", .theme: theme.id]
+                       : [.type: "both", .theme: theme.id])
+        }
+        if let language {
+            var picks: [Slot: String] = language.id == "ja" && animeFan ? [.style: "anime"] : [.origin: language.id]
+            picks[.type] = type
+            if let genre = genres.first { picks[.genre] = genre.id }
+            out.append(picks)
+        }
+        if let genre = genres.first { out.append([.type: type, .genre: genre.id, .rating: "good"]) }
+        if genres.count > 1 {
+            out.append(decade.map { [.type: type, .genre: genres[1].id, .era: $0] }
+                       ?? [.type: type, .genre: genres[1].id, .order: "new"])
+        }
+        return out
+    }
+
+    /// This week's trending as kinds: its films' and shows' biggest genres
+    /// (drama only when nothing else is), anime, a language beyond English;
+    /// popular now first.
+    private static func popular(_ kinds: [TMDBService.TrendingKind]) -> [[Slot: String]] {
+        // TMDB's shows' joined genres, as the list's words.
+        let showGenres = ["Action & Adventure": "Action", "Sci-Fi & Fantasy": "Science Fiction", "War & Politics": "War"]
+        var genres: [String: [String: Int]] = [:]
+        var anime = 0
+        var languages: [String: Int] = [:]
+        for kind in kinds {
+            if kind.genres.contains("Animation"), kind.language == "ja" { anime += 1; continue }
+            let side = kind.isMovie ? "movies" : "shows"
+            for name in kind.genres {
+                let word = showGenres[name] ?? name
+                guard options(.genre).contains(where: { $0.id == word }) else { continue }
+                genres[side, default: [:]][word, default: 0] += 1
+            }
+            if let code = kind.language, code != "en", let origin = option(.origin, feature: "l:" + code) {
+                languages[origin.id, default: 0] += 1
+            }
+        }
+        func top(_ side: String) -> [String] {
+            let counts = genres[side] ?? [:]
+            let ranked = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+            return ranked.filter { $0 != "Drama" } + ranked.filter { $0 == "Drama" }
+        }
+        let movies = top("movies"), shows = top("shows")
+        var out: [[Slot: String]] = []
+        func genre(_ side: String, _ list: [String], _ index: Int) {
+            guard index < list.count else { return }
+            out.append([.type: side, .genre: list[index], .order: "popular"])
+        }
+        genre("movies", movies, 0)
+        genre("shows", shows, 0)
+        if anime >= 3 { out.append([.type: "both", .style: "anime", .order: "popular"]) }
+        if let (language, count) = languages.max(by: { $0.value < $1.value }), count >= 3 {
+            out.append([.type: "both", .origin: language, .order: "popular"])
+        }
+        genre("movies", movies, 1)
+        genre("shows", shows, 1)
+        genre("movies", movies, 2)
+        genre("shows", shows, 2)
+        return out
+    }
+
+    /// Good things away from your taste, new each day: a theme, a language
+    /// (with your genre), an older decade, a genre you don't watch.
+    private static func curveballs(_ model: CueRows.Model?) -> [[Slot: String]] {
+        let shares = model?.taste.shares ?? [:]
+        let day = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+        var random = SeededRandom(seed: UInt64(day) &* 7919)
+        func unfamiliar(_ prefix: String, _ id: String) -> Bool {
+            id.split(separator: "|").allSatisfy { (shares[prefix + $0] ?? 0) < 0.02 }
+        }
+        let themes = options(.theme).dropFirst().filter { unfamiliar("k:", String($0.id.dropFirst())) }
+            .shuffled(using: &random)
+        let languages = options(.origin).dropFirst().filter { $0.id != "en" && unfamiliar("l:", $0.id) }
+            .shuffled(using: &random)
+        let decades = ["older": "1960", "1970s": "1970", "1980s": "1980", "1990s": "1990"]
+        let eras = decades.keys.sorted().filter { unfamiliar("d:", decades[$0]!) }.shuffled(using: &random)
+        let yourGenre = model.flatMap { model in
+            shares.keys.filter { $0.hasPrefix("g:") && $0 != "g:16" }.max { model.pull($0) < model.pull($1) }
+        }.flatMap { Int($0.dropFirst(2)) }.flatMap { TMDBService.genre(id: $0) }
+            .flatMap { name in options(.genre).first { $0.id == name } }
+        let otherGenres = options(.genre).dropFirst().filter { genre in
+            TMDBService.genre(named: genre.id, isMovie: true).map { (shares["g:\($0.id)"] ?? 0) < 0.02 } ?? false
+        }.shuffled(using: &random)
+
+        var out: [[Slot: String]] = []
+        if let theme = themes.first { out.append([.type: "both", .theme: theme.id, .rating: "good"]) }
+        if let language = languages.first {
+            var picks: [Slot: String] = [.type: "movies", .origin: language.id, .rating: "good"]
+            if let yourGenre { picks[.genre] = yourGenre.id }
+            out.append(picks)
+        }
+        if let era = eras.first { out.append([.type: "movies", .era: era, .rating: "acclaimed"]) }
+        if let genre = otherGenres.first { out.append([.type: "movies", .genre: genre.id, .rating: "acclaimed"]) }
+        if languages.count > 1 { out.append([.type: "shows", .origin: languages[1].id, .rating: "good"]) }
+        if themes.count > 1 { out.append([.type: "both", .theme: themes[1].id, .rating: "good"]) }
+        return out
     }
 
     private func reload() async {
@@ -1081,14 +1207,13 @@ final class DiscoverModel: ObservableObject {
         }
     }
 
-    /// Starting points: the sentence filled in.
-    static let fixedPresets: [(name: String, picks: [Slot: String])] = [
-        ("Fantasy anime films", [.type: "movies", .style: "anime", .genre: "Fantasy"]),
-        ("Isekai", [.type: "shows", .style: "anime", .theme: "k237451"]),
-        ("Korean thrillers", [.type: "movies", .genre: "Thriller", .origin: "ko"]),
-        ("'80s classics", [.type: "movies", .era: "1980s", .rating: "good"]),
-        ("Hidden gems", [.type: "movies", .rating: "gems"]),
-        ("New sci-fi shows", [.type: "shows", .genre: "Science Fiction", .era: "recent", .order: "popular"]),
+    /// Starting points with no taste yet: the sentence filled in.
+    static let fixedPresets: [[Slot: String]] = [
+        [.type: "movies", .style: "anime", .genre: "Fantasy"],
+        [.type: "shows", .style: "anime", .theme: "k237451"],
+        [.type: "movies", .genre: "Thriller", .origin: "ko"],
+        [.type: "movies", .era: "1980s", .rating: "good"],
+        [.type: "movies", .rating: "gems"],
     ]
 }
 
@@ -1197,46 +1322,59 @@ private struct DiscoverSentence: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            line([.word("Show me"), .slot(.genre), .slot(.style), .slot(.type), .word("about"), .slot(.theme)])
-            line([.word("in"), .slot(.origin), .word("from"), .slot(.era), .word("·"), .slot(.rating),
-                  .word("·"), .slot(.order), .word("·"), .slot(.watched)])
-            HStack(spacing: 14) {
-                Text(count)
-                    .font(.system(size: 24))
-                    .foregroundStyle(CueInk.tertiary)
-                    .frame(width: 220, alignment: .leading)
-                // Yours on Home first: Select loads one, held it can go.
-                ForEach(pins.pins, id: \.id) { pin in
-                    Button { model.load(pin) } label: {
-                        PinnedChip(pin: pin, current: model.picksMatch(pin))
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    .focused($focusedPin, equals: pin.id)
-                    .holdMenu(focused: focusedPin == pin.id) {
-                        [MenuEntry(title: "Remove from Home", icon: "minus.circle") { pins.remove(pin.id) }]
-                    }
-                }
-                if model.pinnable, !model.pinned {
-                    Button { addToHome() } label: {
-                        FlatChip(label: "＋ Add to Home")
-                            .background { AnchorView(anchors: anchors, key: "add") }
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                }
-                ForEach(model.presets.prefix(max(2, 5 - pins.pins.count)), id: \.name) { preset in
-                    Button { model.apply(preset: preset.picks) } label: {
-                        FlatChip(label: preset.name)
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                }
+            Group {
+                line([.word("Show me"), .slot(.genre), .slot(.style), .slot(.type), .word("about"), .slot(.theme)])
+                line([.word("in"), .slot(.origin), .word("from"), .slot(.era), .word("·"), .slot(.rating),
+                      .word("·"), .slot(.order), .word("·"), .slot(.watched)])
             }
-            .frame(height: Self.line)
+            .padding(.leading, FixedFocusMetrics.titleInset)
+            // Side-scrolling, as Search's: yours on Home first (Select
+            // loads one, held it can go), then the starting points.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    Text(count)
+                        .font(.system(size: 24))
+                        .foregroundStyle(CueInk.tertiary)
+                        .frame(width: 220, alignment: .leading)
+                    ForEach(pins.pins, id: \.id) { pin in
+                        Button { model.load(pin) } label: {
+                            LineChip(name: pin.name, checked: true, current: model.picksMatch(pin))
+                        }
+                        .buttonStyle(PlainCardButtonStyle())
+                        .focused($focusedPin, equals: pin.id)
+                        .holdMenu(focused: focusedPin == pin.id) {
+                            [MenuEntry(title: "Remove from Home", icon: "minus.circle") { pins.remove(pin.id) }]
+                        }
+                    }
+                    if model.pinnable, !model.pinned {
+                        Button { addToHome() } label: {
+                            LineChip(name: "＋ Add to Home")
+                                .background { AnchorView(anchors: anchors, key: "add") }
+                        }
+                        .buttonStyle(PlainCardButtonStyle())
+                    }
+                    ForEach(starts, id: \.self) { picks in
+                        Button { model.apply(preset: picks) } label: {
+                            LineChip(name: DiscoverModel.name(of: picks))
+                        }
+                        .buttonStyle(PlainCardButtonStyle())
+                    }
+                }
+                .padding(.horizontal, FixedFocusMetrics.titleInset)
+                .frame(height: Self.line)
+            }
+            .scrollClipDisabled()
             .padding(.top, 24)
             .focusSection()
         }
-        .padding(.leading, FixedFocusMetrics.titleInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .defaultFocus($focused, .genre)
+    }
+
+    /// The starting points, leaving out what's on Home already.
+    private var starts: [[DiscoverModel.Slot: String]] {
+        let pinned = Set(pins.pins.map(\.id))
+        return model.presets.filter { !pinned.contains(DiscoverPins.Pin.id(of: $0)) }
     }
 
     private var count: String {
@@ -1252,7 +1390,7 @@ private struct DiscoverSentence: View {
         guard pins.pins.count >= DiscoverPins.limit else { return model.pin() }
         guard let view = anchors.views["add"], view.window != nil else { return }
         let entries = pins.pins.map { pin in
-            MenuEntry(title: "Replace \u{201C}\(pin.short)\u{201D}", icon: "arrow.triangle.2.circlepath") {
+            MenuEntry(title: "Replace \u{201C}\(pin.name)\u{201D}", icon: "arrow.triangle.2.circlepath") {
                 model.pin(replacing: pin.id)
             }
         }
@@ -1337,27 +1475,35 @@ private struct AnchorView: UIViewRepresentable {
     func updateUIView(_ view: UIView, context: Context) { anchors.views[key] = view }
 }
 
-/// A sentence on Home, in Discover's line: a check and the name's first
-/// part (up to its first comma), the rest running while focused.
-private struct PinnedChip: View {
+/// A pill in Discover's line: a sentence (a check before one on Home), or
+/// Add to Home. A name too long for its room runs while focused.
+private struct LineChip: View {
     @Environment(\.isFocused) private var isFocused
-    let pin: DiscoverPins.Pin
+    let name: String
+    var checked = false
     /// The sentence showing now.
-    let current: Bool
+    var current = false
+
+    private static let font = UIFont.systemFont(ofSize: 24, weight: .medium)
+    /// The words' room at most: about half the screen.
+    private static let room: CGFloat = 760
 
     var body: some View {
         let ink = isFocused ? FlatControl.contentOnFocus : FlatControl.content
+        let width = (name as NSString).size(withAttributes: [.font: Self.font]).width
+        let long = width > Self.room
         HStack(spacing: 10) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 22, weight: .semibold))
-            Text(pin.short)
+            if checked {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 22, weight: .semibold))
+            }
+            Text(name)
                 .font(.system(size: 24, weight: .medium))
                 .lineLimit(1)
-                .opacity(isFocused && pin.short != pin.title ? 0 : 1)
+                .frame(width: long ? Self.room : nil, alignment: .leading)
+                .opacity(isFocused && long ? 0 : 1)
                 .overlay {
-                    if isFocused, pin.short != pin.title {
-                        RunningText(text: pin.title, color: UIColor(ink))
-                    }
+                    if isFocused, long { RunningText(text: name, color: UIColor(ink)) }
                 }
         }
         .padding(.horizontal, 22)
@@ -1402,8 +1548,6 @@ final class DiscoverPins: ObservableObject {
 
     struct Pin: Codable, Equatable {
         let picks: [String: String]
-        /// The sentence, in its own case ("Fantasy anime movies, in Japanese").
-        let title: String
 
         var id: String { Self.id(of: slots) }
         static func id(of picks: [DiscoverModel.Slot: String]) -> String {
@@ -1415,8 +1559,8 @@ final class DiscoverPins: ObservableObject {
                 DiscoverModel.Slot(rawValue: key).map { ($0, value) }
             })
         }
-        /// Up to its first comma: the pill's name.
-        var short: String { title.components(separatedBy: ", ").first ?? title }
+        /// The sentence, in its own case ("Fantasy anime movies about isekai").
+        @MainActor var name: String { DiscoverModel.name(of: slots) }
     }
 
     @Published private(set) var pins: [Pin] = []
@@ -1449,10 +1593,9 @@ final class DiscoverPins: ObservableObject {
 
     /// On Home, in `replacing`'s place (its slot) when given; never past
     /// the limit.
-    func add(_ picks: [DiscoverModel.Slot: String], title: String, replacing: String? = nil) {
+    func add(_ picks: [DiscoverModel.Slot: String], replacing: String? = nil) {
         load()
-        let pin = Pin(picks: Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }),
-                      title: title)
+        let pin = Pin(picks: Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }))
         guard !pins.contains(where: { $0.id == pin.id }) else { return }
         if let replacing, let index = pins.firstIndex(where: { $0.id == replacing }) {
             pins[index] = pin
@@ -1487,12 +1630,12 @@ final class DiscoverPins: ObservableObject {
         load()
         return pins.compactMap { pin in
             guard let items = titles[pin.id], !items.isEmpty else { return nil }
-            return HomeRow(id: Self.rowPrefix + pin.id, title: Self.titleCase(pin.title), items: items)
+            return HomeRow(id: Self.rowPrefix + pin.id, title: Self.titleCase(pin.name), items: items)
         }
     }
 
     /// Home's rows' names: title case, small words lower but first
-    /// ("Fantasy Anime Movies About Isekai, in Japanese, from the 2010s").
+    /// ("Fantasy Anime Movies About Isekai from the 2010s").
     static func titleCase(_ text: String) -> String {
         let small: Set<String> = ["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of",
                                   "on", "or", "the", "to", "with", "&"]
