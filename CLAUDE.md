@@ -927,8 +927,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   for you" (the default: the rows' taste, `CueRows.tasteModel`, over
   three pages of the best known at a time), best known, popular now, top
   rated, newest; watched included or hidden (a choice). The sentence
-  kept per profile. Search stays its own tab. Under it one side-scrolling
-  line (Search's way): the count, the pins, Add to Home, then 15
+  kept per profile. Search stays its own tab. The sentence's first pills level
+  with Home's billboard card's top; the count (when exact) at the first
+  line's right, on the rows' edge. Under it one side-scrolling line
+  (Search's way; pills 24 pt apart, focused growing 8 pt a side at most:
+  6 % made long ones touch): the pins, Add to Home, then 15
   starting points in three runs, unmarked: five from your taste (your
   themes, your language with your genre, your genres well rated or
   from your decade; fixed ones fill in), five from TMDB's trending this

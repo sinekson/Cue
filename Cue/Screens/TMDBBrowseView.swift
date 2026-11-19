@@ -1313,8 +1313,8 @@ private struct DiscoverSentence: View {
     @FocusState private var focusedPin: String?
 
     /// From the screen's top to the first line (the grid's room above
-    /// the header).
-    static let top: CGFloat = 60 + GlassSidebar.topBarClearance + 70
+    /// the header): its pills' tops where Home's billboard card's top is.
+    static var top: CGFloat { StagePictureView.homeCard.minY - (line - 58) / 2 }
     static let line: CGFloat = 72
     /// The top bar's room: the grid's frame starts under it.
     static let barRoom: CGFloat = 110
@@ -1323,19 +1323,22 @@ private struct DiscoverSentence: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Group {
-                line([.word("Show me"), .slot(.genre), .slot(.style), .slot(.type), .word("about"), .slot(.theme)])
-                line([.word("in"), .slot(.origin), .word("from"), .slot(.era), .word("·"), .slot(.rating),
-                      .word("·"), .slot(.order), .word("·"), .slot(.watched)])
-            }
-            .padding(.leading, FixedFocusMetrics.titleInset)
-            // Side-scrolling, as Search's: yours on Home first (Select
-            // loads one, held it can go), then the starting points.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
+                // The count at the first line's end, on the rows' right edge.
+                HStack(spacing: 0) {
+                    line([.word("Show me"), .slot(.genre), .slot(.style), .slot(.type), .word("about"), .slot(.theme)])
+                    Spacer(minLength: 24)
                     Text(count)
                         .font(.system(size: 24))
                         .foregroundStyle(CueInk.tertiary)
-                        .frame(width: 220, alignment: .leading)
+                }
+                line([.word("in"), .slot(.origin), .word("from"), .slot(.era), .word("·"), .slot(.rating),
+                      .word("·"), .slot(.order), .word("·"), .slot(.watched)])
+            }
+            .padding(.horizontal, FixedFocusMetrics.titleInset)
+            // Side-scrolling, as Search's: yours on Home first (Select
+            // loads one, held it can go), then the starting points.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: LineChip.gap) {
                     ForEach(pins.pins, id: \.id) { pin in
                         Button { model.load(pin) } label: {
                             LineChip(name: pin.name, checked: true, current: model.picksMatch(pin))
@@ -1487,11 +1490,17 @@ private struct LineChip: View {
     private static let font = UIFont.systemFont(ofSize: 24, weight: .medium)
     /// The words' room at most: about half the screen.
     private static let room: CGFloat = 760
+    /// Between pills; focused, one grows at most `grow` each side (6 % of
+    /// a long one ate the gap and touched its neighbours).
+    static let gap: CGFloat = 24
+    private static let grow: CGFloat = 8
 
     var body: some View {
         let ink = isFocused ? FlatControl.contentOnFocus : FlatControl.content
         let width = (name as NSString).size(withAttributes: [.font: Self.font]).width
         let long = width > Self.room
+        let pill = min(width, Self.room) + 44 + (checked ? 32 : 0)
+        let scale = min(1.06, 1 + 2 * Self.grow / pill)
         HStack(spacing: 10) {
             if checked {
                 Image(systemName: "checkmark")
@@ -1510,7 +1519,7 @@ private struct LineChip: View {
         .frame(height: 52)
         .foregroundStyle(ink)
         .background(Capsule().fill(isFocused ? FlatControl.focus : current ? FlatControl.selected : FlatControl.rest))
-        .scaleEffect(isFocused ? 1.06 : 1)
+        .scaleEffect(isFocused ? scale : 1)
         .animation(FlatControl.focusChange, value: isFocused)
     }
 }
