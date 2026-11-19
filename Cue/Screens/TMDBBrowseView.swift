@@ -3,8 +3,6 @@ import SwiftUI
 @MainActor
 final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     enum Source {
-        case genre(id: Int, name: String, isMovie: Bool)
-        case keyword(id: Int, isMovie: Bool)
         case company(Int)
         /// A network's shows.
         case network(Int)
@@ -45,15 +43,6 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         self.source = source
         self.title = title
         switch source {
-        case let .genre(id, name, isMovie):
-            let both = [isMovie, !isMovie].filter { Self.genreID(id: id, name: name, from: isMovie, to: $0) != nil }
-            // Both sides: always Movies first (predictable, whatever the
-            // title it was opened from).
-            self.isMovie = both.count > 1 || isMovie
-            types = both
-        case .keyword:
-            isMovie = true
-            types = [true, false]
         case .company:
             isMovie = true
             types = [true, false]
@@ -203,12 +192,6 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
         switch source {
         case .person:
             return await TMDBService.credits(credits, isMovie: isMovie, page: page)
-        case let .genre(id, name, from):
-            guard let genre = Self.genreID(id: id, name: name, from: from, to: isMovie) else {
-                return TMDBService.BrowsePage(items: [], total: 0, hasMore: false)
-            }
-            filter = ["with_genres": String(genre)]
-        case let .keyword(id, _): filter = ["with_keywords": String(id)]
         case let .company(id): filter = ["with_companies": String(id)]
         case let .network(id): filter = ["with_networks": String(id)]
         }
@@ -233,8 +216,7 @@ final class TMDBBrowseViewModel: ObservableObject, PreparedPage {
     }
 }
 
-/// A genre's, a tag's, a studio's, a network's or a person's titles (Details'
-/// genres, tags, studios and cast): what it is, then the titles — movies or
+/// A studio's, a network's or a person's titles (Details' studios and cast): what it is, then the titles — movies or
 /// series, in the order asked — as Home's own cards: the folder pages' grid
 /// (`FolderPosterGrid`: `FixedFocusDestinationCell`, six across), the header
 /// and its controls scrolling with it.
@@ -256,26 +238,6 @@ struct TMDBBrowseView: View {
          onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
         _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
              network ? .network(companyID) : .company(companyID), title: title))
-        self.onSelect = onSelect
-        self.onOpenInPlace = onOpenInPlace
-        self.backdrop = backdrop
-    }
-
-    /// A tag's titles (Details' tags).
-    init(keywordID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
-             .keyword(id: keywordID, isMovie: isMovie), title: title))
-        self.onSelect = onSelect
-        self.onOpenInPlace = onOpenInPlace
-        self.backdrop = backdrop
-    }
-
-    /// A genre's titles (Details' genres).
-    init(genreID: Int, title: String, isMovie: Bool, onSelect: @escaping (MetaItem) -> Void,
-         onOpenInPlace: ((MetaItem) -> Void)? = nil, backdrop: String? = nil) {
-        _viewModel = StateObject(wrappedValue: TMDBBrowseViewModel.prepared(
-             .genre(id: genreID, name: title, isMovie: isMovie), title: title))
         self.onSelect = onSelect
         self.onOpenInPlace = onOpenInPlace
         self.backdrop = backdrop
@@ -499,8 +461,6 @@ private struct BrowseHeader: View {
 
     private var kindLabel: String {
         switch viewModel.source {
-        case .genre: return "GENRE"
-        case .keyword: return "TAG"
         case .company: return "STUDIO"
         case .network: return "NETWORK"
         case .person:
@@ -637,10 +597,56 @@ final class DiscoverModel: ObservableObject {
         var apply: (inout [String: String], Bool) -> Bool = { _, _ in true }
     }
 
-    /// The sentence, kept per profile: Discover opens on the last one.
-    @Published private(set) var picks: [Slot: String] = DiscoverModel.saved() {
-        didSet { save() }
+    /// The sentence. The tab's is kept per profile (Discover opens on the
+    /// last one); one opened filled in (Details' genre or tag) is its own.
+    @Published private(set) var picks: [Slot: String] {
+        didSet { if persists { save() } }
     }
+    private let persists: Bool
+    /// Choices the lists don't have: the genre or tag it was opened with.
+    private var extras: [Slot: [Option]] = [:]
+    /// Starting points: from your taste first, then the fixed ones.
+    @Published private(set) var presets: [(name: String, picks: [Slot: String])] = DiscoverModel.fixedPresets
+
+    /// The tab's own sentence.
+    init() {
+        picks = Self.saved()
+        persists = true
+    }
+
+    /// Filled in: `extras` added to their words' choices.
+    init(picks: [Slot: String], extras: [Slot: [Option]]) {
+        self.picks = picks
+        self.extras = extras
+        persists = false
+    }
+
+    /// What Details' genre opens: its genre, films or shows (a genre the
+    /// list has by name, else TMDB's own for that side).
+    static func genre(id: Int, name: String, isMovie: Bool) -> DiscoverModel {
+        let type = isMovie ? "movies" : "shows"
+        if id == 16 { return DiscoverModel(picks: [.type: type, .style: "animation"], extras: [:]) }
+        if options(.genre).contains(where: { $0.id == name }) {
+            return DiscoverModel(picks: [.type: type, .genre: name], extras: [:])
+        }
+        let own = Option(id: "g\(id)", word: name.lowercased(), name: name) { query, side in
+            guard side == isMovie else { return false }
+            addGenre(id, &query)
+            return true
+        }
+        return DiscoverModel(picks: [.type: type, .genre: own.id], extras: [.genre: [own]])
+    }
+
+    /// What Details' tag opens: its titles, films or shows.
+    static func keyword(id: Int, name: String, isMovie: Bool) -> DiscoverModel {
+        let type = isMovie ? "movies" : "shows"
+        let known = options(.theme).first { $0.id == "k\(id)" }
+        let own = known ?? keyword(String(id), name.lowercased(), name.prefix(1).uppercased() + name.dropFirst())
+        return DiscoverModel(picks: [.type: type, .theme: own.id], extras: known == nil ? [.theme: [own]] : [:])
+    }
+
+    /// A word's choices: the list's, then this sentence's own.
+    func choices(_ slot: Slot) -> [Option] { Self.options(slot) + (extras[slot] ?? []) }
 
     private static var savedKey: String {
         ProfileScopedDefaults.key("cue.discover.sentence", ProfileScopedDefaults.activeProfileID)
@@ -692,7 +698,7 @@ final class DiscoverModel: ObservableObject {
     func pick(_ slot: Slot) -> String { picks[slot] ?? Self.options(slot)[0].id }
     func option(_ slot: Slot) -> Option {
         let id = pick(slot)
-        return Self.options(slot).first { $0.id == id } ?? Self.options(slot)[0]
+        return choices(slot).first { $0.id == id } ?? Self.options(slot)[0]
     }
     func isSet(_ slot: Slot) -> Bool { pick(slot) != Self.options(slot)[0].id }
 
@@ -710,7 +716,46 @@ final class DiscoverModel: ObservableObject {
     func start() async {
         guard !started else { return }
         started = true
+        async let tasteful: Void = loadPresets()
         await reload()
+        await tasteful
+    }
+
+    /// Two starting points from your taste (the rows' traits you lean to
+    /// most that a word can say), before the fixed ones.
+    private func loadPresets() async {
+        guard persists, let model = await CueRows.tasteModel() else { return }
+        let features = model.taste.shares.keys.sorted { model.pull($0) > model.pull($1) }
+        var mine: [(name: String, picks: [Slot: String])] = []
+        // A theme of yours (isekai, time travel…).
+        if let theme = features.lazy.compactMap({ feature in
+            Self.options(.theme).first { $0.id == "k" + feature.dropFirst(2) }
+        }).first {
+            mine.append((theme.name ?? theme.word, [.theme: theme.id]))
+        }
+        // Your language beyond English with your genre in it.
+        let language = features.lazy.compactMap { feature -> Option? in
+            guard feature.hasPrefix("l:"), feature != "l:en" else { return nil }
+            return Self.options(.origin).first { $0.id == String(feature.dropFirst(2)) }
+        }.first
+        let genre = features.lazy.compactMap { feature -> Option? in
+            guard feature.hasPrefix("g:"), let id = Int(feature.dropFirst(2)), id != 16,
+                  let name = TMDBService.genre(id: id) else { return nil }
+            return Self.options(.genre).first { $0.id == name }
+        }.first
+        if let language {
+            let anime = language.id == "ja" && (model.taste.shares["g:16"] ?? 0) > 0.2
+            var picks: [Slot: String] = anime ? [.style: "anime"] : [.origin: language.id]
+            var name = anime ? "Anime" : language.word + " titles"
+            if let genre {
+                picks[.genre] = genre.id
+                name = anime ? "\(genre.word.capitalized) anime" : "\(language.word) \(genre.word)"
+            }
+            picks[.type] = "both"
+            mine.append((name, picks))
+        }
+        let names = Set(mine.map(\.name))
+        presets = mine + Self.fixedPresets.filter { !names.contains($0.name) }.prefix(6 - mine.count)
     }
 
     private func reload() async {
@@ -838,7 +883,7 @@ final class DiscoverModel: ObservableObject {
 
     // MARK: The choices
 
-    private static func addGenre(_ id: Int, _ query: inout [String: String]) {
+    static func addGenre(_ id: Int, _ query: inout [String: String]) {
         query["with_genres"] = [query["with_genres"], String(id)].compactMap { $0 }.joined(separator: ",")
     }
 
@@ -866,7 +911,7 @@ final class DiscoverModel: ObservableObject {
     /// Magic, dragons, witches, myths, fairy tales, isekai.
     private static let fantasyKeywords = "2343|12554|616|2035|3205|237451"
 
-    private static func keyword(_ id: String, _ word: String, _ name: String) -> Option {
+    static func keyword(_ id: String, _ word: String, _ name: String) -> Option {
         Option(id: "k\(id)", word: word, name: name) { query, _ in
             query["with_keywords"] = id
             return true
@@ -997,7 +1042,7 @@ final class DiscoverModel: ObservableObject {
     }
 
     /// Starting points: the sentence filled in.
-    static let presets: [(name: String, picks: [Slot: String])] = [
+    static let fixedPresets: [(name: String, picks: [Slot: String])] = [
         ("Fantasy anime films", [.type: "movies", .style: "anime", .genre: "Fantasy"]),
         ("Isekai", [.type: "shows", .style: "anime", .theme: "k237451"]),
         ("Korean thrillers", [.type: "movies", .genre: "Thriller", .origin: "ko"]),
@@ -1012,15 +1057,44 @@ private extension Array where Element: Hashable {
 }
 
 struct DiscoverView: View {
-    @StateObject private var model = DiscoverModel()
+    @StateObject private var model: DiscoverModel
     @EnvironmentObject private var watched: WatchedStore
+    @Environment(\.pageBack) private var pageBack
+    @Environment(\.dismiss) private var dismiss
     @State private var gridBack = GridBack()
     let onOpenInPlace: (MetaItem) -> Void
     let onBack: () -> Void
+    /// Opened filled in from Details (a genre, a tag): a page pushed on
+    /// Details' bands (that title's picture), no bar above it.
+    private let opened: Bool
+    private let backdrop: String?
+
+    /// The tab.
+    init(onOpenInPlace: @escaping (MetaItem) -> Void, onBack: @escaping () -> Void) {
+        _model = StateObject(wrappedValue: DiscoverModel())
+        opened = false
+        backdrop = nil
+        self.onOpenInPlace = onOpenInPlace
+        self.onBack = onBack
+    }
+
+    /// Filled in, from Details (Back: the page's own way back).
+    init(_ model: @autoclosure @escaping () -> DiscoverModel, backdrop: String?,
+         onOpenInPlace: @escaping (MetaItem) -> Void) {
+        _model = StateObject(wrappedValue: model())
+        opened = true
+        self.backdrop = backdrop
+        self.onOpenInPlace = onOpenInPlace
+        onBack = {}
+    }
+
+    /// The bar's room above the grid (none on a pushed page).
+    private var barRoom: CGFloat { opened ? 0 : DiscoverSentence.barRoom }
+    private var headerTop: CGFloat { opened ? DiscoverSentence.top - DiscoverSentence.barRoom : DiscoverSentence.top }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ATVBackground()
+            if opened { TitleBandsBackground(url: backdrop) } else { ATVBackground() }
             FolderPosterGrid(
                 header: AnyView(DiscoverSentence(model: model)),
                 headerHeight: DiscoverSentence.height,
@@ -1033,18 +1107,18 @@ struct DiscoverView: View {
                 placeholder: !model.loadedOnce,
                 back: gridBack,
                 headerFirst: true,
-                headerTop: DiscoverSentence.top,
+                headerTop: headerTop,
                 // The bar is on the page: it goes up with it, as Home's.
-                onScroll: { TopBarFollow.shared.set(-$0, for: "discover") },
-                bleedTop: DiscoverSentence.barRoom)
-                .padding(.top, DiscoverSentence.barRoom)
+                onScroll: opened ? nil : { TopBarFollow.shared.set(-$0, for: "discover") },
+                bleedTop: barRoom)
+                .padding(.top, barRoom)
                 .ignoresSafeArea()
             if model.loadedOnce, !model.isLoading, model.items.isEmpty {
                 Text("Nothing matches all of that. Try changing a word.")
                     .font(.system(size: 28, weight: .medium))
                     .foregroundStyle(CueInk.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, DiscoverSentence.top + DiscoverSentence.height + 120)
+                    .padding(.top, headerTop + DiscoverSentence.height + 120)
             }
         }
         .task {
@@ -1054,7 +1128,10 @@ struct DiscoverView: View {
             }
             await model.start()
         }
-        .onExitCommand { if !gridBack.handle() { onBack() } }
+        .onExitCommand {
+            guard !gridBack.handle() else { return }
+            if !opened { onBack() } else if let pageBack { pageBack() } else { dismiss() }
+        }
     }
 }
 
@@ -1085,7 +1162,7 @@ private struct DiscoverSentence: View {
                     .font(.system(size: 24))
                     .foregroundStyle(CueInk.tertiary)
                     .frame(width: 220, alignment: .leading)
-                ForEach(DiscoverModel.presets, id: \.name) { preset in
+                ForEach(model.presets, id: \.name) { preset in
                     Button { model.apply(preset: preset.picks) } label: {
                         FlatChip(label: preset.name)
                     }
@@ -1113,7 +1190,7 @@ private struct DiscoverSentence: View {
     private func open(_ slot: DiscoverModel.Slot) {
         guard let view = anchors.views[slot], view.window != nil else { return }
         let current = model.pick(slot)
-        let entries = DiscoverModel.options(slot).map { option in
+        let entries = model.choices(slot).map { option in
             MenuEntry(title: option.name ?? option.word.capitalized, icon: "", checked: option.id == current) {
                 model.set(slot, option.id)
             }

@@ -929,9 +929,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   for you" (the default: the rows' taste, `CueRows.tasteModel`, over
   three pages of the best known at a time), best known, popular now, top
   rated, newest; watched included or hidden (a choice). The sentence
-  kept per profile. Search stays its own tab. Next: starting points
-  from your taste, Details' genres and tags opening it filled in, pin a
-  sentence as a Home row, Movies and Series tabs retired.
+  kept per profile. Search stays its own tab. Starting points: two from
+  your taste first (a theme of yours; your language beyond English with
+  your genre, Japanese animation as anime), then the fixed ones, six in
+  all. Details' genres and tags open it filled in (`Route.genre`,
+  `.keyword`: a pushed page on Details' bands, its sentence not kept; a
+  genre or tag the lists lack added to that word's choices); the browse
+  page keeps only people, studios and networks. The bar is on the page,
+  scrolling away with it (`TopBarFollow` per page); the grid's frame
+  starts under the bar (`bleedTop`: SwiftUI took a whole-screen grid for
+  the bar's neighbour, Left/Right fell into it). Next: pin a sentence as
+  a Home row, Movies and Series tabs retired.
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.

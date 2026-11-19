@@ -1646,17 +1646,11 @@ struct RootView: View {
                 }
             },
             onSelectGenre: { genre, isMovie, backdrop in
-                TMDBBrowseViewModel.open(.genre(id: genre.id, name: genre.name, isMovie: isMovie),
-                                         title: genre.name) {
-                    pushPage(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie,
-                                         backdrop: backdrop), path)
-                }
+                pushPage(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie, backdrop: backdrop), path)
             },
             onSelectKeyword: { keyword, isMovie, backdrop in
-                TMDBBrowseViewModel.open(.keyword(id: keyword.id, isMovie: isMovie), title: keyword.name) {
-                    pushPage(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie,
-                                           backdrop: backdrop), path)
-                }
+                pushPage(Route.keyword(id: keyword.id, name: keyword.name, isMovie: isMovie,
+                                       backdrop: backdrop), path)
             },
             onReturnToBillboard: onBack,
             takesPrepared: !leaving
@@ -1683,14 +1677,13 @@ struct RootView: View {
             TMDBBrowseView(personID: id, title: name,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
                           onOpenInPlace: openInPlace(path), backdrop: backdrop)
+        // Discover, filled in.
         case .genre(let id, let name, let isMovie, let backdrop):
-            TMDBBrowseView(genreID: id, title: name, isMovie: isMovie,
-                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+            DiscoverView(DiscoverModel.genre(id: id, name: name, isMovie: isMovie), backdrop: backdrop,
+                         onOpenInPlace: openInPlace(path))
         case .keyword(let id, let name, let isMovie, let backdrop):
-            TMDBBrowseView(keywordID: id, title: name, isMovie: isMovie,
-                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+            DiscoverView(DiscoverModel.keyword(id: id, name: name, isMovie: isMovie), backdrop: backdrop,
+                         onOpenInPlace: openInPlace(path))
         case .tmdbCompany(let id, let name, let network, let backdrop):
             TMDBBrowseView(companyID: id, title: name, network: network,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },

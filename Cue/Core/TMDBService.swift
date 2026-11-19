@@ -1919,6 +1919,9 @@ enum TMDBService {
         return await mapToMetaItems(raw)
     }
 
+    /// A genre's name by its id, films' or shows'.
+    static func genre(id: Int) -> String? { movieGenres[id] ?? tvGenres[id] }
+
     /// A genre by its name, as TMDB has it for films / shows (nil: none).
     static func genre(named name: String, isMovie: Bool) -> Genre? {
         (isMovie ? movieGenres : tvGenres).first { $0.value == name }.map { Genre(id: $0.key, name: $0.value) }
