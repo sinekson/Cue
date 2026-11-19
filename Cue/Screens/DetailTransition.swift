@@ -358,7 +358,7 @@ final class DetailTransition {
             // same card on the same background — only its parts appear).
             watch.begin("move 2")
             DetailOpenProbe.note("reveal")
-            if stage == nil { Self.refocus() }
+            if stage == nil { Self.refocus() } else { PlayStage.shared.coverGoing = true }
             await Self.run {
                 Self.animate(self.overlay.root.layer, "opacity", from: 1, to: 0, Self.reveal * k, Self.inOut)
             }

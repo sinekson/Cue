@@ -32,6 +32,10 @@ struct PlayStageView<Sources: View>: View {
     @State private var leaving = false
     /// Back's fade off as a whole.
     @State private var gone = false
+    /// Grown out of a card with the links already in: the row waits below
+    /// the screen under the cover, and comes up with the scroll as the
+    /// cover goes (it never fades in, then moves).
+    @State private var below = false
 
     @ObservedObject private var stage = PlayStage.shared
 
@@ -83,7 +87,8 @@ struct PlayStageView<Sources: View>: View {
                 // Under the card, moved by the card's own state in the same
                 // move (on its own animation it ran ahead of the card).
                 sources(request)
-                    .offset(y: ShelfShape.stageTop + (short ? 0 : ShelfShape.stageScroll))
+                    .offset(y: below ? StagePictureView.pictureSize.height
+                            : ShelfShape.stageTop + (short ? 0 : ShelfShape.stageScroll))
                     .opacity(listUp && !stage.dark ? 1 : 0)
                     .disabled(!listUp)
             }
@@ -110,16 +115,21 @@ struct PlayStageView<Sources: View>: View {
             let fade = picker.request != nil ? PlayStage.listFadeIn : PlayStage.fadeInDuration
             withAnimation(.easeInOut(duration: fade)) { shownIn = true }
             // Grown out of a card (`DetailTransition.openStage`): there at
-            // once under the cover, the scroll once the cover is off.
-            let wait = scene.grown ? DetailTransition.reveal : fade
-            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-                settled = true
-                withAnimation(ShelfShape.stageScrollAnimation) { short = picker.request != nil && picker.hasLinks }
+            // once under the cover, the scroll as the cover goes
+            // (`coverGoing`).
+            if scene.grown {
+                below = picker.request != nil && picker.hasLinks
+                if stage.coverGoing { settle() }
+                return
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + fade) { settle() }
         }
+        .onChange(of: stage.coverGoing) { _, going in if going, scene.grown, !settled { settle() } }
         .onDisappear { picker.leave = nil }
         // Links in: the scroll, only once the stage is in.
         .onChange(of: picker.request != nil && picker.hasLinks) { _, on in
+            // In while still under the cover: below, to come up with the scroll.
+            if !settled, scene.grown, on { below = true }
             guard settled, !leaving else { return }
             withAnimation(ShelfShape.stageScrollAnimation) { short = on }
         }
@@ -129,6 +139,16 @@ struct PlayStageView<Sources: View>: View {
             if !up { holding = true } else if holding { picker.listShown = true }
         }
         .onChange(of: holding) { _, on in if on, listUp { picker.listShown = true } }
+    }
+
+    /// In: the scroll up if there are links (the row coming up from below
+    /// with it, grown out of a card), one move.
+    private func settle() {
+        settled = true
+        withAnimation(ShelfShape.stageScrollAnimation) {
+            below = false
+            short = picker.request != nil && picker.hasLinks
+        }
     }
 
     /// Back: with the list up it closes (as the list's own Back), else the

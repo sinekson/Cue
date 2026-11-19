@@ -62,10 +62,14 @@ final class PlayStage: ObservableObject {
     /// Lights down: the film's first frame is in, the stage goes dark
     /// (`lightsDown`) before the film rises out of it.
     @Published var dark = false
+    /// Grown out of a card: the transition's cover is going (the stage
+    /// scrolls with it, `DetailTransition.openStage`).
+    @Published var coverGoing = false
     nonisolated static let lightsDown: Double = 0.7
 
     func show(_ meta: MetaItem, _ video: MetaVideo?, art: String? = nil, bands: String? = nil,
               grown: Bool = false) {
+        if scene == nil { coverGoing = false }
         let same = scene?.title == meta.name
         var name = same ? scene?.episodeName : nil, number = same ? scene?.episodeNumber : nil
         if let video, let season = video.season, let episode = video.episode {
@@ -131,6 +135,7 @@ final class PlayStage: ObservableObject {
 
     func clear() {
         scene = nil
+        coverGoing = false
         note = nil
         dark = false
     }

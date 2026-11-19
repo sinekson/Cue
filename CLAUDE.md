@@ -883,7 +883,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`DetailTransition.openStage`): the same moves, the same card on the
   same background (the stage's bands), then the stage's parts appear
   under the cover's fade where Details' would (it's brought up under the
-  cover with its logo decoded, `stageReady`); Back one fade off (0.3 s), focus back on the card (the top bar off for 0.5 s as the stage goes: it
+  cover with its logo decoded, `stageReady`); links already in (the
+  5-min cache: kept, a refresh each time would wait on the add-ons
+  again), the row waits below the screen and comes up with the card's
+  scroll as the cover goes, one move (fading in at the peek, then the
+  scroll, read as two; `coverGoing`); Back one fade off (0.3 s), focus back on the card (the top bar off for 0.5 s as the stage goes: it
   took focus first, `stageSettle`).
   (The stage's own grow out of a card, waiting on its picture and logo,
   was before: it fell out of step.) Every other card's hold menu
