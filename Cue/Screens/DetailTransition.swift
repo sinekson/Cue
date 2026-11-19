@@ -159,6 +159,23 @@ final class DetailTransition {
     /// (Home's billboard card).
     func open(_ item: MetaItem, keepsPicture: Bool = false, trailer: AVPlayer? = nil,
               from grown: Window? = nil, push: @escaping () -> Void) {
+        open(item, keepsPicture: keepsPicture, trailer: trailer, from: grown, push: push, stage: nil)
+    }
+
+    /// Into the stage (Continue Watching's Select, Start Over and Choose
+    /// Source): Details' way in, the same moves and the same card on the
+    /// same background; once the card has grown, `show` brings the stage up
+    /// under the cover (given Details' picture; it waits on what the stage
+    /// draws), and the cover fades off over it: the stage's parts appear
+    /// where Details' would.
+    func openStage(_ item: MetaItem, show: @escaping (_ picture: String?) async -> Void) {
+        // The row focus is in, at the press: the cover takes focus from it.
+        FixedFocusRowsController.keepReturnRows()
+        open(item, keepsPicture: false, trailer: nil, from: nil, push: {}, stage: show)
+    }
+
+    private func open(_ item: MetaItem, keepsPicture: Bool, trailer: AVPlayer?, from grown: Window?,
+                      push: @escaping () -> Void, stage: ((String?) async -> Void)?) {
         guard !busy, !PageFade.shared.busy, let window = Self.window else { return }
         let trailer = trailer ?? StageTrailer.carried(for: item.id)
         // Details' picture is a card (`StagePictureView.detailsCard`): every
@@ -175,14 +192,14 @@ final class DetailTransition {
         let card = crossfade ? small
             : grown?.card ?? StageTrailer.carriedFrame(for: item.id) ?? Self.focusedCard(in: window) ?? small
         let carriedFrame = grown == nil && !crossfade ? StageTrailer.carriedFrame(for: item.id) : nil
-        CueRows.Memory.shared.opened(item.id)
+        if stage == nil { CueRows.Memory.shared.opened(item.id) }
         if grown != nil { fromBillboard.insert(item.id) }
-        if grown == nil, let cell = UIFocusSystem.focusSystem(for: window)?.focusedItem as? FixedFocusShowcaseCell,
+        if grown == nil, stage == nil, let cell = UIFocusSystem.focusSystem(for: window)?.focusedItem as? FixedFocusShowcaseCell,
            cell.spotlight, cell.item?.id == item.id {
             fromSpotlight[item.id] = { [weak cell] in cell?.backWindow() }
         }
         busy = true
-        ModeSwap.shared.handingOver = true
+        if stage == nil { ModeSwap.shared.handingOver = true }
         DetailOpenProbe.pressed()
         DetailPreparer.shared.start(item, keepsPicture: keepsPicture)
         // The screen as it is, in the overlay: what dims and what the picture
@@ -192,7 +209,7 @@ final class DetailTransition {
         let page = window.snapshotView(afterScreenUpdates: false)
         overlay.install(in: window, page: page)
         // Kept: Back dissolves into it at once (`close`).
-        if let page { PageFade.shared.keep(page, for: item.id) }
+        if let page, stage == nil { PageFade.shared.keep(page, for: item.id) }
         let watch = FrameWatch()
         let k = Self.length
         Task { @MainActor in
@@ -206,12 +223,14 @@ final class DetailTransition {
             // Details is built meanwhile.)
             watch.begin("move 1")
             var moves: [Task<Void, Never>] = []
+            // The stage's bands are a step more vivid than Details'.
+            let saturation = stage != nil ? BandsPicture.stageSaturation : nil
             let known = DetailPreparer.shared.peek(item.id)?.picture
-            self.overlay.backdrop(TitleBands.shared.cached(known))
+            self.overlay.backdrop(TitleBands.shared.cached(known, saturation: saturation))
             // The colours started at the press, beside the picture (after
             // it, they came late).
-            let bandsReady = TitleBands.shared.cached(known) != nil
-            if let known, !bandsReady { Task { await TitleBands.shared.image(for: known) } }
+            let bandsReady = TitleBands.shared.cached(known, saturation: saturation) != nil
+            if let known, !bandsReady { Task { await TitleBands.shared.image(for: known, saturation: saturation) } }
             // The page goes with the window's start (going at the press, a
             // picture still loading left the background alone a moment).
             let pageGoes = {
@@ -235,25 +254,26 @@ final class DetailTransition {
             let bandsIn = (CACurrentMediaTime() - start) * 1000
             // (In the system log too: Xcode's console on the TV.)
             let bandsLine = String(format: "details bands: %@, %.0f ms after the press",
-                                   bandsReady && known == url ? "ready" : TitleBands.shared.cached(url) != nil
+                                   bandsReady && known == url ? "ready"
+                                       : TitleBands.shared.cached(url, saturation: saturation) != nil
                                        ? "drawn at the press" : "late", bandsIn)
             AppProbe.data(bandsLine)
             NSLog("[CueBands] %@", bandsLine)
-            if let url, TitleBands.shared.cached(url) == nil {
+            if let url, TitleBands.shared.cached(url, saturation: saturation) == nil {
                 Task { @MainActor in
-                    if let bands = await TitleBands.shared.image(for: url), self.busy {
+                    if let bands = await TitleBands.shared.image(for: url, saturation: saturation), self.busy {
                         self.overlay.backdrop(bands, fade: Motion.fadeDuration)
                     }
                 }
             } else if let url, !(bandsReady && known == url) {
                 // In before the window starts: the page goes into them.
-                self.overlay.backdrop(TitleBands.shared.cached(url))
+                self.overlay.backdrop(TitleBands.shared.cached(url, saturation: saturation))
             }
             let wait = Self.pictureDelay * k - (CACurrentMediaTime() - start)
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             var zoomEnd: CFTimeInterval?
             if let url, let image {
-                pictures[item.id] = url
+                if stage == nil { pictures[item.id] = url }
                 overlay.picture.image = image
                 // Where Details' card shows it, and where the card pressed
                 // shows it (Home's billboard card: its own; any other: that
@@ -287,19 +307,27 @@ final class DetailTransition {
             // A frame for the moves to be handed over before the main thread
             // gets busy (Details is built during them).
             try? await Task.sleep(for: .milliseconds(20))
+            // Under it: the stage instead of Details, drawing the same card.
+            if let stage {
+                await stage(url)
+                // Its first frames drawn before the cover goes.
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             // Under it: the rest of the data, then Details, pushed and built.
-            await DetailPreparer.shared.ready(item, within: Self.giveUp)
-            ModeSwap.shared.billboardItemID = item.id
-            ModeSwap.shared.billboardRatings = nil
-            ModeSwap.shared.billboardFacts = nil
-            ModeSwap.shared.billboardSeriesSize = nil
-            appeared = nil
-            DetailOpenProbe.note("push")
-            DetailsOpen.shared.depth += 1
-            push()
-            ModeSwap.shared.handingOver = false
+            if stage == nil { await DetailPreparer.shared.ready(item, within: Self.giveUp) }
+            if stage == nil {
+                ModeSwap.shared.billboardItemID = item.id
+                ModeSwap.shared.billboardRatings = nil
+                ModeSwap.shared.billboardFacts = nil
+                ModeSwap.shared.billboardSeriesSize = nil
+                appeared = nil
+                DetailOpenProbe.note("push")
+                DetailsOpen.shared.depth += 1
+                push()
+                ModeSwap.shared.handingOver = false
+            }
             let built = CACurrentMediaTime()
-            while appeared != item.id, CACurrentMediaTime() - built < 1 {
+            while stage == nil, appeared != item.id, CACurrentMediaTime() - built < 1 {
                 try? await Task.sleep(for: .milliseconds(10))
             }
             let drawnAt = CACurrentMediaTime()
@@ -330,7 +358,7 @@ final class DetailTransition {
             // same card on the same background — only its parts appear).
             watch.begin("move 2")
             DetailOpenProbe.note("reveal")
-            Self.refocus()
+            if stage == nil { Self.refocus() }
             await Self.run {
                 Self.animate(self.overlay.root.layer, "opacity", from: 1, to: 0, Self.reveal * k, Self.inOut)
             }
@@ -562,7 +590,7 @@ final class DetailTransition {
 
     /// The card focused at the press, on the screen at its focused size
     /// (its caption not counted) — what the window grows out of.
-    static func focusedCard(in window: UIWindow) -> CGRect? {
+    private static func focusedCard(in window: UIWindow) -> CGRect? {
         guard let focused = UIFocusSystem.focusSystem(for: window)?.focusedItem as? UIView else { return nil }
         if let cell = focused as? FixedFocusShowcaseCell { return cell.holdMenu([]).rest ?? cell.screenCard }
         if let cell = focused as? FixedFocusDestinationCell { return cell.holdMenu([]).rest }

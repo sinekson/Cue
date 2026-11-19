@@ -985,7 +985,19 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         for controller in all.allObjects where controller.isViewLoaded && controller.view.window != nil
             && controller.view.isUserInteractionEnabled {
             guard let row = controller.returnRow else { continue }
-            controller.requestFocus(row: row)
+            controller.returnFocus(row: row, tries: 6)
+        }
+    }
+
+    /// Asked again until focus is in the rows: while the page that had it
+    /// is still on screen (the stage, gone a frame later) the request is
+    /// refused, and focus then fell to the top bar.
+    private func returnFocus(row: Int, tries: Int) {
+        requestFocus(row: row)
+        let focused = UIFocusSystem.focusSystem(for: view)?.focusedItem as? UIView
+        guard focused?.isDescendant(of: view) != true, tries > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.returnFocus(row: row, tries: tries - 1)
         }
     }
 

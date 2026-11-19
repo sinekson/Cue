@@ -30,11 +30,8 @@ struct PlayStageView<Sources: View>: View {
     @State private var shownIn = false
     /// On the way out (`leave`).
     @State private var leaving = false
-    /// Grown out of the card it came from into Details' place (`fromCard`).
-    @State private var opened = false
-    /// Back's fade off as a whole (not shrinking into its card).
+    /// Back's fade off as a whole.
     @State private var gone = false
-    private var growing: Bool { scene.fromCard != nil }
 
     @ObservedObject private var stage = PlayStage.shared
 
@@ -56,7 +53,6 @@ struct PlayStageView<Sources: View>: View {
 
     private var card: CGRect {
         if stage.dark { return CGRect(origin: .zero, size: StagePictureView.pictureSize) }
-        if !opened, let from = scene.fromCard { return from }
         let card = StagePictureView.detailsCard
         return short ? card.offsetBy(dx: 0, dy: -ShelfShape.stageScroll) : card
     }
@@ -67,11 +63,10 @@ struct PlayStageView<Sources: View>: View {
             // Details' bands a step more vivid: closer to the film.
             TitleBandsBackground(url: scene.bands, saturation: BandsPicture.stageSaturation)
                 .frame(width: 1920, height: 1080)
-                .opacity(partsIn)
             Group {
                 picture
                 text
-                    .opacity(stage.dark ? 0 : partsIn)
+                    .opacity(stage.dark ? 0 : 1)
                     .animation(Motion.fade, value: stage.dark)
             }
             .environment(\.colorScheme, .dark)
@@ -89,7 +84,7 @@ struct PlayStageView<Sources: View>: View {
                 // move (on its own animation it ran ahead of the card).
                 sources(request)
                     .offset(y: ShelfShape.stageTop + (short ? 0 : ShelfShape.stageScroll))
-                    .opacity(listUp && !stage.dark ? partsIn : 0)
+                    .opacity(listUp && !stage.dark ? 1 : 0)
                     .disabled(!listUp)
             }
         }
@@ -99,7 +94,7 @@ struct PlayStageView<Sources: View>: View {
         // (bands, the card's black, the picture through each other: a
         // grey wash mid-fade).
         .compositingGroup()
-        .opacity((growing || shownIn) && !gone ? 1 : 0)
+        .opacity((scene.grown || shownIn) && !gone ? 1 : 0)
         .onExitCommand(perform: back)
         .animation(Motion.fade, value: listUp)
         // Focus here at once: left where it was (Details' Play, in its own
@@ -114,19 +109,18 @@ struct PlayStageView<Sources: View>: View {
             // stage's fade), then one move up.
             let fade = picker.request != nil ? PlayStage.listFadeIn : PlayStage.fadeInDuration
             withAnimation(.easeInOut(duration: fade)) { shownIn = true }
-            // Out of Home's billboard card: the card grows into Details'
-            // place, opaque over its own picture, the rest fading in round it.
-            if growing { withAnimation(Self.growCurve) { opened = true } }
-            DispatchQueue.main.asyncAfter(deadline: .now() + (growing ? Self.grow : fade)) {
+            // Grown out of a card (`DetailTransition.openStage`): there at
+            // once under the cover, the scroll once the cover is off.
+            let wait = scene.grown ? DetailTransition.reveal : fade
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                 settled = true
                 withAnimation(ShelfShape.stageScrollAnimation) { short = picker.request != nil && picker.hasLinks }
             }
         }
         .onDisappear { picker.leave = nil }
-        // Links in while it grows (a cached list, at once): the scroll
-        // joins the grow, one movement; from Details only once it's in.
+        // Links in: the scroll, only once the stage is in.
         .onChange(of: picker.request != nil && picker.hasLinks) { _, on in
-            guard settled || growing, !leaving else { return }
+            guard settled, !leaving else { return }
             withAnimation(ShelfShape.stageScrollAnimation) { short = on }
         }
         // Up while it already holds focus (Play found nothing): it goes
@@ -137,43 +131,26 @@ struct PlayStageView<Sources: View>: View {
         .onChange(of: holding) { _, on in if on, listUp { picker.listShown = true } }
     }
 
-    /// Bands, text and row: with the whole stage's fade, or, grown out of
-    /// Home's card (the card opaque from the start), fading on their own.
-    private var partsIn: CGFloat { growing ? (shownIn ? 1 : 0) : 1 }
-    /// The opening's zoom (`DetailTransition.zoomInCurve`, 0.55 s); Back
-    /// into the card as Details' (0.4 s, eased in and out).
-    private static var growCurve: Animation { .timingCurve(0.2, 0.7, 0.2, 1, duration: grow) }
-    private static var shrink: Double { 0.4 }
-
     /// Back: with the list up it closes (as the list's own Back), else the
     /// stage stops what it's doing.
     private func back() {
         if listUp { picker.back() } else { onBack() }
     }
 
-    /// Back from the list: from Details the card scrolls back down to
-    /// Details' place (the row to its peek), then the stage fades off over
-    /// Details' same card; grown out of a card, one movement from where it
-    /// is (shrunk into its card, or a fade). Presses meanwhile are dropped.
+    /// Back from the list: the card scrolls back down to Details' place
+    /// (the row to its peek), then the stage fades off whole over Details'
+    /// same card; grown out of a card on Home, one fade off from where it
+    /// is (the scroll back only leads into Details' same card). Presses
+    /// meanwhile are dropped.
     private func leave() {
         guard !leaving else { return }
         leaving = true
         let fadeOff = {
-            // Into Home's billboard card or Today's Pick: shrunk back into
-            // it (as Details' Back), the rest fading round it.
-            if growing && scene.shrinksBack {
-                withAnimation(.easeInOut(duration: PlayStage.listFadeIn)) { shownIn = false }
-                withAnimation(.easeInOut(duration: Self.shrink)) { opened = false } completion: { closed() }
-                return
-            }
-            // Anywhere else: one fade off, whole, as Details' Back.
             withAnimation(.easeInOut(duration: PlayStage.listFadeIn)) { gone = true } completion: {
                 closed()
             }
         }
-        // Grown out of a card: straight from where it is, one movement
-        // (the scroll back only leads into Details' same card).
-        guard short, !growing else { return fadeOff() }
+        guard short, !scene.grown else { return fadeOff() }
         withAnimation(ShelfShape.stageScrollAnimation) { short = false } completion: { fadeOff() }
     }
 
@@ -191,7 +168,6 @@ struct PlayStageView<Sources: View>: View {
         // The picture goes with the card (scrolled with it, as Details').
         let full = StagePictureView.cardPicture(in: StagePictureView.detailsCard, url: scene.art)
         let shown = stage.dark ? CGRect(origin: CGPoint(x: full.minX, y: 0), size: full.size)
-            : !opened && scene.fromPicture != nil ? scene.fromPicture!
             : full.offsetBy(dx: 0, dy: card.minY - StagePictureView.detailsCard.minY)
         return ZStack(alignment: .topLeading) {
             Color.black
@@ -212,7 +188,6 @@ struct PlayStageView<Sources: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: stage.dark ? 0 : Spotlight.cornerRadius, style: .continuous))
         .offset(x: card.minX, y: card.minY)
         .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: stage.dark)
-        .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: opened)
     }
 
     /// Details' card shade (`StageArt.cardShade`'s stops, eased between),

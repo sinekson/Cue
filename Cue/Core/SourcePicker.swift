@@ -22,13 +22,10 @@ final class PlayStage: ObservableObject {
         var art: String?
         /// The page's bands come from this (Details': its backdrop).
         var bands: String?
-        /// The card it grows out of (as into Details): the
-        /// card and its picture on screen at the press.
-        var fromCard: CGRect?
-        var fromPicture: CGRect?
-        /// Back shrinks it into that card (Home's billboard card, Today's
-        /// Pick: as Details' Back); else it fades off as from Details.
-        var shrinksBack = false
+        /// Grown out of a card on Home as into Details
+        /// (`DetailTransition.openStage`): there at once under the cover,
+        /// Back one fade off.
+        var grown = false
         let logo: String?
         /// A show's episode: its name, and "Season 2, Episode 5".
         let episodeName: String?
@@ -68,7 +65,7 @@ final class PlayStage: ObservableObject {
     nonisolated static let lightsDown: Double = 0.7
 
     func show(_ meta: MetaItem, _ video: MetaVideo?, art: String? = nil, bands: String? = nil,
-              from: DetailTransition.Window? = nil, shrinksBack: Bool = false) {
+              grown: Bool = false) {
         let same = scene?.title == meta.name
         var name = same ? scene?.episodeName : nil, number = same ? scene?.episodeNumber : nil
         if let video, let season = video.season, let episode = video.episode {
@@ -82,9 +79,7 @@ final class PlayStage: ObservableObject {
         if !same { note = nil }
         dark = false
         scene = Scene(meta: meta, art: known, bands: knownBands,
-                      fromCard: from?.card ?? (same ? scene?.fromCard : nil),
-                      fromPicture: from?.picture ?? (same ? scene?.fromPicture : nil),
-                      shrinksBack: from != nil ? shrinksBack : same && scene?.shrinksBack == true,
+                      grown: grown || (same && scene?.grown == true),
                       // Kept for the same title: a show's full record can
                       // name another logo file (it swapped in mid-move).
                       logo: (same ? scene?.logo : nil) ?? meta.logo ?? BillboardPicks.metaHubLogo(meta.id),
@@ -176,9 +171,9 @@ final class SourcePicker: ObservableObject {
     @Published var listShown = false
 
     func open(_ meta: MetaItem, _ video: MetaVideo?, fromStart: Bool = false, art: String? = nil,
-              bands: String? = nil, from: DetailTransition.Window? = nil, shrinksBack: Bool = false) {
+              bands: String? = nil, grown: Bool = false) {
         if request?.meta.id != meta.id || request?.video?.id != video?.id { failed = [] }
-        PlayStage.shared.show(meta, video, art: art, bands: bands, from: from, shrinksBack: shrinksBack)
+        PlayStage.shared.show(meta, video, art: art, bands: bands, grown: grown)
         picked = false
         searching = false
         empty = false

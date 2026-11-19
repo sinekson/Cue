@@ -1984,15 +1984,6 @@ final class TitlePictures {
         decoded.removeValue(forKey: item.id) ?? decode(item)
     }
 
-    /// The picture decoded at focus, left for the next opening (the stage
-    /// growing out of a card: Choose Source).
-    func shown(_ item: MetaItem) -> Task<String?, Never> {
-        if let task = decoded[item.id] { return task }
-        let task = decode(item)
-        decoded[item.id] = task
-        return task
-    }
-
     private func decode(_ item: MetaItem) -> Task<String?, Never> {
         Task { @MainActor in
             guard let url = await self.picture(for: item),

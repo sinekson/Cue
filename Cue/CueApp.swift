@@ -371,6 +371,11 @@ struct RootView: View {
                 }
             }
             .animation(Motion.fade, value: stage.scene != nil)
+            // The stage gone: focus leaves it a moment later (its fade off),
+            // and the top bar took it before the rows could (`returnFocus`).
+            .onChange(of: stage.scene == nil) { _, gone in
+                if gone { setSidebarEnabled(false, reenableAfter: Self.stageSettle) }
+            }
             .onOpenURL { handleDeepLink($0) }
             .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
             .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
@@ -1425,6 +1430,9 @@ struct RootView: View {
     /// cancels whatever was pending first.
     @State private var sidebarReenableTask: Task<Void, Never>?
 
+    /// The top bar off while the stage goes, so focus returns to the rows.
+    static let stageSettle: Double = 0.5
+
     private func setSidebarEnabled(_ enabled: Bool, reenableAfter delay: Double? = nil) {
         // The rail's `.disabled` windows swallow directional presses, which is
         // the shape of half the focus bugs this app has had — so every open and
@@ -1761,22 +1769,29 @@ struct RootView: View {
         }
     }
 
+    /// Continue Watching's Select and Start Over: into the stage as into
+    /// Details (`DetailTransition.openStage`). The stored row canonicalized
+    /// first (`tmdb:` ids to IMDb's: Cinemeta and Torrentio only speak `tt`).
     private func resume(_ progress: WatchProgress, fromBeginning: Bool = false) {
-        Task { await resumeResolved(progress, fromBeginning: fromBeginning) }
+        DetailTransition.shared.openStage(ContinueActions.title(progress)) { picture in
+            let (meta, video) = await canonicalResumeIdentity(progress)
+            await Self.stageReady(meta)
+            // Always a fresh link, the first one, as Play: a remembered URL expires.
+            PlayLauncher.shared.play(meta, video, fromStart: fromBeginning, art: picture, bands: picture,
+                                     grown: true)
+        }
     }
 
-    /// Continue Watching resume. TMDB-sourced items are stored as `tmdb:<n>`
-    /// (and episodes as `tmdb:<n>:<s>:<e>`), but Cinemeta and Torrentio only
-    /// speak IMDb `tt` ids — so resuming one directly found no metadata and no
-    /// streams (the "metadata not found" a show hit that had never been opened
-    /// through its Detail page, which is where this same resolve normally
-    /// happens). Canonicalize to the `tt` id first, then migrate the stored
-    /// entry so the card doesn't fork into a duplicate under the new key.
-    @MainActor
-    private func resumeResolved(_ progress: WatchProgress, fromBeginning: Bool) async {
-        let (meta, video) = await canonicalResumeIdentity(progress)
-        // Always a fresh link, the first one, as Play: a remembered URL expires.
-        PlayLauncher.shared.play(meta, video, fromStart: fromBeginning)
+    /// What the stage draws over the card decoded before it's shown under
+    /// the cover (its logo), so its parts appear whole.
+    private static func stageReady(_ meta: MetaItem) async {
+        guard let logo = meta.logo ?? BillboardPicks.metaHubLogo(meta.id) else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { _ = await ImageCache.shared.preload(logo, maxDimension: PictureSize.logo) }
+            group.addTask { try? await Task.sleep(for: .seconds(1)) }
+            await group.next()
+            group.cancelAll()
+        }
     }
 
     /// The source list on the stage.
@@ -1796,12 +1811,11 @@ struct RootView: View {
     /// synced rows missing season/episode) — the raw stored row found no
     /// sources.
     private func playManuallyFromProgress(_ progress: WatchProgress) {
-        Task { @MainActor in
+        // Into the stage as into Details; Back fades off.
+        DetailTransition.shared.openStage(ContinueActions.title(progress)) { picture in
             let (meta, video) = await canonicalResumeIdentity(progress)
-            // Grown out of the card as into Details, with Details' picture
-            // (decoded at focus: in from the first frame).
-            let card = await PlayLauncher.shared.grownFrom(meta)
-            SourcePicker.shared.open(meta, video, art: card?.art, bands: card?.art, from: card?.window)
+            await Self.stageReady(meta)
+            SourcePicker.shared.open(meta, video, art: picture, bands: picture, grown: true)
         }
     }
 

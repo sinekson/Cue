@@ -325,8 +325,6 @@ final class StagePictureView: UIView {
     static weak var homeCardShown: StagePictureView?
     /// The title on the card now (Back into it: `DetailTransition`).
     var shownItemID: String? { shownItem?.id }
-    /// Its picture now (the stage growing out of it: `PlayLauncher`).
-    var shownPictureURL: String? { shownURL }
 
     /// The card on the screen as it's drawn now — Details' opening grows
     /// a window out of it (`DetailTransition.Window`): the card, its

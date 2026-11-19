@@ -841,7 +841,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   anyway): from Details nothing moves, the buttons fade and the text
   swaps. The card dark always; the list on the page in its ink (the
   tabs Details' season pills, Refresh a flat control: `PanelTab.onPage`). The picture: an episode's TMDB still in
-  full size, else TMDB's backdrop as Details' (from a card's hold menu
+  full size, else TMDB's backdrop as Details' (from Continue Watching
   looked up at the press, 1.5 s at most, else the card's own background;
   never the poster). In it, bottom left as Details' text: the logo
   (Details' fit; MetaHub's by IMDb id where the item has none; the name
@@ -877,21 +877,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `shownIn`, as one composited picture: the root's insertion transition
   cut it in, and a plain opacity washed it grey), the tabs and the
   cards' peek in Details' peek's place, then the scroll (moving while
-  fading in read as a move and a fade). From a card's hold menu (Choose Source, Continue Watching's too)
-  as into Details: with Opening Details on Grow (Home's billboard card
-  always), the stage's card opaque from the card's frame, with Details'
-  picture (decoded at focus, waited on 0.5 s at most, else the fade) or
-  Home's billboard card's and Today's Pick's own (`Scene.fromCard`,
-  `PlayLauncher.grownFrom`; the picture, logo and a show's episode
-  waited on together, 0.5 s at most, so nothing lands mid-move; Details'
-  picture with Fade too, never the episode's still), growing into Details' place (0.55 s, the opening's
-  curve), bands, text and row fading in round it, then the scroll; links
-  already in (a cached list) scroll during the grow, one movement; Back
-  as Details' Back, one movement from where it is: into Home's
-  billboard card or Today's Pick it shrinks straight back into the card
-  (0.4 s) as the rest fades (`Scene.shrinksBack`); into any other card
-  one fade off (0.3 s) (the scroll back only leads into Details' same
-  card; grow then scroll, scroll then shrink were two movements). Focus: the stage holds it until the list is up, then drops it
+  fading in read as a move and a fade). From Home only Continue Watching goes to the stage directly (Select
+  resumes; its hold menu's Start Over and Choose Source). Select, Start Over and
+  Choose Source go into the stage by Details' own way in
+  (`DetailTransition.openStage`): the same moves, the same card on the
+  same background (the stage's bands), then the stage's parts appear
+  under the cover's fade where Details' would (it's brought up under the
+  cover with its logo decoded, `stageReady`); Back one fade off (0.3 s), focus back on the card (the top bar off for 0.5 s as the stage goes: it
+  took focus first, `stageSettle`).
+  (The stage's own grow out of a card, waiting on its picture and logo,
+  was before: it fell out of step.) Every other card's hold menu
+  has no Play or Choose Source: Details is the way to play (decided
+  2026-11-19: press, press is as quick; the stage grown out of every card,
+  Home's billboard card and Today's Pick shrinking back, was too much from
+  Home; routing Continue Watching through Details was talked over: an
+  extra press for its one job). Focus: the stage holds it until the list is up, then drops it
   into the sheet: the first card, Refresh while there's none (with no
   add-ons the fold still builds, so Refresh is there: focus was lost and
   Back stuck). Back with the list up closes it, the way in reversed: the card
@@ -912,7 +912,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Hold menus** are Cue's own `HoldMenu`: the system's ate the next press.
   One menu everywhere, UIKit (`MenuPanel` in `MenuEntry.swift`): the hold
   menus and the player's Audio and Subtitles; a change there reaches all
-  (the SwiftUI hold menu is gone). Entries: playing, the source, Library,
+  (the SwiftUI hold menu is gone). Entries: Library (Continue Watching's
+  Go to Show, Start Over and Choose Source first),
   watched (narrow to wide), Not for Me, Use as Background, red last; one name per action (Start Over, Go to
   Show / Movie, Mark … as Watched). No confirmations: a mark is undone by
   its row turning into "Mark … as Unwatched" (a confirm page was pointless).

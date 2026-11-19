@@ -3,8 +3,9 @@ import UIKit
 
 /// Holding Select on a title's card, anywhere — Home's rows, Search, Library,
 /// folders, See All, Details' More page: Cue's hold menu (`HoldMenu`), with
-/// the same items everywhere. Pressing the card opens Details, so these are the
-/// shortcuts past it, shown by `HoldMenu` (SwiftUI cards: `.titleMenu(_:)`).
+/// the same items everywhere, shown by `HoldMenu` (SwiftUI cards:
+/// `.titleMenu(_:)`). No Play or Choose Source: Details is the way to play
+/// (Continue Watching's own menu keeps them).
 @MainActor
 final class TitleMenu {
     static let shared = TitleMenu()
@@ -30,21 +31,7 @@ final class TitleMenu {
 
     func entries(for item: MetaItem, in place: Place = .standard) -> [Entry] {
         guard let library, let watched else { return [] }
-        let launcher = PlayLauncher.shared
         var entries: [Entry] = []
-        let started = isStarted(item)
-        entries.append(Entry(title: started ? "Resume" : "Play", icon: "play.fill") {
-            launcher.play(title: item)
-        })
-        if started {
-            entries.append(Entry(title: "Start Over", icon: "gobackward") {
-                launcher.play(title: item, fromStart: true)
-            })
-        }
-        entries.append(Entry(title: "Choose Source", icon: "list.and.film") {
-            launcher.chooseSource(title: item)
-        })
-
         let saved = library.contains(item)
         let libraryEntry = Entry(title: saved ? "Remove from Library" : "Add to Library",
                                  icon: saved ? "bookmark.slash" : "bookmark",
@@ -93,13 +80,6 @@ final class TitleMenu {
 
     private func isWatched(_ id: String, _ episode: MetaVideo) -> Bool {
         watched?.isWatched(contentID: id, season: episode.season, episode: episode.episode) ?? false
-    }
-
-    /// Started and not finished: the film, or an episode of the show.
-    private func isStarted(_ item: MetaItem) -> Bool {
-        guard let progress else { return false }
-        if item.isSeries { return progress.items.values.contains { $0.metaID == item.id && $0.isStarted } }
-        return progress.progress(for: ProgressStore.key(metaID: item.id, video: nil))?.isStarted ?? false
     }
 
     /// As Continue Watching's: marked watched, its progress row goes too.
