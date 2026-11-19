@@ -20,8 +20,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
     var placeholder = false
     /// Rows of landscape cards besides Continue Watching (Search's).
     var landscapeRowIDs: Set<String> = []
-    /// Collection rows: landscape tiles in a panel (see `FixedFocusPanelView`).
-    var panelRowIDs: Set<String> = []
     /// Destination rows (see `FixedFocusMetrics.posterCard`).
     var destinationRowIDs: Set<String> = []
     /// Of them, ranked (Top 10: each card's place beside it).
@@ -223,7 +221,6 @@ struct FixedFocusRows: UIViewControllerRepresentable {
         controller.rowHeaders = rowHeaders
         controller.continueRowID = continueRowID
         controller.landscapeRowIDs = landscapeRowIDs
-        controller.panelRowIDs = panelRowIDs
         controller.rankedRowIDs = rankedRowIDs
         controller.gridRowIDs = gridRowIDs
         controller.showcaseRowIDs = showcaseRowIDs
@@ -421,14 +418,8 @@ enum FixedFocusMetrics {
     /// one height, the open card's right edge near the screen's middle.
     static let featurePoster = CGSize(width: 330, height: 495)
     static let featureCard = CGSize(width: 880, height: 495)
-    /// The panel around a collection row: how far it reaches beyond the
-    /// row's name and cards (left of the box, above the name, under the
-    /// info), and its corners.
-    static let panelPad: CGFloat = 36
+    /// Panels of cards' corners (the player's shelf).
     static let panelRadius: CGFloat = 32
-    /// How far a panel reaches beyond its row's name and cards: above the
-    /// name, and below the cards (the info under the box, then its pad).
-    static var panelReach: (above: CGFloat, below: CGFloat) { (panelPad, panelPad) }
     /// Under the box: the title's name, then its facts (meta) line.
     static let infoGap: CGFloat = 18
     static let factsOffset: CGFloat = 36
@@ -521,14 +512,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     var landscapeRowIDs: Set<String> = []
 
     func isLandscape(_ rowIndex: Int) -> Bool {
-        isContinue(rowIndex) || isPanel(rowIndex)
+        isContinue(rowIndex)
             || (rows.indices.contains(rowIndex) && landscapeRowIDs.contains(rows[rowIndex].id))
-    }
-    /// Collection rows: their tiles in a panel.
-    var panelRowIDs: Set<String> = []
-
-    func isPanel(_ rowIndex: Int) -> Bool {
-        rows.indices.contains(rowIndex) && panelRowIDs.contains(rows[rowIndex].id)
     }
     /// Destination rows: native scrolling, the system's lift, captions.
     /// A change rebuilds the rows
@@ -588,13 +573,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         didSet { if centred != oldValue, isViewLoaded { view.setNeedsLayout() } }
     }
     /// Centred: how much lower than `rowTop` row `r` stands in focus, its
-    /// cards in the screen's middle (Apple TV's; a collection: its panel)
+    /// cards in the screen's middle (Apple TV's)
     /// (nil: not centred, or the billboard).
     func centredDrop(_ r: Int) -> CGFloat? {
         guard centred, rows.indices.contains(r), !isFeatured(r) else { return nil }
         // (A Top 10's grid: with its name, so the rows above and below
         // both keep a peek.)
-        let whole = isPanel(r) || isGrid(r)
+        let whole = isGrid(r)
         // A grid of more lines than shown: the two in view in the middle,
         // with its name while they're its first.
         let columns = gridColumns(r)
@@ -620,16 +605,9 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         let edge = pinnedStage?.cardFrame?.maxY ?? 1080
         return edge - (rowTop + drop - FixedFocusMetrics.centredGap)
     }
-    /// How far a focused row draws, from its anchor (its name; a panel's
-    /// top) to the end of its cards (a panel's edge).
+    /// How far a focused row draws, from its name to the end of its cards.
     func drawnHeight(_ r: Int) -> CGFloat {
-        let named = FixedFocusMetrics.titleHeight + titleExtra(r) + cardHeight(r)
-        // A collection: its panel is its edge.
-        if isPanel(r) {
-            let reach = FixedFocusMetrics.panelReach
-            return reach.above + named + reach.below
-        }
-        return named
+        FixedFocusMetrics.titleHeight + titleExtra(r) + cardHeight(r)
     }
     var showcaseTrailers: (on: Bool, sound: Bool) = (false, false) {
         didSet { if !showcaseTrailers.on { showcaseTrailer.rest(on: nil, sound: false) } }
@@ -745,9 +723,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             && rows.indices.contains(rowIndex) && portraitRowIDs.contains(rows[rowIndex].id)
     }
     /// The room under a row's cards for their captions (in `cardHeight`).
-    /// (Not a collection's: its panel is its edge — placed by that.)
     func captionBelow(_ r: Int) -> CGFloat {
-        isDestination(r) && !isBanner(r) && !isPanel(r) && !isShowcase(r) && !isRanked(r)
+        isDestination(r) && !isBanner(r) && !isShowcase(r) && !isRanked(r)
             && !isFeature(r) && custom(r) == nil && hasCaptions(r) ? captionRoom(r) : 0
     }
     /// The row's cards' height (a Top 10: its grid's).
@@ -923,25 +900,23 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         outer.collectionViewLayout.invalidateLayout()
         applyDimming()
         revealNextNameIfNew()
-        startOnCollectionIfAsked()
+        startOnRowIfAsked()
     }
 
-    /// Dev (`-homeFocusCollection`): start on the first collection row —
-    /// the simulator can't send arrow keys.
+    /// Dev (`-homeFocusRow`): start on a row.
     private var pendingFocusRow: Int?
-    private var startedOnCollection = false
+    private var startedOnRow = false
 
-    private func startOnCollectionIfAsked() {
+    private func startOnRowIfAsked() {
         // (`-homeFocusRow N`: start on row N; `last`: the bottom row.)
         let args = ProcessInfo.processInfo.arguments
         let value = args.firstIndex(of: "-homeFocusRow").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil }
         let wantsLast = value == "last"
         let asked = wantsLast ? rows.indices.last : value.flatMap { Int($0) }
-        guard !startedOnCollection,
+        guard !startedOnRow,
               let index = asked.flatMap({ rows.indices.contains($0) ? $0 : nil })
-                ?? (args.contains("-homeFocusCollection") ? rows.indices.first(where: isPanel) : nil)
         else { return }
-        startedOnCollection = true
+        startedOnRow = true
         // After the launch's curtain (under it, the gate took the focus
         // update and Home's lift sent focus to the billboard).
         Task { @MainActor [self] in
@@ -1039,9 +1014,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             (self?.aboveVisible ?? FixedFocusMetrics.aboveVisible, self?.belowVisible ?? FixedFocusMetrics.belowVisible)
         }
         layout.belowCards = { [weak self] in self?.captionBelow($0) ?? 0 }
-        layout.reach = { [weak self] in
-            self?.isPanel($0) == true ? FixedFocusMetrics.panelReach : (0, 0)
-        }
         layout.customContent = { [weak self] in
             guard let self, let content = self.custom($0)?.contentHeight else { return nil }
             return FixedFocusMetrics.titleHeight + self.titleExtra($0) + content
@@ -1596,8 +1568,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // Not the billboards (Search's Top Result; Home's as a card has
         // one, as every card) or folders.
         guard let titleMenu, !isFeatured(rowIndex) || pinnedStage?.cardFrame != nil,
-              !isBanner(rowIndex), !isPanel(rowIndex),
-              item.type != "collection" else { return nil }
+              !isBanner(rowIndex) else { return nil }
         return (item.name, titleMenu(item, row.id))
     }
 
@@ -1608,9 +1579,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     /// row is at the spot.
     func restingCardOrigin(_ rowIndex: Int) -> CGPoint? {
         guard isViewLoaded, view.window != nil else { return nil }
-        let anchor = isPanel(rowIndex) ? FixedFocusMetrics.panelReach.above : 0
         return view.convert(CGPoint(x: FixedFocusMetrics.inset,
-                                    y: rowTop + (rowIndex == focusedRow ? rowDrop : 0) + anchor
+                                    y: rowTop + (rowIndex == focusedRow ? rowDrop : 0)
                                         + FixedFocusMetrics.titleHeight), to: nil)
     }
 
@@ -3410,8 +3380,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     var isContinue: Bool { controller?.isContinue(rowIndex) == true }
     /// Landscape cards (Continue Watching's, Search's rows).
     var isLandscape: Bool { controller?.isLandscape(rowIndex) == true }
-    /// A collection: its name and tiles in a panel.
-    var isPanel: Bool { controller?.isPanel(rowIndex) == true }
     /// Its box at the posters' size (no wide card).
     /// A destination row: its own strip (native scrolling, system lift).
     var isDestination: Bool { controller?.isDestination(rowIndex) == true }
@@ -3807,8 +3775,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         strip.dataSource = self
         strip.delegate = self
         strip.register(FixedFocusPosterCell.self, forCellWithReuseIdentifier: "poster")
-        stripHost.layer.cornerRadius = FixedFocusMetrics.panelRadius
-        stripHost.layer.cornerCurve = .continuous
         stripHost.addSubview(strip)
         contentView.addSubview(stripHost)
         // The header over the cards' host (it spans the cell): it must not
@@ -3857,22 +3823,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // focus spot (its edge below).
         stage?.frame = CGRect(x: 0, y: -FixedFocusMetrics.rowTop, width: 1920,
                               height: StagePictureView.pictureSize.height)
-        panel?.frame = FixedFocusPanelView.frame(cardHeight: cardHeight)
-        // A collection's tiles stay inside its panel: they slide under its
-        // edges (the strip's host clips to it).
-        let stripFrame = strip.frame
-        if let panel, isPanel {
-            stripHost.frame = panel.frame
-            stripHost.clipsToBounds = true
-        } else {
-            stripHost.frame = bounds
-            stripHost.clipsToBounds = false
-        }
-        strip.frame = stripFrame.offsetBy(dx: -stripHost.frame.minX, dy: -stripHost.frame.minY)
+        stripHost.frame = bounds
         // A destination strip: the screen plus the overscan on both sides.
         destinationStrip?.frame = CGRect(x: -over, y: cardsTop,
                                          width: 1920 + 2 * over, height: cardHeight)
-            .offsetBy(dx: -stripHost.frame.minX, dy: -stripHost.frame.minY)
         // Covers the list wherever its cards (and their lift) reach.
         UIView.performWithoutAnimation { applyConcealMask() }
         // The box at the spot (made before the strip had its place).
@@ -3881,13 +3835,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
     }
 
-    /// Holds the strip; a panel row's clips to the panel.
+    /// Holds the strip.
     private let stripHost = UIView()
 
     /// The Featured row: the billboard's picture (see `StagePictureView`).
     private var stage: StagePictureView?
-    /// A collection row's panel (see `FixedFocusPanelView`).
-    private var panel: FixedFocusPanelView?
 
     func showStage(_ item: MetaItem, direction: CGFloat, animated: Bool) {
         // Full screen: TMDB's ORIGINAL file, whatever size the pick came
@@ -3986,17 +3938,6 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         showAccessory()
         showHeader()
         showCustom()
-        if isPanel {
-            if panel == nil {
-                let view = FixedFocusPanelView()
-                contentView.insertSubview(view, at: 0)
-                panel = view
-                setNeedsLayout()
-            }
-            // The page's colour (or neutral), as it is now.
-            panel?.show(nil, fade: 0, follows: false)
-        }
-        panel?.isHidden = !isPanel
         if isFeatured, let row, row.items.indices.contains(selectedIndex) {
             showStage(row.items[selectedIndex], direction: 1, animated: false)
         }
@@ -4523,7 +4464,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     }
 
     /// Destination rows scroll by a rule, not the system's: as many cards in
-    /// full as their space holds (a collection's panel; the screen) with, once
+    /// full as the screen holds, with, once
     /// the row has moved, a sliver of the one before and the one after split
     /// evenly — always a hint when there's more. At the start: the cards from
     /// the usual inset, the next one's sliver at the right.
@@ -4541,18 +4482,16 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             windowStart = index
             return CGFloat(index) * pitch
         }
-        let space = isPanel ? FixedFocusPanelView.frame(cardHeight: cardHeight)
-                            : CGRect(x: 0, y: 0, width: 1920, height: 0)
         // Room for the slivers (and their gaps) on both sides.
-        let room = space.width - 2 * (gap + FixedFocusMetrics.destinationSliver)
+        let room = 1920 - 2 * (gap + FixedFocusMetrics.destinationSliver)
         let shown = max(1, Int((room + gap) / pitch))
         if index < windowStart { windowStart = index }
         if index > windowStart + shown - 1 { windowStart = index - shown + 1 }
         guard windowStart > 0 else { return 0 }
-        let edge = (space.width - CGFloat(shown) * card - CGFloat(shown - 1) * gap) / 2
+        let edge = (1920 - CGFloat(shown) * card - CGFloat(shown - 1) * gap) / 2
         let content = 2 * FixedFocusMetrics.inset + CGFloat(count) * pitch - gap
         let end = max(0, content - 1920)
-        return min(FixedFocusMetrics.inset + CGFloat(windowStart) * pitch - (space.minX + edge), end)
+        return min(FixedFocusMetrics.inset + CGFloat(windowStart) * pitch - edge, end)
     }
 }
 

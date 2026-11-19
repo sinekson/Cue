@@ -17,12 +17,9 @@ struct HomeRow: Identifiable {
         row.items = items
         return row
     }
-    /// A second caption line per title (destination rows: when a title was
-    /// saved, how many catalogs a folder holds), by title id.
+    /// A second caption line per title (when a title was saved, an
+    /// episode's name), by title id.
     var subtitles: [String: String] = [:]
-    /// Source catalog, so the row can navigate to a paginated "See All".
-    var addon: InstalledAddon?
-    var catalog: ManifestCatalog?
     /// Cue's own rows (`CueRows`): the tabs it shows on ("home"); nil:
     /// every tab.
     var tabs: [String]? = nil
@@ -87,17 +84,6 @@ struct HomeRow: Identifiable {
     /// Shown on Home (rows saved before Movies and Series went say which).
     var onHome: Bool { tabs.map { $0.contains("home") } ?? true }
 
-    /// This row's key in `HomeCatalogSettingsStore` terms, so a setting that
-    /// NAMES a catalog can be matched back to the row it produced.
-    ///
-    /// Not `id`: that is built from `addon.id`, which is the manifest URL,
-    /// while the settings keys use `manifest.id`. Two different strings for
-    /// the same addon — matching one against the other would never hit.
-    var catalogKey: String? {
-        guard let addon, let catalog else { return nil }
-        return HomeCatalogSettingsStore.catalogKey(
-            addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id)
-    }
 }
 
 private extension Sequence where Element == WatchedItem {
@@ -107,65 +93,15 @@ private extension Sequence where Element == WatchedItem {
     }
 }
 
-/// A home screen row: either a catalog of posters or a collection of folders.
-enum HomeEntry: Identifiable {
-    case catalog(HomeRow)
-    case collection(CueCollection)
-
-    var id: String {
-        switch self {
-        case .catalog(let row): return row.id
-        case .collection(let collection): return "collection|\(collection.id)"
-        }
-    }
-}
-
-/// Persists the last-rendered Home catalog rows (their items) to disk, keyed by
-/// catalog key, so the screen paints instantly on a cold start and then
-/// refreshes in the background (stale-while-revalidate).
-enum HomeCatalogCache {
-    private static let fileURL: URL = {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return caches.appendingPathComponent("cue-home-catalogs.json")
-    }()
-
-    static func load() -> [String: [MetaItem]] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([String: [MetaItem]].self, from: data) else { return [:] }
-        return decoded
-    }
-
-    static func save(_ rows: [String: [MetaItem]]) {
-        // Encode + write OFF the main thread. This is called from the @MainActor
-        // Home load right after a refresh; encoding ~15 rows × 30 MetaItems and
-        // writing the file synchronously there is a visible hitch on the A8 the
-        // moment Home finishes loading. It's fire-and-forget persistence, so a
-        // utility-queue hop costs the UI nothing.
-        DispatchQueue.global(qos: .utility).async {
-            guard let data = try? JSONEncoder().encode(rows) else { return }
-            try? data.write(to: fileURL, options: .atomic)
-        }
-    }
-}
-
 @MainActor
 final class HomeViewModel: ObservableObject {
-    @Published var entries: [HomeEntry] = [] {
+    @Published var entries: [HomeRow] = [] {
         didSet { rebuildItemIndex() }
     }
-    @Published var isLoading = false
-    /// Current phase label for the first-run stepped loading backdrop
-    /// (nil when not doing a cold, cache-less load).
-    @Published var loadingStep: String?
-    @Published var loadError: String?
-    /// When the catalogs were last fetched (nil: not yet this launch) —
-    /// Home refreshes when they're older than `refreshAge` (see `HomeView`).
+    /// When the rows were last loaded (nil: not yet this launch) — Home
+    /// loads again when they're older than `refreshAge` (see `HomeView`).
     private(set) var loadedAt: Date?
-    /// Catalogs are pulled (add-ons can't push): an hour covers lists that
-    /// change daily or hourly, at a handful of requests a day.
     static let refreshAge: TimeInterval = 60 * 60
-    /// One catalog's fetch, at most: then its saved copy stands.
-    static let catalogWait: Double = 8
     var isStale: Bool {
         if let retryAt, Date() > retryAt { return true }
         return loadedAt.map { Date().timeIntervalSince($0) > Self.refreshAge } ?? false
@@ -219,7 +155,7 @@ final class HomeViewModel: ObservableObject {
     /// add-ons and layout match (the picks follow its history).
     @Published private(set) var reloadRequest = 0
     func profileSwitched() {
-        loadedFingerprint = []
+        loadedOnce = false
         cueBuild = nil   // (the last profile's: not taken over)
         reloadRequest &+= 1
     }
@@ -228,9 +164,8 @@ final class HomeViewModel: ObservableObject {
     /// picks aren't made yet.
     func billboard(max: Int = BillboardPicks.count) -> [BillboardPick] {
         // Today's Pick has its own card below: not on the billboard too.
-        let spotlight = Set(entries.compactMap { entry -> String? in
-            guard case .catalog(let row) = entry, row.shape == .spotlight else { return nil }
-            return row.items.first?.id
+        let spotlight = Set(entries.compactMap { row -> String? in
+            row.shape == .spotlight ? row.items.first?.id : nil
         })
         func fits(_ item: MetaItem) -> Bool {
             !spotlight.contains(item.id)
@@ -239,17 +174,9 @@ final class HomeViewModel: ObservableObject {
         return Array((picks.isEmpty ? highlights(max: max).filter { fits($0.item) } : picks).prefix(max))
     }
 
-    private var loadedFingerprint: [String] = []
-    /// Bumped by every `load`. Loads overlap constantly on launch —
-    /// `.task` fires one, then the account sync lands and collections,
-    /// order keys and add-ons each trip their own `.onChange` — and each
-    /// run holds its OWN `orderedKeys`, captured before its awaits. With
-    /// no generation check the run that finishes last wins, which is
-    /// routinely the OLDEST one: it republishes a row list assembled
-    /// before the collections existed, so the collection rows vanish and
-    /// stay gone (the fingerprint already says "loaded"). That is the
-    /// intermittent "my categories didn't show up" — a race, which is
-    /// why a relaunch usually 'fixes' it.
+    /// Loaded for this profile (a profile switch loads again).
+    private var loadedOnce = false
+    /// Bumped by every load: a superseded run stops publishing.
     private var loadGeneration = 0
 
     // MARK: - Shared home assembly
@@ -268,12 +195,7 @@ final class HomeViewModel: ObservableObject {
     /// `HomeView`).
     var cueHistory: (@MainActor () -> BillboardPicks.History)?
 
-    static func isCueEntry(_ entry: HomeEntry) -> Bool {
-        if case .catalog(let row) = entry { return row.id.hasPrefix("cue.") }
-        return false
-    }
-
-    private static func entries(_ rows: [CueRows.Row]) -> [HomeEntry] {
+    private static func entries(_ rows: [CueRows.Row]) -> [HomeRow] {
         rows.map { row in
             // An episode row: the episode's still as the card's picture, its
             // title under the show's name.
@@ -284,18 +206,18 @@ final class HomeViewModel: ObservableObject {
                 if let still = episode.still { art[id] = still }
                 if let name = episode.name, !name.isEmpty { subtitles[id] = name }
             }
-            return .catalog(HomeRow(id: row.id, title: row.title, items: row.items, subtitles: subtitles,
-                                    tabs: row.tabs, badges: row.badges ?? [:], art: art,
-                                    shape: row.shape ?? .poster, episodes: episodes))
+            return HomeRow(id: row.id, title: row.title, items: row.items, subtitles: subtitles,
+                           tabs: row.tabs, badges: row.badges ?? [:], art: art,
+                           shape: row.shape ?? .poster, episodes: episodes)
         }
     }
 
     /// Cue's own rows (`CueRows`): the saved ones at once, new ones when
-    /// they're due. No catalogs, no collections.
+    /// they're due.
     private func loadCueRows() async {
+        loadedOnce = true
         loadGeneration &+= 1
         let generation = loadGeneration
-        loadError = nil
         let history = cueHistory?()
         let seeds = CueRows.seeds(history)
         CueRows.modelSource = {
@@ -304,11 +226,10 @@ final class HomeViewModel: ObservableObject {
         }
         let saved = await CueRows.saved()
         guard loadGeneration == generation else { return }
-        if let saved, entries.isEmpty || !entries.allSatisfy(Self.isCueEntry) {
+        if let saved, entries.isEmpty {
             entries = Self.entries(saved.rows)
         }
         if CueRows.due(saved, seeds: seeds) {
-            isLoading = entries.isEmpty
             // A load arriving mid-build from the same titles takes its rows
             // (two at launch doubled every request to TMDB).
             let build = cueBuild.flatMap { $0.seeds == seeds ? $0.task : nil } ?? Task {
@@ -336,17 +257,14 @@ final class HomeViewModel: ObservableObject {
                 CueRows.save(built)
             }
         }
-        if entries.isEmpty { loadError = "Nothing came from TMDB. Check the network." }
         loadedAt = Date()
-        isLoading = false
-        loadingStep = nil
         warmSpotlightArt()
     }
 
     private func rebuildItemIndex() {
         var index: [String: MetaItem] = [:]
         var ordered: [MetaItem] = []
-        for case .catalog(let row) in entries {
+        for row in entries {
             for item in row.items where index[item.id] == nil {
                 index[item.id] = item
                 ordered.append(item)
@@ -356,400 +274,19 @@ final class HomeViewModel: ObservableObject {
         orderedItems = ordered
     }
 
-    func loadIfNeeded(
-        addonManager: AddonManager,
-        collections: CollectionsStore,
-        settings: HomeCatalogSettingsStore,
-        providers: CollectionProviders
-    ) async {
-        // Fingerprint includes catalog counts (so rows refresh when the live
-        // manifests replace the bundled seed) plus the layout customization
-        // state and collection list, so edits re-render immediately. viewMode +
-        // pinToTop are included so changing a collection's Home layout or its
-        // pin re-renders without a relaunch.
-        var fingerprint = addonManager.catalogAddons.map {
-            "\($0.id)#\(($0.manifest.catalogs ?? []).count)"
-        }
-        fingerprint.append(settings.orderKeys.joined(separator: ","))
-        fingerprint.append(settings.disabledKeys.sorted().joined(separator: ","))
-        fingerprint.append(settings.customTitles.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ","))
-        // Hero source. The spotlight is derived during the load, so picking a
-        // different catalog has to re-run it.
-        fingerprint.append(collections.collections.map {
-            "\($0.id)#\($0.folders.count)#\($0.title)#\($0.viewMode)#\($0.pinToTop)"
-        }.joined(separator: ","))
-        // Collection rows no longer come and go with TMDB / Trakt, but keep
-        // the connections in the fingerprint anyway — cheap, and any future
-        // provider-dependent rendering rebuilds without a relaunch.
-        fingerprint.append("providers=\(providers.tmdb)/\(providers.trakt)")
-        fingerprint.append("cueRows=\(CueRows.isOn)")
-        guard entries.isEmpty || fingerprint != loadedFingerprint else { return }
-        loadedFingerprint = fingerprint
-        await load(addonManager: addonManager, collections: collections,
-                   settings: settings, providers: providers)
-    }
-
-    func load(
-        addonManager: AddonManager,
-        collections: CollectionsStore,
-        settings: HomeCatalogSettingsStore,
-        /// TMDB / Trakt. Collections ALWAYS show on Home, whatever is
-        /// connected — a collection opened with nothing connected explains
-        /// inside (per folder) that TMDB or Trakt needs setting up. Hiding
-        /// them here just made the feature look broken with no pointer to why.
-        providers: CollectionProviders
-    ) async {
+    /// Home's rows: Cue's own (`CueRows`), the saved ones at once, new ones
+    /// when they're due (a load whose rows aren't due is cheap).
+    func load() async {
         retryAt = nil
-        if CueRows.isOn { await loadCueRows(); return }
-        loadGeneration &+= 1
-        let generation = loadGeneration
-        /// False once a newer load has started; a superseded run stops
-        /// publishing instead of overwriting the newer one's rows.
-        func isCurrent() -> Bool { loadGeneration == generation }
-
-        // Back from Cue's own rows: none of them stands in for a catalog.
-        if entries.contains(where: Self.isCueEntry) { entries = [] }
-        isLoading = entries.isEmpty
-        loadError = nil
-
-        // Assemble the available rows keyed the same way the sync payload is,
-        // then let the layout settings decide order and visibility.
-        var catalogByKey: [String: (addon: InstalledAddon, catalog: ManifestCatalog)] = [:]
-        var catalogKeys: [String] = []
-        // Enumerate EVERY catalog the addon declares — the same rule
-        // Settings → Layout uses. These two lists must agree: a per-addon
-        // `.prefix(6)` here meant an addon declaring 10 catalogs showed all 10
-        // in the Layout editor (with live toggles and reorder arrows) while
-        // Home silently never fetched 7-10, and no amount of reordering could
-        // rescue them because the cut was taken in MANIFEST order, before the
-        // user's order was merged in. `maxHomeRows` below is the real ceiling,
-        // and it cuts in the user's own order.
-        for addon in addonManager.catalogAddons {
-            for catalog in (addon.manifest.catalogs ?? []) where !catalog.requiresExtra {
-                let key = HomeCatalogSettingsStore.catalogKey(
-                    addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id
-                )
-                guard catalogByKey[key] == nil else { continue }
-                catalogKeys.append(key)
-                catalogByKey[key] = (addon, catalog)
-            }
-        }
-        var collectionByKey: [String: CueCollection] = [:]
-        var collectionKeys: [String] = []
-        for collection in collections.collections {
-            let key = HomeCatalogSettingsStore.collectionKey(collection.id)
-            collectionKeys.append(key)
-            collectionByKey[key] = collection
-        }
-        NSLog("[CueHome] load: %d catalogs, %d collections (%d pinned), %d order keys",
-              catalogKeys.count, collectionKeys.count,
-              collections.collections.filter(\.pinToTop).count,
-              settings.orderKeys.count)
-        AppProbe.data("home load: \(catalogKeys.count) catalogs,"
-                      + " \(collectionKeys.count) collections"
-                      + " (\(collections.collections.filter(\.pinToTop).count) pinned),"
-                      + " \(settings.orderKeys.count) order keys")
-
-        let mergedKeys = settings
-            .mergedOrder(catalogKeys: catalogKeys, collectionKeys: collectionKeys)
-            .filter { settings.isEnabled(key: $0) }
-        // Pin to top: a collection flagged pinToTop jumps to the front of the
-        // Home order (keeping relative order among pins), so it renders above
-        // the catalogs instead of wherever the merged order placed it.
-        let pinnedKeys = Set(collections.collections.filter(\.pinToTop)
-            .map { HomeCatalogSettingsStore.collectionKey($0.id) })
-        let prioritized = pinnedKeys.isEmpty ? mergedKeys
-            : mergedKeys.filter { pinnedKeys.contains($0) } + mergedKeys.filter { !pinnedKeys.contains($0) }
-
-        // Cap the number of CATALOG rows Home will build. Row layouts render
-        // their rows eagerly (see rowsContent), so an account carrying 40+
-        // addons — each declaring up to 6 catalogs — would materialize hundreds
-        // of rows and fetch every one of them on a single load. That is the
-        // "app dies after signing in with lots of addons" case: it isn't the
-        // login, it's the Home load that follows it. Collections are exempt:
-        // they're markers with no fetch, and the user explicitly created them.
-        // The order is the user's own (Settings → Layout), so the cut is always
-        // "the rows you ranked lowest", and everything remains reachable from
-        // Discover.
-        var catalogRowBudget = AddonSweepLimits.maxHomeRows
-        let orderedKeys = prioritized.filter { key in
-            guard catalogByKey[key] != nil else { return true }   // collections: always keep
-            guard catalogRowBudget > 0 else { return false }
-            catalogRowBudget -= 1
-            return true
-        }
-
-        // Rows painted from the on-disk cache, by key. These are REAL content
-        // already on screen, so every republish below composes against them:
-        // a row that hasn't come back from the network yet keeps showing its
-        // cached items rather than disappearing.
-        var staleByKey: [String: HomeEntry] = [:]
-
-        /// The published row list: fresh where we have it, cached where we
-        /// don't, collections always.
-        ///
-        /// Everything that assigns `entries` during a refresh goes through
-        /// this. The old code assigned raw partial results instead — first the
-        /// collection markers alone (wiping every cached row the moment a
-        /// refresh started), then each progressive batch (a screen of cached
-        /// rows collapsing to the one or two that had answered so far). That
-        /// is the "categories flash for a split second and vanish" on a cold
-        /// start: the rows were never lost, they were being republished a few
-        /// at a time over a full screen that had already painted.
-        func compose(fresh: [String: HomeEntry]) -> [HomeEntry] {
-            orderedKeys.compactMap { key in
-                if let collection = collectionByKey[key] { return .collection(collection) }
-                return fresh[key] ?? staleByKey[key]
-            }
-        }
-
-        // A refresh over an already-populated Home (coming back to the tab, a
-        // settings change, a manual refresh) has to be protected the same way
-        // — seed the fallback from what is currently on screen, or the
-        // progressive republish blanks those rows exactly like a cold start.
-        if !entries.isEmpty {
-            var keyByRowID: [String: String] = [:]
-            for key in orderedKeys {
-                if let request = catalogByKey[key] { keyByRowID[Self.rowID(request)] = key }
-            }
-            for entry in entries {
-                if case .catalog(let row) = entry, let key = keyByRowID[row.id] {
-                    staleByKey[key] = entry
-                }
-            }
-        }
-
-        // STALE: on a cold start, paint the last-saved catalog items instantly
-        // (paired with the live addon/catalog so "See All" still works), then
-        // refresh below.
-        if entries.isEmpty {
-            // Read + JSON-decode the on-disk cache OFF the main thread — on the
-            // A8 this blocked the very first frame (the loading backdrop) until
-            // the file was parsed. Awaiting a detached read lets the backdrop
-            // paint immediately, then the stale rows swap in when it returns.
-            let cached = await Task.detached(priority: .userInitiated) {
-                HomeCatalogCache.load()
-            }.value
-            var stale: [HomeEntry] = []
-            for key in orderedKeys {
-                if let collection = collectionByKey[key] {
-                    // Collections are pure markers (buttons/tiles, no content
-                    // fetch) in every view mode, so all paint instantly.
-                    stale.append(.collection(collection))
-                } else if let request = catalogByKey[key], let items = cached[key], !items.isEmpty {
-                    // Dedup: a cache written before the source-side dedup
-                    // shipped could still hold duplicate ids.
-                    let staleItems = items.deduplicatedByID()
-                    guard !staleItems.isEmpty else { continue }
-                    let staleRow = HomeEntry.catalog(HomeRow(
-                        id: Self.rowID(request),
-                        title: Self.rowTitle(key: key, request: request, settings: settings),
-                        items: staleItems, addon: request.addon, catalog: request.catalog
-                    ))
-                    // Remembered by key so the refresh below can fall back to
-                    // it PER ROW instead of blanking the screen.
-                    staleByKey[key] = staleRow
-                    stale.append(staleRow)
-                }
-            }
-            if !isCurrent() { return }
-            if !stale.isEmpty {
-                entries = stale
-                // As early as the rows exist, before the network revalidation
-                // even starts. Backdrops are the one image class nothing warms:
-                // the poster prefetch below only takes `\.poster` from rows 3+,
-                // so every spotlight title used to hit the network at the
-                // moment it rotated in — a full-screen download while you are
-                // looking at the frame it belongs in.
-                warmSpotlightArt()
-            }
-        }
-
-        // The stepped backdrop only shows when there's genuinely nothing on
-        // screen (true first run). Warm starts render from cache instantly.
-        isLoading = entries.isEmpty
-        if isLoading {
-            // No artificial pause — go straight to fetching so the first-run
-            // load is as fast as the network allows.
-            loadingStep = "Loading catalogs…"
-        }
-
-        // REVALIDATE: fetch the catalogs, a bounded number at a time.
-        // Collections are just markers here — Home shows them as buttons/tiles;
-        // their catalog content is resolved on demand when the user opens a
-        // folder/collection's discover page, so Home never eagerly fetches
-        // collection content.
-        var fetched: [(index: Int, key: String?, entry: HomeEntry)] = []
-        /// Fresh rows by key, for `compose`.
-        var freshByKey: [String: HomeEntry] = [:]
-        // The catalog rows still to fetch, paired with their slot in
-        // orderedKeys. Titles and row ids are resolved HERE, on the main actor,
-        // so the fetch loop below needs no isolated state of its own.
-        var pending: [(index: Int, key: String, title: String, rowID: String,
-                       request: (addon: InstalledAddon, catalog: ManifestCatalog))] = []
-        for (index, key) in orderedKeys.enumerated() {
-            if let collection = collectionByKey[key] {
-                fetched.append((index, nil, .collection(collection)))
-            } else if let request = catalogByKey[key] {
-                pending.append((
-                    index, key,
-                    Self.rowTitle(key: key, request: request, settings: settings),
-                    Self.rowID(request),
-                    request
-                ))
-            }
-        }
-        // Collections resolve instantly; publish them WITH the cached rows
-        // still in place (compose keeps them) rather than in place of them.
-        if !fetched.isEmpty, isCurrent() { entries = compose(fresh: [:]) }
-
-        await withTaskGroup(of: (Int, String, HomeEntry?).self) { group in
-            // Keep at most `catalogs` requests outstanding. Unbounded, a large
-            // install fired one request per row simultaneously and held every
-            // decoded response at once — the peak that killed the app.
-            let window = max(1, min(AddonSweepLimits.catalogs, pending.count))
-            var next = 0
-            func startNext() {
-                guard next < pending.count else { return }
-                let (index, key, title, rowID, request) = pending[next]
-                next += 1
-                group.addTask {
-                    // A row that yields nothing is dropped silently — it just
-                    // isn't on Home, while Settings → Layout still lists it.
-                    // That is indistinguishable from "the addon is down" unless
-                    // we say which happened, so log the reason.
-                    var items: [MetaItem]
-                    do {
-                        // At most `catalogWait`: past it the row keeps its
-                        // saved copy (the launch waits for these).
-                        items = try await withDeadline(Self.catalogWait) {
-                            try await StremioAPI.catalog(addon: request.addon, catalog: request.catalog)
-                        }
-                    } catch {
-                        NSLog("[CueHome] row dropped — fetch failed: %@ (%@): %@",
-                              title, key, error.localizedDescription)
-                        // An empty Home is nearly always a pile of these. Each
-                        // one names the row that will simply not be there.
-                        AppProbe.warn("home row", "\(title) [\(key)] — \(error.localizedDescription)")
-                        return (index, key, nil)
-                    }
-                    let fetched = items.count
-                    guard !items.isEmpty else {
-                        NSLog("[CueHome] row dropped — %@: %@ (%@)",
-                              fetched == 0 ? "addon returned no items"
-                                           : "all \(fetched) items hidden by Hide unreleased content",
-                              title, key)
-                        AppProbe.data("home row dropped — \(title) [\(key)]: "
-                                      + (fetched == 0 ? "add-on returned no items"
-                                         : "all \(fetched) hidden by Hide unreleased content"))
-                        return (index, key, nil)
-                    }
-                    let row = HomeRow(
-                        id: rowID,
-                        title: title,
-                        // Dedupe by id, exactly as the cache-paint path above
-                        // does: a repeated MetaItem.id inside a tvOS ForEach
-                        // crashes the focus engine, and aggregator catalogs do
-                        // return the same title twice.
-                        items: Array(items.deduplicatedByID().prefix(30)),
-                        addon: request.addon,
-                        catalog: request.catalog
-                    )
-                    return (index, key, .catalog(row))
-                }
-            }
-            for _ in 0..<window { startNext() }
-
-            // Reveal rows AS SOURCES RESPOND so a slow aggregator doesn't hold
-            // up the whole screen — but coalesce the republishes. Re-sorting and
-            // reassigning `entries` on every single completion made SwiftUI
-            // rebuild the entire (eagerly-built) row stack once per row; with
-            // many rows that is quadratic work on the main actor. Same throttle
-            // the Sources sweep uses.
-            var lastFlush = Date.distantPast
-            for await (index, key, entry) in group {
-                // Stop the whole sweep once superseded, rather than only muting
-                // its results. The generation check below prevented a stale
-                // publish, but the abandoned run carried on issuing and decoding
-                // every remaining catalog page — so the duplicated work and the
-                // memory peak both survived it.
-                guard isCurrent() else { group.cancelAll(); break }
-                startNext()
-                guard let entry else { continue }
-                fetched.append((index: index, key: String?.some(key), entry: entry))
-                freshByKey[key] = entry
-                if Date().timeIntervalSince(lastFlush) > 0.4, isCurrent() {
-                    entries = compose(fresh: freshByKey)
-                    lastFlush = Date()
-                }
-            }
-            if isCurrent() { entries = compose(fresh: freshByKey) }
-        }
-
-        // Superseded mid-flight: a newer load owns the screen now. Bail before
-        // republishing this run's (older) row list over it.
-        guard isCurrent() else { return }
-
-        if isLoading { loadingStep = "Loading artwork…" }
-
-        let ordered = fetched.sorted { $0.index < $1.index }
-        // Per-row fallback, so one dead catalog can't blank its row and an
-        // offline refresh can't blank the screen.
-        entries = compose(fresh: freshByKey)
-
-        // Persist fresh catalog items for the next cold start. Only real
-        // add-on catalog rows (whose key maps back to a live catalog) are
-        // cached; collection-derived rows re-resolve on next launch.
-        var toCache: [String: [MetaItem]] = [:]
-        for row in ordered {
-            if let key = row.key, catalogByKey[key] != nil, case .catalog(let r) = row.entry {
-                toCache[key] = r.items
-            }
-        }
-        // A row that didn't answer this run is still on screen from cache —
-        // carry its items forward, or saving here would drop it and the next
-        // cold start would have nothing to paint for it.
-        for (key, entry) in staleByKey where toCache[key] == nil {
-            if catalogByKey[key] != nil, case .catalog(let r) = entry { toCache[key] = r.items }
-        }
-        if !toCache.isEmpty { HomeCatalogCache.save(toCache) }
-        loadedAt = Date()
-
-        // Again with the live rows: the fresh top titles may differ from the
-        // cached ones, and an already-cached URL costs a `fileExists` here.
-        warmSpotlightArt()
-        if entries.isEmpty {
-            loadError = "No catalogs available. Check your addons and network connection."
-        }
-        isLoading = false
-        loadingStep = nil
-
-        // Warm the poster cache for the below-the-fold rows so scrolling down
-        // hits disk, not the network. First rows render on their own.
-        let prefetchURLs = entries.dropFirst(2).flatMap { entry -> [String] in
-            guard case .catalog(let row) = entry else { return [] }
-            return row.items.prefix(12).compactMap(\.poster)
-        }
-        if !prefetchURLs.isEmpty {
-            ImageCache.shared.prefetch(urls: Array(prefetchURLs))
-        }
+        await loadCueRows()
     }
 
-    // MARK: Row builders (shared between the cache-paint and live-fetch paths)
-
-    static func rowID(_ request: (addon: InstalledAddon, catalog: ManifestCatalog)) -> String {
-        "\(request.addon.id)|\(request.catalog.type)|\(request.catalog.id)"
+    /// Once per profile; later loads come from `refreshIfStale`.
+    func loadIfNeeded() async {
+        guard entries.isEmpty || !loadedOnce else { return }
+        await load()
     }
 
-    static func rowTitle(
-        key: String,
-        request: (addon: InstalledAddon, catalog: ManifestCatalog),
-        settings: HomeCatalogSettingsStore
-    ) -> String {
-        // The catalog's own name (or the one given it in Settings) — no
-        // "- Movie" / "- Series" suffix: each title's facts line says it.
-        settings.customTitle(for: key) ?? request.catalog.name ?? request.catalog.id.capitalized
-    }
 
     /// Pull the billboard's backdrops into the image cache (art that is not
     /// on screen yet).
@@ -771,8 +308,7 @@ final class HomeViewModel: ObservableObject {
     func highlights(max: Int) -> [BillboardPick] {
         var seen = Set<String>()
         var picks: [BillboardPick] = []
-        for entry in entries {
-            guard case .catalog(let row) = entry else { continue }
+        for row in entries {
             let fresh = row.items.filter { item in
                 item.background != nil && !seen.contains(item.id)
             }
@@ -791,18 +327,12 @@ final class HomeViewModel: ObservableObject {
 struct HomeView: View {
     @EnvironmentObject private var addonManager: AddonManager
     @EnvironmentObject private var progressStore: ProgressStore
-    @EnvironmentObject private var collections: CollectionsStore
+    /// Continue Watching's order.
     @EnvironmentObject private var homeCatalogSettings: HomeCatalogSettingsStore
     @EnvironmentObject private var watched: WatchedStore
     @EnvironmentObject private var tmdbSettings: TMDBSettingsStore
     @EnvironmentObject private var mdblist: MDBListSettingsStore
 
-    /// The services collections can resolve from right now (see
-    /// `CollectionProviders`). Collection rows always render; this only tells
-    /// the loader what a collection opened from them will be able to fill.
-    private var collectionProviders: CollectionProviders {
-        CollectionProviders(tmdb: tmdbSettings.isEnabled, trakt: TraktService.isConfigured)
-    }
     // Owned by RootView so it PERSISTS across tab switches. If it were a local
     // @StateObject, switching away and back would rebuild HomeView with a fresh
     // (empty) model → a "Loading catalogs" spinner with no focusable element →
@@ -823,8 +353,6 @@ struct HomeView: View {
     /// Continue Watching's hold menu: Start Over, Choose Source.
     var onStartOver: (WatchProgress) -> Void = { _ in }
     var onChooseSource: (WatchProgress) -> Void = { _ in }
-    /// A collection's folder, selected on its row.
-    let onOpenFolder: (CueCollection, CueCollectionFolder) -> Void
     /// Fires when the first load attempt finishes (success or error), so the
     /// root can re-enable the sidebar only once content exists to hold focus.
     var onContentReady: () -> Void = {}
@@ -834,14 +362,7 @@ struct HomeView: View {
     /// the stream for bandwidth).
     private func refreshIfStale() {
         guard active, viewModel.isStale, !NuvioSyncManager.playbackActive else { return }
-        Task {
-            await viewModel.load(
-                addonManager: addonManager,
-                collections: collections,
-                settings: homeCatalogSettings,
-                providers: collectionProviders
-            )
-        }
+        Task { await viewModel.load() }
     }
 
     /// Coalesces the launch burst of store publishes into one reload.
@@ -867,7 +388,6 @@ struct HomeView: View {
     /// at) — left out of the rows with Hide watched titles.
     @State private var finishedShows: Set<String> = []
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
-    @AppStorage(HomeRowSource.key) private var rowSource = HomeRowSource.current.rawValue
     @ObservedObject private var stills = ContinueStills.shared
 
     /// False while Home is covered (player fullScreenCover, pushed screen,
@@ -903,32 +423,10 @@ struct HomeView: View {
                 progress)
     }
     
-    /// Catalog rows plus collections, in the order Settings → Home rows gives
-    /// them. Each collection is its own row: its folders as landscape tiles
-    /// in one wide panel (see `FixedFocusRowCell`'s panel). Selecting a tile
-    /// opens the folder — see `selectSpotlight`.
+    /// Cue's rows that go on Home.
     private var spotlightRows: [HomeRow] {
-        var rows: [HomeRow] = []
-        for entry in viewModel.entries {
-            switch entry {
-            case .catalog(let row):
-                if !row.items.isEmpty, row.onHome { rows.append(row) }
-            case .collection(let collection):
-                let items = collection.folders.map { Self.spotlightItem(for: $0, in: collection) }
-                guard !items.isEmpty else { continue }
-                let key = HomeCatalogSettingsStore.collectionKey(collection.id)
-                rows.append(HomeRow(id: Self.collectionItemPrefix + collection.id,
-                                    title: homeCatalogSettings.customTitle(for: key) ?? collection.title,
-                                    items: items,
-                                    subtitles: Dictionary(items.map { ($0.id, $0.description ?? "") },
-                                                          uniquingKeysWith: { first, _ in first })))
-            }
-        }
-        return rows
+        viewModel.entries.filter { !$0.items.isEmpty && $0.onHome }
     }
-
-    /// The collection rows (their panels).
-    static func isCollectionRow(_ id: String) -> Bool { id.hasPrefix(collectionItemPrefix) }
 
     /// The rows in order: the billboard, Continue Watching, the Watchlist,
     /// the catalogs — filtered on Movies / Series.
@@ -940,10 +438,10 @@ struct HomeView: View {
         return withoutWatched(rows)
     }
 
-    /// Discover's pins in Cue's own rows: large-row slots 2–4 (the first
-    /// stays Because You Watched), the catalogue's large rows moving down,
-    /// the slots where they were, so large rows still take turns with the
-    /// fixed ones. With the add-ons' rows (no slots): first.
+    /// Your rows (Discover's pins) in Cue's: from the second large-row slot
+    /// on, in your order (the first stays Because You Watched), the
+    /// catalogue's large rows moving down into the slots after them, so large
+    /// rows still take turns with the fixed ones.
     private static func placing(_ pinned: [HomeRow], in rows: [HomeRow]) -> [HomeRow] {
         guard !pinned.isEmpty else { return rows }
         let slots = rows.indices.filter { rows[$0].tabs != nil && rows[$0].shape == .poster }
@@ -962,7 +460,7 @@ struct HomeView: View {
         return rows.compactMap { row in
             // A ranked list keeps its ten: left out, the ranks would skip.
             if row.id == Spotlight.featuredRowID || row.id == Spotlight.continueRowID
-                || row.id == Self.libraryRowID || Self.isCollectionRow(row.id)
+                || row.id == Self.libraryRowID
                 || row.shape == .ranked { return row }
             let items = row.items.filter { item in
                 item.isSeries ? !finishedShows.contains(item.id) : !watched.isWatched(contentID: item.id)
@@ -999,41 +497,6 @@ struct HomeView: View {
     }
     static let libraryRowID = "spotlight.library"
 
-    /// Marks a spotlight card that stands for a collection or folder, not a
-    /// title. The rest of the id is looked up again in `selectSpotlight`.
-    private static let collectionItemPrefix = "cue-collection:"
-
-    private static func spotlightItem(for collection: CueCollection) -> MetaItem {
-        let cover = collection.folders.first?.tileCoverImageUrl
-        let backdrop = collection.backdropImageUrl?.isEmpty == false ? collection.backdropImageUrl : cover
-        return MetaItem(id: collectionItemPrefix + collection.id, type: "collection",
-                        name: collection.title, poster: cover, background: backdrop)
-    }
-
-    /// A folder as a tile: its cover (the art carries its name); the facts
-    /// line says how many catalogs it holds.
-    private static func spotlightItem(for folder: CueCollectionFolder, in collection: CueCollection) -> MetaItem {
-        let count = folder.effectiveSources.count
-        return MetaItem(id: collectionItemPrefix + collection.id + "\u{1F}" + folder.id,
-                        type: "collection", name: folder.title,
-                        poster: folder.tileCoverImageUrl, background: folder.tileCoverImageUrl,
-                        description: count == 1 ? "1 catalog" : "\(count) catalogs")
-    }
-
-    /// A spotlight card was selected: a collection/folder card opens its
-    /// browser, anything else is a title.
-    private func selectSpotlight(_ item: MetaItem) {
-        guard item.id.hasPrefix(Self.collectionItemPrefix) else { onSelect(item); return }
-        let parts = item.id.dropFirst(Self.collectionItemPrefix.count)
-            .split(separator: "\u{1F}", maxSplits: 1).map(String.init)
-        for entry in viewModel.entries {
-            guard case .collection(let collection) = entry, collection.id == parts.first else { continue }
-            if parts.count == 2, let folder = collection.folders.first(where: { $0.id == parts[1] }) {
-                onOpenFolder(collection, folder)
-            }
-            return
-        }
-    }
     var body: some View {
         Group {
             let cw = spotlightContinue
@@ -1054,7 +517,7 @@ struct HomeView: View {
                           billboardReasons: Dictionary(picks.compactMap { pick in
                               pick.reason.map { (pick.id, $0) }
                           }, uniquingKeysWith: { first, _ in first }),
-                          onSelect: selectSpotlight,
+                          onSelect: onSelect,
                           onSelectFeatured: onSelectFeatured,
                           onResume: onResume,
                           onStartOver: onStartOver,
@@ -1104,21 +567,8 @@ struct HomeView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshIfStale() } }
-        // Eight separate triggers, ONE debounced reload. Each of these used to
-        // fire its own unthrottled `reload()`, and at launch they arrive in a
-        // burst: the first load runs, then the collections library finishes
-        // decoding, then profile scoping republishes four settings at once — so
-        // a cold start ran the whole catalog sweep two to four times over.
-        .onChange(of: addonManager.addons) { _, _ in scheduleReload() }
+        // Another profile: its rows.
         .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
-        .onChange(of: rowSource) { _, _ in scheduleReload() }
-        .onChange(of: collections.collections) { _, _ in scheduleReload() }
-        // Collection rows render regardless, but a provider change still
-        // reloads Home so anything downstream of the connections is fresh.
-        .onChange(of: collectionProviders) { _, _ in scheduleReload() }
-        .onChange(of: homeCatalogSettings.orderKeys) { _, _ in scheduleReload() }
-        .onChange(of: homeCatalogSettings.disabledKeys) { _, _ in scheduleReload() }
-        .onChange(of: homeCatalogSettings.customTitles) { _, _ in scheduleReload() }
         .task(id: nextUpRefreshKey) { await refreshNextUpContinueItems() }
         .task(id: continueStillsKey) {
             await stills.load(mergedContinueItems(), useEpisodes: tmdbSettings.settings.useEpisodes)
@@ -1160,12 +610,7 @@ struct HomeView: View {
         }
 
         let done = AppProbe.begin("data", "Home reload")
-        await viewModel.loadIfNeeded(
-            addonManager: addonManager,
-            collections: collections,
-            settings: homeCatalogSettings,
-            providers: collectionProviders
-        )
+        await viewModel.loadIfNeeded()
         done("\(viewModel.entries.count) rows")
         onContentReady()
     }
@@ -1831,7 +1276,6 @@ struct HomeUIKitView: View {
                            progress: progress,
                            // Episode rows: Continue Watching's cards.
                            landscapeRowIDs: Set(rows.filter { $0.shape == .episode }.map(\.id)),
-                           panelRowIDs: Set(rows.map(\.id).filter(HomeView.isCollectionRow)),
                            // Every row: moving focus, its cards by its
                            // shape (`CueRows.CardShape`; posters unless said).
                            destinationRowIDs: Set(rows.map(\.id).filter { $0 != featuredRowID }),
@@ -1905,17 +1349,6 @@ struct HomeUIKitView: View {
         }
         .ignoresSafeArea()
     }
-}
-
-/// The colours' timing.
-@MainActor
-enum FixedFocusTint {
-    /// The colours' Core Animation fade with focus (the background, the
-    /// collection panels; a fade takes a
-    /// curve, not a spring: the no-bounce spring's shape, fast then a long
-    /// settle).
-    @MainActor static let focusTiming = CAMediaTimingFunction(controlPoints: 0.25, 0.85, 0.3, 1)
-
 }
 
 /// The billboard's text (Home's and Details'): the logo (the name), then

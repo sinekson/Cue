@@ -2874,3 +2874,59 @@ extension TMDBService {
                                  logo: imageURL($0.logo_path, size: "original")) }
     }
 }
+
+// MARK: - Upcoming's dates
+
+extension TMDBService {
+    /// A show's episodes around now, with their air dates: the seasons of
+    /// its last aired and next episode (Upcoming).
+    static func airDates(tmdbID: Int) async -> [(season: Int, episode: Int, date: String)] {
+        struct Ref: Decodable { let season_number: Int? }
+        struct Show: Decodable { let last_episode_to_air: Ref?; let next_episode_to_air: Ref? }
+        struct Season: Decodable {
+            struct Episode: Decodable { let episode_number: Int?; let air_date: String? }
+            let episodes: [Episode]?
+        }
+        guard let show: Show = try? await get("/tv/\(tmdbID)") else { return [] }
+        let seasons = Set([show.last_episode_to_air?.season_number, show.next_episode_to_air?.season_number]
+            .compactMap { $0 }.filter { $0 > 0 })
+        var out: [(season: Int, episode: Int, date: String)] = []
+        for season in seasons.sorted() {
+            guard let body: Season = try? await get("/tv/\(tmdbID)/season/\(season)") else { continue }
+            for episode in body.episodes ?? [] {
+                guard let number = episode.episode_number, let date = episode.air_date, !date.isEmpty else { continue }
+                out.append((season, number, date))
+            }
+        }
+        return out
+    }
+
+    /// TMDB's "2026-11-20" as that day here (a calendar day, not a moment).
+    static func localDay(_ text: String) -> Date? { localDayFormat.date(from: text) }
+    private static let localDayFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    /// A film's release dates in a country: in cinemas (TMDB's theatrical,
+    /// 2 and 3) and streaming (digital, 4).
+    static func releases(tmdbID: Int, region: String) async -> (cinemas: Date?, streaming: Date?) {
+        struct Body: Decodable {
+            struct Country: Decodable {
+                struct Release: Decodable { let release_date: String?; let type: Int? }
+                let iso_3166_1: String
+                let release_dates: [Release]
+            }
+            let results: [Country]
+        }
+        guard let body: Body = try? await get("/movie/\(tmdbID)/release_dates"),
+              let country = body.results.first(where: { $0.iso_3166_1 == region }) else { return (nil, nil) }
+        func first(_ types: Set<Int>) -> Date? {
+            country.release_dates.filter { types.contains($0.type ?? 0) }
+                .compactMap { $0.release_date.flatMap { localDay(String($0.prefix(10))) } }.min()
+        }
+        return (first([2, 3]), first([4]))
+    }
+}

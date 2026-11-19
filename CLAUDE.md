@@ -1,7 +1,8 @@
 # Cue
 
 Native tvOS media player (SwiftUI + UIKit), a GPLv3 fork of Orivio TV.
-Content comes from Stremio add-ons (AIOStreams, debrid configured inside them).
+Streams come from Stremio add-ons (AIOStreams, debrid configured inside them);
+Home's rows, Search, Discover and the pictures from TMDB (a key is required).
 Syncs with a **Nuvio** account (`Core/NuvioAccount/`, QR at first launch).
 Bundle id `app.cue.tv`, URL scheme `cue://`, defaults keys `cue.*`.
 Server-facing values (`nuvio_tvos_preferences`, `syncSource: "nuvio"`) must not change.
@@ -52,7 +53,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Breaking Bad default; Re:Zero tt5607616, One Piece tt0388629),
   `-transitionSlowMo` (4×), `-slowMo [speed]` (every animation, 0.1 by
   default, from the curtain's lift; timers keep real time), `-detailsHold`, `-holdMenuDemo`, `-browseDemo <person|genre|keyword|company|network> <tmdb id> <name>`,
-  `-folderDemo`, `-homeFocusCollection`, `-homeFocusRow <n|last>`, `-cue.home.billboardAutoPage NO`.
+  `-welcomeKeyDemo`, `-homeFocusRow <n|last>`, `-cue.home.billboardAutoPage NO`.
 - Settings → Developer holds experiment switches
   (`PerformanceSettingsStore`). Remove options once a decision is made.
 
@@ -159,7 +160,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   for "picking something now" rows, were removed 2026-11-15: the large
   rows made them pointless.) Saved for Later and the rewatch row plain posters with moving focus, Top 10's grid. (The
   fixed focus box was retired 2026-11-13: too many hacks for what it gave;
-  back 2026-11-15 narrower, only showing: the large rows' box.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes, collections' tiles; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
+  back 2026-11-15 narrower, only showing: the large rows' box.) One poster everywhere (`FixedFocusMetrics.posterCard`, 258 × 387, Apple TV's: six across, the next peeking: Saved for Later, Top 10, Search, Details' rows, grids), one gap between cards at rest in every row, 40 pt (`FixedFocusMetrics.gap`, Apple TV's; 24 in the fixed rows beside 32 in the others read uneven), the next row peeking 247 pt, the gap above its name as at 490 (490, 440 and 420 were too large). One landscape card (`landscapeHeight`, about 557 × 313, Apple TV's: three across: Continue Watching, Details' episodes; 300 looked small). One showcase card (`showcaseCard`, 4:5, about 557 × 696, three across: New & Notable).
   A card's progress (Continue Watching, Details' episodes, the Top Shelf):
   the player's bar's look (capsule, 25 % track, 56 % fill cut flat), 6 pt
   (3, scaled, was too faint), 30 pt from the foot and sides, alone at the
@@ -243,9 +244,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   grown picture were tried.)
 - **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs,
   each its icon and name (`AppTab.topBarOrder`: Search, Home, Discover,
-  Placeholder, Settings; Movies and Series retired 2026-11-19, Discover
-  replaces them; the placeholder an empty page with one card, `EmptyTabPage`, so
-  Down has somewhere to land) from the rows' text edge, where their names
+  Upcoming, Settings; Movies and Series retired 2026-11-19, Discover
+  replaces them) from the rows' text edge, where their names
   start (from the cards' edge it read 4 pt left; centred on the screen
   was tried, liked as much: `GlassSidebar.centred`, off) (25 pt medium,
   22 pt icons, 46 pt tall, 15 pt in each pill, 10 pt between pills;
@@ -291,20 +291,19 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   full brightness too loud).
   Continue Watching's art is the episode's TMDB still as Details', else the
   add-on's, looked up under the launch curtain (`ContinueStills`).
-- **Catalogs** are pulled: fresh at every launch (under the curtain), then
-  again once an hour old — on coming back, a tab switch, and while Home sits
+- **Home's rows** are loaded at every launch (under the curtain: the saved
+  ones, made again when due), then again once an hour old — on coming back, a tab switch, and while Home sits
   open (checked every 5 min). A refresh's billboard picks swap in only while
   no billboard is on screen (`BillboardSight`).
-- **Rows: Made for You or From Add-ons** (Settings → Home & Details →
-  Rows, `HomeRowSource`, on the device; the default From Add-ons until
-  onboarding asks, later: a choice early, Made for You needing a key).
-  The row under it follows the choice, hidden, not greyed (tvOS can't
-  focus a greyed row): Why These Rows for Made for You, Home Rows (the
-  add-ons' rows to hide, order, rename) for From Add-ons. Hide Watched
-  Titles works on both; ranked grids keep their ten.
-  **Made for You** (Cue's own rows, branch `tmdb-catalogs`): Home's
-  rows made by Cue from TMDB, no
-  add-on catalogs (`CueRows` at the end of `BillboardPicks.swift`): titles
+- **Rows: Cue's own, from TMDB only** (decided 2026-11-19: the add-ons'
+  catalogs as rows, collections and personal lists on Home were dropped;
+  TMDB is far better, and without TMDB the app would be barebones anyway).
+  The collections and Home-row settings stores and their Nuvio sync are
+  left as they are, unused by Cue. Onboarding asks for a TMDB key, no way
+  past it (`WelcomeKeyStep`: a phone QR or typed; one arriving with the
+  account goes on by itself). Settings → Home & Details: Why These Rows,
+  Your Rows (below). Hide Watched Titles; ranked grids keep their ten.
+  Home's rows made by Cue from TMDB (`CueRows` at the end of `BillboardPicks.swift`): titles
   only with a poster, a backdrop and an IMDb id (they play by it), TMDB's
   posters and logos (`TMDBService.traits`, 30 days on disk). A taste from
   the last 60 titles watched, started or saved (shows weigh more per
@@ -441,8 +440,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   catalogue row gone through without moving 2 along it sinks, one explored
   or opened from rises (last 14 days). Seasonal rows only in their dates
   (Halloween, Christmas, New Year, Thanksgiving, Valentine's, winter, Pride,
-  summer), lifted while they last; This Anime Season always (an episode out
-  since the season began). Talk and news shows never in a row.
+  summer), lifted while they last (This Anime Season was dropped
+  2026-11-19: Discover's This Season pinned does it). Talk and news shows never in a row.
   Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Application
   Support, not a cache), decided 2026-11-18: watching already teaches
   the taste, so only the two ends are asked. Love: Details' fourth button
@@ -754,8 +753,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`minimum`, the floor), whichever is later, however long the minimum
   takes; 15 s is only a safety ceiling for a broken network (`ceiling`, then
   placeholders). Back from the background instant (no curtain; the gate at
-  once after 4 h). The minimum, in order: saved rows; every catalog fresh
-  (each at most 8 s, `catalogWait`, then its saved copy) and the Nuvio pull
+  once after 4 h). The minimum, in order: saved rows; the rows made
+  again when due and the Nuvio pull
   (`sync`); the picks from those; what the first screen draws and one press
   reaches (`minimumJobs`: the billboard's first three, the first row's
   cards, the box's first card in the 3 rows below, Continue Watching's
@@ -929,7 +928,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   [theme] / in [language] from [year] · [rating] · [order] · [watched]",
   each word a flat pill (changed ones on the selected grey), Select its
   choices in the menus' glass panel under it (`HoldMenu.open`, `below`),
-  one value per word; the grid (`FolderPosterGrid`, `headerFirst`) under
+  one value per word; Year's list in pages (`MenuEntry.page`, Back a
+  page up): Any Year, This Season and Next Season (relative, moving on
+  with the quarter, so a pin stays current), This Year, the Last 5
+  Years, each decade's page (all of it, its years), each year's page
+  (all of it, Winter, Spring, Summer, Fall: AniList's quarters), Before
+  1970; a season is films released in it, shows on air in it (an
+  episode out: sequels and long runners too, a seasonal chart's way),
+  years and decades by first release (decided 2026-11-19: anime seasons
+  live here, not in Upcoming); the grid (`FolderPosterGrid`, `headerFirst`) under
   it, starting points (presets) and the count beside them. TMDB's
   discover behind it; anime = Animation + Japanese; fantasy / sci-fi
   shows split TMDB's one genre by fantasy's keywords; movies & shows
@@ -942,7 +949,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   with Home's billboard card's top; the count (when exact) at the first
   line's right, on the rows' edge. Under it one side-scrolling line
   (Search's way; pills 24 pt apart, focused growing 8 pt a side at most:
-  6 % made long ones touch): the pins, Add to Home, then 15
+  6 % made long ones touch): Add to Home, then 15
   starting points in three runs, unmarked: five from your taste (your
   themes, your language with your genre, your genres well rated or
   from your decade; fixed ones fill in), five from TMDB's trending this
@@ -969,17 +976,39 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   scrolling away with it (`TopBarFollow` per page); the grid's frame
   starts under the bar (`bleedTop`: SwiftUI took a whole-screen grid for
   the bar's neighbour, Left/Right fell into it). Add to Home (a pill
-  before the starting points, gone once the sentence is on Home; not on
-  a sentence with a genre or tag added from Details): three at most,
-  each a large row in Home's large-row slots 2–4, after the first
-  Because You Watched (From Add-ons: first after Saved for Later), its
-  name the sentence in title case with Discover's compass before it
-  ("Anime Shows About Isekai"; sentence case in Discover), its first 25
-  in the sentence's order, fetched at launch and when added
-  (`DiscoverPins`, per profile, on the device). In Discover they lead
-  the starting points, "✓" and the sentence (no rename: too tedious); Select loads it, held: Remove from Home; with three on
-  Home, Add to Home asks "Replace which?". It replaces the Movies
+  before the starting points; "✓ On Home" once it is, Select takes it
+  off; with eight on Home, words saying so; not on a sentence with a
+  genre or tag added from Details): **your rows**, eight at most, large
+  rows from Home's second large-row slot on, after the first Because You
+  Watched, in your order, its name the sentence in title case with
+  Discover's compass before it ("Anime Shows About Isekai") or a name of
+  your own — never one made up for it (an automatic "This Season's
+  Anime" was rejected: fragile); its first 25 in the sentence's order,
+  fetched at launch and when added (`DiscoverPins`, per profile, on the
+  device). Arranged in Settings → Home & Details → Your Rows
+  (`YourRowsPage`: Edit to order; a row's page: Open in Discover (the tab
+  with that sentence, focus on its name in the bar), Rename, Remove from
+  Home). The pins in Discover's line, their hold menu's Remove from Home
+  and "Replace which?" were before. An Edit Home at the foot of Home was
+  talked over: no, Settings is enough (2026-11-19). It replaces the Movies
   and Series tabs (retired 2026-11-19).
+- **Upcoming** (prototype, 2026-11-19; `UpcomingModel`/`UpcomingView`
+  at the end of `TMDBBrowseView.swift`): a calendar (the user rejected
+  rows here: a calendar look, after an anime release chart). Days as
+  columns along a strip, today held at the second spot; each day a
+  square tile (the day's first title, the focused line's while focus is
+  in it) with its weekday and date, then its lines (name over "S2:E7",
+  the menus' row focus); over five lines a day takes another column.
+  Yours first (followed: watched, started, saved), then TMDB's popular
+  shows airing (no news, reality, soap, talk, nor dailies), films
+  opening in your country, the season's popular anime (AniList, no key;
+  titles by IMDb id through Fribb's anime-lists, `AnimeIDs`, else TMDB's
+  search by matching name; found nowhere: left out); a week back to two
+  ahead. (Season pages, tried 2026-11-19 and removed: Calendar plus
+  quarters as pills, a season's anime lineup as a sectioned grid — New,
+  Sequels, Continuing, Films — and before that Fall/Winter anime pages
+  as weekday and premiere strips: not how the user likes it, and it
+  crashed on the TV.)
 - **Search**: `.searchable` with TMDB behind it, not the add-ons' catalogs;
   Cue's own order (`SearchViewModel.ranked`); titles play by their IMDb ids.
   Only completions in the suggestions: a Button froze Search.
@@ -1077,7 +1106,8 @@ mid-move).
 
 ## Removed / rejected (don't bring back)
 
-- Removed features: cloud library, Plex/Jellyfin, Live TV/M3U, JS plugins,
+- Removed features: the add-ons' catalogs as Home rows, collections and
+  personal lists on Home (folders, community presets), cloud library, Plex/Jellyfin, Live TV/M3U, JS plugins,
   in-app debrid/TorrServer, themes/accent palettes, external players,
   Trakt/SIMKL accounts (public Trakt lists stay), Stremio account, the
   Dynamic background (title colours following focus), Nuvio's
@@ -1120,13 +1150,6 @@ mid-move).
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
 - Inter's OFL text and copyright notice to ship with the fonts (`Cue/Player/Fonts/`); Licenses & Credits lists it.
-- A collection editor (create and edit Cue's collections) — wanted back,
-  in the new Settings look; the old one (`CollectionsSettingsDetail`,
-  `CollectionSourcePickerView`, old cards) is deleted: last in commit
-  f29be4c. Skipped for now: a collection is
-  treated as a row (Home Rows: order, hide, rename), and Nuvio → Sync's
-  Collections row stays a count with no page (talked over, not built: a
-  list as the add-ons', then ready-made presets, then the editor).
 - Player rework (merged into main 2026-11-08): KSPlayer, VLC and the old player
   are gone (a second FFmpeg can take the engine's calls, so they can't
   sit beside it). The new player is `CuePlayer` (`Cue/Player/CuePlayer.swift`):
@@ -1177,7 +1200,7 @@ mid-move).
   Atmos heights (the engine's `TrueHDObjectAudio`, as Native Player)
   talked over: not now. Sonos' Atmos badge proves nothing: check the readout
   (Developer → Playback diagnostics HUD).
-  The shelf (`PlayerShelf`), glass from the bottom, its foot 30 pt above the screen's (60 was too high), the episodes' one caption line evenly padded above and below (room for a second line left a gap; running the glass on past the screen's foot was tried: it didn't work), corners as the collections' panel (`panelRadius`, 32 pt: panels of cards; 61 pt, concentric with its capsule rows, is `MenuPanel`'s and looked too round here) (the top was tried twice: bottom liked better): Details (stream info, to check a stream against what it claims: two columns, spread as the cards (first line's capitals at their tops, the last baseline at their caption's), the file left (title, episode, add-on, file, length, size, bitrate; size and bitrate as the source card says them, decimal GB), what plays right (video, range, audio, output: where the sound goes and its channels, subtitles as the Subtitles list names them, container, decoding: Hardware or Software) (a value too long runs: a rest, then round),
+  The shelf (`PlayerShelf`), glass from the bottom, its foot 30 pt above the screen's (60 was too high), the episodes' one caption line evenly padded above and below (room for a second line left a gap; running the glass on past the screen's foot was tried: it didn't work), corners `panelRadius` (32 pt: panels of cards; 61 pt, concentric with its capsule rows, is `MenuPanel`'s and looked too round here) (the top was tried twice: bottom liked better): Details (stream info, to check a stream against what it claims: two columns, spread as the cards (first line's capitals at their tops, the last baseline at their caption's), the file left (title, episode, add-on, file, length, size, bitrate; size and bitrate as the source card says them, decimal GB), what plays right (video, range, audio, output: where the sound goes and its channels, subtitles as the Subtitles list names them, container, decoding: Hardware or Software) (a value too long runs: a rest, then round),
   what's really sent, so a converted track never says Atmos), Episodes and
   Sources (films: no Episodes), Home's cards; Sources unfolds in its place into the add-ons' tabs (one add-on too: it names it) as focus reaches it, a 32 pt gap opening before them (16 pt before Refresh), back to Sources as it goes to Episodes or the shelf closes (closed on an add-on, it opens unfolded on it again), opening on the playing add-on, after them, only while Sources or an add-on is chosen, a round glass Refresh, a button at rest as Audio and Subtitles (it needs a press; the tabs act on focus) (asks every add-on again, past the caches; what plays goes on; its arrows (`arrow.trianglehead.2.clockwise.rotate.90`, round; `arrow.clockwise` wobbled) going a half turn, then a brief rest, as the dots (a steady spin was tried) turning while it searches (the one exception to the loading symbol: the button's own symbol at work; the dots were tried), stopping at once (on the next half turn within 0.4 s; finishing a full turn felt delayed), "Searching" in place of the time; at the end the cards swell a little and settle, as Search's new results (`FixedFocusMotion.pulse`); each add-on's links replacing its old ones as it answers, a page whose links changed swapping them in one fade, the same links staying put (the cards stay while it searches: no removing them, no placeholders, no dots), a press mid-search starts again; on its own line's end it looked random) and "Found 4 min ago" in the body level (the dimmest was hard to read) (a second row of tabs would make every page taller; tabs under the cards read backwards); every card a little smaller than Details' episode cards (498 × 280; 533 × 300 left no peek past three), episodes and sources alike, card and caption centred in the page, the rows as Details' (`ShelfRow`, the stage's too): 40 pt apart whatever the card (24 pt, for a peek past three cards, was tried), moving focus, their window of cards in full with slivers on the move spring (focus in place at the first spot, as Details' episodes, was tried: not here), the row a card past the page each side so cards slide under the glass's edge, a source card's row keeping an episode's caption room so the tops line up (wider sources, as tall as an episode card with its caption, is the fallback), two looks, Settings → Appearance → Source Cards (`SourceCardStyle`). Styled, the default, built on what AIOStreams sends, read by known words from the add-on's text and file name (`StreamFacts`). Every fact has one fixed place and a place with nothing to show stays clear: no stand-ins, no falling back to Raw (consistency: you always know where quality is). Top: quality left, resolution right, shaped as the billboard's status badge (`TitleBadge`, larger: outline and a plate). Playing and Didn't play under the card, in its caption room as the episodes' names (22 pt, the caption's white, its indent), Playing led by three moving bars (`PlayingBars`), Didn't play by `play.slash`; Raw keeps it at its foot (on the card left of the badge, then under it, were tried; the foot's spaced capitals were too loud; a status colour was talked over). Quality 28 pt bold, the facts 23 pt, near Raw's 26 and 23 (32 and Details' 24 looked large beside Raw; the foot's spaced capitals for quality, 23 and 26 pt, were tried; larger looked too big on the card); under quality, in words, "27 GB at 55 Mbps" (a decimal only under 10; the numbers in equal-width digits at the line's level, units and "at" a level down; a bitrate bar against the list's highest was talked over) (as badges, capsules or outlined, they looked wrong). Above the language, dimmer (stacked from the rule up, the room left above them), one line for the picture ("DV · HDR10+ · HEVC"), one for the audio ("TrueHD Atmos · 7.1"), each listing what's there (a fixed column per fact left gaps; a grid of facts over badges looked wrong). Just above the rule, language left (three, then "+2"), right a bolt for cached or a dimmer hourglass for not cached (the words were tried; only "Not cached" was talked over: blank would mean cached and unknown alike), only as the add-on states it (`statedCached`; a playable link proves nothing), so AIOStreams' template must carry it. Under a thin rule (as far from the language's baseline as from the foot's capitals) in spaced capitals the add-on (with AIOStreams the one behind the link, the first part of the template's last line), release group or provider, and edition; at that line's end the score, a number starting the add-on's first line (a 150 pt ring, and a small ring with the number inside, were tried). Raw: the add-on's own text with its line breaks, its first line 26 pt semibold, the rest 23 (the floor: descriptions run long) (32 bold was too large; as a caption under the card it would be cut), from the top, the card down to the episodes' caption baseline and 16:9, so wider (571 × 321; Styled keeps the episode card's size), Playing at the foot's right (no add-on name: the tabs say it), too many lines fade (the AIOStreams template's reasoning and indexer only show here). Running lines were tried: cards are for comparing. Every card of a list the stage picture's dominant colour, flat and opaque (on the player's shelf at 60 %, its glass, coloured by the film, showing through: a full colour clashed with it; a neutral slate there and the colour sampled from the frame were talked over), always dark enough for the text (`SourceTint`; grey pictures a quiet slate), dimmed at rest (brightness 0.24), less for what's playing (0.3), lit when focused (0.4), its words in an ink of the card's hue (14 % saturation at most, full brightness: printed on the card, not white over it), the words letterpressed (a 1 pt dark edge above each letter at 45 %, a light one below at 18 % white), the colour plain (the words cut out of it, the shelf showing through, read too faint; a sheen from above, a soft white over the top half, under and over the words, was tried; a bright top rim and a shine following the thumb, as tvOS's posters, were talked over), lifting and growing with a soft shadow, no outline (kept to go back to: the words on the shelf's glass with a 5 % white behind them, 9 % playing, 18 % focused: fine for Styled, but Raw's text read as highlighted areas, not a card) (tried and dropped: glass on the shelf's glass, tinted and clear; the app's Bands picture; a white wash, smoked glass, a graphite gradient: washed out, flat or boring; a painting per card, a full colour per card from the title's palette: different colours read as different kinds, as quality; the same on pale paper with dark ink; a night painting); the text is past the usual levels here, on purpose. Windows onto one sharp backdrop were too noisy; a dark 90 % blur was dull; flat white too solid; light frost with dark text, grey panes and the blurred episode picture looked bad; the same growth in points as an episode card (a side panel with a button beside Subtitles was tried: too wide, the moves looked off; Audio and Subtitles as shelf tabs, with the buttons gone and the prompts right, were tried and dropped: the buttons stay); one shelf height for every tab; opens on the tabs, a page on what's
   playing; An episode: what plays goes on until

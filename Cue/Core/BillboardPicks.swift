@@ -208,7 +208,7 @@ enum BillboardPicks {
         }
         for pick in fallback { add(pick) }
         let pictured = await withTMDBPictures(picks)
-        return CueRows.isOn ? await withTMDBLogos(pictured) : pictured
+        return await withTMDBLogos(pictured)
     }
 
     /// Cue's own rows: each pick's logo TMDB's, as the rows' (MetaHub's
@@ -319,46 +319,14 @@ enum BillboardPicks {
     }
 }
 
-/// Settings → Home & Details → Rows: where Home's, Movies' and Series'
-/// rows come from. Made for You: Cue's own (`CueRows`); From Add-ons: the
-/// add-ons' catalogs, as Home Rows arranges them. On this device only.
-enum HomeRowSource: String, CaseIterable {
-    case madeForYou = "cue"
-    case addons
-
-    static let key = "cue.home.rowSource"
-
-    var label: String {
-        switch self {
-        case .madeForYou: "Made for You"
-        case .addons: "From Add-ons"
-        }
-    }
-
-    static var current: HomeRowSource {
-        UserDefaults.standard.string(forKey: key).flatMap(HomeRowSource.init(rawValue:)) ?? fromDeveloperSwitch
-    }
-
-    /// Before the setting: Developer's "Cue's own rows" switch, as it was left.
-    private static var fromDeveloperSwitch: HomeRowSource {
-        guard let data = UserDefaults.standard.data(forKey: "cue.performance.v1"),
-              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              saved["cueRows"] as? Bool == true else { return .addons }
-        return .madeForYou
-    }
-}
-
-/// CUE'S OWN ROWS — Home's, Movies' and Series' rows made by Cue from TMDB
-/// and what you watch, not the add-ons' catalogs (Home & Details → Rows:
-/// Made for You, `HomeRowSource`). A taste is read from your watching (`Taste`); a catalogue of named
+/// CUE'S OWN ROWS — Home's rows made by Cue from TMDB and what you watch.
+/// A taste is read from your watching (`Taste`); a catalogue of named
 /// rows (`catalogue`) is scored against it, with a daily seeded share of
 /// chance so rows rotate; each row's titles are ordered for you. Each tab
 /// has its own rows (`tabs`). Built on a new day, after `rebuildAge`, or when
 /// your last titles changed; saved per profile, so a launch paints the last
 /// ones at once and new ones show on the next load, never mid-browse.
 enum CueRows {
-    @MainActor static var isOn: Bool { HomeRowSource.current == .madeForYou }
-
     typealias Title = TMDBService.CueTitle
     typealias Traits = TMDBService.TitleTraits
     typealias Watch = BillboardPicks.History.Watch
@@ -1174,22 +1142,7 @@ enum CueRows {
             show("apple", "Apple Originals", "network", ["with_networks": "2552"]),
             show("netflix", "Netflix Originals", "network", ["with_networks": "213"]),
             show("showtime", "Showtime", "network", ["with_networks": "67"]),
-
-            // This anime season: anime with an episode out since the season
-            // began (January, April, July, October), new or returning.
-            show("anime.season", "This Anime Season", "season.anime",
-                 genres("16") + japanese + ["air_date.gte": date(animeSeasonStart(now)),
-                                            "air_date.lte": date(now.addingTimeInterval(7 * days)),
-                                            "vote_count.gte": "5"]),
         ] + seasonal(now: now)
-    }
-
-    /// The first day of the anime season `now` is in.
-    static func animeSeasonStart(_ now: Date) -> Date {
-        let calendar = Calendar.current
-        let parts = calendar.dateComponents([.year, .month], from: now)
-        let month = ((parts.month ?? 1) - 1) / 3 * 3 + 1
-        return calendar.date(from: DateComponents(year: parts.year, month: month, day: 1)) ?? now
     }
 
     /// Rows for the time of year, only while it lasts (from, to: month and

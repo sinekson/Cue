@@ -24,7 +24,6 @@
 		2805EBADC519E05898889E8D /* Atomic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F475D3148C854DB4176635F5 /* Atomic.swift */; };
 		282704283B6BBD1492DF0423 /* DetailTransition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D7B03CD83C5198350DA484D /* DetailTransition.swift */; };
 		291A7A1DD8E6AA35FD797B3B /* TrailerPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5427161C5B0687D4E2BE224 /* TrailerPlayer.swift */; };
-		2A5D67319BBE83D40A353516 /* CollectionResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D0D29B5B2CF8CCAC26FE74 /* CollectionResolver.swift */; };
 		2AB47E0B77562598B0188E64 /* WatchedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24942AB2575A11ACFA406AC6 /* WatchedStore.swift */; };
 		2BEF8A289B89B0330D99CF40 /* GlassSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58D8180984B4284D3CA243B6 /* GlassSidebar.swift */; };
 		2F98C1D4C6E988FD7DC12DBA /* Inter-BoldItalic.otf in Resources */ = {isa = PBXBuildFile; fileRef = F70F6F731127123D52EC26E0 /* Inter-BoldItalic.otf */; };
@@ -79,7 +78,6 @@
 		B1A040D1791BEC43A01A044E /* NuvioConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 187DF84826DC68D109534E01 /* NuvioConfig.swift */; };
 		B5FAC4B8D107C13DFE7E9DD8 /* PlayerSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDFD27E05A5352D478C4B8A6 /* PlayerSettingsStore.swift */; };
 		B612F8D2A6D567BA53009C7F /* ProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2168F1AA0C862B47963475 /* ProgressStore.swift */; };
-		B790C29C844013776D6E1FF9 /* CommunityCollectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B190C6A3EC193403F990E44 /* CommunityCollectionsView.swift */; };
 		B80AD9FB13D7C29A9D5D8652 /* HomeSpotlightRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26DE8F594FF4ADB4A57E378F /* HomeSpotlightRow.swift */; };
 		BCF1C4F00BE061F752A80EA9 /* KeyHandoffServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11EDE0A18FEE5671CAE1B78F /* KeyHandoffServer.swift */; };
 		BFF7F5BF901AB53093874A7D /* StremioAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A71AB2161724E58DB238EE8 /* StremioAPI.swift */; };
@@ -185,7 +183,6 @@
 		6FFF27DA5544E44B18B4B502 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		740D162CDAEB78E4F823B830 /* StreamsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamsView.swift; sourceTree = "<group>"; };
 		74BFF6963EAAD2C29809A7AB /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
-		7B190C6A3EC193403F990E44 /* CommunityCollectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityCollectionsView.swift; sourceTree = "<group>"; };
 		7B5A2D2A438A0D95776E6F59 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
 		7C464D838A298B04AEE96A43 /* NuvioAccountManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NuvioAccountManager.swift; sourceTree = "<group>"; };
 		8754CC2FD0C184520717DD39 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
@@ -197,7 +194,6 @@
 		9C75E8CFD93E97C2BE92DB13 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
 		A43B53E1ECE04FB2661CD6C0 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A4BBC739E3399FA6DA063F27 /* ProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesView.swift; sourceTree = "<group>"; };
-		A6D0D29B5B2CF8CCAC26FE74 /* CollectionResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionResolver.swift; sourceTree = "<group>"; };
 		A8C7FC4A725E236D997C68EC /* CueTopShelf-Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "CueTopShelf-Debug.entitlements"; sourceTree = "<group>"; };
 		AB8AB6F22DA58A0AA4DE37BB /* SettingsPlaybackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPlaybackView.swift; sourceTree = "<group>"; };
 		AF398ABD1B4BF441EE90F3E1 /* RequestCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestCache.swift; sourceTree = "<group>"; };
@@ -268,7 +264,6 @@
 			children = (
 				2D8EA33A7A9ABD7C430A3FAF /* AddonPhoneAddView.swift */,
 				4E2AA54994F2EEFCB7172538 /* ATVSettingsView.swift */,
-				7B190C6A3EC193403F990E44 /* CommunityCollectionsView.swift */,
 				E9E1BA33775847CEF217F4C0 /* DetailAbout.swift */,
 				2D7B03CD83C5198350DA484D /* DetailTransition.swift */,
 				9390D85D459598B237A2DDF2 /* DetailView.swift */,
@@ -367,7 +362,6 @@
 				450294311D741DD3D74B3947 /* AudioLanguageMatch.swift */,
 				C4FD9D8AECB46DB5C84D9072 /* BillboardPicks.swift */,
 				B9FDE11E85CEAF58848F779A /* BoundedConcurrency.swift */,
-				A6D0D29B5B2CF8CCAC26FE74 /* CollectionResolver.swift */,
 				B0FE905AA7465EECAC02E29C /* CollectionsStore.swift */,
 				B4EDB66B1027E31D29B8CFB1 /* ContentFocusRouter.swift */,
 				300808B71D35000E1EB1F5B0 /* DeepLinkService.swift */,
@@ -568,9 +562,7 @@
 				38065B64097111CBD3F90A75 /* AudioLanguageMatch.swift in Sources */,
 				EC263304AE7415B356028A1A /* BillboardPicks.swift in Sources */,
 				C726E04055FB457A18739D04 /* BoundedConcurrency.swift in Sources */,
-				2A5D67319BBE83D40A353516 /* CollectionResolver.swift in Sources */,
 				9FE2C5C6ADF167F08AD68F7C /* CollectionsStore.swift in Sources */,
-				B790C29C844013776D6E1FF9 /* CommunityCollectionsView.swift in Sources */,
 				68D94C72E2C857E8470EA7FA /* Components.swift in Sources */,
 				4819AE91275956F9D3F32CB8 /* ContentFocusRouter.swift in Sources */,
 				AE2FBA63EFF888C21487D13F /* CueApp.swift in Sources */,

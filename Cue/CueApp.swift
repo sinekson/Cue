@@ -169,7 +169,6 @@ extension Route {
     var probeName: String {
         switch self {
         case .detail: return "Detail"
-        case .folder: return "Folder"
         case .person: return "Cast"
         case .tmdbCompany: return "Studio"
         case .genre: return "Genre"
@@ -181,7 +180,6 @@ extension Route {
     var probeDetail: String {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
-        case .folder(let c, let f): return "\(c.title) → \(f.title)"
         case .person(_, let name, _): return name
         case .tmdbCompany(_, let name, _, _): return name
         case .genre(_, let name, _, _): return name
@@ -207,8 +205,7 @@ struct DetailLayer {
 
 extension Route {
     /// A page of the trail above where you started (`RootView.trail`):
-    /// Details, a browse page — not a folder (where you started) or a
-    /// source list.
+    /// Details, a browse page — not a source list.
     var isTrailPage: Bool {
         switch self {
         case .detail, .person, .tmdbCompany, .genre, .keyword, .discover: return true
@@ -225,8 +222,6 @@ extension Route {
 
 enum Route: Hashable {
     case detail(MetaItem)
-    /// A folder of a collection, opened from its Home row.
-    case folder(CueCollection, CueCollectionFolder)
     /// From Details: `backdrop`, that title's picture (behind the page,
     /// blurred).
     case person(id: Int, name: String, backdrop: String? = nil)
@@ -244,7 +239,6 @@ enum Route: Hashable {
     /// (`PageFade.push`).
     var pageBackground: AnyView? {
         switch self {
-        case .folder: AnyView(ATVBackground())
         case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
              .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop), .discover(_, _, let backdrop):
             AnyView(TitleBandsBackground(url: backdrop))
@@ -278,6 +272,7 @@ struct RootView: View {
     @State private var searchPath: [Route] = []
     @State private var libraryPath: [Route] = []
     @State private var discoverPath: [Route] = []
+    @State private var upcomingPath: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -494,15 +489,6 @@ struct RootView: View {
                             }
                         }
                     }
-                    // Fix up any already-installed Community Collections after
-                    // launch has yielded. Keep network-backed logo migration
-                    // out of app-open startup; that runs when the collection
-                    // screen is opened.
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                        guard !Task.isCancelled else { return }
-                        CommunityCollections.runLaunchMigrations(collections: collections)
-                    }
                     // Everything the browse probe needs that lives in a store
                     // rather than in this view. Weak, so a block registered
                     // here can never be what keeps a store alive, and
@@ -533,19 +519,6 @@ struct RootView: View {
                     if args.contains("-accountDemo") || args.contains("-settingsPage") { selectedTab = 3 }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
-                    // A collection's folder, opened from Home (the simulator can't
-                    // select): `-folderDemo <n>` — the n-th collection's first.
-                    if let flag = args.firstIndex(of: "-folderDemo") {
-                        let n = flag + 1 < args.count ? Int(args[flag + 1]) ?? 0 : 0
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(2))
-                            let shelves = collections.collections.filter { !$0.folders.isEmpty }
-                            if shelves.indices.contains(n), let folder = shelves[n].folders.first {
-                                let route = Route.folder(shelves[n], folder)
-                                PageFade.shared.push(key: route, background: route.pageBackground) { homePath.append(route) }
-                            }
-                        }
-                    }
                     // A browse page (genre, tag, studio, network, person),
                     // opened from Home: `-browseDemo <kind> <tmdb id> <name>`.
                     if let flag = args.firstIndex(of: "-browseDemo"), flag + 3 < args.count,
@@ -875,6 +848,7 @@ struct RootView: View {
         case 1: return searchPath.isEmpty
         case 2: return libraryPath.isEmpty
         case 6: return discoverPath.isEmpty
+        case 7: return upcomingPath.isEmpty
         default: return true   // Settings keeps the rail
         }
     }
@@ -962,7 +936,7 @@ struct RootView: View {
                 TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
                            pressed: topBarPressed, hidden: !atTabRoot,
                            follows: AppTab(rawValue: selectedTab).flatMap {
-                               $0 == .home ? "home" : $0 == .discover ? "discover" : nil
+                               $0 == .home ? "home" : $0 == .discover ? "discover" : $0 == .upcoming ? "upcoming" : nil
                            })
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
@@ -1089,6 +1063,15 @@ struct RootView: View {
             visitedTabs.insert(tab)
             // Home's pages say for themselves (`HomeUIKitView`).
         }
+        // Your Rows' Open in Discover: the tab at its root with that
+        // sentence, focus on its name in the bar.
+        .onReceive(DiscoverPins.shared.$opening.compactMap { $0 }) { _ in
+            let discover = AppTab.discover.rawValue
+            visitedTabs.insert(discover)
+            discoverPath = []
+            switchTab(to: discover)
+            focusSidebar(discover)
+        }
         .task { await buildTabsAhead() }
     }
 
@@ -1161,9 +1144,18 @@ struct RootView: View {
                 .probeScreen("Discover")
                 .navigationDestination(for: Route.self) { destination(for: $0, path: trail($discoverPath)) }
             }
-        case .placeholder:
-            // Empty for now (`EmptyTabPage`).
-            EmptyTabPage(title: tab.label) { focusSidebar(tab.rawValue) }
+        case .upcoming:
+            NavigationStack(path: $upcomingPath) {
+                UpcomingView(onOpen: { item in
+                    DetailTransition.shared.open(item) {
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { upcomingPath.append(Route.detail(item)) }
+                    }
+                }, onBack: { focusSidebar(tab.rawValue) })
+                .probeScreen("Upcoming")
+                .navigationDestination(for: Route.self) { destination(for: $0, path: trail($upcomingPath)) }
+            }
         }
     }
 
@@ -1269,22 +1261,21 @@ struct RootView: View {
     }
 
     /// Back is never more than two presses from where you started (a
-    /// tab's own page, its folders): above it only the page on screen and
+    /// tab's own page): above it only the page on screen and
     /// the one it came from — opening another, the older ones go. (Deep
     /// in Details — a similar title, a voice actor, a genre… — Back took
     /// as many presses home.)
     private func trail(_ path: Binding<[Route]>) -> Binding<[Route]> {
         Binding(get: { path.wrappedValue }, set: { new in
             let old = path.wrappedValue
-            let base = old.prefix { if case .folder = $0 { return true } else { return false } }
-            let pages = old.dropFirst(base.count)
+            let pages = old[...]
             guard let added = new.last, added.isTrailPage, new.count == old.count + 1,
                   Array(new.dropLast()) == old, pages.count >= 2, let kept = pages.last else {
                 path.wrappedValue = new
                 return
             }
             Self.leave(Array(pages.dropLast()), kept: kept, keepStill: true)
-            path.wrappedValue = Array(base) + [kept, added]
+            path.wrappedValue = [kept, added]
         })
     }
 
@@ -1514,17 +1505,6 @@ struct RootView: View {
             onResume: { resume($0) },
             onStartOver: { resume($0, fromBeginning: true) },
             onChooseSource: { playManuallyFromProgress($0) },
-            onOpenFolder: { collection, folder in
-                let key = FolderView.loadKey(collection, folder)
-                PagePreparer.shared.open(key,
-                                         showing: { [addonManager, tmdbSettings] show in
-                                             await FolderView.catalogs(of: folder, key: key,
-                                                                       addonManager: addonManager, tmdb: tmdbSettings,
-                                                                       show: show)
-                                         }) {
-                    pushPage(Route.folder(collection, folder), path)
-                }
-            },
             onContentReady: {
                 // Give the freshly-loaded rows a beat to render and take
                 // initial focus before the rail becomes focusable. This must
@@ -1626,6 +1606,7 @@ struct RootView: View {
             case .search: path = trail($searchPath)
             case .library: path = trail($libraryPath)
             case .discover: path = trail($discoverPath)
+            case .upcoming: path = trail($upcomingPath)
             default: return
             }
             pushPage(Route.discover(name: item.name,
@@ -1634,21 +1615,9 @@ struct RootView: View {
         }
     }
 
-    /// A page (folder, browse page) in: `PageFade`'s crossfade, no slide.
+    /// A page (a browse page) in: `PageFade`'s crossfade, no slide.
     private func pushPage(_ route: Route, _ path: Binding<[Route]>) {
         PageFade.shared.push(key: route, background: route.pageBackground) { path.wrappedValue.append(route) }
-    }
-
-    /// A collection's folder.
-    private func folderView(_ collection: CueCollection, _ folder: CueCollectionFolder,
-                            path: Binding<[Route]>) -> some View {
-        FolderView(collection: collection, folder: folder,
-                   onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                   onOpenInPlace: { item in
-                       var transaction = Transaction()
-                       transaction.disablesAnimations = true
-                       withTransaction(transaction) { path.wrappedValue.append(Route.detail(item)) }
-                   })
     }
 
     /// Details, its pages pushed on `path`.
@@ -1695,8 +1664,6 @@ struct RootView: View {
                     }
                 }
             }
-        case .folder(let collection, let folder):
-            folderView(collection, folder, path: path)
         case .person(let id, let name, let backdrop):
             TMDBBrowseView(personID: id, title: name,
                           onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
@@ -2210,11 +2177,11 @@ final class LaunchPreloader: ObservableObject {
         while home.entries.isEmpty, elapsed < 1.0 { try? await Task.sleep(for: .milliseconds(25)) }
         line(String(format: "Disk      rows %d · %.0f ms", home.entries.count, (CACurrentMediaTime() - t) * 1000))
 
-        // ② The minimum begins with the network: every catalog fresh (Home's
-        // own load, started as it was built; each one at most
-        // `HomeViewModel.catalogWait`, then its saved copy) and the account's
-        // pull (Continue Watching, library — `syncOnAppOpen`), so Home shows
-        // the latest and nothing changes under you after the curtain.
+        // ② The minimum begins with the network: Home's rows (its own load,
+        // started as it was built: the saved ones, made again when due) and
+        // the account's pull (Continue Watching, library — `syncOnAppOpen`),
+        // so Home shows the latest and nothing changes under you after the
+        // curtain.
         t = CACurrentMediaTime()
         var sawSyncing = false
         func catalogsIn() -> Bool { home.loadedAt != nil && home.loadedAt != loadedBefore }
@@ -2230,7 +2197,7 @@ final class LaunchPreloader: ObservableObject {
             try? await Task.sleep(for: .milliseconds(25))
         }
         guard current == generation else { return }
-        line(String(format: "Network   catalogs and sync · %.0f ms", (CACurrentMediaTime() - t) * 1000))
+        line(String(format: "Network   rows and sync · %.0f ms", (CACurrentMediaTime() - t) * 1000))
 
         // The billboard's own picks, made from the fresh rows.
         t = CACurrentMediaTime()
@@ -2239,7 +2206,7 @@ final class LaunchPreloader: ObservableObject {
         // (Home's own: its first `BillboardPicks.count` — the model holds
         // every tab's.)
         let picks = home.billboard().map(\.item)
-        let rows = catalogRows(home)
+        let rows = home.entries
         line(String(format: "Picks     %d · %.0f ms", picks.count, (CACurrentMediaTime() - t) * 1000))
 
         // One-time artwork (cheap), on the main actor — under the curtain.
@@ -2271,10 +2238,6 @@ final class LaunchPreloader: ObservableObject {
         }
         guard current == generation else { return }
         finish(note: "ready")
-    }
-
-    private func catalogRows(_ home: HomeViewModel) -> [HomeRow] {
-        home.entries.compactMap { if case .catalog(let row) = $0 { return row } else { return nil } }
     }
 
     /// What the first screen draws and one press reaches: the billboard's
@@ -2349,7 +2312,7 @@ final class LaunchPreloader: ObservableObject {
         if !force, let deepAt, Date().timeIntervalSince(deepAt) < 60 * 60 { return }
         deepAt = Date()
         let picks = home.billboard().map(\.item)
-        let rows = catalogRows(home)
+        let rows = home.entries
         let featured = HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: picks)
         TitlePreloader.shared.focused(rows: [featured] + rows, row: 0, index: 0)
         var jobs: [LoadQueue.Job] = []

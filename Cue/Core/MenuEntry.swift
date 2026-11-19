@@ -10,6 +10,10 @@ struct MenuEntry {
     /// A dropdown's current choice: a check at the row's end.
     var checked = false
     let run: () -> Void
+    /// A page of its own instead of a choice (Discover's Year: a decade,
+    /// then a year): Select opens it, Back returns.
+    var pageTitle: String? = nil
+    var page: (() -> [MenuEntry])? = nil
 }
 
 // MARK: - The hold menu
@@ -388,9 +392,12 @@ private final class HoldMenuController: UIViewController {
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] { [panel] }
 
-    /// Back closes it.
+    /// Back: a page back (an entry's page), else it closes.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .menu }) { close(); return }
+        if presses.contains(where: { $0.type == .menu }) {
+            if !panel.back() { close() }
+            return
+        }
         super.pressesBegan(presses, with: event)
     }
 
@@ -802,10 +809,15 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
 
 extension MenuPanel.Menu {
     /// A hold menu's entries: one page, no title.
-    init(entries: [MenuEntry], pick: @escaping (MenuEntry) -> Void) {
+    init(entries: [MenuEntry], title: String? = nil, pick: @escaping (MenuEntry) -> Void) {
+        self.title = title
         rows = entries.map { entry in
-            MenuPanel.Row(title: entry.title, icon: entry.icon.isEmpty ? nil : entry.icon,
-                          destructive: entry.destructive, active: entry.checked) { pick(entry) }
+            var row = MenuPanel.Row(title: entry.title, icon: entry.icon.isEmpty ? nil : entry.icon,
+                                    destructive: entry.destructive, active: entry.checked) { pick(entry) }
+            if let page = entry.page {
+                row.page = { MenuPanel.Menu(entries: page(), title: entry.pageTitle, pick: pick) }
+            }
+            return row
         }
         checks = entries.contains(where: \.checked)
     }

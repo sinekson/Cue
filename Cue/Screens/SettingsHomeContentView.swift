@@ -2,46 +2,31 @@ import SwiftUI
 
 // MARK: - Home & Details
 
-/// Settings → Home & Details: Home's rows (their order, names, which
-/// show), Continue Watching's order, hiding watched titles, the billboard
+/// Settings → Home & Details: why Home's rows are there, your rows
+/// (Discover's sentences on Home), Continue Watching's order, hiding watched titles, the billboard
 /// paging by itself, trailers, hiding spoilers.
 /// (The add-ons are Nuvio's, synced: under Nuvio → Sync.)
 struct HomeContentSettingsDetail: View {
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var settings: HomeCatalogSettingsStore
+    @ObservedObject private var pins = DiscoverPins.shared
     @AppStorage(BillboardAutoPage.key) private var billboardAutoPage = true
     @AppStorage(HomeHideWatched.key) private var hideWatched = false
     @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
-    @AppStorage(HomeRowSource.key) private var rowSource = HomeRowSource.current.rawValue
 
     var body: some View {
-        let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
         SettingsPage(title: SettingsCategory.homeContent.title) {
             SettingsSection {
-                SettingsOptionsRow(
-                    title: "Rows",
-                    pageDescription: "Choose where Home's rows come from. Made for You builds them from what "
-                        + "you watch and rate, new each day, with titles from TMDB. From Add-ons shows the "
-                        + "catalogs of your add-ons, arranged in Home Rows.",
-                    options: HomeRowSource.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
-                    selection: rowSource
-                ) { rowSource = $0 }
+                SettingsLinkRow(
+                    title: "Why These Rows",
+                    description: "What Cue read from your watching, and why each row is on Home today."
+                ) { WhyTheseRowsPage() }
 
-                // The second row is about the rows you have: Made for You's
-                // reasons, or the add-ons' rows to arrange.
-                if rowSource == HomeRowSource.madeForYou.rawValue {
-                    SettingsLinkRow(
-                        title: "Why These Rows",
-                        description: "What Cue read from your watching, and why each row is on Home today."
-                    ) { WhyTheseRowsPage() }
-                } else {
-                    SettingsLinkRow(
-                        title: "Home Rows",
-                        description: "Choose which rows show on Home, their order and their names.",
-                        value: "\(rows.filter { $0.isShown(settings: settings) }.count)"
-                    ) { HomeRowsPage() }
-                }
+                SettingsLinkRow(
+                    title: "Your Rows",
+                    description: "Sentences from Discover you put on Home: their order and their names. "
+                        + "Add one in Discover with Add to Home.",
+                    value: pins.all.isEmpty ? "None" : "\(pins.all.count)"
+                ) { YourRowsPage() }
 
                 SettingsOptionsRow(
                     title: "Continue Watching Order",
@@ -548,122 +533,48 @@ private struct WhyTitleLine: View {
     }
 }
 
-// MARK: - Rows
+// MARK: - Your rows
 
-/// One of Home's rows, as the Rows page lists it: a catalog or a
-/// collection (each its own row on Home).
-private struct HomeRowEntry: Identifiable {
-    let key: String
-    let defaultTitle: String
-    /// The add-on it comes from.
-    let source: String
-    var id: String { key }
-
-    @MainActor
-    func title(settings: HomeCatalogSettingsStore) -> String {
-        settings.customTitle(for: key) ?? defaultTitle
-    }
-
-    @MainActor
-    func isShown(settings: HomeCatalogSettingsStore) -> Bool { settings.isEnabled(key: key) }
-
-    @MainActor
-    static func collectionKeys(_ collections: CollectionsStore) -> [String] {
-        collections.collections.map { HomeCatalogSettingsStore.collectionKey($0.id) }
-    }
-
-    /// Every catalog an add-on offers as a plain row (no required extras).
-    @MainActor
-    static func catalogKeys(_ addonManager: AddonManager) -> [String] {
-        var keys: [String] = []
-        var seen = Set<String>()
-        for addon in addonManager.catalogAddons {
-            for catalog in (addon.manifest.catalogs ?? []) where !catalog.requiresExtra {
-                let key = HomeCatalogSettingsStore.catalogKey(
-                    addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id)
-                if seen.insert(key).inserted { keys.append(key) }
-            }
-        }
-        return keys
-    }
-
-    /// The rows in Home's order.
-    @MainActor
-    static func all(addonManager: AddonManager, collections: CollectionsStore,
-                    settings: HomeCatalogSettingsStore) -> [HomeRowEntry] {
-        var byKey: [String: HomeRowEntry] = [:]
-        for addon in addonManager.catalogAddons {
-            for catalog in (addon.manifest.catalogs ?? []) where !catalog.requiresExtra {
-                let key = HomeCatalogSettingsStore.catalogKey(
-                    addonID: addon.manifest.id, type: catalog.type, catalogID: catalog.id)
-                if byKey[key] == nil {
-                    byKey[key] = HomeRowEntry(key: key, defaultTitle: catalog.displayName, source: addon.displayName)
-                }
-            }
-        }
-        for collection in collections.collections {
-            let key = HomeCatalogSettingsStore.collectionKey(collection.id)
-            byKey[key] = HomeRowEntry(key: key, defaultTitle: collection.title, source: "Collection")
-        }
-        var result: [HomeRowEntry] = []
-        for key in settings.mergedOrder(catalogKeys: catalogKeys(addonManager),
-                                        collectionKeys: collectionKeys(collections)) {
-            if let entry = byKey[key] { result.append(entry) }
-        }
-        return result
-    }
-}
-
-/// Settings → Home & Details → Home Rows: Home's rows in order, as the
-/// add-ons': a row each (its name, where it comes from, "Off" when hidden),
-/// lit whole; Select opens its page (`HomeRowPage`). Edit, on the title's
-/// line, gives each row an on / off and the ≡ handle; Done or Back ends it.
-/// (Tried: each one line with Rename, Move and a switch.)
-private struct HomeRowsPage: View {
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
-    @EnvironmentObject private var settings: HomeCatalogSettingsStore
+/// Settings → Home & Details → Your Rows: Discover's sentences on Home in
+/// their order, a row each (its name on Home), lit whole; Select opens its
+/// page (`YourRowPage`). Edit, on the title's line, gives each the ≡
+/// handle; Done or Back ends it. (Home & Details as Home Rows' and the
+/// add-ons' pages.)
+private struct YourRowsPage: View {
     @EnvironmentObject private var nav: SettingsNav
     @Environment(\.settingsRowFocus) private var rowFocus
+    @ObservedObject private var pins = DiscoverPins.shared
     @State private var editing = false
     @State private var moving: String?
 
     var body: some View {
-        let rows = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
-        SettingsPage(title: "Home Rows",
-                     accessory: AnyView(accessory(hasRows: !rows.isEmpty))) {
+        let rows = pins.all
+        SettingsPage(title: "Your Rows",
+                     subtitle: rows.isEmpty ? "None yet. In Discover, Add to Home puts a sentence on Home." : "",
+                     accessory: AnyView(accessory(count: rows.count))) {
             SettingsSection(spacing: SettingsMetrics.tallRowGap) {
-                ForEach(rows) { row in
-                    let shown = row.isShown(settings: settings)
+                ForEach(rows, id: \.id) { pin in
                     SettingsReorderRow(
-                        title: row.title(settings: settings), id: row.id,
-                        value: shown ? row.source : "Off",
+                        title: pin.rowName, id: pin.id,
                         chevron: true,
-                        dimmed: !shown,
-                        toggle: SettingsEntrySwitch(isOn: shown, title: shown ? "Hide" : "Show") {
-                            settings.setEnabled(!shown, key: row.key)
-                        },
-                        editing: editing, isMoving: moving == row.id, anyMoving: moving != nil,
-                        onSelect: { nav.push(HomeRowPage(key: row.key)) },
-                        onLift: { moving = row.id },
-                        onMoveStep: { step in
-                            settings.move(key: row.key, up: step < 0,
-                                          within: HomeRowEntry.catalogKeys(addonManager)
-                                              + HomeRowEntry.collectionKeys(collections))
-                        },
+                        editing: editing, isMoving: moving == pin.id, anyMoving: moving != nil,
+                        onSelect: { nav.push(YourRowPage(id: pin.id)) },
+                        onLift: { moving = pin.id },
+                        onMoveStep: { pins.move(pin.id, by: $0) },
                         onDrop: { moving = nil })
                 }
             }
         }
+        .background(alignment: .top) { if rows.isEmpty { SettingsFocusHolder() } }
         .onExitCommand(perform: editing && moving == nil ? endEditing : nil)
         .onChange(of: editing) { _, editing in TopBarLock.shared.locked = editing }
         .onDisappear { TopBarLock.shared.locked = false }
     }
 
-    @ViewBuilder private func accessory(hasRows: Bool) -> some View {
+    @ViewBuilder private func accessory(count: Int) -> some View {
         if editing {
             SettingsCapsuleButton(title: "Done", action: endEditing).disabled(moving != nil)
-        } else if hasRows {
+        } else if count > 1 {
             SettingsCapsuleButton(title: "Edit") {
                 editing = true
                 DispatchQueue.main.async { rowFocus?.wrappedValue = "Done" }
@@ -677,29 +588,32 @@ private struct HomeRowsPage: View {
     }
 }
 
-/// A Home row's own page: Rename (the keyboard; empty or the original: its
-/// own name again), and where it comes from, to read.
-private struct HomeRowPage: View {
-    @EnvironmentObject private var addonManager: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
-    @EnvironmentObject private var settings: HomeCatalogSettingsStore
-    let key: String
+/// One of your rows: Open in Discover (the tab with its sentence), Rename
+/// (empty or the sentence: the sentence again), Remove from Home; its
+/// sentence to read.
+private struct YourRowPage: View {
+    @EnvironmentObject private var nav: SettingsNav
+    @ObservedObject private var pins = DiscoverPins.shared
+    let id: String
 
     @State private var keyboard: KeyboardRequest?
 
     var body: some View {
-        if let row = HomeRowEntry.all(addonManager: addonManager, collections: collections, settings: settings)
-            .first(where: { $0.key == key }) {
-            let name = row.title(settings: settings)
+        if let pin = pins.all.first(where: { $0.id == id }) {
+            let name = pin.rowName
             SettingsPage(title: name) {
                 SettingsSection {
+                    SettingsButtonRow(title: "Open in Discover") { pins.opening = pin }
                     SettingsButtonRow(title: "Rename", value: name) {
-                        keyboard = KeyboardRequest(text: name, placeholder: row.defaultTitle) { text in
-                            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            settings.setCustomTitle(trimmed == row.defaultTitle ? nil : trimmed, key: row.key)
+                        keyboard = KeyboardRequest(text: name, placeholder: DiscoverPins.titleCase(pin.name)) {
+                            pins.rename(pin.id, to: $0)
                         }
                     }
-                    SettingsInfoRow(title: "Source", value: row.source)
+                    SettingsButtonRow(title: "Remove from Home") {
+                        nav.back()
+                        pins.remove(pin.id)
+                    }
+                    SettingsInfoRow(title: "Sentence", value: pin.name)
                         .padding(.top, SettingsMetrics.infoGap)
                 }
             }

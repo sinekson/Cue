@@ -580,6 +580,8 @@ enum CacheStorage {
     private static let tmdbFiles = ["tmdb-raw", "tmdb-imdb-ids", "tmdb-facts", "tmdb-traits", "cue-rows"]
     private static let ratingFiles = ["title-records.json", "mdblist-ratings-v2", "imdb-ratings.bin"]
     private static let trailerFiles = ["trailers.json"]
+    /// AniList's ids to IMDb's and TMDB's (Upcoming's anime, `AnimeIDs`).
+    private static let animeFiles = ["anime-ids.json"]
     /// In CueCache but not a cache: kept.
     private static func kept(_ name: String) -> Bool {
         name == "collections-library.json" || name.hasPrefix("background-")
@@ -604,7 +606,7 @@ enum CacheStorage {
             let cueNames = (try? fm.contentsOfDirectory(atPath: cue.path)) ?? []
             func size(_ urls: [URL]) -> Int64 { urls.reduce(0) { $0 + allocated($1, fm) } }
             func inCue(_ names: [String]) -> Int64 { size(names.map { cue.appendingPathComponent($0) }) }
-            let known = Set(addonFiles + tmdbFiles + ratingFiles + trailerFiles)
+            let known = Set(addonFiles + tmdbFiles + ratingFiles + trailerFiles + animeFiles)
             let other = cueNames.filter { !known.contains($0) && !kept($0) }
             let responseNames = ((try? fm.contentsOfDirectory(atPath: responses.path)) ?? []).filter(isResponse)
             let tmp = fm.temporaryDirectory
@@ -618,6 +620,7 @@ enum CacheStorage {
                 Part(id: "tmdb", name: "TMDB Data", bytes: inCue(tmdbFiles), limit: nil),
                 Part(id: "ratings", name: "Ratings & Badges", bytes: inCue(ratingFiles), limit: nil),
                 Part(id: "trailers", name: "Trailers", bytes: inCue(trailerFiles), limit: nil),
+                Part(id: "anime", name: "Anime IDs", bytes: inCue(animeFiles), limit: nil),
                 Part(id: "responses", name: "Network Responses",
                      bytes: size(responseNames.map { responses.appendingPathComponent($0) }), limit: responseLimit),
                 Part(id: "playback", name: "Playback Files",

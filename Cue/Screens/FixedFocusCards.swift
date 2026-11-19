@@ -1601,9 +1601,6 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     var peeks: () -> (above: CGFloat, below: CGFloat) = {
         (FixedFocusMetrics.aboveVisible, FixedFocusMetrics.belowVisible)
     }
-    /// How far a row's drawing reaches beyond its name and cards (a
-    /// collection's panel): rows keep that much more room between them.
-    var reach: (Int) -> (above: CGFloat, below: CGFloat) = { _ in (0, 0) }
     /// How much of a row's height is below its cards (a destination row's
     /// captions): the row above shows its CARDS' lower part, as any row.
     var belowCards: (Int) -> CGFloat = { _ in 0 }
@@ -1683,7 +1680,6 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
         // (The list's own height: the whole screen on Home.)
         let screen = (collectionView?.bounds.height).map { $0 - 2 * Self.overscan } ?? 1080
         let peek = peeks()
-        let reaches = (0..<count).map(reach)
         /// The lowest the row below the focused one may start: its name and
         /// the minimum peek of its cards still on the screen.
         let lowestBelow = screen - FixedFocusMetrics.titleHeight - Self.minimumPeek
@@ -1692,9 +1688,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
         /// (whatever its height — so the peek varies, the gap doesn't), but
         /// never lower than its minimum peek; the ones after it the same gap
         /// apart; the one before peeking down from the top, the rest a row
-        /// apart above it — each row's reach (a panel's) included, so no
-        /// drawing overlaps the next. A row's ANCHOR
-        /// is the top of what it draws (its name; a collection's panel).
+        /// apart above it.
         func tops(_ f: Int) -> [CGFloat] {
             var y = [CGFloat](repeating: 0, count: count)
             guard count > 0 else { return y }
@@ -1702,32 +1696,29 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
             let centred = centredDrop(f)
             let focusY = centred.map { focusY - rowDrop() + $0 } ?? focusY
             let gap = centred == nil ? FixedFocusMetrics.peekGap : FixedFocusMetrics.centredGap
-            y[f] = focusY + reaches[f].above
+            y[f] = focusY
             if f + 1 < count {
                 let after = focusY + drawnHeight(f) + gap
-                y[f + 1] = (centred == nil ? min(after, lowestBelow) : after) + reaches[f + 1].above
+                y[f + 1] = (centred == nil ? min(after, lowestBelow) : after)
             }
             // Further down: the same gap below each row (its height, captions
             // in) — a row coming up to be next doesn't move again.
             if f + 2 < count {
                 for r in (f + 2)..<count {
-                    y[r] = y[r - 1] + heights[r - 1] + reaches[r - 1].below + gap
-                        + reaches[r].above
+                    y[r] = y[r - 1] + heights[r - 1] + gap
                 }
             }
             if f > 0, centred != nil {
                 // Centred: the row above the same gap over it as the one below.
-                y[f - 1] = y[f] - reaches[f].above - gap - reaches[f - 1].below
-                    - heights[f - 1] + belowCards(f - 1)
+                y[f - 1] = y[f] - gap - heights[f - 1] + belowCards(f - 1)
             } else if f > 0 {
-                y[f - 1] = peek.above - heights[f - 1] - reaches[f - 1].below + belowCards(f - 1)
+                y[f - 1] = peek.above - heights[f - 1] + belowCards(f - 1)
             }
             // Further up: the same gap above each row, below the cards of the
             // one over it (out of focus, its captions don't show).
             if f > 1 {
                 for r in stride(from: f - 2, through: 0, by: -1) {
-                    y[r] = y[r + 1] - reaches[r + 1].above - gap - reaches[r].below
-                        - heights[r] + belowCards(r)
+                    y[r] = y[r + 1] - gap - heights[r] + belowCards(r)
                 }
             }
             return y
@@ -1766,7 +1757,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
                     y = normal(r, next) + Self.billboardScroll(depth: 1)
                 } else {
                     let cardsTop = screen - Self.restingCardsOnScreen
-                    y = normal(r, next) + cardsTop - FixedFocusMetrics.titleHeight - reaches[next].above - focusY
+                    y = normal(r, next) + cardsTop - FixedFocusMetrics.titleHeight - focusY
                 }
             } else if let featured, r == featured, f > featured {
                 // Scrolled away above: the picture and its edge off the top
@@ -1827,68 +1818,6 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
     }
 }
 
-final class FixedFocusPanelView: UIView {
-    /// In the row cell: around the name, the tiles and the info under the
-    /// box, from a little left of the box almost to the right edge.
-    static func frame(cardHeight: CGFloat) -> CGRect {
-        let reach = FixedFocusMetrics.panelReach
-        let x = FixedFocusMetrics.inset - FixedFocusMetrics.panelPad
-        return CGRect(x: x, y: -reach.above, width: 1920 - 2 * x,
-                      height: reach.above + FixedFocusMetrics.titleHeight + cardHeight + reach.below)
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        layer.cornerRadius = FixedFocusMetrics.panelRadius
-        layer.cornerCurve = .continuous
-        layer.borderWidth = 1.5
-        apply(nil)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// The title background's colour (`TitleBackground`): the fill and edge
-    /// change over `fade`, on the background's own curve; nil: neutral.
-    func show(_ color: UIColor?, fade: Double, follows: Bool) {
-        let shown = layer.presentation() ?? layer
-        let from = [("backgroundColor", shown.backgroundColor), ("borderColor", shown.borderColor)]
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        apply(color)
-        CATransaction.commit()
-        guard fade > 0, window != nil else { return }
-        for (key, old) in from {
-            let change = CABasicAnimation(keyPath: key)
-            change.fromValue = old
-            change.duration = fade
-            change.timingFunction = follows ? FixedFocusTint.focusTiming
-                : CAMediaTimingFunction(name: .easeInEaseOut)
-            layer.add(change, forKey: key)
-        }
-    }
-
-    private func apply(_ color: UIColor?) {
-        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        guard let color, color.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else {
-            backgroundColor = UIColor(white: 1, alpha: 0.06)
-            layer.borderColor = UIColor(white: 1, alpha: 0.14).cgColor
-            return
-        }
-        backgroundColor = UIColor(hue: h, saturation: min(s, 0.75), brightness: 0.26, alpha: 0.92)
-        layer.borderColor = UIColor(hue: h, saturation: min(s, 0.6), brightness: 0.62, alpha: 0.7).cgColor
-    }
-}
-
-/// A card's state, laid over the whole card: the badges' plates
-/// (`FixedFocusBadges`), "S1:E5" top left and "21m left" / "Up Next" /
-/// "Yesterday" top right, readable on any picture (words on the picture
-/// over the bar needed the bar under them); the player's bar
-/// (`Spotlight.stateBarHeight`) alone at the foot, only while in progress.
-/// A card's details (badges, rating, facts; a landscape card's plates)
-/// only while its row has focus, on the captions' timing: set in the rows'
-/// move, they take its spring (tried: in after a beat over 0.2 s, out in
-/// 0.15 s, in Core Animation: the captions' felt better).
 enum FixedFocusDetails {
     static func fade(_ views: [UIView], shown: Bool, animated: Bool) {
         let apply = { for view in views { view.alpha = shown ? 1 : 0 } }

@@ -5,13 +5,13 @@ import SwiftUI
 enum AppTab: Int, CaseIterable, Identifiable {
     case home, search, library, settings
     // (4 and 5 were Movies and Series.)
-    case discover = 6, placeholder
+    case discover = 6, upcoming
     var id: Int { rawValue }
 
-    /// The top navigation: Search first, left of Home; the placeholder an
-    /// empty page for now. The library is a row
+    /// The top navigation: Search first, left of Home; Upcoming the
+    /// calendar of your shows. The library is a row
     /// on Home — its old tab stays reachable only from within the app.
-    static let topBarOrder: [AppTab] = [.search, .home, .discover, .placeholder, .settings]
+    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings]
 
 
     var label: String {
@@ -21,7 +21,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .library: return "Library"
         case .settings: return "Settings"
         case .discover: return "Discover"
-        case .placeholder: return "Placeholder"
+        case .upcoming: return "Upcoming"
         }
     }
 
@@ -32,7 +32,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .library: return "bookmark.fill"
         case .settings: return "gearshape.fill"
         case .discover: return "safari.fill"
-        case .placeholder: return "square.dashed"
+        case .upcoming: return "calendar"
         }
     }
 }
@@ -380,43 +380,5 @@ struct TopBarFace: UIViewRepresentable {
             .frame(maxHeight: .infinity, alignment: .top)
             .environmentObject(profiles)
         }
-    }
-}
-
-/// A tab with nothing on it yet (Discover, the placeholder): its name and
-/// one empty card, so Down from the bar has somewhere to land (with
-/// nothing focusable, focus went nowhere). Back: the bar.
-struct EmptyTabPage: View {
-    let title: String
-    let onBack: () -> Void
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text(title)
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(CueInk.primary)
-            Button {} label: {
-                RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
-                    .fill(focused ? FlatControl.focus : FlatControl.rest)
-                    .frame(width: 557, height: 313)
-                    .overlay {
-                        Text("Nothing here yet")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(focused ? FlatControl.contentOnFocus : FlatControl.content)
-                    }
-                    .scaleEffect(focused ? 1 + FixedFocusMetrics.focusLift(CGSize(width: 557, height: 313)) : 1)
-                    .animation(Motion.focus, value: focused)
-            }
-            .buttonStyle(PlainCardButtonStyle())
-            .focused($focused)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.leading, FixedFocusMetrics.titleInset)
-        .padding(.top, 40)
-        // The whole page one section: Down from any tab lands on the card.
-        .focusSection()
-        .background { ATVBackground() }
-        .onExitCommand(perform: onBack)
     }
 }

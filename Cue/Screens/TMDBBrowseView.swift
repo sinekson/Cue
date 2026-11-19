@@ -719,14 +719,12 @@ final class DiscoverModel: ObservableObject {
     /// Only a sentence of the lists' own words can go on Home (a genre or
     /// tag added from Details isn't kept).
     var pinnable: Bool { extras.isEmpty }
-    var pinned: Bool { DiscoverPins.shared.pin(for: picks) != nil }
 
-    /// On Home, in place of `replacing` (a pin's id) when three are there.
-    func pin(replacing: String? = nil) {
-        DiscoverPins.shared.add(picks, replacing: replacing)
+    /// On Home; Select again takes it off.
+    func togglePin() {
+        if let pin = DiscoverPins.shared.pin(for: picks) { DiscoverPins.shared.remove(pin.id) }
+        else { DiscoverPins.shared.add(picks) }
     }
-
-    func picksMatch(_ pin: DiscoverPins.Pin) -> Bool { DiscoverPins.Pin.id(of: picks) == pin.id }
 
     /// A pin's sentence, loaded.
     func load(_ pin: DiscoverPins.Pin) { apply(preset: pin.slots) }
@@ -1143,6 +1141,51 @@ final class DiscoverModel: ObservableObject {
         }
     }
 
+    /// The year's quarters by AniList's names: winter January–March, then
+    /// spring, summer, fall.
+    static let seasonNames = ["Winter", "Spring", "Summer", "Fall"]
+
+    /// The quarter `ahead` of today's (0: this one): its year and number (1–4).
+    static func quarter(ahead: Int) -> (year: Int, quarter: Int) {
+        let parts = Calendar.current.dateComponents([.year, .month], from: Date())
+        let index = (parts.year ?? 2026) * 4 + ((parts.month ?? 1) - 1) / 3 + ahead
+        return (index / 4, index % 4 + 1)
+    }
+
+    /// A quarter: films released in it; shows on air in it (an episode
+    /// out), so a season's sequels and long runners are there too, as in
+    /// a season's chart. `when` read at the asking: "this season" moves on.
+    private static func season(_ id: String, _ word: String, _ name: String,
+                               _ when: @escaping () -> (year: Int, quarter: Int)) -> Option {
+        Option(id: id, word: word, name: name) { query, isMovie in
+            let (year, quarter) = when()
+            let first = (quarter - 1) * 3 + 1
+            let last = ["03-31", "06-30", "09-30", "12-31"][quarter - 1]
+            let key = isMovie ? "primary_release_date" : "air_date"
+            query["\(key).gte"] = String(format: "%04d-%02d-01", year, first)
+            query["\(key).lte"] = "\(year)-\(last)"
+            return true
+        }
+    }
+
+    private static func seasonLabel(_ when: (year: Int, quarter: Int)) -> String {
+        "\(seasonNames[when.quarter - 1]) \(when.year)"
+    }
+
+    /// The year an era's id is in ("y2019", "2019-q3"), for the list's
+    /// checks on its decades and years.
+    static func year(ofEra id: String) -> Int? {
+        if id.hasPrefix("y") { return Int(id.dropFirst()) }
+        if id.contains("-q") { return Int(id.prefix(4)) }
+        return nil
+    }
+
+    /// The years with pages of their own in Year's list (each with its
+    /// seasons), newest first.
+    static var listedYears: [Int] {
+        Array((1970...Calendar.current.component(.year, from: Date())).reversed())
+    }
+
     private static func floor(_ votes: Int, _ query: inout [String: String]) {
         query["vote_count.gte"] = String(max(votes, Int(query["vote_count.gte"] ?? "0") ?? 0))
     }
@@ -1198,15 +1241,24 @@ final class DiscoverModel: ObservableObject {
                 ("sv|da|no", "Scandinavian"),
             ].map { language($0.0, $0.1) }
         case .era:
+            let now = quarter(ahead: 0), next = quarter(ahead: 1)
             return [
                 years("any", "any year", nil, nil),
+                season("season-now", "this season", "This Season · \(seasonLabel(now))") { quarter(ahead: 0) },
+                season("season-next", "next season", "Next Season · \(seasonLabel(next))") { quarter(ahead: 1) },
                 years("now", "this year", year, nil),
                 years("recent", "the last 5 years", year - 4, nil),
                 years("2020s", "the 2020s", 2020, 2029), years("2010s", "the 2010s", 2010, 2019),
                 years("2000s", "the 2000s", 2000, 2009), years("1990s", "the '90s", 1990, 1999),
                 years("1980s", "the '80s", 1980, 1989), years("1970s", "the '70s", 1970, 1979),
                 years("older", "before 1970", nil, 1969),
-            ]
+            ] + listedYears.flatMap { listed in
+                [years("y\(listed)", String(listed), listed, listed)] + (1...4).map { number in
+                    season("\(listed)-q\(number)", seasonLabel((listed, number)), seasonLabel((listed, number))) {
+                        (listed, number)
+                    }
+                }
+            }
         case .rating:
             return [
                 Option(id: "any", word: "any rating", name: "Any Rating"),
@@ -1341,6 +1393,12 @@ struct DiscoverView: View {
             }
             await model.start()
         }
+        // The tab: one of your rows opened from Settings (Your Rows).
+        .onReceive(DiscoverPins.shared.$opening) { pin in
+            guard !opened, let pin else { return }
+            model.load(pin)
+            DispatchQueue.main.async { DiscoverPins.shared.opening = nil }
+        }
         .onExitCommand {
             // The tab: the page up to its top on the way, focus on the bar
             // (never the sentence), as every tab.
@@ -1362,8 +1420,6 @@ private struct DiscoverSentence: View {
     @State private var anchors = DiscoverAnchors()
     /// Coming in: the sentence's first word.
     @FocusState private var focused: DiscoverModel.Slot?
-    /// The pin with focus (its hold menu).
-    @FocusState private var focusedPin: String?
 
     /// From the screen's top to the first line (the grid's room above
     /// the header): its pills' tops where Home's billboard card's top is.
@@ -1388,28 +1444,26 @@ private struct DiscoverSentence: View {
                       .word("·"), .slot(.order), .word("·"), .slot(.watched)])
             }
             .padding(.horizontal, FixedFocusMetrics.titleInset)
-            // Side-scrolling, as Search's: yours on Home first (Select
-            // loads one, held it can go), then the starting points.
+            // Side-scrolling, as Search's: Add to Home (On Home once it
+            // is: Select takes it off), then the starting points.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: LineChip.gap) {
-                    ForEach(pins.pins, id: \.id) { pin in
-                        Button { model.load(pin) } label: {
-                            LineChip(name: pin.name, checked: true, current: model.picksMatch(pin))
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                        .focused($focusedPin, equals: pin.id)
-                        .holdMenu(focused: focusedPin == pin.id) {
-                            [MenuEntry(title: "Remove from Home", icon: "minus.circle") { pins.remove(pin.id) }]
+                    if model.pinnable {
+                        let pinned = pins.pin(for: model.picks) != nil
+                        if pinned || !pins.full {
+                            Button { model.togglePin() } label: {
+                                LineChip(name: pinned ? "On Home" : "＋ Add to Home", checked: pinned)
+                            }
+                            .buttonStyle(PlainCardButtonStyle())
+                        } else {
+                            // (Eight on Home: room is made in Settings.)
+                            Text("Home has \(DiscoverPins.limit) of your rows")
+                                .font(.system(size: 24))
+                                .foregroundStyle(CueInk.tertiary)
+                                .padding(.horizontal, 8)
                         }
                     }
-                    if model.pinnable, !model.pinned {
-                        Button { addToHome() } label: {
-                            LineChip(name: "＋ Add to Home")
-                                .background { AnchorView(anchors: anchors, key: "add") }
-                        }
-                        .buttonStyle(PlainCardButtonStyle())
-                    }
-                    ForEach(starts, id: \.self) { picks in
+                    ForEach(model.presets, id: \.self) { picks in
                         Button { model.apply(preset: picks) } label: {
                             LineChip(name: DiscoverModel.name(of: picks))
                         }
@@ -1428,12 +1482,6 @@ private struct DiscoverSentence: View {
         .defaultFocus($focused, .genre)
     }
 
-    /// The starting points, leaving out what's on Home already.
-    private var starts: [[DiscoverModel.Slot: String]] {
-        let pinned = Set(pins.pins.map(\.id))
-        return model.presets.filter { !pinned.contains(DiscoverPins.Pin.id(of: $0)) }
-    }
-
     private var count: String {
         guard model.loadedOnce else { return " " }
         if model.isLoading { return "Looking…" }
@@ -1441,32 +1489,52 @@ private struct DiscoverSentence: View {
         return "\(model.total.formatted(.number)) \(model.countLabel)"
     }
 
-    /// On Home; with three there, which one it takes the place of, in the
-    /// menus' glass panel under the pill.
-    private func addToHome() {
-        guard pins.pins.count >= DiscoverPins.limit else { return model.pin() }
-        guard let view = anchors.views["add"], view.window != nil else { return }
-        let entries = pins.pins.map { pin in
-            MenuEntry(title: "Replace \u{201C}\(pin.name)\u{201D}", icon: "arrow.triangle.2.circlepath") {
-                model.pin(replacing: pin.id)
-            }
-        }
-        HoldMenu.shared.open(HoldMenuRequest(entries: entries, anchor: view.convert(view.bounds, to: nil),
-                                             below: true))
-    }
-
     /// The word's choices in the menus' glass panel, under it; a pick
     /// changes the sentence and the titles under it, the page staying.
     private func open(_ slot: DiscoverModel.Slot) {
         guard let view = anchors.views[slot.rawValue], view.window != nil else { return }
         let current = model.pick(slot)
-        let entries = model.choices(slot).map { option in
+        let entries = slot == .era ? eraEntries(current) : model.choices(slot).map { option in
             MenuEntry(title: option.name ?? option.word.capitalized, icon: "", checked: option.id == current) {
                 model.set(slot, option.id)
             }
         }
         HoldMenu.shared.open(HoldMenuRequest(entries: entries, anchor: view.convert(view.bounds, to: nil),
                                              below: true))
+    }
+
+    /// Year's list in pages: the relative and broad choices, then each
+    /// decade's page (all of it, then its years), each year's page (all
+    /// of it, then its four seasons). A decade or year holding the pick
+    /// has its check.
+    private func eraEntries(_ current: String) -> [MenuEntry] {
+        let options = Dictionary(model.choices(.era).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let pickedYear = DiscoverModel.year(ofEra: current)
+        func choice(_ id: String, _ title: String? = nil) -> MenuEntry? {
+            guard let option = options[id] else { return nil }
+            return MenuEntry(title: title ?? option.name ?? option.word.capitalized, icon: "",
+                             checked: id == current) { model.set(.era, id) }
+        }
+        func yearPage(_ year: Int) -> MenuEntry {
+            MenuEntry(title: String(year), icon: "", checked: pickedYear == year, run: {},
+                      pageTitle: String(year)) {
+                [choice("y\(year)", "All of \(year)")].compactMap { $0 } + (1...4).compactMap { number in
+                    choice("\(year)-q\(number)", DiscoverModel.seasonNames[number - 1])
+                }
+            }
+        }
+        let years = DiscoverModel.listedYears
+        let decades = [("2020s", 2020), ("2010s", 2010), ("2000s", 2000), ("1990s", 1990), ("1980s", 1980), ("1970s", 1970)]
+        let decadePages = decades.map { id, start in
+            MenuEntry(title: id, icon: "",
+                      checked: current == id || pickedYear.map { (start...start + 9).contains($0) } == true,
+                      run: {}, pageTitle: id) {
+                [choice(id, "All of the \(id)")].compactMap { $0 }
+                    + years.filter { (start...start + 9).contains($0) }.map(yearPage)
+            }
+        }
+        return ["any", "season-now", "season-next", "now", "recent"].compactMap { choice($0) }
+            + decadePages + [choice("older")].compactMap { $0 }
     }
 
     enum Part: Hashable { case word(String), slot(DiscoverModel.Slot) }
@@ -1538,8 +1606,6 @@ private struct LineChip: View {
     @Environment(\.isFocused) private var isFocused
     let name: String
     var checked = false
-    /// The sentence showing now.
-    var current = false
 
     private static let font = UIFont.systemFont(ofSize: 24, weight: .medium)
     /// The words' room at most: about half the screen.
@@ -1572,7 +1638,7 @@ private struct LineChip: View {
         .padding(.horizontal, 22)
         .frame(height: 52)
         .foregroundStyle(ink)
-        .background(Capsule().fill(isFocused ? FlatControl.focus : current ? FlatControl.selected : FlatControl.rest))
+        .background(Capsule().fill(isFocused ? FlatControl.focus : FlatControl.rest))
         .scaleEffect(isFocused ? scale : 1)
         .animation(FlatControl.focusChange, value: isFocused)
     }
@@ -1598,19 +1664,22 @@ private struct RunningText: UIViewRepresentable {
     }
 }
 
-/// Discover's sentences put on Home (per profile, three at most): each a
-/// large row in Home's large-row slots 2–4 (after Because You Watched),
-/// its name in title case after the Discover compass; with the add-ons'
-/// rows, after Saved for Later. Their titles are fetched at launch and when
+/// Your rows: Discover's sentences put on Home (per profile, eight at
+/// most), each a large row from Home's second large-row slot on (after
+/// Because You Watched), in your order, its name after the Discover compass:
+/// the sentence in title case, or a name of your own. Arranged in Settings →
+/// Home & Details → Your Rows. Their titles are fetched at launch and when
 /// one is added.
 @MainActor
 final class DiscoverPins: ObservableObject {
     static let shared = DiscoverPins()
-    static let limit = 3
+    static let limit = 8
     static let rowPrefix = "discover.pin."
 
     struct Pin: Codable, Equatable {
         let picks: [String: String]
+        /// A name of your own (nil: the sentence).
+        var title: String? = nil
 
         var id: String { Self.id(of: slots) }
         static func id(of picks: [DiscoverModel.Slot: String]) -> String {
@@ -1624,9 +1693,13 @@ final class DiscoverPins: ObservableObject {
         }
         /// The sentence, in its own case ("Fantasy anime movies about isekai").
         @MainActor var name: String { DiscoverModel.name(of: slots) }
+        /// Its name on Home.
+        @MainActor var rowName: String { title ?? DiscoverPins.titleCase(name) }
     }
 
     @Published private(set) var pins: [Pin] = []
+    /// A pin to open in Discover's tab (Your Rows' Open in Discover).
+    @Published var opening: Pin?
     /// Each pin's titles, by its id.
     @Published private(set) var titles: [String: [MetaItem]] = [:]
     private var loadedFor: Int?
@@ -1654,22 +1727,39 @@ final class DiscoverPins: ObservableObject {
         return pins.first { $0.id == id }
     }
 
-    /// On Home, in `replacing`'s place (its slot) when given; never past
-    /// the limit.
-    func add(_ picks: [DiscoverModel.Slot: String], replacing: String? = nil) {
+    /// On Home, last of your rows; never past the limit.
+    func add(_ picks: [DiscoverModel.Slot: String]) {
         load()
         let pin = Pin(picks: Dictionary(uniqueKeysWithValues: picks.map { ($0.key.rawValue, $0.value) }))
-        guard !pins.contains(where: { $0.id == pin.id }) else { return }
-        if let replacing, let index = pins.firstIndex(where: { $0.id == replacing }) {
-            pins[index] = pin
-            titles[replacing] = nil
-        } else {
-            guard pins.count < Self.limit else { return }
-            pins.append(pin)
-        }
+        guard !pins.contains(where: { $0.id == pin.id }), pins.count < Self.limit else { return }
+        pins.append(pin)
         save()
         Task { await fetch(pin) }
     }
+
+    var full: Bool { load(); return pins.count >= Self.limit }
+
+    /// One place up (`step` -1) or down (1).
+    func move(_ id: String, by step: Int) {
+        load()
+        guard let index = pins.firstIndex(where: { $0.id == id }), pins.indices.contains(index + step) else { return }
+        pins.swapAt(index, index + step)
+        save()
+    }
+
+    /// A name of your own; empty or the sentence's: the sentence again.
+    func rename(_ id: String, to title: String) {
+        load()
+        guard let index = pins.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pin = pins[index]
+        pins[index].title = trimmed.isEmpty || trimmed == Self.titleCase(pin.name) || trimmed == pin.name
+            ? nil : trimmed
+        save()
+    }
+
+    /// Your rows as they stand (Settings).
+    var all: [Pin] { load(); return pins }
 
     func remove(_ id: String) {
         load()
@@ -1693,7 +1783,7 @@ final class DiscoverPins: ObservableObject {
         load()
         return pins.compactMap { pin in
             guard let items = titles[pin.id], !items.isEmpty else { return nil }
-            return HomeRow(id: Self.rowPrefix + pin.id, title: Self.titleCase(pin.name), items: items)
+            return HomeRow(id: Self.rowPrefix + pin.id, title: pin.rowName, items: items)
         }
     }
 
@@ -1708,5 +1798,660 @@ final class DiscoverPins: ObservableObject {
             return word.split(separator: "-", omittingEmptySubsequences: false)
                 .map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: "-")
         }.joined(separator: " ")
+    }
+}
+
+// MARK: - Upcoming (prototype, 2026-11-19)
+
+/// UPCOMING: what's on, as a calendar — the days as columns along a
+/// strip, today held at the second spot (yesterday beside it), the days
+/// sliding under it. Each day a square tile (its headline: the day's first
+/// line) with its date, the day's lines under it; the tile follows focus
+/// down the list; a day with more than fits takes another column. Your
+/// shows' episodes first, then TMDB's popular shows airing, films opening
+/// in your country and the season's popular anime (AniList), a week back
+/// to two ahead; days with nothing left out.
+@MainActor
+final class UpcomingModel: ObservableObject {
+    struct Entry: Identifiable {
+        let id: String
+        /// nil: an anime with no IMDb id known (it can't open).
+        let item: MetaItem?
+        let name: String
+        let date: Date
+        let picture: String?
+        /// "S2:E7", "S1:E1 · Premiere", "In cinemas", "E8", a studio…
+        let info: String
+        /// One of your shows (first in its day).
+        let mine: Bool
+        /// An episode's season and (last) number: its watched mark.
+        let episode: (season: Int, number: Int)?
+
+        init(id: String, item: MetaItem?, name: String? = nil, date: Date, picture: String?, info: String,
+             mine: Bool, episode: (season: Int, number: Int)?) {
+            self.id = id
+            self.item = item
+            self.name = name ?? item?.name ?? ""
+            self.date = date
+            self.picture = picture
+            self.info = info
+            self.mine = mine
+            self.episode = episode
+        }
+    }
+
+    struct Column: Identifiable {
+        let id: String
+        let day: Date
+        /// The day's first column (it carries the date).
+        let first: Bool
+        let entries: [Entry]
+    }
+
+    struct Built {
+        var columns: [Column]
+        /// The column focus starts in: today's (or the first after it).
+        var start: Int
+    }
+
+    @Published private(set) var calendar: Built?
+    private var loading = false
+    var following: [MetaItem] = []
+    var addonManager: AddonManager?
+
+    func load() async {
+        guard calendar == nil, !loading else { return }
+        loading = true
+        defer { loading = false }
+        calendar = await week()
+    }
+
+    static let daysBack = 7
+    static let daysAhead = 14
+    static let perColumn = 5
+    /// A day's lines at most in This Week (two columns): yours always, the
+    /// rest by popularity.
+    static let perDay = 10
+    static let shows = 60
+    /// A show not yours on more days than this in the window is a daily.
+    static let dailyLimit = 6
+
+    private typealias Dated = (order: Int, entry: Entry)
+
+    /// Days into columns, each day's lines by their order.
+    private static func build(_ days: [Date: [Dated]], cap: ([Entry]) -> [Entry] = { $0 }) -> Built {
+        let today = Calendar.current.startOfDay(for: Date())
+        var columns: [Column] = []
+        var start: Int?
+        for day in days.keys.sorted() {
+            let entries = cap(days[day, default: []].sorted { $0.order < $1.order }.map(\.entry))
+            if start == nil, day >= today { start = columns.count }
+            var part = 0
+            while part * perColumn < entries.count {
+                let slice = Array(entries[(part * perColumn)..<min(entries.count, (part + 1) * perColumn)])
+                columns.append(Column(id: "\(Int(day.timeIntervalSince1970))-\(part)", day: day,
+                                      first: part == 0, entries: slice))
+                part += 1
+            }
+        }
+        return Built(columns: columns, start: start ?? max(0, columns.count - 1))
+    }
+
+    private func week() async -> Built {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let addonManager,
+              let start = calendar.date(byAdding: .day, value: -Self.daysBack, to: today),
+              let end = calendar.date(byAdding: .day, value: Self.daysAhead + 1, to: today)
+        else { return Built(columns: [], start: 0) }
+        async let mine = Self.mine(following, addonManager: addonManager, start: start, end: end)
+        async let shows = Self.popularShows(start: start, end: end, skip: Set(following.map(\.id)))
+        async let films = Self.films(start: start, end: end)
+        async let anime = Self.anime(start: start, end: end)
+        var days: [Date: [Dated]] = [:]
+        var placed = Set<String>()
+        for dated in await mine + shows + films + anime {
+            let day = calendar.startOfDay(for: dated.entry.date)
+            // An anime TMDB lists too, or one of yours: once a day.
+            if let id = dated.entry.item?.id, !placed.insert("\(id)-\(day)").inserted { continue }
+            days[day, default: []].append(dated)
+        }
+        return Self.build(days) { sorted in
+            Array(sorted.prefix(max(sorted.filter(\.mine).count, Self.perDay)))
+        }
+    }
+
+    // MARK: Anime
+
+    /// Anime as titles, by IMDb id: the community's AniList → IMDb / TMDB
+    /// list (`AnimeIDs`), else TMDB's search by name (only a name that
+    /// matches); TMDB's pictures where it has them. Those found nowhere
+    /// are left out (an id of AniList's own would reach the library).
+    private static func items(for shows: [AniList.Show]) async -> [Int: MetaItem] {
+        let ids = await AnimeIDs.map()
+        let found = await boundedConcurrentMap(shows, limit: 8) { show -> MetaItem? in
+            let type = show.isFilm && show.format == "MOVIE" ? "movie" : "series"
+            var imdb: String?
+            if let ref = ids[show.id] {
+                imdb = ref.imdb
+                if imdb == nil, let tmdb = ref.tmdb { imdb = await TMDBService.imdbID(tmdbID: tmdb, isMovie: ref.isMovie) }
+            }
+            if imdb == nil { imdb = await searched(show) }
+            guard let imdb else { return nil }
+            if let title = await TMDBService.cueTitle(imdbID: imdb, type: type) { return title.item }
+            return MetaItem(id: imdb, type: type, name: show.name, poster: show.cover, background: show.banner)
+        }
+        var out: [Int: MetaItem] = [:]
+        for (index, show) in shows.enumerated() { if let item = found[index] { out[show.id] = item } }
+        return out
+    }
+
+    /// A show the list doesn't have yet, by TMDB's search: the first title
+    /// whose name matches AniList's (a season's suffix aside).
+    private static func searched(_ show: AniList.Show) async -> String? {
+        func plain(_ text: String) -> String {
+            var text = text.lowercased()
+            for suffix in [#"\s*(\d+(st|nd|rd|th)\s+)?season(\s+\d+)?$"#, #"\s*part\s+\d+$"#, #"\s+\d+$"#] {
+                text = text.replacingOccurrences(of: suffix, with: "", options: .regularExpression)
+            }
+            return text.filter { $0.isLetter || $0.isNumber }
+        }
+        for name in [show.english, show.romaji].compactMap({ $0 }) {
+            let wanted = plain(name)
+            guard wanted.count >= 4 else { continue }
+            let hits = await TMDBService.searchMulti(name).filter { $0.type != "person" }
+            if let hit = hits.prefix(3).first(where: { plain($0.name) == wanted }) { return hit.id }
+        }
+        return nil
+    }
+
+    /// The season's popular anime in the calendar: each airing weekly
+    /// round its next episode (AniList gives only the next).
+    private static func anime(start: Date, end: Date) async -> [Dated] {
+        let season = AniList.season(of: Date())
+        async let fresh = AniList.shows(season)
+        async let carried = AniList.continuing(season)
+        let shows = Array(await fresh.filter { !$0.isFilm && $0.next != nil }.prefix(20))
+            + Array(await carried.prefix(8))
+        let items = await items(for: shows)
+        let calendar = Calendar.current
+        var out: [Dated] = []
+        for (index, show) in shows.enumerated() {
+            guard let item = items[show.id], let next = show.next, let number = show.nextEpisode else { continue }
+            for week in -3...3 {
+                let episode = number + week
+                guard episode >= 1, show.episodes.map({ episode <= $0 }) ?? true,
+                      let date = calendar.date(byAdding: .day, value: 7 * week, to: next),
+                      date >= start, date < end else { continue }
+                let day = calendar.startOfDay(for: date)
+                out.append((1002 + 3 * index, Entry(
+                    id: "anime-\(show.id)-\(episode)", item: item, name: show.name, date: day,
+                    picture: item.background ?? show.banner ?? show.cover,
+                    info: episode == 1 ? "E1 · Premiere" : "E\(episode)", mine: false, episode: nil)))
+            }
+        }
+        return out
+    }
+
+    /// A day's episodes of one show as a line (a season dropped at once is one).
+    private static func episodeEntry(item: MetaItem, day: Date, season: Int, numbers: [Int],
+                                     mine: Bool) -> Entry? {
+        let numbers = numbers.sorted()
+        guard let low = numbers.first, let high = numbers.last else { return nil }
+        var info = low == high ? "S\(season):E\(low)" : "S\(season):E\(low)–\(high)"
+        if low == 1 { info += season == 1 ? " · Premiere" : " · New season" }
+        return Entry(id: "\(item.id)-\(Int(day.timeIntervalSince1970))", item: item, date: day,
+                     picture: item.background ?? item.poster, info: info, mine: mine,
+                     episode: (season, high))
+    }
+
+    /// Your shows (watched, started or saved, the latest first): their
+    /// episode lists, the add-ons'.
+    private static func mine(_ following: [MetaItem], addonManager: AddonManager,
+                             start: Date, end: Date) async -> [Dated] {
+        let shows = Array(following.prefix(Self.shows))
+        let metas: [Int: MetaItem] = await withTaskGroup(of: (Int, MetaItem).self) { group in
+            for (rank, show) in shows.enumerated() {
+                group.addTask { @MainActor in
+                    (rank, await SeriesEpisodes.fullMeta(for: show, addonManager: addonManager))
+                }
+            }
+            var out: [Int: MetaItem] = [:]
+            for await (rank, meta) in group { out[rank] = meta }
+            return out
+        }
+        let calendar = Calendar.current
+        var out: [Dated] = []
+        for (rank, meta) in metas {
+            let show = shows[rank]
+            let item = MetaItem(id: meta.id, type: meta.type, name: meta.name.isEmpty ? show.name : meta.name,
+                                poster: meta.poster ?? show.poster, background: meta.background ?? show.background,
+                                logo: meta.logo ?? show.logo)
+            var byDay: [Date: [MetaVideo]] = [:]
+            for video in meta.videos ?? [] {
+                guard let season = video.season, season > 0, video.episode != nil,
+                      let date = video.airedDate, date >= start, date < end else { continue }
+                byDay[calendar.startOfDay(for: date), default: []].append(video)
+            }
+            for (day, videos) in byDay {
+                let season = videos.compactMap(\.season).max() ?? 0
+                let numbers = videos.filter { $0.season == season }.compactMap(\.episode)
+                if let entry = episodeEntry(item: item, day: day, season: season, numbers: numbers, mine: true) {
+                    out.append((rank, entry))
+                }
+            }
+        }
+        return out
+    }
+
+    private static func ymd(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    /// TMDB's most popular shows with an episode in the window, their
+    /// current season's dates. News, reality, soap and talk left out, and
+    /// any show on most days (a daily one filled every day).
+    private static func popularShows(start: Date, end: Date, skip: Set<String>) async -> [Dated] {
+        var titles: [TMDBService.CueTitle] = []
+        for page in 1...2 {
+            let list = await TMDBService.cueList("/discover/tv", query: [
+                "air_date.gte": ymd(start), "air_date.lte": ymd(end), "sort_by": "popularity.desc",
+                "without_genres": "10763,10764,10766,10767", "vote_count.gte": "20", "include_adult": "false",
+                "page": String(page)], isMovie: false)
+            titles += list.titles
+        }
+        var seen = skip
+        titles = titles.filter { seen.insert($0.item.id).inserted }
+        let dates = await boundedConcurrentMap(titles, limit: 8) { await TMDBService.airDates(tmdbID: $0.tmdbID) }
+        var out: [Dated] = []
+        for (index, title) in titles.enumerated() {
+            var byDay: [Date: [(season: Int, episode: Int)]] = [:]
+            for found in dates[index] {
+                guard let day = TMDBService.localDay(found.date), day >= start, day < end else { continue }
+                byDay[day, default: []].append((found.season, found.episode))
+            }
+            guard byDay.count <= Self.dailyLimit else { continue }
+            for (day, episodes) in byDay {
+                let season = episodes.map(\.season).max() ?? 0
+                if let entry = episodeEntry(item: title.item, day: day, season: season,
+                                            numbers: episodes.filter { $0.season == season }.map(\.episode),
+                                            mine: false) {
+                    out.append((1000 + 3 * index, entry))
+                }
+            }
+        }
+        return out
+    }
+
+    /// Films opening in the window in your country: in cinemas, or
+    /// streaming (TMDB's digital release).
+    private static func films(start: Date, end: Date) async -> [Dated] {
+        let region = CueRows.region
+        let titles = await TMDBService.cueList("/discover/movie", query: [
+            "region": region, "release_date.gte": ymd(start), "release_date.lte": ymd(end),
+            "with_release_type": "2|3|4", "sort_by": "popularity.desc", "include_adult": "false"],
+            isMovie: true).titles
+        let releases = await boundedConcurrentMap(titles, limit: 8) {
+            await TMDBService.releases(tmdbID: $0.tmdbID, region: region)
+        }
+        var out: [Dated] = []
+        for (index, title) in titles.enumerated() {
+            let found = releases[index]
+            for (date, info) in [(found.cinemas, "In cinemas"), (found.streaming, "Streaming")] {
+                guard let date, date >= start, date < end else { continue }
+                out.append((1001 + 3 * index, Entry(
+                    id: "\(title.item.id)-\(info)", item: title.item, date: date,
+                    picture: title.item.background ?? title.item.poster, info: info, mine: false, episode: nil)))
+            }
+        }
+        return out
+    }
+}
+
+struct UpcomingView: View {
+    @StateObject private var model = UpcomingModel()
+    @EnvironmentObject private var addonManager: AddonManager
+    @EnvironmentObject private var progressStore: ProgressStore
+    @EnvironmentObject private var watched: WatchedStore
+    @EnvironmentObject private var library: LibraryStore
+    let onOpen: (MetaItem) -> Void
+    let onBack: () -> Void
+
+    @FocusState private var focus: String?
+    /// The column focus is in (or last was): the strip holds it at the
+    /// second spot.
+    @State private var spot = 0
+
+    static let width: CGFloat = FixedFocusMetrics.posterCard.width
+    static var pitch: CGFloat { width + FixedFocusMetrics.gap }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ATVBackground()
+            if let built = model.calendar {
+                if built.columns.isEmpty {
+                    Text("Nothing on this week or the next two.")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(CueInk.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    strip(built.columns)
+                }
+            } else {
+                LoadingSpinner()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .ignoresSafeArea()
+        .task {
+            guard model.addonManager == nil else { return }
+            model.addonManager = addonManager
+            model.following = BillboardPicks.History(progress: progressStore, watched: watched,
+                                                     library: library).following
+            await model.load()
+            spot = model.calendar?.start ?? 0
+        }
+        .onExitCommand(perform: onBack)
+    }
+
+    private func strip(_ columns: [UpcomingModel.Column]) -> some View {
+        HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
+            ForEach(columns) { column in
+                UpcomingColumn(column: column, focus: $focus,
+                               past: column.day < Calendar.current.startOfDay(for: Date()),
+                               watched: watched, onOpen: onOpen)
+            }
+        }
+        .fixedSize()
+        .offset(x: FixedFocusMetrics.inset - CGFloat(max(0, spot - 1)) * Self.pitch)
+        .animation(Motion.move, value: spot)
+        .padding(.top, StagePictureView.homeCard.minY)
+        .frame(width: 1920, height: 1080, alignment: .topLeading)
+        .focusSection()
+        .onChange(of: focus) { old, new in
+            guard let new, let column = columns.firstIndex(where: { $0.entries.contains { $0.id == new } })
+            else { return }
+            // Coming in from the bar: the column the strip holds, not the
+            // one nearest the tab.
+            if old == nil, column != spot, columns.indices.contains(spot),
+               let first = columns[spot].entries.first(where: { $0.item != nil }) {
+                focus = first.id
+                return
+            }
+            spot = column
+        }
+    }
+}
+
+private struct UpcomingColumn: View {
+    let column: UpcomingModel.Column
+    var focus: FocusState<String?>.Binding
+    let past: Bool
+    let watched: WatchedStore
+    let onOpen: (MetaItem) -> Void
+
+    private var focused: UpcomingModel.Entry? {
+        column.entries.first { $0.id == focus.wrappedValue }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            tile
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(column.entries) { entry in
+                    Button { if let item = entry.item { onOpen(item) } } label: {
+                        UpcomingLine(entry: entry, seen: seen(entry))
+                    }
+                    .buttonStyle(PlainCardButtonStyle())
+                    .focused(focus, equals: entry.id)
+                    // An anime with no IMDb id known can't open: not focusable.
+                    .disabled(entry.item == nil)
+                }
+            }
+        }
+        .frame(width: UpcomingView.width, alignment: .leading)
+        .opacity(past && focused == nil ? FixedFocusMetrics.peekAlpha : 1)
+        .animation(Motion.fade, value: focused?.id)
+    }
+
+    /// The day's headline, or the focused line's show (dissolving).
+    private var tile: some View {
+        let entry = focused ?? column.entries[0]
+        let side = UpcomingView.width
+        return ZStack(alignment: .bottomLeading) {
+            RemoteImage(url: entry.picture, maxDimension: side * 2)
+                .frame(width: side, height: side)
+                .id(entry.id)
+                .transition(.opacity)
+            LinearGradient(stops: [.init(color: .clear, location: 0.45),
+                                   .init(color: .black.opacity(0.85), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+            if column.first {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Self.weekday(column.day))
+                        .font(.system(size: 23, weight: .semibold))
+                        .foregroundStyle(.white.opacity(FixedFocusText.body))
+                    Text(Self.date.string(from: column.day).uppercased())
+                        .font(.system(size: 48, weight: .bold))
+                        .foregroundStyle(.white.opacity(FixedFocusText.primary))
+                }
+                .padding(.leading, 20)
+                .padding(.bottom, 16)
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
+    }
+
+    private func seen(_ entry: UpcomingModel.Entry) -> Bool {
+        guard let id = entry.item?.id else { return false }
+        guard let episode = entry.episode else { return entry.item?.type == "movie" && watched.isWatched(contentID: id) }
+        return watched.isWatched(contentID: id, season: episode.season, episode: episode.number)
+    }
+
+    private static let date: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter
+    }()
+
+    private static func weekday(_ day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "TODAY" }
+        if calendar.isDateInTomorrow(day) { return "TOMORROW" }
+        if calendar.isDateInYesterday(day) { return "YESTERDAY" }
+        return day.formatted(.dateTime.weekday(.wide)).uppercased()
+    }
+}
+
+/// One episode in a day's list: the show over its "S2:E7", the menus'
+/// row focus (the white plate, dark words).
+private struct UpcomingLine: View {
+    @Environment(\.isFocused) private var isFocused
+    let entry: UpcomingModel.Entry
+    let seen: Bool
+
+    private static let pad: CGFloat = 14
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(entry.name)
+                .font(.system(size: 24, weight: .medium))
+                .lineLimit(2)
+                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : CueInk.color(seen ? FixedFocusText.secondary : FixedFocusText.primary))
+            HStack(spacing: 8) {
+                if seen { Image(systemName: "checkmark") }
+                Text(entry.info)
+            }
+            .font(.system(size: 24, weight: .regular))
+            .foregroundStyle(isFocused ? FlatControl.contentOnFocus.opacity(0.7) : CueInk.color(seen ? FixedFocusText.tertiary : FixedFocusText.body))
+        }
+        .padding(.horizontal, Self.pad)
+        .padding(.vertical, 10)
+        .frame(width: UpcomingView.width + 2 * Self.pad, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(isFocused ? FlatControl.focus : .clear))
+        .scaleEffect(isFocused ? 1.05 : 1)
+        .animation(FlatControl.focusChange, value: isFocused)
+        .padding(.horizontal, -Self.pad)
+    }
+}
+
+/// AniList's seasons (no key): the season's anime, the most popular
+/// first, with its next airing (a moment: shown on its day here) — the
+/// calendar's anime. Asked once a run per list.
+@MainActor
+enum AniList {
+    struct Season: Hashable { let name: String; let year: Int }
+
+    struct Show: Sendable {
+        let id: Int
+        let english: String?
+        let romaji: String?
+        let banner: String?
+        let cover: String?
+        let format: String?
+        let episodes: Int?
+        let next: Date?
+        let nextEpisode: Int?
+
+        var name: String { english ?? romaji ?? "" }
+        var isFilm: Bool { ["MOVIE", "SPECIAL", "OVA"].contains(format ?? "") }
+    }
+
+    private static let names = ["WINTER", "SPRING", "SUMMER", "FALL"]
+
+    /// AniList's: winter January–March, then spring, summer, fall.
+    static func season(of date: Date) -> Season {
+        let parts = Calendar.current.dateComponents([.year, .month], from: date)
+        return Season(name: names[((parts.month ?? 1) - 1) / 3], year: parts.year ?? 2026)
+    }
+
+    private static let fields = """
+    id title { romaji english } bannerImage coverImage { extraLarge } format episodes
+    nextAiringEpisode { airingAt episode }
+    """
+
+    /// What began in the season (TV, shorts, web series, films, specials).
+    /// Two pages: the 100 most popular.
+    static func shows(_ season: Season) async -> [Show] {
+        await list("""
+        query($season: MediaSeason, $year: Int, $page: Int) { Page(page: $page, perPage: 50) {
+          pageInfo { hasNextPage }
+          media(season: $season, seasonYear: $year, type: ANIME, isAdult: false, sort: POPULARITY_DESC,
+                format_in: [TV, TV_SHORT, ONA, MOVIE, SPECIAL, OVA]) { \(fields) } } }
+        """, ["season": season.name, "year": season.year], pages: 2)
+    }
+
+    /// Shows begun before the season, still airing in it.
+    static func continuing(_ season: Season) async -> [Show] {
+        let month = (names.firstIndex(of: season.name) ?? 0) * 3 + 1
+        return await list("""
+        query($before: FuzzyDateInt, $page: Int) { Page(page: $page, perPage: 30) {
+          pageInfo { hasNextPage }
+          media(type: ANIME, status: RELEASING, startDate_lesser: $before, isAdult: false, sort: POPULARITY_DESC,
+                format_in: [TV, TV_SHORT, ONA]) { \(fields) } } }
+        """, ["before": season.year * 10000 + month * 100 + 1], pages: 1)
+    }
+
+    private static var asked: [String: Task<[Show], Never>] = [:]
+
+    private static func list(_ query: String, _ variables: [String: AnyHashable], pages: Int) async -> [Show] {
+        let key = query + variables.map { "\($0.key)=\($0.value)" }.sorted().joined()
+        if let task = asked[key] { return await task.value }
+        let task = Task { await fetch(query, variables, pages: pages) }
+        asked[key] = task
+        let shows = await task.value
+        if shows.isEmpty { asked[key] = nil }
+        return shows
+    }
+
+    private static func fetch(_ query: String, _ variables: [String: AnyHashable], pages: Int) async -> [Show] {
+        struct Body: Decodable {
+            struct DataPart: Decodable { let Page: PagePart }
+            struct PagePart: Decodable { let pageInfo: Info; let media: [Media] }
+            struct Info: Decodable { let hasNextPage: Bool }
+            struct Media: Decodable {
+                struct Title: Decodable { let romaji: String?; let english: String? }
+                struct Cover: Decodable { let extraLarge: String? }
+                struct Airing: Decodable { let airingAt: Int; let episode: Int }
+                let id: Int
+                let title: Title
+                let bannerImage: String?
+                let coverImage: Cover?
+                let format: String?
+                let episodes: Int?
+                let nextAiringEpisode: Airing?
+            }
+            let data: DataPart
+        }
+        var out: [Show] = []
+        for page in 1...pages {
+            var request = URLRequest(url: URL(string: "https://graphql.anilist.co")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            var all: [String: Any] = variables
+            all["page"] = page
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["query": query, "variables": all])
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let body = try? JSONDecoder().decode(Body.self, from: data) else {
+                AppProbe.warn("anilist", "\(variables) page \(page) failed")
+                break
+            }
+            for media in body.data.Page.media {
+                out.append(Show(
+                    id: media.id, english: media.title.english, romaji: media.title.romaji,
+                    banner: media.bannerImage, cover: media.coverImage?.extraLarge,
+                    format: media.format, episodes: media.episodes,
+                    next: media.nextAiringEpisode.map { Date(timeIntervalSince1970: TimeInterval($0.airingAt)) },
+                    nextEpisode: media.nextAiringEpisode?.episode))
+            }
+            guard body.data.Page.pageInfo.hasNextPage else { break }
+        }
+        return out
+    }
+}
+
+/// AniList's ids to IMDb's and TMDB's: the community's list (Fribb's
+/// anime-lists, ~6 MB), kept on disk a week, read once a run.
+enum AnimeIDs {
+    struct Ref: Sendable { let imdb: String?; let tmdb: Int?; let isMovie: Bool }
+
+    @MainActor private static var task: Task<[Int: Ref], Never>?
+
+    @MainActor static func map() async -> [Int: Ref] {
+        if let task { return await task.value }
+        let task = Task.detached(priority: .utility) { await read() }
+        self.task = task
+        return await task.value
+    }
+
+    private static let source = URL(string: "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-mini.json")!
+    private static let maxAge: TimeInterval = 7 * 24 * 60 * 60
+
+    private static func read() async -> [Int: Ref] {
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CueCache/anime-ids.json")
+        let age = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            .map { Date().timeIntervalSince($0) } ?? .infinity
+        var data = try? Data(contentsOf: file)
+        if data == nil || age > maxAge, let (fresh, _) = try? await URLSession.shared.data(from: source) {
+            data = fresh
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fresh.write(to: file)
+        }
+        guard let data, let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [:] }
+        var out: [Int: Ref] = [:]
+        for entry in list {
+            guard let anilist = entry["anilist_id"] as? Int else { continue }
+            let imdb = (entry["imdb_id"] as? [String])?.first ?? entry["imdb_id"] as? String
+            let ids = entry["themoviedb_id"] as? [String: Any]
+            let film = ids?["movie"] as? Int
+            let tmdb = ids?["tv"] as? Int ?? film
+            guard imdb != nil || tmdb != nil else { continue }
+            out[anilist] = Ref(imdb: imdb, tmdb: tmdb, isMovie: film != nil && ids?["tv"] == nil)
+        }
+        return out
     }
 }
