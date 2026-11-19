@@ -834,7 +834,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   way into the player goes through Details' card, where Details has it
   (`StagePictureView.detailsCard`, its picture moved for faces, its
   bottom fade), on the title's bands as Details' page, following the
-  setting, a step more vivid (saturation 2.2: Home 0.8, Details 1.8;
+  setting, a step more vivid (saturation 2.2: Home 1.2, Details 1.8;
   the same layout deepening as the stage comes in, closer to the film;
   `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
   setting were first: a second change, and lights down goes dark
@@ -936,15 +936,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
   one Home title's TMDB backdrop as its colours: up to four main ones
-  (k-means), each 0.8× the picture's saturation (1.4×, then 1.2× in
-  dark, read too colourful; Details' 1.8×), the darkest the base, the rest soft pools in a random layout
+  (k-means), each 1.2× the picture's saturation (1.4× read too
+  colourful; 0.8× and 1.0× tried; Details' 1.8×), the darkest the base, the rest soft pools in a random layout
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
   bands; dark, light's mirror: sunk to 0.05–0.22 (`sunk`; 0.07–0.30 too light), a dark grey
   with the colours a tint over it (dimmed as Details', no colour past
   0.40, read too colourful beside light's silver), grained, app-wide,
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
-  too busy at times, and with it the hue-runs rule went).
+  too busy at times, and with it the hue-runs rule went); the colours read
+  from the sharp picture, small, as Details' (read from the blurred one,
+  a busy picture came out grey: faint one day, loud the next).
   Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
   picture's mean light ≥ 0.14. By appearance (`BackgroundPicks.Mode`):
   dark takes the darker half, light the lighter, drawn bright (colours

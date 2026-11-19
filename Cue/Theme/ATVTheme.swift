@@ -241,10 +241,10 @@ enum BandsPicture {
 
     private static let poolCount = 8
     /// The colours' saturation, times the picture's: the app's
-    /// background, below the picture's own (1.4, then 1.2 in dark, read
-    /// too colourful on an OLED with tvOS in Dolby Vision, which lifts
-    /// colour far more than light: tuned there), Details' (`strong`).
-    static let saturation = 0.8
+    /// background (1.4 read too colourful on an OLED with tvOS in Dolby
+    /// Vision, which lifts colour far more than light: tuned there; 0.8
+    /// and 1.0 were tried), Details' (`strong`).
+    static let saturation = 1.2
     static let strongSaturation = 1.8
     /// The play stage's: a step past Details', the same bands deepening as
     /// it comes in (closer to the film).
@@ -464,7 +464,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands6-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands9-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
     /// A new picture is due: the mode changed, or it's been up 4 h (coming
@@ -542,7 +542,21 @@ final class BackgroundPicks {
     private func draw(_ url: String, dim: Double, mode: Mode) async -> Bool {
         let file = Self.file(for: url, mode: mode)
         if FileManager.default.fileExists(atPath: file.path) { return true }
-        guard let blurred = await BlurredBackdrop.image(for: url), let cg = blurred.cgImage else { return false }
+        // The colours read from the sharp picture, small, as Details' are
+        // (`TitleBands`): from the blurred one they came out grey for a
+        // busy picture, so it was faint one day and loud the next.
+        let small = url.replacingOccurrences(of: "/t/p/original/", with: "/t/p/w780/")
+        let decoded = ImageCache.shared.image(for: RemoteImage.memoryKey(url, maxDimension: PictureSize.screen,
+                                                                        maxPixels: nil))?.cgImage
+        var data: Data?
+        if decoded == nil {
+            guard let remote = URL(string: small),
+                  let downloaded = try? await ImageCache.shared.download(remote) else { return false }
+            data = downloaded
+        }
+        guard let cg = decoded.flatMap({ TitleBands.shrunk($0, to: 160) })
+                ?? data.flatMap({ ImageCache.decodeDownsampled($0, budget: 160)?.cgImage })
+        else { return false }
         let seed = Self.seed(url)
         return await Task.detached(priority: .utility) { () -> Bool in
             guard let picture = Self.draw(cg, dim: dim, light: mode == .light, seed: seed),
@@ -618,8 +632,8 @@ final class BackgroundPicks {
 
     /// The picture's colours as bands (`BandsPicture.pools`): no shapes of
     /// its own (the blurred picture was too busy at times), its mood only.
-    nonisolated private static func draw(_ blurred: CGImage, dim: Double, light: Bool, seed: UInt64) -> CGImage? {
-        guard let bands = BandsPicture.pools(from: BandsPicture.palette(blurred), dim: dim,
+    nonisolated private static func draw(_ source: CGImage, dim: Double, light: Bool, seed: UInt64) -> CGImage? {
+        guard let bands = BandsPicture.pools(from: BandsPicture.palette(source), dim: dim,
                                              brightest: brightestSpot, light: light, seed: seed) else { return nil }
         return BandsPicture.render(base: bands.base, pools: bands.pools)
     }
@@ -765,7 +779,7 @@ final class TitleBands {
     }
 
     /// A decoded picture drawn small (its longest side `side` pixels).
-    nonisolated private static func shrunk(_ image: CGImage, to side: Int) -> CGImage? {
+    nonisolated static func shrunk(_ image: CGImage, to side: Int) -> CGImage? {
         let scale = Double(side) / Double(max(image.width, image.height))
         let w = max(1, Int(Double(image.width) * scale)), h = max(1, Int(Double(image.height) * scale))
         guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
