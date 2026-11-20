@@ -1156,12 +1156,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   title, faded (decided 2026-11-20: a brightness score, ≥ 0.14 dimmed,
   and dark taking the darker half, light the lighter, were for the
   blurred picture; time-of-day thirds before that). A grey picture's
-  grey bands are fine (Use as Background covers taste). A new title at
-  each launch, nothing else changes it (a 4 h rule on coming back was
-  dropped 2026-11-20); the next drawn ahead in both modes. Grey pools (`BandsPicture`) only until the first title is
-  drawn (faded in then). Settings → Appearance → Background: the title
-  up, Pick Another. A card's hold menu has Use as Background: that
-  title's colours until the next launch.
+  grey bands are fine (saving covers taste). A new one at each launch,
+  nothing else changes it (a 4 h rule on coming back was dropped
+  2026-11-20), by Settings → Appearance → Background → Change at Launch
+  (`BackgroundPicks.AtLaunch`): From Home (the default; the next drawn
+  ahead in both modes), From Saved (one of yours, never the same twice
+  running; offered only once something's saved, back to From Home when
+  the last goes), Never (fixed: set one, then Never). Saved backgrounds
+  (2026-11-20): up to 12 (at the limit a toast, nothing dropped), on the
+  device, the title and its colours (redrawn without its picture,
+  Application Support); a card's hold menu has Use as Background, which
+  becomes Save Background (checked once saved, Select again takes it
+  off) once that title is up; the Background page: Change at Launch,
+  Pick Another (from Saved under From Saved), Save This Background
+  ("Saved" beside it), Saved (a row each with a small preview in the
+  mode; its page: Use Now, Remove from Saved), Now. Grey pools
+  (`BandsPicture`) only until the first title is drawn (faded in then).
   (Dynamic, the focused title's colours, and the title's blurred picture
   behind the rows were too much going on.) Details' dim for bright pictures
   reaches 0.28 under it (`StageArt.brightestBelow`; 0.50 never took).

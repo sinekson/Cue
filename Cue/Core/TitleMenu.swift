@@ -63,9 +63,15 @@ final class TitleMenu {
 
         entries.append(TitleRatings.notForMeEntry(item))
 
-        entries.append(Entry(title: "Use as Background", icon: "photo") {
-            BackgroundStore.shared.use(item)
-        })
+        // Up as the background: Save Background (checked once saved,
+        // Select again takes it off Saved).
+        let background = BackgroundStore.shared
+        if background.shown?.id == item.id {
+            entries.append(Entry(title: "Save Background", icon: "photo.badge.plus",
+                                 checked: background.isSaved(item.id)) { background.toggleSaved() })
+        } else {
+            entries.append(Entry(title: "Use as Background", icon: "photo") { background.use(item) })
+        }
 
         return entries
     }

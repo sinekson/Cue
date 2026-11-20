@@ -267,8 +267,8 @@ struct SeededRandom: RandomNumberGenerator {
 /// THE BACKGROUND, one still picture behind every page: a title's
 /// picture's colours as soft pools in a layout of their own, in tvOS's
 /// mode (`BackgroundPicks`): light, its colours lifted to tvOS's light
-/// grey; dark, sunk to a dark one's. A new title at each launch; a mode
-/// change keeps the title (Automatic at sunset: the page changes anyway).
+/// grey; dark, sunk to a dark one's. A new title at each launch (Change
+/// at Launch: from Home, from Saved, never); a mode change keeps the title (Automatic at sunset: the page changes anyway).
 /// Grey pools are the fallback (nothing picked yet: a first launch).
 /// (Tried: the title's picture blurred as Details' — too busy at times;
 /// grey alone; following the focused title — its colours, then its
@@ -279,11 +279,13 @@ final class BackgroundStore: ObservableObject {
     @Published private(set) var image: UIImage?
     /// The title it's from (Settings → Appearance → Background); nil: Bands.
     @Published private(set) var shown: BackgroundPicks.Entry?
-    /// Chosen from a card's menu.
-    @Published private(set) var chosen = false
+    /// How it came: from Home, from Saved, or chosen.
+    @Published private(set) var source: BackgroundPicks.Source = .home
+    /// Saved backgrounds, newest last (Settings → Background → Saved).
+    @Published private(set) var saved: [BackgroundPicks.Entry] = BackgroundPicks.shared.savedEntries
     private var loading = false
 
-    /// At launch: the next title, else Bands (nil until in).
+    /// At launch: the next title (Change at Launch), else Bands (nil until in).
     func load() {
         guard image == nil, !loading else { return }
         loading = true
@@ -313,7 +315,8 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
-    /// Settings' Pick Another: another title now.
+    /// Settings' Pick Another: another now (from Saved when launches take
+    /// those, else from Home).
     func another() {
         Task {
             let pick = await BackgroundPicks.shared.next(fresh: true)
@@ -321,12 +324,44 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
-    /// A card's "Use as Background": its title now, until the next change.
+    /// A card's "Use as Background": its title now.
     func use(_ item: MetaItem) {
         Task {
             guard let pick = await BackgroundPicks.shared.choose(item) else { return }
             await show(pick, fade: true)
         }
+    }
+
+    /// A saved one, set from Settings.
+    func set(_ entry: BackgroundPicks.Entry) {
+        Task {
+            guard let pick = await BackgroundPicks.shared.set(entry) else { return }
+            await show(pick, fade: true)
+        }
+    }
+
+    func isSaved(_ id: String) -> Bool { saved.contains { $0.id == id } }
+
+    /// The one up saved, or taken off Saved (the hold menu's Save
+    /// Background, Settings' Save This Background).
+    func toggleSaved() {
+        guard let shown else { return }
+        if isSaved(shown.id) { unsave(shown.id); return }
+        guard saved.count < BackgroundPicks.savedLimit else {
+            ToastCenter.shared.show("\(BackgroundPicks.savedLimit) saved. Remove one first.", icon: "photo")
+            return
+        }
+        Task {
+            guard await BackgroundPicks.shared.save(shown) else { return }
+            saved = BackgroundPicks.shared.savedEntries
+        }
+    }
+
+    func unsave(_ id: String) {
+        BackgroundPicks.shared.unsave(id)
+        saved = BackgroundPicks.shared.savedEntries
+        // Nothing left to take from: launches go back to Home.
+        if saved.isEmpty, BackgroundPicks.AtLaunch.current == .saved { BackgroundPicks.AtLaunch.current = .home }
     }
 
     private func show(_ pick: (entry: BackgroundPicks.Entry, file: URL)?, fade: Bool) async {
@@ -342,7 +377,7 @@ final class BackgroundStore: ObservableObject {
         transaction.disablesAnimations = !fade
         withTransaction(transaction) { image = picture }
         shown = picked ? pick?.entry : nil
-        chosen = picked && BackgroundPicks.shared.chosen
+        source = BackgroundPicks.shared.source
     }
 
     /// The Bands picture (~8 MB), from its copy on disk once drawn (a first
@@ -368,13 +403,15 @@ final class BackgroundStore: ObservableObject {
     }
 }
 
-/// Which title's colours are the background (`BackgroundStore`): any title
-/// on Home (the billboard's, each row's first 15), at random, not one of
-/// the last 7, a new one at each launch. One title for both modes: its colours sunk for dark, lifted
-/// for light (`BandsPicture.pools`), so any picture works in either and a
-/// mode change keeps the title. The next is drawn ahead in both modes, so
-/// a change is instant. (A brightness score and a dark / light split of
-/// the titles were for the blurred picture as the background.)
+/// Which title's colours are the background (`BackgroundStore`). At each
+/// launch, by Change at Launch (`AtLaunch`): any title on Home (the
+/// billboard's, each row's first 15) at random, not one of the last 7; or
+/// one of your saved ones (up to 12, never the same twice running); or
+/// none (it stays). One title for both modes: its colours sunk for dark,
+/// lifted for light (`BandsPicture.pools`), so any picture works in either
+/// and a mode change keeps the title. Home's next is drawn ahead in both
+/// modes, so a change is instant. (A brightness score and a dark / light
+/// split of the titles were for the blurred picture as the background.)
 @MainActor
 final class BackgroundPicks {
     static let shared = BackgroundPicks()
@@ -384,6 +421,28 @@ final class BackgroundPicks {
         let name: String
         /// TMDB's backdrop (Details' picture).
         let url: String
+    }
+
+    /// How the one up came.
+    enum Source: String, Codable {
+        case home, saved, chosen
+    }
+
+    /// What a launch brings (Settings → Background → Change at Launch).
+    enum AtLaunch: String, CaseIterable {
+        case home, saved, never
+        var label: String {
+            switch self {
+            case .home: "From Home"
+            case .saved: "From Saved"
+            case .never: "Never"
+            }
+        }
+        static let key = "cue.background.atLaunch"
+        static var current: AtLaunch {
+            get { AtLaunch(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .home }
+            set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+        }
     }
 
     /// tvOS's appearance (Settings → Appearance; Automatic turns it at
@@ -398,21 +457,34 @@ final class BackgroundPicks {
 
     private struct State: Codable {
         var shown: Entry?
-        /// The one up was chosen from a card's menu (until the next launch).
-        var chosen = false
+        var source: Source?
         /// Title ids.
         var recent: [String] = []
         /// Drawn ahead in both modes.
         var next: Entry?
     }
 
+    /// A saved background: the title and its colours (drawn again
+    /// without its picture).
+    private struct Saved: Codable {
+        let entry: Entry
+        /// r, g, b, share.
+        let palette: [[Double]]
+    }
+
     static let recentCount = 7
+    static let savedLimit = 12
 
     nonisolated static var folder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CueCache/backgrounds")
     }
     private static var stateFile: URL { folder.appendingPathComponent("background.json") }
+    /// Kept with the settings, not the caches (Clear Cache leaves it).
+    private static var savedFile: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Cue/saved-backgrounds.json")
+    }
 
     private lazy var state: State = {
         // The scored picks of before.
@@ -421,6 +493,11 @@ final class BackgroundPicks {
               let state = try? JSONDecoder().decode(State.self, from: data) else { return State() }
         return state
     }()
+    private lazy var saved: [Saved] = {
+        guard let data = try? Data(contentsOf: Self.savedFile),
+              let saved = try? JSONDecoder().decode([Saved].self, from: data) else { return [] }
+        return saved
+    }()
     /// Home's titles, from the last deep band.
     private var pool: [MetaItem] = []
     private var preparing = false
@@ -428,6 +505,16 @@ final class BackgroundPicks {
     private func save() {
         let data = try? JSONEncoder().encode(state)
         let file = Self.stateFile
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            try? data?.write(to: file, options: .atomic)
+        }
+    }
+
+    private func saveSaved() {
+        let data = try? JSONEncoder().encode(saved)
+        let file = Self.savedFile
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
@@ -452,6 +539,8 @@ final class BackgroundPicks {
         return FileManager.default.fileExists(atPath: file.path) ? (entry, file) : nil
     }
 
+    var source: Source { state.source ?? .home }
+
     /// The title up, in this mode's colours (drawn now if it isn't yet).
     func current() async -> (entry: Entry, file: URL)? {
         guard let shown = state.shown else { return nil }
@@ -460,37 +549,52 @@ final class BackgroundPicks {
         return await draw(shown.url, mode: mode) ? drawn(shown, mode) : nil
     }
 
-    /// The next title, drawn ahead (`fresh`: drawn now), else the one up;
-    /// nil: none (Bands).
+    /// A launch's (Change at Launch), or another now (`fresh`: Pick
+    /// Another, never "Never"); else the one up; nil: none (Bands).
     func next(fresh: Bool = false) async -> (entry: Entry, file: URL)? {
+        let atLaunch = AtLaunch.current
+        if !fresh, atLaunch == .never, let current = await current() { return current }
+        if atLaunch == .saved, let pick = await nextSaved() { return pick }
         if fresh {
-            // Pick Another: drawn now, whatever's ready.
+            // Drawn now, whatever's ready.
             state.next = nil
             await prepare()
         }
         guard let next = drawn(state.next, Mode.now) else { return await current() }
         state.next = nil
-        up(next.entry, chosen: false)
+        up(next.entry, source: .home)
         return next
     }
 
-    /// The one up was chosen from a card's menu (until the next launch).
-    var chosen: Bool { state.chosen }
+    /// One of the saved, not the one up (unless it's the only one).
+    private func nextSaved() async -> (entry: Entry, file: URL)? {
+        let others = saved.filter { $0.entry.id != state.shown?.id }
+        guard let pick = others.randomElement() else { return await current() }
+        return await set(pick.entry)
+    }
 
-    /// A title chosen from its card's menu: up now, until the next launch.
+    /// A saved one, up now.
+    func set(_ entry: Entry) async -> (entry: Entry, file: URL)? {
+        let mode = Mode.now
+        guard await draw(entry.url, mode: mode) else { return nil }
+        up(entry, source: .saved)
+        return drawn(entry, mode)
+    }
+
+    /// A title chosen from its card's menu: up now.
     func choose(_ item: MetaItem) async -> (entry: Entry, file: URL)? {
         guard let url = await TMDBService.backdrop(id: item.id, type: item.type) else { return nil }
         let entry = Entry(id: item.id, name: item.name, url: url)
         let mode = Mode.now
         guard await draw(url, mode: mode) else { return nil }
         if state.next?.id == item.id { state.next = nil }
-        up(entry, chosen: true)
+        up(entry, source: .chosen)
         return (entry, Self.file(for: url, mode: mode))
     }
 
-    private func up(_ entry: Entry, chosen: Bool) {
+    private func up(_ entry: Entry, source: Source) {
         state.shown = entry
-        state.chosen = chosen
+        state.source = source
         state.recent = Array(([entry.id] + state.recent.filter { $0 != entry.id }).prefix(Self.recentCount))
         save()
         Task {
@@ -500,11 +604,45 @@ final class BackgroundPicks {
         }
     }
 
-    /// The picture's colours drawn to its file (off the main thread).
+    // MARK: Saved
+
+    var savedEntries: [Entry] { saved.map(\.entry) }
+
+    /// Saved with its colours; false: full, or its colours couldn't be read.
+    func save(_ entry: Entry) async -> Bool {
+        guard saved.count < Self.savedLimit else { return false }
+        if saved.contains(where: { $0.entry.id == entry.id }) { return true }
+        guard let palette = await TitleBands.shared.palette(for: entry.url) else { return false }
+        saved.append(Saved(entry: entry, palette: palette.map { [$0.r, $0.g, $0.b, $0.share] }))
+        saveSaved()
+        return true
+    }
+
+    func unsave(_ id: String) {
+        saved.removeAll { $0.entry.id == id }
+        saveSaved()
+    }
+
+    /// A saved one drawn small, in this mode (Settings' list).
+    func preview(_ entry: Entry) async -> UIImage? {
+        let mode = Mode.now
+        guard await draw(entry.url, mode: mode) else { return nil }
+        let file = Self.file(for: entry.url, mode: mode)
+        return await Task.detached(priority: .utility) {
+            UIImage(contentsOfFile: file.path)?.preparingThumbnail(of: CGSize(width: 192, height: 108))
+        }.value
+    }
+
+    /// The picture's colours drawn to its file (off the main thread): a
+    /// saved one's own, else read from its picture.
     private func draw(_ url: String, mode: Mode) async -> Bool {
         let file = Self.file(for: url, mode: mode)
         if FileManager.default.fileExists(atPath: file.path) { return true }
-        guard let palette = await TitleBands.shared.palette(for: url) else { return false }
+        let kept: [BandsPicture.Colour]? = saved.first { $0.entry.url == url }?.palette
+            .filter { $0.count == 4 }.map { (r: $0[0], g: $0[1], b: $0[2], share: $0[3]) }
+        var palette = kept
+        if palette == nil { palette = await TitleBands.shared.palette(for: url) }
+        guard let palette else { return false }
         let seed = Self.seed(url)
         return await Task.detached(priority: .utility) { () -> Bool in
             // Dark sinks the colours, light lifts them: neither dims.
@@ -526,7 +664,7 @@ final class BackgroundPicks {
         BackgroundStore.shared.firstReady()
     }
 
-    /// The next title, drawn ahead in both modes.
+    /// Home's next title, drawn ahead in both modes.
     private func prepare() async {
         guard !preparing else { return }
         preparing = true
@@ -544,10 +682,10 @@ final class BackgroundPicks {
                 if ok { state.next = Entry(id: item.id, name: item.name, url: url); break }
             }
         }
-        // Only what's up and the next stay on disk.
+        // Only what's up, the next and the saved stay on disk.
         let files = FileManager.default
         var keep = Set<String>()
-        for entry in [state.shown, state.next].compactMap({ $0 }) {
+        for entry in [state.shown, state.next].compactMap({ $0 }) + savedEntries {
             for mode in Mode.allCases { keep.insert(Self.file(for: entry.url, mode: mode).lastPathComponent) }
         }
         for name in (try? files.contentsOfDirectory(atPath: Self.folder.path)) ?? []
