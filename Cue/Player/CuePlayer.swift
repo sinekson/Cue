@@ -66,8 +66,9 @@ final class GlassBacking: UIView {
     }
 }
 
-/// A round glass button; focused white with a dark icon, 5 % larger. Focusable
-/// only while the buttons are in use, so the arrows scrub during playback.
+/// A round glass button; focused white with a dark icon, as Details' buttons
+/// (`ButtonFocus`). Focusable only while the buttons are in use, so the
+/// arrows scrub during playback.
 private final class PlayerButton: UIButton {
     static let size: CGFloat = 72
 
@@ -85,7 +86,7 @@ private final class PlayerButton: UIButton {
         platter.backgroundColor = .white
         platter.alpha = 0
         platter.isUserInteractionEnabled = false
-        liftShadow(platter)
+        ButtonFocus.lift(platter)
         insertSubview(glass, at: 0)
         insertSubview(platter, at: 1)
     }
@@ -96,7 +97,10 @@ private final class PlayerButton: UIButton {
     override var canBecomeFocused: Bool { takesFocus && super.canBecomeFocused }
 
     override var isHighlighted: Bool {
-        didSet { focusChange { self.paint() } }
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            ButtonFocus.size(isHighlighted ? .press : .release) { self.paintSize() }
+        }
     }
 
     override func layoutSubviews() {
@@ -110,15 +114,56 @@ private final class PlayerButton: UIButton {
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        focusChange { self.paint() }
+        ButtonFocus.white(isFocused) { self.paint() }
+        ButtonFocus.size(.focus) { self.paintSize() }
     }
 
     private func paint() {
         platter.alpha = isFocused ? 1 : 0
         tintColor = isFocused ? UIColor.black.withAlphaComponent(0.85)
                               : CueInk.ui(FixedFocusText.primary)
-        let scale: CGFloat = isFocused && !isHighlighted ? 1.05 : 1
+    }
+
+    private func paintSize() {
+        let scale = isFocused && !isHighlighted ? ButtonFocus.scale : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
+    }
+}
+
+/// Details' buttons' focus (`DetailActionButton`) for the player's glass
+/// buttons: the white in on a 0.15 s spring, out over 0.15 s linear; the size
+/// 10 % on focus's spring both ways; a press back to resting size in 0.1 s,
+/// up again on a 0.3 s spring; the white's shadow 35 %.
+enum ButtonFocus {
+    enum Change { case focus, press, release }
+
+    static let scale = DetailActionButton.detailsFocusScale
+    private static let options: UIView.AnimationOptions = [
+        .beginFromCurrentState, .overrideInheritedDuration, .overrideInheritedCurve, .allowUserInteraction
+    ]
+
+    static func white(_ lit: Bool, _ changes: @escaping () -> Void) {
+        if lit {
+            UIView.animate(withDuration: 0.15, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0,
+                           options: options, animations: changes)
+        } else {
+            UIView.animate(withDuration: 0.15, delay: 0, options: options.union(.curveLinear), animations: changes)
+        }
+    }
+
+    static func size(_ change: Change, _ changes: @escaping () -> Void) {
+        if change == .press {
+            UIView.animate(withDuration: DetailActionButton.pressInTime, delay: 0,
+                           options: options.union(.curveEaseOut), animations: changes)
+        } else {
+            UIView.animate(withDuration: change == .focus ? Motion.focusDuration : 0.3, delay: 0,
+                           usingSpringWithDamping: 1, initialSpringVelocity: 0, options: options, animations: changes)
+        }
+    }
+
+    static func lift(_ view: UIView) {
+        liftShadow(view)
+        view.layer.shadowOpacity = 0.35
     }
 }
 
@@ -210,7 +255,7 @@ private final class PanelTab: UIView {
         let glass = GlassBacking(Circle())
         insertSubview(glass, at: 0)
         self.glass = glass
-        liftShadow(platter)
+        ButtonFocus.lift(platter)
         icon.image = UIImage(systemName: symbol,
                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .medium))
         icon.contentMode = .center
@@ -277,7 +322,8 @@ private final class PanelTab: UIView {
 
     private func setPressed(_ down: Bool) {
         pressed = down
-        focusChange { self.paint() }
+        // (A tab's press: Refresh is the one with an action, a button.)
+        ButtonFocus.size(down ? .press : .release) { self.paintSize() }
     }
 
     private func paint() {
@@ -292,13 +338,25 @@ private final class PanelTab: UIView {
         let chosenFill = onPage && light ? 0.55 : Self.chosenFill
         let restFill: CGFloat = onPage && glass != nil ? (light ? 0.32 : 0.13) : 0
         platter.alpha = isFocused ? 1 : chosen && marksChosen && glass == nil ? chosenFill : restFill
-        let scale: CGFloat = isFocused && !pressed ? 1.05 : 1
+    }
+
+    /// A tab 5 %, a button (Refresh) as Details' buttons.
+    private func paintSize() {
+        let scale = isFocused && !pressed ? glass == nil ? 1.05 : ButtonFocus.scale : 1
         transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
-        focusChange(duration: 0.2) { self.paint() }
+        if glass != nil {
+            ButtonFocus.white(isFocused) { self.paint() }
+            ButtonFocus.size(.focus) { self.paintSize() }
+        } else {
+            focusChange(duration: 0.2) {
+                self.paint()
+                self.paintSize()
+            }
+        }
     }
 }
 
