@@ -704,49 +704,76 @@ enum CacheStorage {
     ]
     private static let retired = ["tmdb-wide-pictures"]
 
-    /// Once a day, a while after launch, at background priority: the disk
-    /// caches kept to their rules (`tidyRules`). Unbounded, they had grown
-    /// to ~430 MB, tens of thousands of files.
-    static func tidyLater() {
-        Task.detached(priority: .background) {
-            try? await Task.sleep(for: .seconds(90))
-            let fm = FileManager.default
-            let stamp = cue.appendingPathComponent(".tidied")
-            if let last = (try? fm.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
-               Date().timeIntervalSince(last) < 24 * 60 * 60 { return }
-            let started = Date()
-            var removed = 0
-            var freed: Int64 = 0
-            for name in retired {
-                let url = cue.appendingPathComponent(name)
-                freed += allocated(url, fm)
-                if (try? fm.removeItem(at: url)) != nil { removed += 1 }
-            }
-            let keys: [URLResourceKey] = [.contentModificationDateKey, .totalFileAllocatedSizeKey]
-            for rule in tidyRules {
-                let folder = cue.appendingPathComponent(rule.name)
-                let files = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys)) ?? [])
-                    .compactMap { url -> (url: URL, date: Date, size: Int64)? in
-                        guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                              let date = values.contentModificationDate else { return nil }
-                        return (url, date, Int64(values.totalFileAllocatedSize ?? 0))
-                    }
-                    .sorted { $0.date > $1.date }
-                let cutoff = Date().addingTimeInterval(-rule.days * 24 * 60 * 60)
-                var total: Int64 = 0
-                for file in files {
-                    let over = rule.cap.map { total + file.size > $0 } ?? false
-                    if file.date < cutoff || over {
-                        if (try? fm.removeItem(at: file.url)) != nil { removed += 1; freed += file.size }
-                    } else {
-                        total += file.size
-                    }
+    /// The disk caches kept to their rules (`tidyRules`; unbounded they had
+    /// grown to ~430 MB, tens of thousands of files): once a day, as the app
+    /// goes to the background — nothing on screen to compete with, tvOS
+    /// leaving it ~30 s (a day's run takes well under one; cut short, the
+    /// next goes on: the mark is set at the end). A TV left on Cue for days:
+    /// 90 s after a launch once it's 3 days since.
+    @MainActor
+    static func scheduleTidy() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                               object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard tidyAge() > 24 * 60 * 60 else { return }
+                var task = UIBackgroundTaskIdentifier.invalid
+                task = UIApplication.shared.beginBackgroundTask(withName: "cache tidy") {
+                    UIApplication.shared.endBackgroundTask(task)
+                }
+                Task.detached(priority: .utility) {
+                    tidy(why: "going to the background")
+                    await MainActor.run { UIApplication.shared.endBackgroundTask(task) }
                 }
             }
-            fm.createFile(atPath: stamp.path, contents: nil)
-            AppProbe.life(String(format: "caches tidied — %d files, %.0f MB, %.1f s", removed,
-                                 Double(freed) / 1_048_576, Date().timeIntervalSince(started)))
         }
+        Task.detached(priority: .background) {
+            try? await Task.sleep(for: .seconds(90))
+            if tidyAge() > 3 * 24 * 60 * 60 { tidy(why: "3 days since the last") }
+        }
+    }
+
+    private static var tidyStamp: URL { cue.appendingPathComponent(".tidied") }
+
+    /// Since the last tidy (never: forever).
+    nonisolated private static func tidyAge() -> TimeInterval {
+        let last = (try? FileManager.default.attributesOfItem(atPath: tidyStamp.path))?[.modificationDate] as? Date
+        return last.map { Date().timeIntervalSince($0) } ?? .infinity
+    }
+
+    nonisolated private static func tidy(why: String) {
+        let fm = FileManager.default
+        let started = Date()
+        var removed = 0
+        var freed: Int64 = 0
+        for name in retired {
+            let url = cue.appendingPathComponent(name)
+            freed += allocated(url, fm)
+            if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+        }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .totalFileAllocatedSizeKey]
+        for rule in tidyRules {
+            let folder = cue.appendingPathComponent(rule.name)
+            let files = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys)) ?? [])
+                .compactMap { url -> (url: URL, date: Date, size: Int64)? in
+                    guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                          let date = values.contentModificationDate else { return nil }
+                    return (url, date, Int64(values.totalFileAllocatedSize ?? 0))
+                }
+                .sorted { $0.date > $1.date }
+            let cutoff = Date().addingTimeInterval(-rule.days * 24 * 60 * 60)
+            var total: Int64 = 0
+            for file in files {
+                let over = rule.cap.map { total + file.size > $0 } ?? false
+                if file.date < cutoff || over {
+                    if (try? fm.removeItem(at: file.url)) != nil { removed += 1; freed += file.size }
+                } else {
+                    total += file.size
+                }
+            }
+        }
+        fm.createFile(atPath: tidyStamp.path, contents: nil)
+        AppProbe.life(String(format: "caches tidied (%@) — %d files, %.0f MB, %.1f s", why, removed,
+                             Double(freed) / 1_048_576, Date().timeIntervalSince(started)))
     }
 
     private static func allocated(_ url: URL, _ fm: FileManager) -> Int64 {

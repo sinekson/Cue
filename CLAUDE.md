@@ -1171,9 +1171,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   responses, playback files in `tmp`); a new cache gets a row there. Clear
   Cache never touches account, profiles, progress, library, collections,
   settings or search history. Search History: the profile's recent
-  searches and the titles opened from Search. Once a day, 90 s after
-  launch at background priority, the disk caches are kept to their rules
-  (`CacheStorage.tidyLater`: each folder's entries past their readers'
+  searches and the titles opened from Search. Once a day, as the app
+  goes to the background (nothing on screen to compete with; 90 s after a
+  launch only once it's 3 days since), the disk caches are kept to their
+  rules (`CacheStorage.scheduleTidy`: each folder's entries past their readers'
   longest keep, `tmdb-raw` over 128 MB and `meta` over 64 MB oldest first,
   retired folders removed; unbounded they reached ~430 MB). The network's
   own response cache stays: the rows' TMDB lists come from it at launch.
