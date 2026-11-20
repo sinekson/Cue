@@ -503,18 +503,23 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     func collectionView(_ collectionView: UICollectionView, didUpdateFocusIn context: UICollectionViewFocusUpdateContext,
                         with coordinator: UIFocusAnimationCoordinator) {
         focusedPath = context.nextFocusedIndexPath
-        showCaptions(on: focusedPath.map { $0.item / Self.columns }, context)
-        TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
         // `headerFirst`, the page at its top: Down from a tab's bar, on to the
-        // header's controls, as Back's way up (the header sits in the scroll
-        // view, where the engine never looks). Not a return (from Details):
-        // that keeps its title.
+        // header's controls, as Back's way up. Not a return (from Details):
+        // that keeps its title. A redirect after the landing: SwiftUI enters
+        // the grid on its own (no focus guide, no preferred environment,
+        // not the header's items even when listed); a clean single move
+        // needs the header out of the scroll view. The title is only passed
+        // through: no captions for it (their room opened and closed again,
+        // the lines under it bobbing), nothing loaded for it.
         if headerFirst, context.focusHeading.contains(.down),
            context.previouslyFocusedView.map({ !$0.isDescendant(of: view) }) ?? true,
            collectionView.contentOffset.y <= -collectionView.contentInset.top + 1, headerHost != nil {
             backToTop = true
             DispatchQueue.main.async { [weak self] in self?.focusFirst() }
+            return
         }
+        showCaptions(on: focusedPath.map { $0.item / Self.columns }, context)
+        TitlePictures.shared.resting(on: focusedPath.flatMap { items.indices.contains($0.item) ? items[$0.item] : nil })
         // Moved by the viewer (from something in the page): no longer ours.
         if prefersFirstTitle, context.previouslyFocusedView?.isDescendant(of: collectionView) == true {
             prefersFirstTitle = false
