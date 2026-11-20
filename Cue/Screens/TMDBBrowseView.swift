@@ -52,6 +52,14 @@ final class DiscoverModel: ObservableObject, PreparedPage {
         let word: String
         var name: String? = nil
         var apply: (inout [String: String], Bool) -> Bool = { _, _ in true }
+        /// A season's: its year and quarter (1–4), read at the asking.
+        var quarter: (() -> (year: Int, quarter: Int))? = nil
+
+        func with(quarter: @escaping () -> (year: Int, quarter: Int)) -> Option {
+            var copy = self
+            copy.quarter = quarter
+            return copy
+        }
     }
 
     /// The sentence. The tab's is kept per profile (Discover opens on the
@@ -595,30 +603,35 @@ final class DiscoverModel: ObservableObject, PreparedPage {
     }
 
     /// TMDB's total is the count only while Cue drops nothing itself.
-    var countIsExact: Bool { pick(.rating) == "any" && pick(.watched) != "hidden" }
+    var countIsExact: Bool {
+        pick(.rating) == "any" && pick(.watched) != "hidden" && option(.era).quarter == nil
+    }
 
     /// The next titles from `start`: TMDB's pages until a screenful is
-    /// kept (IMDb's ratings and watched titles are Cue's to drop), at most
-    /// five; "best for you" ranks three pages of the best known at a time.
+    /// kept (IMDb's ratings, watched titles and a season's long runners are
+    /// Cue's to drop), at most five (a season's ten: it drops many);
+    /// "best for you" ranks three pages of the best known at a time.
     private func chunk(from start: Int) async -> (page: TMDBService.BrowsePage, next: Int) {
         await IMDbRatings.ready()
         let model = pick(.order) == "foryou" ? await CueRows.tasteModel() : nil
         let least = model == nil ? 1 : 3
         let rating = pick(.rating)
         let hideSeen = pick(.watched) == "hidden"
+        let quarter = option(.era).quarter?()
+        let pages = quarter == nil ? 5 : 10
         var items: [MetaItem] = []
         var known = Set<String>()
         var total = 0
         var more = true
         var page = start
-        while more, page < start + 5, page - start < least || items.count < 18 {
+        while more, page < start + pages, page - start < least || items.count < 18 {
             let result = await fetch(page: page)
             if page == start { total = result.total }
-            for item in result.items where !known.contains(item.id) {
-                guard Self.passes(item, rating: rating), !(hideSeen && hideWatched(item)) else { continue }
-                known.insert(item.id)
-                items.append(item)
+            var kept = result.items.filter {
+                !known.contains($0.id) && Self.passes($0, rating: rating) && !(hideSeen && hideWatched($0))
             }
+            if let quarter { kept = await Self.begun(kept, in: quarter) }
+            for item in kept where known.insert(item.id).inserted { items.append(item) }
             more = result.hasMore
             page += 1
         }
@@ -636,6 +649,29 @@ final class DiscoverModel: ObservableObject, PreparedPage {
         case "gems": return imdb.value >= 7.5 && (1_000...20_000).contains(imdb.votes)
         default: return true
         }
+    }
+
+    /// A season's shows: only those that began something in it, not every
+    /// show with an episode out. Anime by AniList, where each cour is its
+    /// own entry dated by its start (a new cour counts; Detective Conan,
+    /// One Piece, a cour begun the season before don't); TMDB's seasons
+    /// lump cours and split long runners by year. Other shows: a season of
+    /// TMDB's premiering in it. Films pass (their date is the release).
+    private static func begun(_ items: [MetaItem], in quarter: (year: Int, quarter: Int)) async -> [MetaItem] {
+        guard items.contains(where: { $0.type != "movie" }) else { return items }
+        let anime = await AniList.begun(AniList.Season(quarter: quarter.quarter, year: quarter.year))
+        let first = String(format: "%04d-%02d-01", quarter.year, (quarter.quarter - 1) * 3 + 1)
+        let last = "\(quarter.year)-\(["03-31", "06-30", "09-30", "12-31"][quarter.quarter - 1])"
+        let keep = await boundedConcurrentMap(items, limit: 8) { item -> Bool in
+            guard item.type != "movie" else { return true }
+            guard let found = await TMDBService.cueTraits(imdbID: item.id, type: item.type) else { return false }
+            // (AniList unreached: TMDB's seasons rather than none.)
+            if found.traits.genres.contains(16), found.traits.language == "ja", !anime.isEmpty {
+                return anime.contains(imdb: item.id, tmdb: found.tmdbID, name: item.name)
+            }
+            return await TMDBService.seasonPremieres(tmdbID: found.tmdbID).contains { $0 >= first && $0 <= last }
+        }
+        return zip(items, keep).filter(\.1).map(\.0)
     }
 
     /// Best for you: the rows' fit for your taste, a little of the quality.
@@ -780,8 +816,9 @@ final class DiscoverModel: ObservableObject, PreparedPage {
     }
 
     /// A quarter: films released in it; shows on air in it (an episode
-    /// out), so a season's sequels and long runners are there too, as in
-    /// a season's chart. `when` read at the asking: "this season" moves on.
+    /// out), then only those that began something in it (`begun`): new
+    /// shows, new seasons and cours, no long runners. `when` read at the
+    /// asking: "this season" moves on.
     private static func season(_ id: String, _ word: String, _ name: String,
                                _ when: @escaping () -> (year: Int, quarter: Int)) -> Option {
         Option(id: id, word: word, name: name) { query, isMovie in
@@ -793,6 +830,7 @@ final class DiscoverModel: ObservableObject, PreparedPage {
             query["\(key).lte"] = "\(year)-\(last)"
             return true
         }
+        .with(quarter: when)
     }
 
     private static func seasonLabel(_ when: (year: Int, quarter: Int)) -> String {
@@ -1637,13 +1675,7 @@ final class UpcomingModel: ObservableObject {
     /// A show the list doesn't have yet, by TMDB's search: the first title
     /// whose name matches AniList's (a season's suffix aside).
     private static func searched(_ show: AniList.Show) async -> String? {
-        func plain(_ text: String) -> String {
-            var text = text.lowercased()
-            for suffix in [#"\s*(\d+(st|nd|rd|th)\s+)?season(\s+\d+)?$"#, #"\s*part\s+\d+$"#, #"\s+\d+$"#] {
-                text = text.replacingOccurrences(of: suffix, with: "", options: .regularExpression)
-            }
-            return text.filter { $0.isLetter || $0.isNumber }
-        }
+        let plain = AniList.plain
         for name in [show.english, show.romaji].compactMap({ $0 }) {
             let wanted = plain(name)
             guard wanted.count >= 4 else { continue }
@@ -2211,7 +2243,59 @@ private struct UpcomingLine: View {
 /// calendar's anime. Asked once a run per list.
 @MainActor
 enum AniList {
-    struct Season: Hashable { let name: String; let year: Int }
+    struct Season: Hashable {
+        let name: String
+        let year: Int
+        init(name: String, year: Int) { self.name = name; self.year = year }
+        /// Quarter 1–4: winter to fall.
+        init(quarter: Int, year: Int) { self.init(name: AniList.names[quarter - 1], year: year) }
+    }
+
+    /// What began in a season, to match TMDB's shows against: Fribb's
+    /// ids, else the names (a season's suffix aside).
+    struct Begun: Sendable {
+        let imdb: Set<String>
+        let tmdb: Set<Int>
+        let names: Set<String>
+        var isEmpty: Bool { imdb.isEmpty && tmdb.isEmpty && names.isEmpty }
+        func contains(imdb: String, tmdb: Int, name: String) -> Bool {
+            self.imdb.contains(imdb) || self.tmdb.contains(tmdb) || names.contains(AniList.plain(name))
+        }
+    }
+
+    /// A name compared across AniList and TMDB: lower case, letters and
+    /// digits, "2nd Season", "Part 2" or a trailing number dropped.
+    nonisolated static func plain(_ text: String) -> String {
+        var text = text.lowercased()
+        for suffix in [#"\s*(\d+(st|nd|rd|th)\s+)?season(\s+\d+)?$"#, #"\s*part\s+\d+$"#, #"\s+\d+$"#] {
+            text = text.replacingOccurrences(of: suffix, with: "", options: .regularExpression)
+        }
+        return text.filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// Every series that began in the season (TV, shorts, web series; up
+    /// to 400, a season has fewer), as Discover's season word asks.
+    static func begun(_ season: Season) async -> Begun {
+        async let listed = list("""
+        query($season: MediaSeason, $year: Int, $page: Int) { Page(page: $page, perPage: 50) {
+          pageInfo { hasNextPage }
+          media(season: $season, seasonYear: $year, type: ANIME, isAdult: false, sort: POPULARITY_DESC,
+                format_in: [TV, TV_SHORT, ONA]) { \(fields) } } }
+        """, ["season": season.name, "year": season.year], pages: 8)
+        let ids = await AnimeIDs.map()
+        var imdb = Set<String>(), tmdb = Set<Int>(), names = Set<String>()
+        for show in await listed {
+            if let ref = ids[show.id] {
+                if let id = ref.imdb { imdb.insert(id) }
+                if let id = ref.tmdb, !ref.isMovie { tmdb.insert(id) }
+            }
+            for name in [show.english, show.romaji].compactMap({ $0 }) {
+                let plain = plain(name)
+                if plain.count >= 4 { names.insert(plain) }
+            }
+        }
+        return Begun(imdb: imdb, tmdb: tmdb, names: names)
+    }
 
     struct Show: Sendable {
         let id: Int
@@ -2228,7 +2312,7 @@ enum AniList {
         var isFilm: Bool { ["MOVIE", "SPECIAL", "OVA"].contains(format ?? "") }
     }
 
-    private static let names = ["WINTER", "SPRING", "SUMMER", "FALL"]
+    fileprivate static let names = ["WINTER", "SPRING", "SUMMER", "FALL"]
 
     /// AniList's: winter January–March, then spring, summer, fall.
     static func season(of date: Date) -> Season {

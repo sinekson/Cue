@@ -3078,3 +3078,21 @@ extension TMDBService {
             .prefix(limit).map { ($0.key, names[$0.key]!) }
     }
 }
+
+// MARK: - A show's season premieres
+
+extension TMDBService {
+    /// The first air dates ("2026-10-04") of a show's numbered seasons:
+    /// Discover's season word keeps a show only if one falls in it. The
+    /// show's record as the trailers read it (a day fresh, a month kept).
+    static func seasonPremieres(tmdbID: Int) async -> [String] {
+        struct Seasons: Decodable {
+            struct Season: Decodable { let season_number: Int?; let air_date: String? }
+            let seasons: [Season]?
+        }
+        let day: TimeInterval = 24 * 60 * 60
+        let list: Seasons? = try? await cachedGet("/tv/\(tmdbID)", fresh: { _ in day }, keep: 30 * day)
+        return (list?.seasons ?? []).filter { ($0.season_number ?? 0) > 0 }.compactMap(\.air_date)
+            .filter { !$0.isEmpty }
+    }
+}

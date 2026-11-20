@@ -930,8 +930,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   with the quarter, so a pin stays current), This Year, the Last 5
   Years, each decade's page (all of it, its years), each year's page
   (all of it, Winter, Spring, Summer, Fall: AniList's quarters), Before
-  1970; a season is films released in it, shows on air in it (an
-  episode out: sequels and long runners too, a seasonal chart's way),
+  1970; a season is films released in it, shows that began something in it
+  (`DiscoverModel.begun`: anime by AniList's season list, each cour its
+  own entry, matched by Fribb's ids or name; other shows a TMDB season
+  premiering in it; long runners and a cour begun the season before
+  out — every show with an episode out was before),
   years and decades by first release (decided 2026-11-19: anime seasons
   live here, not in Upcoming); the grid (`FolderPosterGrid`, `headerFirst`) under
   it (loading, the first titles or a word changed: placeholders in its
