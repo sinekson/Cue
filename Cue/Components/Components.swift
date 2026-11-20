@@ -150,8 +150,11 @@ final class ImageCache: @unchecked Sendable {
     /// budget the device framebuffer cap applies (1920 on the 1080p HD, 3840
     /// on 4K devices) — beyond the framebuffer there is nothing more to show,
     /// so every path stays pixel-identical.
-    static func decodeDownsampled(_ data: Data, budget: CGFloat? = nil) -> UIImage? {
-        let maxDim = min(budget ?? .greatestFiniteMagnitude,
+    /// `fill` (pixels): decoded just large enough to cover a card of that
+    /// size, whatever the picture's shape — a 2:3 poster in a 4:5 card by
+    /// its width, a backdrop by its height (a longest side can't say which).
+    static func decodeDownsampled(_ data: Data, budget: CGFloat? = nil, fill: CGSize? = nil) -> UIImage? {
+        var maxDim = min(budget ?? .greatestFiniteMagnitude,
                          PerformanceProfile.maxImagePixelSize)
         guard let src = CGImageSourceCreateWithData(data as CFData,
                         [kCGImageSourceShouldCache: false] as CFDictionary) else {
@@ -160,13 +163,18 @@ final class ImageCache: @unchecked Sendable {
             let decoded = UIImage(data: data)
             return decoded?.preparingForDisplay() ?? decoded
         }
-        // Source already within the display's budget — plain decode.
         if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
            let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
-           let h = props[kCGImagePropertyPixelHeight] as? CGFloat,
-           max(w, h) <= maxDim {
-            let decoded = UIImage(data: data)
-            return decoded?.preparingForDisplay() ?? decoded
+           let h = props[kCGImagePropertyPixelHeight] as? CGFloat, w > 0, h > 0 {
+            if let fill {
+                let scale = max(fill.width / w, fill.height / h)
+                maxDim = min(maxDim, (max(w, h) * scale).rounded(.up))
+            }
+            // Source already within the budget — plain decode.
+            if max(w, h) <= maxDim {
+                let decoded = UIImage(data: data)
+                return decoded?.preparingForDisplay() ?? decoded
+            }
         }
         let thumbOpts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -189,16 +197,16 @@ final class ImageCache: @unchecked Sendable {
     /// file's mtime is touched so it survives LRU trimming. Disk stores the
     /// original encoded bytes keyed by URL, and beside it a smaller copy per
     /// size decoded (`keepResized`), keyed by `memoryKey` — read first.
-    func diskImage(for key: String, budget: CGFloat? = nil, memoryKey: String? = nil,
+    func diskImage(for key: String, budget: CGFloat? = nil, fill: CGSize? = nil, memoryKey: String? = nil,
                    turn: DecodeGate.Turn = .now, still: (@MainActor () -> Bool)? = nil) async -> UIImage? {
         await DecodeGate.shared.enter(turn)
         if let still, !(await still()) { await DecodeGate.shared.leave(turn); return nil }
-        let image = await readDisk(for: key, budget: budget, memoryKey: memoryKey)
+        let image = await readDisk(for: key, budget: budget, fill: fill, memoryKey: memoryKey)
         await DecodeGate.shared.leave(turn)
         return image
     }
 
-    private func readDisk(for key: String, budget: CGFloat?, memoryKey: String?) async -> UIImage? {
+    private func readDisk(for key: String, budget: CGFloat?, fill: CGSize?, memoryKey: String?) async -> UIImage? {
         let fileURL = fileURL(for: key)
         // Its copy at this size, if one was kept (`keepResized`): a small
         // file, decoded as it is.
@@ -207,7 +215,7 @@ final class ImageCache: @unchecked Sendable {
             ioQueue.async { [weak self] in
                 guard let self else { continuation.resume(returning: nil); return }
                 if let resizedURL, let small = try? Data(contentsOf: resizedURL),
-                   let prepared = Self.decodeDownsampled(small, budget: budget) {
+                   let prepared = Self.decodeDownsampled(small, budget: budget, fill: fill) {
                     self.insertMemory(prepared, for: memoryKey ?? key)
                     continuation.resume(returning: prepared)
                     self.ioQueue.async { [weak self] in
@@ -220,7 +228,7 @@ final class ImageCache: @unchecked Sendable {
                       // Decode HERE (background, downsampled) — otherwise UIKit
                       // decodes lazily on first draw, i.e. on the render path
                       // while a row is scrolling.
-                      let prepared = Self.decodeDownsampled(data, budget: budget) else {
+                      let prepared = Self.decodeDownsampled(data, budget: budget, fill: fill) else {
                     continuation.resume(returning: nil)
                     return
                 }
@@ -720,13 +728,22 @@ enum PictureSize {
     /// tiles, wide cards): the box-wide card with a little room, as the
     /// pictures already on disk were cut.
     static var landscape: CGFloat { FixedFocusMetrics.boxWidth * 1.04 }
-    /// A showcase card (New & Notable), focused: the height a backdrop
-    /// is cut at, so its width at 16:9.
-    static var showcase: CGFloat {
-        FixedFocusMetrics.showcaseCard.height * (1 + FixedFocusMetrics.focusLift(FixedFocusMetrics.showcaseCard)) * 16 / 9
-    }
+    /// A large row's open card, focused (16:9, as its backdrops).
+    static var openCard: CGFloat { card(FixedFocusMetrics.featureCard) }
     /// A large row's poster (never grown).
     static var featurePoster: CGFloat { FixedFocusMetrics.featurePoster.height }
+    /// A card showing a picture of its own shape (a portrait, a studio's
+    /// logo on its square), focused: its longer side. The poster's too.
+    static func card(_ size: CGSize) -> CGFloat {
+        max(size.width, size.height) * (1 + FixedFocusMetrics.focusLift(size))
+    }
+    /// A card cut from a picture of another shape (the tall cards, Top 10's
+    /// squares, Today's Pick: posters or backdrops), focused: decoded to
+    /// cover it (`ImageCache.decodeDownsampled(fill:)`).
+    static func fill(_ size: CGSize) -> CGSize {
+        let grown = 1 + FixedFocusMetrics.focusLift(size)
+        return CGSize(width: size.width * grown, height: size.height * grown)
+    }
     /// A landscape card's logo.
     static var cardLogo: CGFloat { landscape * 0.55 }
     /// Full screen: the billboard, Details, the stage.

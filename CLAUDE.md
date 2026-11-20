@@ -789,9 +789,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   `wideScene`, ignored resolution: The Chosen got a 1280 px one, blurry at
   4K); on Home's card and Today's Pick moved
   up or down to keep its faces in (`faceCentre`, the cards' rule). Decoded at a few
-  named sizes (`PictureSize`: poster, landscape, card logo, screen, logo),
-  each its largest on screen at the screen's scale, nothing more (1.5× and
-  a ladder of sizes cost up to 3× the memory). On disk the original plus
+  named sizes (`PictureSize`: poster, landscape, open card, card logo,
+  screen, logo; `card(_:)` for a picture of its card's shape, a portrait or
+  a studio's logo), each its largest on screen at the screen's scale,
+  nothing more (1.5× and a ladder of sizes cost up to 3× the memory); a
+  card cut from a picture of another shape (tall cards, Top 10's squares,
+  Today's Pick) decoded just large enough to cover it (`fill(_:)`: a
+  longest side can't tell a poster from a backdrop; before, a square
+  borrowed the tall card's size, up to 18 MB a card). On disk the original plus
   a copy at each size decoded smaller (`keepResized`), read first, so a
   disk read doesn't decode a 4K original again. Three decodes at a time,
   never on the main thread (`DecodeGate`): what's on screen first, with a

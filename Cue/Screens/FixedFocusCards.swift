@@ -384,7 +384,8 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
             backdropWanted = false
             tintBadges(feature ? backdropArt : art)
             FixedFocusImages.load(art, into: picture,
-                                  maxDimension: feature ? PictureSize.featurePoster : PictureSize.showcase,
+                                  maxDimension: feature ? PictureSize.featurePoster : 0,
+                                  fill: feature ? nil : PictureSize.fill(cardSize),
                                   waiting: { [weak self] waiting in
                 guard let self else { return }
                 self.loadingCard.follow(waiting: waiting)
@@ -493,7 +494,7 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     func wantBackdrop() {
         guard feature, !backdropWanted, let backdropArt else { return }
         backdropWanted = true
-        FixedFocusImages.load(backdropArt, into: backdrop, maxDimension: PictureSize.showcase,
+        FixedFocusImages.load(backdropArt, into: backdrop, maxDimension: PictureSize.openCard,
                               waiting: { [weak self] waiting in
             guard let self, !waiting else { return }
             UIView.performWithoutAnimation { self.layoutPicture() }
@@ -1448,7 +1449,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             FixedFocusImages.load(nil, into: picture, maxDimension: 0)
             logo.image = nil
             logo.tintColor = CueInk.ui(FixedFocusText.primary)
-            FixedFocusImages.load(art, into: logo, maxDimension: PictureSize.landscape,
+            FixedFocusImages.load(art, into: logo, maxDimension: PictureSize.card(card),
                                   waiting: { [weak self] waiting in
                 guard let self else { return }
                 // (A logo drawn on a box of its own keeps its colours: in
@@ -1498,7 +1499,7 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
                 self.pictureWaiting(false, plate: false)
             }
         } else {
-            FixedFocusImages.load(art, into: picture, maxDimension: card.width > card.height ? PictureSize.landscape : PictureSize.poster,
+            FixedFocusImages.load(art, into: picture, maxDimension: card.width > card.height ? PictureSize.landscape : PictureSize.card(card),
                                   waiting: { [weak self] in self?.pictureWaiting($0, plate: false) })
         }
     }

@@ -1321,7 +1321,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 // (`FixedFocusShowcaseCell.wantBackdrop`): left out, the
                 // first visit opened a dark card until its backdrop came.
                 let art = rows[index].art[item.id] ?? item.poster ?? item.background
-                wants.append(.init(item.background ?? art, PictureSize.showcase))
+                wants.append(.init(item.background ?? art, PictureSize.openCard))
                 wants.append(.init(item.logo, PictureSize.cardLogo))
             } else if !isLandscape(index), !isDestination(index), custom(index) == nil {
                 wants.append(.init(item.background ?? item.poster, PictureSize.landscape))
@@ -3166,6 +3166,20 @@ enum FixedFocusImages {
         }
     }
 
+    /// A picture's key in memory and how it's decoded: by its longest side
+    /// (`maxDimension`, points), or to cover a card (`fill`, points).
+    @MainActor
+    private static func sizing(_ url: String, maxDimension: CGFloat, fill: CGSize?)
+        -> (key: String, budget: CGFloat?, fill: CGSize?) {
+        guard let fill else {
+            return (RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil),
+                    RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil), nil)
+        }
+        let scale = UIScreen.main.scale
+        let pixels = CGSize(width: (fill.width * scale).rounded(.up), height: (fill.height * scale).rounded(.up))
+        return ("\(url)#\(Int(pixels.width))x\(Int(pixels.height))", nil, pixels)
+    }
+
     @MainActor
     private static func warm(_ url: String, maxDimension: CGFloat) async {
         let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
@@ -3218,29 +3232,30 @@ enum FixedFocusImages {
     /// placeholder — `FixedFocusPlaceholder`), false once it's in, or when
     /// there's none to wait for.
     @MainActor
-    static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat,
+    static func load(_ url: String?, into view: UIImageView, maxDimension: CGFloat, fill: CGSize? = nil,
                      waiting: ((Bool) -> Void)? = nil) {
         let slot = ObjectIdentifier(view)
         requested[slot] = url
         guard let url else { view.image = nil; waiting?(false); return }
-        let memoryKey = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
+        let (memoryKey, budget, fillPixels) = sizing(url, maxDimension: maxDimension, fill: fill)
         if let hit = ImageCache.shared.image(for: memoryKey) {
             show(hit, in: view, key: memoryKey, url: url, waiting: waiting)
             return
         }
         view.image = nil
         waiting?(true)
-        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
         // Dropped, not decoded, once the view has asked for another
         // (a held Left/Right: the box has moved on).
         let still: @MainActor () -> Bool = { requested[slot] == url }
         Task { @MainActor [weak view] in
-            var image = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: memoryKey,
-                                                          still: still)
+            var image = await ImageCache.shared.diskImage(for: url, budget: budget, fill: fillPixels,
+                                                          memoryKey: memoryKey, still: still)
             if image == nil, still(), let remote = URL(string: url),
                let data = try? await ImageCache.shared.download(remote) {
                 // Off the main thread (it decoded here, mid-scroll).
-                image = await DecodeGate.shared.run(.now) { ImageCache.decodeDownsampled(data, budget: budget) }
+                image = await DecodeGate.shared.run(.now) {
+                    ImageCache.decodeDownsampled(data, budget: budget, fill: fillPixels)
+                }
                 // In memory too (under the same key a SwiftUI RemoteImage of
                 // this size uses): the Detail page opened from the billboard
                 // shows the very same picture from its first frame.
