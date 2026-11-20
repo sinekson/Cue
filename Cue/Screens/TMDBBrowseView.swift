@@ -979,6 +979,8 @@ struct DiscoverView: View {
         onBack = {}
     }
 
+    private var showsPlaceholder: Bool { !model.loadedOnce || model.isLoading }
+
     /// The bar's room above the grid (none on a pushed page).
     private var barRoom: CGFloat { opened ? 0 : DiscoverSentence.barRoom }
     private var headerTop: CGFloat { opened ? DiscoverSentence.top - DiscoverSentence.barRoom : DiscoverSentence.top }
@@ -992,13 +994,16 @@ struct DiscoverView: View {
                 // out of focus's way until they're in.
                 header: AnyView(DiscoverSentence(model: model, waitsForTitles: opened, onOpenSubject: onOpenSubject)),
                 headerHeight: DiscoverSentence.height,
-                items: model.loadedOnce ? model.items : FolderPosterGrid.placeholderItems,
+                // Loading (the first titles, or a word changed): placeholders
+                // in the grid's place, as Search's — the old titles no
+                // longer match the sentence.
+                items: showsPlaceholder ? FolderPosterGrid.placeholderItems : model.items,
                 subtitles: Dictionary(model.items.compactMap { item in item.year.map { (item.id, $0) } },
                                       uniquingKeysWith: { first, _ in first }),
                 onSelect: { _ in },
                 onOpenDetails: { item in DetailTransition.shared.open(item) { onOpenInPlace(item) } },
                 onDisplay: { item in Task { await model.loadMore(after: item) } },
-                placeholder: !model.loadedOnce,
+                placeholder: showsPlaceholder,
                 back: gridBack,
                 // The tab: the words first, and Back's way up; filled in,
                 // the titles, Back leaving from their first line.

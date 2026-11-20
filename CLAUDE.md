@@ -934,7 +934,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   episode out: sequels and long runners too, a seasonal chart's way),
   years and decades by first release (decided 2026-11-19: anime seasons
   live here, not in Upcoming); the grid (`FolderPosterGrid`, `headerFirst`) under
-  it, starting points (presets) and the count beside them. TMDB's
+  it (loading, the first titles or a word changed: placeholders in its
+  place, focus staying on the words, the titles taking over in one fade
+  and swelling once, as Search's; the old titles left under a changed
+  sentence read as nothing happening), starting points (presets) and the count beside them. TMDB's
   discover behind it; anime = Animation + Japanese; fantasy / sci-fi
   shows split TMDB's one genre by fantasy's keywords; movies & shows
   mixed one of each in turn. Rating by IMDb's own file and the badges'

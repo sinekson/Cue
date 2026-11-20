@@ -336,6 +336,9 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
                 }
                 self.collectionView.layoutIfNeeded()
             }
+            // The titles in: they swell a little and settle, as Search's
+            // new results (the sign that what's shown is new).
+            if !isPlaceholder { FixedFocusMotion.pulse(collectionView.visibleCells) }
         } else if headerFocused {
             UIView.performWithoutAnimation { collectionView.reloadSections(IndexSet(integer: 0)) }
         } else {
