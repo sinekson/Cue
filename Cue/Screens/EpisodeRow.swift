@@ -37,7 +37,15 @@ struct EpisodeRowState: Equatable {
 /// recomputed per frame. Kept per picture and strength.
 @MainActor
 enum BlurredBackdrop {
-    private static let cache = NSCache<NSString, UIImage>()
+    /// A few seasons' worth (each ~1 MB); unlimited it kept every one.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 60
+        return cache
+    }()
+    /// One context for every blur (made each time, it cost tens of ms),
+    /// its intermediates not kept.
+    nonisolated private static let context = CIContext(options: [.cacheIntermediates: false])
     /// The working width.
     private static let width: CGFloat = 640
     /// The blur's radius, in the working width's pixels.
@@ -64,7 +72,6 @@ enum BlurredBackdrop {
             let output = input.clampedToExtent()
                 .applyingGaussianBlur(sigma: strength)
                 .cropped(to: input.extent)
-            let context = CIContext()
             guard let result = context.createCGImage(output, from: input.extent) else { return nil }
             return UIImage(cgImage: result)
         }.value

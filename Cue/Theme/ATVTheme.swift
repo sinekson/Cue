@@ -77,8 +77,11 @@ enum BandsPicture {
     static let shared = context()
 
     static func context() -> CIContext {
+        // Its intermediates not kept: a drawing is made once per title, and
+        // kept they held tens of MB (half floats at the screen's size).
         CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                            .workingFormat: CIFormat.RGBAh])
+                            .workingFormat: CIFormat.RGBAh,
+                            .cacheIntermediates: false])
     }
 
     /// The grey picture (nothing picked yet: a first launch), in the

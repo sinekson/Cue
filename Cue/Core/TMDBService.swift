@@ -658,16 +658,15 @@ enum TMDBService {
         }
     }
 
-    /// A title's picture for the billboard and Details: the best of TMDB's
-    /// main backdrop and its two best-voted text-free ones for the
-    /// billboard's wide cut (`wideScene`), the main one favoured; else the
-    /// main one. The original file. (Tried: one of several at random each
-    /// time — the others too often looked bad, by whatever rule: the best
-    /// by average, by votes, bars on both.) nil: none, or not asked (no
-    /// key, an id TMDB can't map, the request failed).
+    /// A title's picture for the billboard, Details and Today's Pick: TMDB's
+    /// main backdrop, the original file — the large rows' cards' too, so a
+    /// card opens into the same picture. (Tried: the best of it and two
+    /// text-free ones by faces and light: it ignored resolution and picked a
+    /// 1280 px one at times, blurry at 4K; one of several at random looked
+    /// bad too often.) nil: none, or not asked (no key, an id TMDB can't
+    /// map, the request failed).
     static func backdrop(id: String, type: String) async -> String? {
         guard hasAPIKey, let (tmdbID, isMovie) = await resolveTMDBID(from: id, type: type) else { return nil }
-        if let scene = await wideScene(tmdbID: tmdbID, isMovie: isMovie) { return scene }
         struct Response: Decodable { let backdrop_path: String? }
         let path = (isMovie ? "/movie/" : "/tv/") + "\(tmdbID)"
         guard let body: Response = try? await cachedGet(path, query: [:], fresh: { _ in 7 * day }, keep: 60 * day),
@@ -2779,49 +2778,9 @@ extension TMDBService {
         return chosen
     }
 
-    /// The billboard's and Today's Pick's picture: TMDB's main backdrop or
-    /// one of its two best-voted text-free ones, whichever reads best cut
-    /// to the billboard's band around its faces (`sceneScore`); the main
-    /// one wins unless another is clearly better (others chosen by votes
-    /// looked bad). Kept 30 days.
-    private static let wideCache = DiskCache<String>(name: "tmdb-wide-pictures")
-    /// The billboard card's shape, about (a band across a 16:9 backdrop).
+    /// The billboard card's shape, about (a band across a 16:9 backdrop):
+    /// its faces are found along this cut.
     static let wideAspect: CGFloat = 2.2
-
-    static func wideScene(tmdbID: Int, isMovie: Bool, cachedOnly: Bool = false) async -> String? {
-        let key = "\(isMovie ? "m" : "t"):\(tmdbID)"
-        if let hit = await wideCache.value(for: key, ttl: 30 * 24 * 60 * 60) { return hit.isEmpty ? nil : hit }
-        if cachedOnly { return nil }
-        struct Body: Decodable {
-            struct Backdrop: Decodable { let file_path: String; let vote_average: Double? }
-            struct Images: Decodable { let backdrops: [Backdrop]? }
-            let backdrop_path: String?
-            let images: Images?
-        }
-        guard let body: Body = try? await get(isMovie ? "/movie/\(tmdbID)" : "/tv/\(tmdbID)", query: [
-            "append_to_response": "images", "include_image_language": "null",
-        ]) else { return nil }
-        var paths = (body.images?.backdrops ?? []).filter { !$0.file_path.hasSuffix(".svg") }
-            .sorted { ($0.vote_average ?? 0) > ($1.vote_average ?? 0) }.map(\.file_path)
-        if let main = body.backdrop_path { paths.insert(main, at: 0) }
-        var unique = Set<String>()
-        paths = Array(paths.filter { unique.insert($0).inserted }.prefix(3))
-        let scored = await boundedConcurrentMap(paths, limit: 3) { path -> (String, Double) in
-            guard let url = imageURL(path, size: "w300").flatMap(URL.init),
-                  let (data, _) = try? await URLSession.shared.data(from: url),
-                  let image = UIImage(data: data)?.cgImage else { return (path, -.infinity) }
-            return (path, await withCheckedContinuation { done in
-                sceneQueue.async { done.resume(returning: sceneScore(image, aspect: wideAspect)) }
-            })
-        }
-        let best = scored.enumerated().max { a, b in
-            a.element.1 + (a.offset == 0 ? 0.15 : 0) < b.element.1 + (b.offset == 0 ? 0.15 : 0)
-        }?.element
-        let chosen = best.flatMap { $0.1 > -.infinity ? imageURL($0.0, size: "original") : nil }
-            ?? body.backdrop_path.flatMap { imageURL($0, size: "original") }
-        await wideCache.store(chosen ?? "", for: key)
-        return chosen
-    }
 
     /// Where a picture's faces are, along the cut that fits it to a shape
     /// of `aspect` (0 top / left, 1 bottom / right): across a picture

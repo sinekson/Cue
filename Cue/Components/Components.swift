@@ -621,7 +621,21 @@ struct LogoFit {
         return CGSize(width: width * scale, height: height * scale)
     }
 
-    private static let cache = NSCache<NSString, UIImage>()
+    /// The trimmed logos shown, by their own bytes: room for every logo
+    /// Home and Details show at once and then some (evicted, a card's logo
+    /// would come in after its picture). Unlimited, and each a crop that
+    /// kept its whole original alive, it held every logo ever seen.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 96 << 20
+        cache.countLimit = 400
+        return cache
+    }()
+
+    private static func keep(_ image: UIImage, _ key: String) {
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        cache.setObject(image, forKey: key as NSString, cost: cost)
+    }
 
     /// The logo without its empty (transparent) edges, so its shape is the
     /// drawing's and it starts where the text does. Made once per logo.
@@ -629,7 +643,7 @@ struct LogoFit {
     static func trimmed(_ image: UIImage, key: String) -> UIImage {
         if let hit = cache.object(forKey: key as NSString) { return hit }
         let result = trim(image) ?? image
-        cache.setObject(result, forKey: key as NSString)
+        keep(result, key)
         return result
     }
 
@@ -642,7 +656,7 @@ struct LogoFit {
     static func trimmedInBackground(_ image: UIImage, key: String) async -> UIImage {
         if let hit = cachedTrim(key: key) { return hit }
         let result = await Task.detached(priority: .userInitiated) { trim(image) ?? image }.value
-        cache.setObject(result, forKey: key as NSString)
+        keep(result, key)
         return result
     }
 
@@ -677,10 +691,19 @@ struct LogoFit {
         }
         guard maxX >= minX, maxY >= minY else { return nil }
         if minX == 0, minY == 0, maxX == w - 1, maxY == h - 1 { return nil }
-        // (The buffer's rows run top to bottom, as the image's.)
-        guard let cropped = cg.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1,
-                                                   height: maxY - minY + 1)) else { return nil }
-        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+        // (The buffer's rows run top to bottom, as the image's.) Drawn into
+        // a buffer of its own size: a crop keeps the whole original alive.
+        let width = maxX - minX + 1, height = maxY - minY + 1
+        guard let cropped = cg.cropping(to: CGRect(x: minX, y: minY, width: width, height: height)),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: 0,
+                                      space: cg.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+                                          ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let copy = context.makeImage() else { return nil }
+        return UIImage(cgImage: copy, scale: image.scale, orientation: image.imageOrientation)
     }
 }
 

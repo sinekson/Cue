@@ -783,10 +783,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   and time to the probe when it runs dry. Warm, the whole of Home was done
   5.7 s after launch.
 - **Pictures**: posters and the box from add-ons (honoured: we're a Nuvio
-  client); billboard, Details and Today's Pick from TMDB's backdrop, the best of
-  the main one and its two best-voted text-free ones for the billboard's
-  band (`TMDBService.wideScene`: Top 10's scoring on a 2.2:1 cut, the main
-  one favoured; 30 days on disk); on Home's card and Today's Pick moved
+  client); billboard, Details, Today's Pick and the large rows' cards
+  from TMDB's main backdrop, the same picture everywhere (decided
+  2026-11-20; choosing among it and two text-free ones by faces and light,
+  `wideScene`, ignored resolution: The Chosen got a 1280 px one, blurry at
+  4K); on Home's card and Today's Pick moved
   up or down to keep its faces in (`faceCentre`, the cards' rule). Decoded at a few
   named sizes (`PictureSize`: poster, landscape, card logo, screen, logo),
   each its largest on screen at the screen's scale, nothing more (1.5× and
