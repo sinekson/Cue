@@ -1021,10 +1021,25 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Upcoming** (prototype, 2026-11-19; `UpcomingModel`/`UpcomingView`
   at the end of `TMDBBrowseView.swift`): a calendar (the user rejected
   rows here: a calendar look, after an anime release chart). Days as
-  columns along a strip, today held at the second spot; each day a
-  square tile (the day's first title, the focused line's while focus is
-  in it) with its weekday and date, then its lines (name over "S2:E7",
-  the menus' row focus); over five lines a day takes another column.
+  columns along a strip, every day (an empty one too), five across (the
+  sixth peeking), opening with today second, moving focus: the strip
+  moves a column only when focus goes past the five in view (today
+  held at the second spot was before), one column a day:
+  hairline separators (ink 16 %, a week's start 34 %); each day's header
+  the day's first title's picture, edge to edge in the cell (no corners,
+  16:9), still whatever focus does, the weekday over the date on it over
+  a shade (white: on a picture), "TODAY" and its date on a light plate,
+  the month beside the 1st; an empty day's header on the page; a rule
+  under the headers; above them the first day in view's month at the rows' edge
+  ("November 2026"); under the rule the day's lines, no pictures (the
+  name over "S2:E7", the menus' row focus), moving focus, scrolling
+  under the rule as needed, a 28 pt fade there, each day on its own, a
+  day left stays as it was; a faint fill on today's column (trying
+  2026-11-20; tried before: a picture per line, beside the name
+  (cramped) and over it; a square tile per day atop its lines following
+  focus (standing still, the lines under it; then scrolling with them);
+  fixed focus; six columns, a day taking a second column, all days
+  scrolling together).
   Yours first (followed: watched, started, saved), then TMDB's popular
   shows airing (no news, reality, soap, talk, nor dailies), films
   opening in your country, the season's popular anime (AniList, no key;
