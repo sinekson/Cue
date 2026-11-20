@@ -245,7 +245,7 @@ enum BandsPicture {
     /// Vision, which lifts colour far more than light: tuned there; 0.8
     /// and 1.0 were tried), Details' (`strong`).
     static let saturation = 1.2
-    static let strongSaturation = 1.8
+    static let strongSaturation = 1.5
     /// The play stage's: a step past Details', the same bands deepening as
     /// it comes in (closer to the film).
     static let stageSaturation = 2.2

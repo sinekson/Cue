@@ -675,7 +675,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`captionRoom`: rows with no second line reserve one, not two); About's band white over the page in light. The
   page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
-  bands from its picture, stronger — each colour's saturation 1.8× the picture's (k-means and the blur greyed them: barely noticeable), dimmed 30 % (40 % before), ceiling 0.34; light a
+  bands from its picture, stronger — each colour's saturation 1.5× the picture's (1.8 was before; k-means and the blur greyed them: barely noticeable), dimmed 30 % (40 % before), ceiling 0.34; light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
   the press finds them; without it Details read as Home; each picture's
   colours (`palette`, a few numbers) kept for 300 titles, worked out as
@@ -843,7 +843,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   way into the player goes through Details' card, where Details has it
   (`StagePictureView.detailsCard`, its picture moved for faces, its
   bottom fade), on the title's bands as Details' page, following the
-  setting, a step more vivid (saturation 2.2: Home 1.2, Details 1.8;
+  setting, a step more vivid (saturation 2.2: Home 1.2, Details 1.5;
   the same layout deepening as the stage comes in, closer to the film;
   `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
   setting were first: a second change, and lights down goes dark
@@ -1082,7 +1082,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
   one Home title's TMDB backdrop as its colours: up to four main ones
   (k-means), each 1.2× the picture's saturation (1.4× read too
-  colourful; 0.8× and 1.0× tried; Details' 1.8×), the darkest the base, the rest soft pools in a random layout
+  colourful; 0.8× and 1.0× tried; Details' 1.5×), the darkest the base, the rest soft pools in a random layout
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
   bands; dark, light's mirror: sunk to 0.05–0.22 (`sunk`; 0.07–0.30 too light), a dark grey
