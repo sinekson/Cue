@@ -248,7 +248,7 @@ enum BandsPicture {
     static let strongSaturation = 1.5
     /// The play stage's: a step past Details', the same bands deepening as
     /// it comes in (closer to the film).
-    static let stageSaturation = 2.2
+    static let stageSaturation = 1.8
 }
 
 /// The same numbers for the same seed (a picture's layout drawn again).

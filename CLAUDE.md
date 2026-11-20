@@ -843,7 +843,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   way into the player goes through Details' card, where Details has it
   (`StagePictureView.detailsCard`, its picture moved for faces, its
   bottom fade), on the title's bands as Details' page, following the
-  setting, a step more vivid (saturation 2.2: Home 1.2, Details 1.5;
+  setting, a step more vivid (saturation 1.8, 2.2 before: Home 1.2, Details 1.5;
   the same layout deepening as the stage comes in, closer to the film;
   `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
   setting were first: a second change, and lights down goes dark
