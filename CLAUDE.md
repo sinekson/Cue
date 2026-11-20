@@ -1029,14 +1029,33 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   card only when focus goes past the four in view. At the card's top
   the day's first title's picture (16:9), still whatever focus does, the
   date over the weekday low on it (the weekday lowest) over a shade to
-  85 % black (white: on a picture), "TODAY" and its date on a light
-  plate, the month beside the 1st; under it on the flat fill
-  (`FlatControl.rest`) its titles, the name over "S2:E7", focused the
-  white plate inside the card (corners concentric, 10 pt in, not
-  grown), scrolling as focus moves, each day on its own, a day left
+  85 % black (white: on a picture), "TODAY" and its date dark on the
+  selected tab's pill as light mode draws it (white 55 %, 10 pt
+  corners; a faint white and the badges' dark plate were hard to read,
+  solid white too loud), the month beside the 1st; the picture's foot a hard edge; the
+  card's fill the page's flat grey (`FlatControl.rest`; the picture's
+  colour, `SourceTint` sampled, as an opaque shade at several strengths
+  and as a thin wash over the grey, was tried 2026-11-20: calmer
+  without); the picture fading into the colour was not
+  liked: no colour on the picture); under it its titles, the name over "S2:E7" (anime with
+  AniList's time: "E8 · 17:30"), nothing behind them at rest (Settings'
+  faint plates were not meant), 12 pt apart; focused shaped as Settings'
+  tall rows (trying; 20 pt corners, 14 pt in from the card's sides):
+  the top bar's focus: its solid white
+  (`DetailActionButton.focusFill`), its shadow (35 %, 12 pt, 6 down),
+  dark words (Settings' glass highlight and 16 pt shadow were before),
+  the platter 4.5 pt larger each side; the same quick move both ways, 0.12 s: growing from the
+  row's size while fading in, shrinking back while fading out, the
+  highlight always there, size and opacity animated (Settings' 0.18 s
+  swap blinked; the top bar's slow fade out, 0.28 s, was tiring in a
+  list); the scroll keeps the shadow clear of the
+  lines' fades (cut by them as lines moved: a flicker) (tried: the white
+  plate with dark words; a white barely of the card's hue; the card's
+  colour lit with a shadow, grown 4 pt a side), scrolling as focus moves, each day on its own, a day left
   stays as it was, fading out under the picture (20 pt) and over the
   last 110 pt to the screen's foot (the focused line kept above it).
-  The day with focus grows 2 %, a soft shadow under it (the cards'
+  The day with focus grows 2 %, its grey a small step lighter
+  (trying: 0.17 / 0.4 over the rest's 0.13 / 0.32), a soft shadow under it (the cards'
   6 % was far too strong on a card this tall);
   past days dimmed (`peekAlpha`). Above, the first day in view's month
   as Home's row names (their font, ink, line and

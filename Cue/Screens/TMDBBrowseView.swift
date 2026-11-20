@@ -1672,10 +1672,13 @@ final class UpcomingModel: ObservableObject {
                       let date = calendar.date(byAdding: .day, value: 7 * week, to: next),
                       date >= start, date < end else { continue }
                 let day = calendar.startOfDay(for: date)
+                // AniList knows the minute: the time it airs, here.
+                let time = date.formatted(date: .omitted, time: .shortened)
                 out.append((1002 + 3 * index, Entry(
                     id: "anime-\(show.id)-\(episode)", item: item, name: show.name, date: day,
                     picture: item.background ?? show.banner ?? show.cover,
-                    info: episode == 1 ? "E1 · Premiere" : "E\(episode)", mine: false, episode: nil)))
+                    info: (episode == 1 ? "E1 · Premiere" : "E\(episode)") + " · " + time,
+                    mine: false, episode: nil)))
             }
         }
         return out
@@ -1929,9 +1932,12 @@ struct UpcomingView: View {
     /// Moving focus: scrolled just enough to show the focused line, clear
     /// of the fade at the foot, the top line just under the rule's fade.
     private static func scroll(_ scroll: CGFloat, showing place: ClosedRange<CGFloat>) -> CGFloat {
-        let foot = room - UpcomingDay.foot
+        // The focused plate's shadow kept out of the fades too: in them it
+        // was cut by the gradient as the lines moved (a flicker).
+        let foot = room - UpcomingDay.foot - UpcomingLine.shadowBelow
         if place.upperBound - scroll > foot { return place.upperBound - foot }
-        if place.lowerBound - scroll < UpcomingDay.edge { return max(0, place.lowerBound - UpcomingDay.edge) }
+        let top = UpcomingDay.edge + UpcomingLine.shadowAbove
+        if place.lowerBound - scroll < top { return max(0, place.lowerBound - top) }
         return scroll
     }
 }
@@ -1946,8 +1952,8 @@ private struct UpcomingPlaces: PreferenceKey {
 /// A day of the calendar as a tall card (the cards' corners, no rim, the
 /// cards' gap between days), running past the screen's foot: at its top
 /// the day's first title's picture, still (focus doesn't change it), the
-/// date over the weekday low on it over a shade; under it on the flat
-/// fill its titles, scrolling as focus moves, each day on its own, fading
+/// date over the weekday low on it over a shade; under it, a hard edge
+/// apart, on the page's flat grey its titles, scrolling as focus moves, each day on its own, fading
 /// out under the picture and toward the screen's foot. The day with focus
 /// grows a little, a soft shadow under it; past days dimmed.
 private struct UpcomingDay: View {
@@ -1968,12 +1974,14 @@ private struct UpcomingDay: View {
     static let foot: CGFloat = 110
     /// The titles' plates inside the card, each side (their corners
     /// concentric with the card's).
-    static let inset: CGFloat = 10
+    static let inset: CGFloat = 14
     /// The card's height: past the screen's foot, its end never seen.
     static var height: CGFloat { 1080 - UpcomingView.stripTop + 60 }
     /// Grown a little: 2 % (22 pt across, 6 %, was far too strong on a
     /// card this tall).
     static let lift: CGFloat = 1.02
+    /// The focused day's fill: `FlatControl.rest` (0.13 / 0.32) a step on.
+    static let litFill = CueInk.fill(dark: 0.17, light: 0.4)
 
     private var focused: UpcomingModel.Entry? {
         column.entries.first { $0.id == focus.wrappedValue }
@@ -1989,6 +1997,8 @@ private struct UpcomingDay: View {
                     RemoteImage(url: picture, maxDimension: width * 2)
                         .frame(width: width, height: Self.header)
                         .clipped()
+                    // The cards' shade, no colour in it: the picture ends in
+                    // a hard edge on the card's colour.
                     LinearGradient(stops: [.init(color: .clear, location: 0.25),
                                            .init(color: .black.opacity(0.5), location: 0.6),
                                            .init(color: .black.opacity(0.85), location: 1)],
@@ -2017,7 +2027,10 @@ private struct UpcomingDay: View {
                 }
         }
         .frame(width: width, height: Self.height, alignment: .topLeading)
-        .background(FlatControl.rest)
+        // The page's flat grey, a small step lighter for the day with focus
+        // (toward the selected grey), with its growth (the picture's colour
+        // as a tint, opaque or a thin wash, was tried: calmer without).
+        .background(on ? Self.litFill : FlatControl.rest)
         .clipShape(shape)
         .shadow(color: .black.opacity(on ? 0.4 : 0), radius: 30, y: 14)
         .scaleEffect(on ? Self.lift : 1)
@@ -2027,7 +2040,7 @@ private struct UpcomingDay: View {
     }
 
     private var lines: some View {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(column.entries) { entry in
                     Button { if let item = entry.item { onOpen(item) } } label: {
                         UpcomingLine(entry: entry, seen: seen(entry))
@@ -2045,9 +2058,8 @@ private struct UpcomingDay: View {
             }
     }
 
-    /// The date over the weekday, the weekday lowest (nearest the
-    /// shade's darkest); on the picture white (dark always), else the
-    /// page's ink.
+    /// The date over the weekday, the weekday lowest (nearest the shade's
+    /// darkest); on the picture white (dark always), else the page's ink.
     private func header(onPicture: Bool) -> some View {
         let day = column.day
         let ink: (CGFloat) -> Color = { onPicture ? .white.opacity($0) : CueInk.color($0) }
@@ -2055,10 +2067,14 @@ private struct UpcomingDay: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(day.formatted(.dateTime.day()))
                     .font(.system(size: 48, weight: .bold).monospacedDigit())
-                    .foregroundStyle(ink(FixedFocusText.primary))
+                    .foregroundStyle(today && onPicture ? FlatControl.contentOnFocus : ink(FixedFocusText.primary))
                     .padding(.horizontal, today ? 14 : 0)
-                    .background(today ? RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(onPicture ? Color.white.opacity(0.22) : FlatControl.selected) : nil)
+                    // On the picture the selected tab's pill as light mode
+                    // draws it (white 55 %), the number dark (a faint white,
+                    // the badges' dark plate and solid white were tried),
+                    // else the selected grey.
+                    .background(today ? RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(onPicture ? Color.white.opacity(0.55) : FlatControl.selected) : nil)
                     .padding(.leading, today ? -14 : 0)
                 if showsMonth {
                     Text(day.formatted(.dateTime.month(.abbreviated)).uppercased())
@@ -2080,22 +2096,54 @@ private struct UpcomingDay: View {
     }
 }
 
-/// One title in a day's card: the show over its "S2:E7"; focused, the
-/// white plate behind it, dark words, inside the card (its corners
-/// concentric with the card's; not grown: the day's card grows).
+/// One title in a day's card: nothing behind it at rest; focused, shaped
+/// as Settings' tall rows with the top bar's focus: its white, its shadow,
+/// dark words,
+/// the platter 4.5 pt larger each side, a soft shadow (Settings' own
+/// values, `SettingsMetrics`), inside the card.
 private struct UpcomingLine: View {
     @Environment(\.isFocused) private var isFocused
     let entry: UpcomingModel.Entry
     let seen: Bool
 
+    /// Settings' tall rows' corners (30 on 119 pt) for a row this tall.
+    static let radius: CGFloat = 20
+    /// The focused shadow (the top bar's focus: 35 %, 12 pt, 6 down), kept
+    /// out of the lines' fades by the scroll (in them it was cut as lines
+    /// moved).
+    static let shadowRadius: CGFloat = 12
+    static let shadowDrop: CGFloat = 6
+    static var shadowAbove: CGFloat { shadowRadius - shadowDrop + SettingsMetrics.focusGrowth }
+    static var shadowBelow: CGFloat { shadowRadius + shadowDrop + SettingsMetrics.focusGrowth }
+
+    /// The highlight shown, and grown: the same quick move both ways
+    /// (0.12 s), growing from the row's size while fading in, shrinking
+    /// back while fading out, so the old is gone as the new comes. Always
+    /// there, only its size and opacity animated (a swapped view blinked;
+    /// the top bar's slow fade out, 0.28 s, was tiring in a list).
+    @State private var lit = false
+    @State private var grown = false
+    static let time = 0.12
+
     var body: some View {
         text
-        .padding(.horizontal, 24 - UpcomingDay.inset)
-        .padding(.vertical, 10)
-        .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Spotlight.cornerRadius - UpcomingDay.inset, style: .continuous)
-            .fill(isFocused ? FlatControl.focus : .clear))
-        .animation(FlatControl.focusChange, value: isFocused)
+            .padding(.horizontal, 24 - UpcomingDay.inset)
+            .padding(.vertical, 14)
+            .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, alignment: .leading)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                shape.fill(DetailActionButton.focusFill)
+                    .padding(grown ? -SettingsMetrics.focusGrowth : 0)
+                    .shadow(color: .black.opacity(0.35), radius: Self.shadowRadius, y: Self.shadowDrop)
+                    .compositingGroup()
+                    .opacity(lit ? 1 : 0)
+            }
+            .scaleEffect(grown ? SettingsMetrics.focusScale : 1)
+            .onAppear { if isFocused { lit = true; grown = true } }
+            .onChange(of: isFocused) { _, focused in
+                withAnimation(.linear(duration: Self.time)) { lit = focused }
+                withAnimation(.easeOut(duration: Self.time)) { grown = focused }
+            }
     }
 
     private var text: some View {
@@ -2103,13 +2151,15 @@ private struct UpcomingLine: View {
             Text(entry.name)
                 .font(.system(size: 24, weight: .medium))
                 .lineLimit(2)
-                .foregroundStyle(isFocused ? FlatControl.contentOnFocus : CueInk.color(seen ? FixedFocusText.secondary : FixedFocusText.primary))
+                .foregroundStyle(lit ? SettingsMetrics.focusedText
+                                 : CueInk.color(seen ? FixedFocusText.secondary : FixedFocusText.primary))
             HStack(spacing: 8) {
                 if seen { Image(systemName: "checkmark") }
                 Text(entry.info)
             }
             .font(.system(size: 24, weight: .regular))
-            .foregroundStyle(isFocused ? FlatControl.contentOnFocus.opacity(0.7) : CueInk.color(seen ? FixedFocusText.tertiary : FixedFocusText.body))
+            .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6)
+                             : CueInk.color(seen ? FixedFocusText.tertiary : FixedFocusText.body))
         }
     }
 }
