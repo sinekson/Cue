@@ -796,7 +796,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   card cut from a picture of another shape (tall cards, Top 10's squares,
   Today's Pick) decoded just large enough to cover it (`fill(_:)`: a
   longest side can't tell a poster from a backdrop; before, a square
-  borrowed the tall card's size, up to 18 MB a card). On disk the original plus
+  borrowed the tall card's size, up to 18 MB a card). Full-screen
+  pictures (billboard, Details, the stage) at the panel's 3840 (2560, 15 MB
+  not 33, was tried 2026-11-20: noticeably softer on the TV). On disk the original plus
   a copy at each size decoded smaller (`keepResized`), read first, so a
   disk read doesn't decode a 4K original again. Three decodes at a time,
   never on the main thread (`DecodeGate`): what's on screen first, with a
@@ -1276,7 +1278,7 @@ mid-move).
   curtain, so the first presses (Details, its colours and faces, the
   stage) find everything ready (felt 2026-11-19: right after launch the
   first openings still waited a little).
-- Home performance (render-bound: glass/blur/scrims, 2560 px backdrop cap) —
+- Home performance (render-bound: glass/blur/scrims) —
   parked until features are done.
 - TMDB's logo on Licenses & Credits (its terms ask for it; the notice is there).
 - Inter's OFL text and copyright notice to ship with the fonts (`Cue/Player/Fonts/`); Licenses & Credits lists it.

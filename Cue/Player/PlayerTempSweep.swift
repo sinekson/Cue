@@ -1112,8 +1112,11 @@ enum MemoryCensus {
         var lines = [
             "footprint \(String(format: "%.0f MB", PlayerProbe.footprintMB())) · pictures in views \(mb(shown + hidden))"
                 + " (on screen \(mb(shown)), off screen or hidden \(mb(hidden))) · \(windows) windows",
-            "image cache \(mb(ImageCache.shared.memoryCost)) of \(mb(PerformanceProfile.imageCacheBytes))",
+            "image cache \(mb(ImageCache.shared.memoryCost)) of \(mb(PerformanceProfile.imageCacheBytes))"
+                + { let d = ImageCache.shared.duplicates
+                    return d.pictures > 0 ? " · \(d.pictures) at two sizes or more, \(mb(d.bytes)) in the extra copies" : "" }(),
         ]
+        lines += ImageCache.shared.duplicateSizes.prefix(12).map { "  twice: " + $0 }
         for (key, value) in owners.sorted(by: { $0.value.bytes > $1.value.bytes }).prefix(20) {
             lines.append("  \(mb(value.bytes).padding(toLength: 8, withPad: " ", startingAt: 0)) \(value.count) × \(key)")
         }

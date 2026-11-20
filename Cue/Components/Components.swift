@@ -93,6 +93,13 @@ final class ImageCache: @unchecked Sendable {
     private let memory = NSCache<NSString, UIImage>()
     /// What the memory cache holds now, in bytes (the census, Settings).
     var memoryCost: Int { costs.total }
+    /// Pictures in memory at more than one size, and the smaller copies' bytes.
+    var duplicates: (pictures: Int, bytes: Int) { costs.duplicates() }
+    var duplicateSizes: [String] { costs.duplicateSizes() }
+    /// A memory key's picture: the key without its size (`#…`).
+    nonisolated static func url(ofKey key: String) -> String {
+        key.lastIndex(of: "#").map { String(key[..<$0]) } ?? key
+    }
     private let costs = CostLedger()
     /// CONCURRENT and user-initiated. As a serial `.utility` queue this made
     /// the best-cached path the slowest one: every newly visible poster queued
@@ -369,7 +376,7 @@ final class ImageCache: @unchecked Sendable {
     private func insertMemory(_ image: UIImage, for key: String) {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale) * 4
         if let old = memory.object(forKey: key as NSString) { costs.remove(old) }
-        costs.add(image, cost)
+        costs.add(image, cost, key: key)
         memory.setObject(image, forKey: key as NSString, cost: cost)
     }
 
@@ -746,7 +753,8 @@ enum PictureSize {
     }
     /// A landscape card's logo.
     static var cardLogo: CGFloat { landscape * 0.55 }
-    /// Full screen: the billboard, Details, the stage.
+    /// Full screen: the billboard, Details, the stage, at the panel's own
+    /// pixels (2560 px on the 4K boxes was tried: the softening showed).
     static var screen: CGFloat { StagePictureView.pictureSize.width }
     /// The billboard's and Details' logo.
     static var logo: CGFloat { TitleBlock.logoWidth }
@@ -2097,22 +2105,59 @@ struct WrapRow: Layout {
     }
 }
 
-/// The image cache's bytes, kept as it adds and evicts (NSCache won't say).
+/// The image cache's bytes and its copies by picture, kept as it adds and
+/// evicts (NSCache says neither).
 private final class CostLedger: NSObject, NSCacheDelegate, @unchecked Sendable {
+    /// One decoded copy of a picture in memory: its key and pixels.
+    struct Copy { let key: String; let width: Int; let height: Int; let cost: Int }
     private let lock = NSLock()
-    private var costs: [ObjectIdentifier: Int] = [:]
+    private var byImage: [ObjectIdentifier: (url: String, copy: Copy)] = [:]
+    private var byURL: [String: [Copy]] = [:]
     private var sum = 0
     var total: Int { lock.lock(); defer { lock.unlock() }; return sum }
 
-    func add(_ image: UIImage, _ cost: Int) {
+    func add(_ image: UIImage, _ cost: Int, key: String) {
         lock.lock(); defer { lock.unlock() }
-        sum += cost - (costs[ObjectIdentifier(image)] ?? 0)
-        costs[ObjectIdentifier(image)] = cost
+        removeLocked(ObjectIdentifier(image))
+        let url = ImageCache.url(ofKey: key)
+        let copy = Copy(key: key, width: Int(image.size.width * image.scale),
+                        height: Int(image.size.height * image.scale), cost: cost)
+        byImage[ObjectIdentifier(image)] = (url, copy)
+        byURL[url, default: []].append(copy)
+        sum += cost
     }
 
     func remove(_ image: AnyObject) {
         lock.lock(); defer { lock.unlock() }
-        sum -= costs.removeValue(forKey: ObjectIdentifier(image)) ?? 0
+        removeLocked(ObjectIdentifier(image))
+    }
+
+    private func removeLocked(_ id: ObjectIdentifier) {
+        guard let (url, copy) = byImage.removeValue(forKey: id) else { return }
+        sum -= copy.cost
+        byURL[url]?.removeAll { $0.key == copy.key }
+        if byURL[url]?.isEmpty == true { byURL[url] = nil }
+    }
+
+    func copies(of url: String) -> [Copy] {
+        lock.lock(); defer { lock.unlock() }
+        return byURL[url] ?? []
+    }
+
+    /// Pictures held at more than one size, and those copies' bytes.
+    func duplicates() -> (pictures: Int, bytes: Int) {
+        lock.lock(); defer { lock.unlock() }
+        let many = byURL.values.filter { $0.count > 1 }
+        return (many.count, many.reduce(0) { $0 + $1.reduce(0) { $0 + $1.cost } - ($1.map(\.cost).max() ?? 0) })
+    }
+
+    /// The pictures held at more than one size, each copy's pixels.
+    func duplicateSizes() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return byURL.filter { $0.value.count > 1 }.map { url, copies in
+            (url.split(separator: "/").last.map(String.init) ?? url) + "  "
+                + copies.map { "\($0.width)×\($0.height)" }.joined(separator: ", ")
+        }
     }
 
     func cache(_ cache: NSCache<AnyObject, AnyObject>, willEvictObject obj: Any) {
