@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import UIKit
 
 /// Coalesces concurrent identical requests: if the same key is already being
 /// fetched, later callers await the SAME task instead of firing their own
@@ -270,7 +271,7 @@ struct CardBadge: Codable, Equatable, Sendable {
 final class TitleRecords {
     static let shared = TitleRecords()
 
-    struct Record: Codable {
+    struct Record: Codable, Equatable {
         /// A series' seasons and episodes (specials left out).
         var size: TMDBService.ShowSize?
         /// The latest episode aired when the list was read, and the ones
@@ -308,6 +309,8 @@ final class TitleRecords {
     private var records: [String: Record] = [:]
     private var running: [String: Task<Void, Never>] = [:]
     private var saveTask: Task<Void, Never>?
+    /// Changed since the last save.
+    private var dirty = false
     private let file: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("CueCache/title-records.json")
 
@@ -316,6 +319,11 @@ final class TitleRecords {
            let stored = try? JSONDecoder().decode([String: Record].self, from: data) {
             let cutoff = Date().addingTimeInterval(-Self.forgetAfter)
             records = stored.filter { $0.value.usedAt > cutoff }
+        }
+        // Saved at once when the app goes away (else every 30 s at most).
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                               object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { TitleRecords.shared.saveNow() }
         }
         // (The separate caches these replace.)
         Task.detached(priority: .utility) {
@@ -335,6 +343,7 @@ final class TitleRecords {
         records = [:]
         saveTask?.cancel()
         saveTask = nil
+        dirty = false
         try? FileManager.default.removeItem(at: file)
     }
 
@@ -470,15 +479,17 @@ final class TitleRecords {
             }
         }
         let after = records[item.id]
-        if before == nil || after?.size != before?.size || after?.ratings != before?.ratings
+        // Saved when an answer came, or its use is a day newer (`forgetAfter`
+        // counts days): a look alone rewrote the whole file every few seconds.
+        var compared = after
+        compared?.usedAt = before?.usedAt ?? Date()
+        if compared != before || (before.map { Date().timeIntervalSince($0.usedAt) > Self.maxAge } ?? true) {
+            scheduleSave()
+        }
+        return before == nil || after?.size != before?.size || after?.ratings != before?.ratings
             || after?.tagline != before?.tagline || after?.tmdbStatus != before?.tmdbStatus
             || after?.lastAired != before?.lastAired || after?.upcoming != before?.upcoming
-            || after?.finale != before?.finale || after?.limited != before?.limited {
-            scheduleSave()
-            return true
-        }
-        scheduleSave()
-        return false
+            || after?.finale != before?.finale || after?.limited != before?.limited
     }
 
     private func once(_ key: String, _ work: @escaping @MainActor () async -> Void) async {
@@ -539,19 +550,30 @@ final class TitleRecords {
         records[item.id] = record
     }
 
+    /// Saved 30 s after the first change, the rest of them with it (every
+    /// 3 s rewrote the whole file 13 times in two minutes of browsing).
     private func scheduleSave() {
+        dirty = true
         guard saveTask == nil else { return }
         saveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
-            saveTask = nil
-            let snapshot = records
-            let file = file
-            Task.detached(priority: .utility) {
-                guard let data = try? JSONEncoder().encode(snapshot) else { return }
-                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
-                                                         withIntermediateDirectories: true)
-                try? data.write(to: file, options: .atomic)
-            }
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            saveNow()
+        }
+    }
+
+    private func saveNow() {
+        saveTask?.cancel()
+        saveTask = nil
+        guard dirty else { return }
+        dirty = false
+        let snapshot = records
+        let file = file
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
         }
     }
 }
@@ -669,6 +691,62 @@ enum CacheStorage {
             try? fm.removeItem(at: caches.appendingPathComponent("cue-home-catalogs.json"))
             if !playing { PlayerTempSweep.sweep() }
         }.value
+    }
+
+    /// The disk caches' folders: how long an entry is any use (the longest
+    /// its readers keep it; older ones they'd delete when met, but nothing
+    /// met the ones never read again) and, for the big ones, a size past
+    /// which the oldest go. Folders no longer used are removed.
+    private static let tidyRules: [(name: String, days: Double, cap: Int64?)] = [
+        ("tmdb-raw", 60, 128 << 20), ("meta", 30, 64 << 20), ("tmdb-imdb-ids", 90, nil),
+        ("tmdb-traits", 30, nil), ("tmdb-card-pictures", 30, nil), ("tmdb-facts", 2, nil),
+        ("tmdb-news", 2, nil), ("mdblist-ratings-v2", 14, nil),
+    ]
+    private static let retired = ["tmdb-wide-pictures"]
+
+    /// Once a day, a while after launch, at background priority: the disk
+    /// caches kept to their rules (`tidyRules`). Unbounded, they had grown
+    /// to ~430 MB, tens of thousands of files.
+    static func tidyLater() {
+        Task.detached(priority: .background) {
+            try? await Task.sleep(for: .seconds(90))
+            let fm = FileManager.default
+            let stamp = cue.appendingPathComponent(".tidied")
+            if let last = (try? fm.attributesOfItem(atPath: stamp.path))?[.modificationDate] as? Date,
+               Date().timeIntervalSince(last) < 24 * 60 * 60 { return }
+            let started = Date()
+            var removed = 0
+            var freed: Int64 = 0
+            for name in retired {
+                let url = cue.appendingPathComponent(name)
+                freed += allocated(url, fm)
+                if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+            }
+            let keys: [URLResourceKey] = [.contentModificationDateKey, .totalFileAllocatedSizeKey]
+            for rule in tidyRules {
+                let folder = cue.appendingPathComponent(rule.name)
+                let files = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys)) ?? [])
+                    .compactMap { url -> (url: URL, date: Date, size: Int64)? in
+                        guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                              let date = values.contentModificationDate else { return nil }
+                        return (url, date, Int64(values.totalFileAllocatedSize ?? 0))
+                    }
+                    .sorted { $0.date > $1.date }
+                let cutoff = Date().addingTimeInterval(-rule.days * 24 * 60 * 60)
+                var total: Int64 = 0
+                for file in files {
+                    let over = rule.cap.map { total + file.size > $0 } ?? false
+                    if file.date < cutoff || over {
+                        if (try? fm.removeItem(at: file.url)) != nil { removed += 1; freed += file.size }
+                    } else {
+                        total += file.size
+                    }
+                }
+            }
+            fm.createFile(atPath: stamp.path, contents: nil)
+            AppProbe.life(String(format: "caches tidied — %d files, %.0f MB, %.1f s", removed,
+                                 Double(freed) / 1_048_576, Date().timeIntervalSince(started)))
+        }
     }
 
     private static func allocated(_ url: URL, _ fm: FileManager) -> Int64 {

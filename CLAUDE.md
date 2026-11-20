@@ -824,7 +824,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   MDBList's ratings — all in one file read into memory at launch, so a title
   seen before draws badge, ratings and season count with its text (separate
   async caches per kind came late). Shown as stored, asked again once a day,
-  redrawn only if the answer differs. Launch refreshes what's reachable first
+  redrawn only if the answer differs; saved 30 s after a change and when
+  the app goes to the background (every 3 s rewrote its 860 KB 13 times
+  in two minutes). Launch refreshes what's reachable first
   under the curtain (then the first screen's badges are redrawn,
   `TitleRecords.badgesSettled`), then every Home row's titles in the queue's
   deep band (ratings only for the first 15 each: the badges need the rest
@@ -1164,7 +1166,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   responses, playback files in `tmp`); a new cache gets a row there. Clear
   Cache never touches account, profiles, progress, library, collections,
   settings or search history. Search History: the profile's recent
-  searches and the titles opened from Search. Playback scratch
+  searches and the titles opened from Search. Once a day, 90 s after
+  launch at background priority, the disk caches are kept to their rules
+  (`CacheStorage.tidyLater`: each folder's entries past their readers'
+  longest keep, `tmdb-raw` over 128 MB and `meta` over 64 MB oldest first,
+  retired folders removed; unbounded they reached ~430 MB). The network's
+  own response cache stays: the rows' TMDB lists come from it at launch.
+  Pictures' dates (the trim's order) move at most once a day. Playback scratch
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
   one Home title's TMDB backdrop as its colours: up to four main ones

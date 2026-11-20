@@ -226,8 +226,7 @@ final class ImageCache: @unchecked Sendable {
                     self.insertMemory(prepared, for: memoryKey ?? key)
                     continuation.resume(returning: prepared)
                     self.ioQueue.async { [weak self] in
-                        try? self?.fm.setAttributes([.modificationDate: Date()],
-                                                    ofItemAtPath: resizedURL.path)
+                        self?.markUsed(resizedURL)
                     }
                     return
                 }
@@ -245,8 +244,7 @@ final class ImageCache: @unchecked Sendable {
                 // LRU bookkeeping only — never make the caller wait on a
                 // filesystem attribute write.
                 self.ioQueue.async { [weak self] in
-                    try? self?.fm.setAttributes([.modificationDate: Date()],
-                                                ofItemAtPath: fileURL.path)
+                    self?.markUsed(fileURL)
                 }
             }
         }
@@ -287,6 +285,15 @@ final class ImageCache: @unchecked Sendable {
         writeCacheFile(small, to: fileURL)
     }
 
+    /// A file read: its date moved to now for the trim (oldest go first),
+    /// only once a day — the trim needs no finer, and every read was a
+    /// write (~500 a session). On `ioQueue`.
+    private func markUsed(_ file: URL) {
+        let date = (try? fm.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+        guard date.map({ Date().timeIntervalSince($0) > 24 * 60 * 60 }) ?? false else { return }
+        try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+    }
+
     /// Raw encoded bytes from the disk layer, no decode — for consumers that
     /// decode themselves (the animated collection GIFs). Touches the file's
     /// mtime so a GIF in active rotation survives LRU trimming.
@@ -300,8 +307,7 @@ final class ImageCache: @unchecked Sendable {
                 }
                 continuation.resume(returning: data)
                 self?.ioQueue.async { [weak self] in
-                    try? self?.fm.setAttributes([.modificationDate: Date()],
-                                                ofItemAtPath: fileURL.path)
+                    self?.markUsed(fileURL)
                 }
             }
         }

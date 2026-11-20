@@ -124,6 +124,7 @@ struct CueApp: App {
         UserDefaults.standard.removeObject(forKey: "dev.pipTrail")
         #endif
         PlayerTempSweep.sweepAtLaunch()
+        CacheStorage.tidyLater()
         // The Log (Settings → Developer): on unless switched off. Resolved
         // before anything logs; the file log, its LAN server (:8123) and the
         // main thread's watchdog start with it.
