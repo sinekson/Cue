@@ -753,12 +753,23 @@ final class DiscoverModel: ObservableObject, PreparedPage {
     }
 
 
+    /// Keywords as one more condition (`,`: and); each list's own `|`: any.
+    static func addKeywords(_ ids: String, _ query: inout [String: String]) {
+        query["with_keywords"] = [query["with_keywords"], ids].compactMap { $0 }.joined(separator: ",")
+    }
+
     static func addGenre(_ id: Int, _ query: inout [String: String]) {
         query["with_genres"] = [query["with_genres"], String(id)].compactMap { $0 }.joined(separator: ",")
     }
 
     private static func genre(_ name: String, _ word: String) -> Option {
         Option(id: name, word: word, name: name) { query, isMovie in
+            // Shows have no Romance genre: theirs is by keywords
+            // (`TMDBService.showGenres`).
+            if !isMovie, name == "Romance" {
+                addKeywords(TMDBService.romanceKeywords, &query)
+                return true
+            }
             let id: Int
             if let own = TMDBService.genre(named: name, isMovie: isMovie) {
                 id = own.id
@@ -772,7 +783,8 @@ final class DiscoverModel: ObservableObject, PreparedPage {
             // Shows: TMDB has one "Sci-Fi & Fantasy"; its fantasy is the
             // part with fantasy's keywords, its sci-fi the rest.
             if !isMovie, id == 10765 {
-                query[name == "Fantasy" ? "with_keywords" : "without_keywords"] = fantasyKeywords
+                if name == "Fantasy" { addKeywords(fantasyKeywords, &query) }
+                else { query["without_keywords"] = fantasyKeywords }
             }
             return true
         }
@@ -783,7 +795,7 @@ final class DiscoverModel: ObservableObject, PreparedPage {
 
     static func keyword(_ id: String, _ word: String, _ name: String) -> Option {
         Option(id: "k\(id)", word: word, name: name) { query, _ in
-            query["with_keywords"] = id
+            addKeywords(id, &query)
             return true
         }
     }

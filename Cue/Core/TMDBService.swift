@@ -2391,7 +2391,7 @@ extension TMDBService {
         let name: String?
         let year: Int?
         let logo: String?
-        let genres: [Int]
+        var genres: [Int]
         let keywords: [Int]
         let companies: [Int]
         let networks: [Int]
@@ -2428,8 +2428,9 @@ extension TMDBService {
     static func traits(tmdbID: Int, isMovie: Bool, pictures: Bool = false, bulk: Bool = false) async -> TitleTraits? {
         let language = languageCode
         let key = "\(isMovie ? "m" : "t"):\(tmdbID):\(language)"
-        if let hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil,
+        if var hit = await traitsCache.value(for: key, ttl: traitsTTL), !pictures || hit.backdrop != nil,
            hit.cast != nil {
+            if !isMovie { hit.genres = showGenres(hit.genres, keywords: hit.keywords) }
             return hit
         }
         struct Body: Decodable {
@@ -2501,7 +2502,8 @@ extension TMDBService {
             name: isMovie ? body.title : body.name,
             year: date.flatMap { Int($0.prefix(4)) },
             logo: imageURL(logo?.file_path, size: "original"),
-            genres: (body.genres ?? []).map(\.id),
+            genres: isMovie ? (body.genres ?? []).map(\.id)
+                : showGenres((body.genres ?? []).map(\.id), keywords: keywords.map(\.id)),
             keywords: keywords.map(\.id),
             companies: companies.map(\.id),
             networks: networks.map(\.id),
@@ -2524,6 +2526,28 @@ extension TMDBService {
             await imdbDiskCache.store(imdb, for: idKey)
         }
         return facts
+    }
+
+    /// TMDB's shows have no Romance genre (films' 10749): a show is one by
+    /// its keywords (romance, romcom, love triangle, first love…; not
+    /// "love", "shoujo" or "harem", which say less), Romance second after
+    /// its first genre ("Animation, Romance, Comedy"), so the facts line,
+    /// the taste and Discover read it as a film's.
+    static let romanceKeywords = "9840|9799|128|157303|10048|3691|269719|239884|188237|212760|289844|280003|18425"
+    private static let romanceKeywordIDs = Set(romanceKeywords.split(separator: "|").compactMap { Int($0) })
+
+    /// A list's genre names with a show's Romance (from its traits) added.
+    private static func withRomance(_ names: [String]?, _ facts: TitleTraits, isMovie: Bool) -> [String]? {
+        guard !isMovie, facts.genres.contains(10749), var names, !names.contains("Romance") else { return names }
+        names.insert("Romance", at: min(1, names.count))
+        return names
+    }
+
+    static func showGenres(_ genres: [Int], keywords: [Int]) -> [Int] {
+        guard !genres.contains(10749), keywords.contains(where: romanceKeywordIDs.contains) else { return genres }
+        var out = genres
+        out.insert(10749, at: min(1, out.count))
+        return out
     }
 
     /// A title as Cue's rows weigh it: what the row shows, and its traits.
@@ -2584,7 +2608,7 @@ extension TMDBService {
                 logo: facts.logo ?? "https://images.metahub.space/logo/medium/\(imdb)/img",
                 description: item.description, releaseInfo: item.releaseInfo,
                 imdbRating: item.rating.flatMap { $0 > 0 ? String(format: "%.1f", $0) : nil },
-                genres: item.genres)
+                genres: withRomance(item.genres, facts, isMovie: item.isMovie))
             titles.append(CueTitle(item: meta, tmdbID: item.tmdbID, isMovie: item.isMovie, traits: facts))
         }
         let missed = all.filter { $0.facts == nil }.count

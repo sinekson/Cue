@@ -990,7 +990,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   and swelling once, as Search's; the old titles left under a changed
   sentence read as nothing happening), starting points (presets) and the count beside them. TMDB's
   discover behind it; anime = Animation + Japanese; fantasy / sci-fi
-  shows split TMDB's one genre by fantasy's keywords; movies & shows
+  shows split TMDB's one genre by fantasy's keywords; TMDB's shows have no
+  Romance: a show with romance's keywords is one (`TMDBService.showGenres`,
+  in its traits: facts line, taste, Discover); movies & shows
   mixed one of each in turn. Rating by IMDb's own file and the badges'
   rules (Cue drops, so the count shows only when exact); order "best
   for you" (the default: the rows' taste, `CueRows.tasteModel`, over
@@ -1288,6 +1290,9 @@ mid-move).
 
 ## Open / later
 
+- Genres, soon: TMDB's show genres lack Romance (done by keywords for
+  now, `TMDBService.showGenres`), Horror, Thriller, History; a person's
+  page ignores keywords (Romance, Fantasy for shows); look at it again.
 - Details' Trailers & Extras (TMDB videos, no image galleries — parked
   until the playback work): after More Like This, before Cast & Crew.
 - Presses mid-animation (the rule under Design rules): rows, pages,
