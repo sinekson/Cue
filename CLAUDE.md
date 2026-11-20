@@ -666,8 +666,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   rarely looked for); the name and role on the card over the cards'
   bottom fade (under it, two lines left no peeks), a line each at rest,
   a long one fading out at its end (no "…"), in full when focused,
-  two lines each at most, wrapping upward from the foot, crossfaded
-  (0.25 s) as the card grows (running text is rejected for cards; six
+  two lines each at most, wrapping upward from the foot: the text
+  gliding up on the card's growth (the move's spring), the lines after
+  the first coming in under it on the same spring, the first line broken
+  at a word, its last word fading at rest (trying 2026-11-20; a 0.25 s
+  crossfade of the two layouts was before: the name in two places) (running text is rejected for cards; six
   across left ~38 pt peeks); two lines in view,
   a third coming in a line at a time, the focused line and the one
   before it centred, the rest peeking as rows and dimmed as them

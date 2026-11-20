@@ -1004,9 +1004,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     /// Focused: the name and role in full, wrapping upward from the foot
     /// (two lines each at most: a wrapped name left the role cut at
     /// three); at rest a line each, a long one fading out
-    /// at its end (no "…"). Crossfaded (`onCardFade`) as the card grows.
+    /// at its end (no "…"). Revealed (`setOnCardFull`) as the card grows.
     private var onCardFull = false
-    private static let onCardFade = 0.25
     private static let onCardLines = 2
     /// A cut line's end fading into the card.
     private static let fadeRun: CGFloat = 36
@@ -1216,7 +1215,11 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     }
 
     /// The name and role on the card: from the foot up, the role's lines,
-    /// then the name's.
+    /// then the name's. Each label always holds its full text (two lines
+    /// at most), the same size focused or not; at rest it sits lower, its
+    /// first line in its one line's place, the lines after masked off and
+    /// the first fading out at its end. Focused, it glides up by what the
+    /// lines after need, and they come in under it (`setOnCardFull`).
     private func layoutOnCard() {
         onCardShade.frame = picture.bounds
         onCardText.frame = picture.bounds
@@ -1225,58 +1228,119 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         let step = FixedFocusMetrics.captionLineOffset
         let wrap = onCardName.font.lineHeight.rounded()
         let hasDetail = !onCardDetail.isHidden
-        func lines(_ label: UILabel) -> Int {
-            let text = (label.text ?? "") as NSString
-            let height = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
-                                           options: .usesLineFragmentOrigin,
-                                           attributes: [.font: label.font as Any], context: nil).height
-            return max(1, Int((height / label.font.lineHeight).rounded(.up)))
-        }
-        var nameLines = 1, detailLines = hasDetail ? 1 : 0
-        if onCardFull {
-            let name = lines(onCardName), detail = hasDetail ? lines(onCardDetail) : 0
-            detailLines = min(detail, Self.onCardLines)
-            nameLines = min(name, Self.onCardLines)
-        }
+        let nameLines = onCardLines(onCardName, width: width)
+        let detailLines = hasDetail ? onCardLines(onCardDetail, width: width) : 0
         let foot = picture.bounds.height - 18
         var top = foot - 30
         if hasDetail {
-            top -= CGFloat(detailLines - 1) * wrap
-            onCardDetail.frame = CGRect(x: inset, y: top, width: width, height: 30 + CGFloat(detailLines - 1) * wrap)
+            let extra = CGFloat(detailLines - 1) * wrap
+            if onCardFull { top -= extra }
+            onCardDetail.frame = CGRect(x: inset, y: top, width: width, height: 30 + extra)
             top -= step
         }
-        top -= CGFloat(nameLines - 1) * wrap
-        onCardName.frame = CGRect(x: inset, y: top, width: width, height: 30 + CGFloat(nameLines - 1) * wrap)
-        for (label, count) in [(onCardName, nameLines), (onCardDetail, detailLines)] {
+        let extra = CGFloat(nameLines - 1) * wrap
+        if onCardFull { top -= extra }
+        onCardName.frame = CGRect(x: inset, y: top, width: width, height: 30 + extra)
+        for (label, count) in [(onCardName, nameLines), (onCardDetail, detailLines)] where count > 0 {
             label.numberOfLines = count
-            label.lineBreakMode = onCardFull ? .byTruncatingTail : .byClipping
-            // At rest, a line too long fades out at its end.
-            let cut = !onCardFull && lines(label) > 1
-            if cut {
-                let mask = (label.layer.mask as? CAGradientLayer) ?? CAGradientLayer()
-                mask.frame = label.bounds
-                mask.startPoint = CGPoint(x: 0, y: 0.5)
-                mask.endPoint = CGPoint(x: 1, y: 0.5)
-                mask.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
-                mask.locations = [0, NSNumber(value: Double(1 - Self.fadeRun / max(width, 1))), 1]
-                label.layer.mask = mask
-            } else {
-                label.layer.mask = nil
-            }
+            label.lineBreakMode = .byTruncatingTail
+            onCardMask(label, lines: count, wrap: wrap, animated: false)
         }
     }
 
-    /// Focus on and off: the text in full or a line each, crossfaded.
+    /// A label's lines at the card's text width, two at most.
+    private func onCardLines(_ label: UILabel, width: CGFloat) -> Int {
+        let text = (label.text ?? "") as NSString
+        let height = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                                       options: .usesLineFragmentOrigin,
+                                       attributes: [.font: label.font as Any], context: nil).height
+        return min(max(1, Int((height / label.font.lineHeight).rounded(.up))), Self.onCardLines)
+    }
+
+    /// The label's mask: its first line (fading out at its end while more
+    /// is hidden) and the lines after it (shown only focused). `animated`:
+    /// on the card's growth spring (the move's), else at once.
+    private func onCardMask(_ label: UILabel, lines: Int, wrap: CGFloat, animated: Bool) {
+        let mask = (label.layer.mask as? OnCardMask) ?? OnCardMask()
+        label.layer.mask = mask
+        let cut = lines > 1 && !onCardFull
+        // The fade over the first line's last word (it breaks at a word,
+        // short of the width).
+        let width = max(label.bounds.width, 1)
+        let used = lines > 1 ? Self.firstLineWidth(label, width: width) : width
+        let edge = NSNumber(value: Double(max(used - Self.fadeRun, 0) / width))
+        let end = NSNumber(value: Double(min(used / width, 1)))
+        let colors = [UIColor.black.cgColor, UIColor.black.cgColor,
+                      (cut ? UIColor.clear : UIColor.black).cgColor]
+        let after: Float = onCardFull ? 1 : 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.frame = label.bounds
+        mask.first.frame = CGRect(x: 0, y: 0, width: label.bounds.width, height: lines > 1 ? wrap : label.bounds.height)
+        mask.first.locations = [0, edge, end]
+        mask.after.frame = CGRect(x: 0, y: wrap, width: label.bounds.width, height: max(label.bounds.height - wrap, 0))
+        if animated {
+            // UIKit's spring(duration:bounce: 0) as `FixedFocusMotion.run`.
+            func spring(_ key: String, from: Any?, to: Any) -> CASpringAnimation {
+                let spring = CASpringAnimation(perceptualDuration: Motion.moveDuration, bounce: 0)
+                spring.keyPath = key
+                spring.fromValue = from
+                spring.toValue = to
+                spring.duration = spring.settlingDuration
+                return spring
+            }
+            mask.first.add(spring("colors", from: mask.first.presentation()?.colors ?? mask.first.colors,
+                                  to: colors), forKey: "colors")
+            mask.after.add(spring("opacity", from: mask.after.presentation()?.opacity ?? mask.after.opacity,
+                                  to: after), forKey: "opacity")
+        }
+        mask.first.colors = colors
+        mask.after.opacity = after
+        CATransaction.commit()
+    }
+
+    /// Focus on and off: the text gliding up into its full lines on the
+    /// card's growth (the move's spring), the lines after it coming in
+    /// and the first line's fading end clearing on the same spring (a
+    /// crossfade of the two layouts showed the name in two places at
+    /// once); going, the same back.
     private func setOnCardFull(_ full: Bool, animated: Bool) {
         guard captionOnCard, full != onCardFull else { return }
-        let change = {
-            self.onCardFull = full
-            self.layoutOnCard()
+        onCardFull = full
+        guard animated else { layoutOnCard(); return }
+        FixedFocusMotion.run(duration: Motion.moveDuration, animations: { self.layoutOnCard() }, completion: { _ in })
+        let wrap = onCardName.font.lineHeight.rounded()
+        for label in [onCardName, onCardDetail] where !label.isHidden {
+            onCardMask(label, lines: label.numberOfLines, wrap: wrap, animated: true)
         }
-        guard animated else { change(); return }
-        UIView.transition(with: onCardText, duration: Self.onCardFade,
-                          options: [.transitionCrossDissolve, .beginFromCurrentState, .allowUserInteraction],
-                          animations: change)
+    }
+    /// How far the first line of `label`'s text runs, wrapped at `width`.
+    private static func firstLineWidth(_ label: UILabel, width: CGFloat) -> CGFloat {
+        let storage = NSTextStorage(string: label.text ?? "", attributes: [.font: label.font as Any])
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        guard layout.numberOfGlyphs > 0 else { return width }
+        return min(layout.lineFragmentUsedRect(forGlyphAt: 0, effectiveRange: nil).maxX.rounded(.up), width)
+    }
+
+
+    /// A caption's mask (`onCardMask`): its first line and the rest.
+    private final class OnCardMask: CALayer {
+        let first = CAGradientLayer()
+        let after = CALayer()
+        override init() {
+            super.init()
+            first.startPoint = CGPoint(x: 0, y: 0.5)
+            first.endPoint = CGPoint(x: 1, y: 0.5)
+            after.backgroundColor = UIColor.black.cgColor
+            addSublayer(first)
+            addSublayer(after)
+        }
+        override init(layer: Any) { super.init(layer: layer) }
+        required init?(coder: NSCoder) { fatalError() }
     }
 
     /// The card itself, without its caption (in the cell).
