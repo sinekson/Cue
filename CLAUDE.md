@@ -1059,7 +1059,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   highlight always there, size and opacity animated (Settings' 0.18 s
   swap blinked; the top bar's slow fade out, 0.28 s, was tiring in a
   list); the scroll keeps the shadow clear of the
-  lines' fades (cut by them as lines moved: a flicker) (tried: the white
+  lines' fades (cut by them as lines moved: a flicker) (every line one height, the name and info a line each:
+  the scroll, its end and the fades reckoned from a line's place in the
+  list, never measured; measured, the list's end and the scroll fell out
+  of step, the fade left over the last title) (tried: the white
   plate with dark words; a white barely of the card's hue; the card's
   colour lit with a shadow, grown 4 pt a side), scrolling as focus moves, each day on its own, a day left
   stays as it was, fading out under the picture (20 pt) and over the

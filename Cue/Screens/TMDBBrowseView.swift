@@ -1851,8 +1851,6 @@ struct UpcomingView: View {
     /// How far each day's lines are scrolled under its header (by column
     /// id): only the focused day's moves.
     @State private var scrolls: [String: CGFloat] = [:]
-    /// Each line's place in its day's column (unscrolled).
-    @State private var places: [String: ClosedRange<CGFloat>] = [:]
 
     /// A day's card: four across between the rows' edges, the cards' gap
     /// between, so the days either side peek alike (Home's rows).
@@ -1927,8 +1925,8 @@ struct UpcomingView: View {
         return HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
                 UpcomingDay(column: column, focus: $focus, scroll: scrolls[column.id] ?? 0,
-                            more: (above: (scrolls[column.id] ?? 0) > 0.5,
-                                   below: (scrolls[column.id] ?? 0) < maxScroll(column) - 0.5),
+                            more: (above: (scrolls[column.id] ?? 0) > 0,
+                                   below: (scrolls[column.id] ?? 0) < Self.maxScroll(column)),
                             past: column.day < today, today: column.day == today,
                             showsMonth: calendar.component(.day, from: column.day) == 1,
                             watched: watched, onOpen: onOpen)
@@ -1941,9 +1939,9 @@ struct UpcomingView: View {
         .padding(.top, Self.stripTop)
         .frame(width: 1920, height: 1080, alignment: .topLeading)
         .focusSection()
-        .onPreferenceChange(UpcomingPlaces.self) { places = $0 }
         .onChange(of: focus) { old, new in
-            guard let new, let column = columns.firstIndex(where: { $0.entries.contains { $0.id == new } })
+            guard let new, let column = columns.firstIndex(where: { $0.entries.contains { $0.id == new } }),
+                  let line = columns[column].entries.firstIndex(where: { $0.id == new })
             else { return }
             // Coming in from the bar: the column the strip holds, not the
             // one nearest the tab.
@@ -1956,9 +1954,8 @@ struct UpcomingView: View {
             if column < shown { shown = column }
             if column >= shown + Self.across { shown = column - Self.across + 1 }
             let id = columns[column].id
-            if let place = places[new] {
-                scrolls[id] = min(Self.scroll(scrolls[id] ?? 0, showing: place), maxScroll(columns[column]))
-            }
+            scrolls[id] = min(Self.scroll(scrolls[id] ?? 0, showing: Self.place(line)),
+                              Self.maxScroll(columns[column]))
         }
     }
 
@@ -1971,11 +1968,23 @@ struct UpcomingView: View {
     /// with the focused shadow.
     static var endPad: CGFloat { UpcomingLine.shadowBelow + 8 }
 
+    /// A day's lines are all one height (`UpcomingLine.height`, the rule
+    /// between them `UpcomingDay.ruleRoom`), so where each is follows from
+    /// its place in the list: the scroll, its end and the fades from one
+    /// sum, never measured (measured, a list laid out again after a scroll
+    /// left the fade over its last title, the scroll and its end
+    /// disagreeing).
+    /// Line `index`'s top and foot in its day's list, unscrolled.
+    private static func place(_ index: Int) -> ClosedRange<CGFloat> {
+        let top = UpcomingDay.edge + CGFloat(index) * (UpcomingLine.height + UpcomingDay.ruleRoom)
+        return top...top + UpcomingLine.height
+    }
+
     /// As far as a day's list scrolls: its last title at the card's foot,
-    /// no fade there (nothing below); unknown yet, none.
-    private func maxScroll(_ column: UpcomingModel.Column) -> CGFloat {
-        guard let last = column.entries.last, let end = places[last.id]?.upperBound else { return .infinity }
-        return max(0, end + Self.endPad - Self.room)
+    /// no fade there (nothing below).
+    private static func maxScroll(_ column: UpcomingModel.Column) -> CGFloat {
+        guard !column.entries.isEmpty else { return 0 }
+        return max(0, place(column.entries.count - 1).upperBound + endPad - room)
     }
 
     private static func scroll(_ scroll: CGFloat, showing place: ClosedRange<CGFloat>) -> CGFloat {
@@ -1986,13 +1995,6 @@ struct UpcomingView: View {
         let top = UpcomingDay.edge + UpcomingLine.shadowAbove
         if place.lowerBound - scroll < top { return max(0, place.lowerBound - top) }
         return scroll
-    }
-}
-
-private struct UpcomingPlaces: PreferenceKey {
-    static let defaultValue: [String: ClosedRange<CGFloat>] = [:]
-    static func reduce(value: inout [String: ClosedRange<CGFloat>], nextValue: () -> [String: ClosedRange<CGFloat>]) {
-        value.merge(nextValue()) { $1 }
     }
 }
 
@@ -2025,6 +2027,10 @@ private struct UpcomingDay: View {
     static let edge: CGFloat = 20
     /// The lines' fade at the card's foot (the focused line kept above it).
     static let foot: CGFloat = 80
+    /// The line between titles and the room either side of it.
+    static let rule: CGFloat = 1
+    static let ruleGap: CGFloat = 5
+    static var ruleRoom: CGFloat { rule + 2 * ruleGap }
     /// The titles' plates inside the card, each side (their corners
     /// concentric with the card's).
     static let inset: CGFloat = 14
@@ -2067,7 +2073,6 @@ private struct UpcomingDay: View {
                 .padding(.top, Self.edge)
                 .padding(.horizontal, Self.inset)
                 .frame(width: width, alignment: .topLeading)
-                .coordinateSpace(name: column.id)
                 .offset(y: -scroll)
                 .frame(width: width, height: UpcomingView.room, alignment: .topLeading)
                 .mask {
@@ -2119,11 +2124,6 @@ private struct UpcomingDay: View {
                     .focused(focus, equals: entry.id)
                     // An anime with no IMDb id known can't open: not focusable.
                     .disabled(entry.item == nil)
-                    .background(GeometryReader { proxy in
-                        let frame = proxy.frame(in: .named(column.id))
-                        Color.clear.preference(key: UpcomingPlaces.self,
-                                               value: [entry.id: frame.minY...frame.maxY])
-                    })
                 }
             }
     }
@@ -2135,9 +2135,9 @@ private struct UpcomingDay: View {
         let hidden = focus.wrappedValue == above.id || focus.wrappedValue == below.id
         return Rectangle()
             .fill(CueInk.color(0.1))
-            .frame(width: UpcomingView.card - 2 * 24 - 2 * Self.inset, height: 1)
+            .frame(width: UpcomingView.card - 2 * 24 - 2 * Self.inset, height: Self.rule)
             .padding(.horizontal, 24 - Self.inset)
-            .padding(.vertical, 5)
+            .padding(.vertical, Self.ruleGap)
             .opacity(hidden ? 0 : 1)
             .animation(.linear(duration: UpcomingLine.time), value: hidden)
     }
@@ -2209,11 +2209,18 @@ private struct UpcomingLine: View {
     @State private var grown = false
     static let time = 0.12
 
+    /// Every line one height: the name and the info a line each, 14 pt
+    /// above and below (the day's scroll is reckoned from it).
+    static let pad: CGFloat = 14
+    static let gap: CGFloat = 2
+    static let height: CGFloat = 2 * pad + gap
+        + UIFont.systemFont(ofSize: 24, weight: .medium).lineHeight.rounded(.up)
+        + UIFont.systemFont(ofSize: 24, weight: .regular).lineHeight.rounded(.up)
+
     var body: some View {
         text
             .padding(.horizontal, 24 - UpcomingDay.inset)
-            .padding(.vertical, 14)
-            .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, alignment: .leading)
+            .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, height: Self.height, alignment: .leading)
             .background {
                 let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                 shape.fill(DetailActionButton.focusFill)
@@ -2231,15 +2238,16 @@ private struct UpcomingLine: View {
     }
 
     private var text: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Self.gap) {
             Text(entry.name)
                 .font(.system(size: 24, weight: .medium))
-                .lineLimit(2)
+                .lineLimit(1)
                 .foregroundStyle(lit ? SettingsMetrics.focusedText
                                  : CueInk.color(seen ? FixedFocusText.secondary : FixedFocusText.primary))
             HStack(spacing: 8) {
                 if seen { Image(systemName: "checkmark") }
                 Text(entry.info)
+                    .lineLimit(1)
             }
             .font(.system(size: 24, weight: .regular))
             .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6)
