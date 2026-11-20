@@ -578,6 +578,32 @@ final class TitleRecords {
     }
 }
 
+/// What Cue keeps on the device that isn't a cache (Like / Not for Me,
+/// saved backgrounds): in Caches/Kept, as tvOS lets an app write nowhere
+/// else (Application Support, the simulator's place for it, can't be made
+/// on the box: nothing was kept there), outside what Clear Cache empties.
+/// tvOS may still empty Caches when it runs short of space.
+enum KeptFiles {
+    static let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Kept", isDirectory: true)
+
+    /// `name`'s place, brought over from Application Support where an
+    /// older build (in the simulator) left it.
+    static func url(_ name: String) -> URL {
+        let url = folder.appendingPathComponent(name)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: url.path),
+           let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let old = support.appendingPathComponent("Cue").appendingPathComponent(name)
+            if fm.fileExists(atPath: old.path) {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? fm.moveItem(at: old, to: url)
+            }
+        }
+        return url
+    }
+}
+
 /// WHAT CUE KEEPS ON DISK, by kind, and one clear for all of it
 /// (Settings → Storage). Every cache, honestly: pictures, the add-ons'
 /// and TMDB's answers, the titles' records and ratings, trailers' links,

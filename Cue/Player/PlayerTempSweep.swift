@@ -313,7 +313,11 @@ extension Bool {
 /// with neither (killed for memory, a watchdog, a force stop) gets an EXIT
 /// line at the next launch.
 enum CueLog {
-    static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// In Caches: tvOS lets an app write nowhere else (Application Support,
+    /// the simulator's place for it, can't be made on the box: nothing was
+    /// ever kept there). Clear Cache leaves it; tvOS may empty it when short
+    /// of space.
+    static let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Logs", isDirectory: true)
     private static let keepDays: TimeInterval = 7
     private static let keepBytes: Int64 = 50 * 1_048_576
@@ -383,7 +387,7 @@ enum CueLog {
 
     /// A moment marked from the remote: the line to look for later.
     @MainActor static func mark(from place: String) {
-        PlayerProbe.event(markTag, "marked \(place) · \(AppProbe.breadcrumb)")
+        PlayerProbe.event(markTag, "marked \(place) · \(AppProbe.place)")
     }
 
     private static var header: String {
@@ -757,6 +761,7 @@ enum Watchdog {
         watch.resume()
         timers = [heart, watch]
         observeLifecycle()
+        MainActor.assumeIsolated { FrameDrops.shared.start() }
     }
 
     private static func look() {
@@ -780,9 +785,10 @@ enum Watchdog {
         }
         if now - lastTick >= tickEvery {
             lastTick = now
-            CueLog.write("tick", String(format: "mem %.0f MB · cpu %.0f %% · thermal %@",
+            CueLog.write("tick", String(format: "mem %.0f MB · cpu %.0f %% · thermal %@ · dropped %d",
                                         PlayerProbe.footprintMB(), PlayerProbe.cpuPercent(),
-                                        AppProbe.thermalLabel(ProcessInfo.processInfo.thermalState)))
+                                        AppProbe.thermalLabel(ProcessInfo.processInfo.thermalState),
+                                        FrameDrops.takeWindow()))
         }
     }
 
@@ -799,6 +805,91 @@ enum Watchdog {
         watch(UIApplication.willResignActiveNotification, "inactive", active: false)
         watch(UIApplication.didEnterBackgroundNotification, "background", active: false)
         watch(UIApplication.willEnterForegroundNotification, "foreground", active: false)
+    }
+}
+
+/// Frames the main thread missed, for the Log: a display link (as the
+/// Frame Rate overlay's), each stretch of dropped frames one DROP line —
+/// how many, over how long, the worst frame, the screen and the last press
+/// before it — and the 10 s `tick` the window's count. Only the main
+/// thread's frames: the GPU's drops need Instruments.
+@MainActor
+final class FrameDrops {
+    static let shared = FrameDrops()
+
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private let frame = 1 / Double(UIScreen.main.maximumFramesPerSecond)
+    /// The stretch going on: from its first dropped frame until 0.5 s
+    /// without one.
+    private var stretchStart: CFTimeInterval?
+    private var stretchLastDrop: CFTimeInterval = 0
+    private var stretchDropped = 0
+    private var stretchWorst: CFTimeInterval = 0
+    private var stretchPress: String?
+    /// For the tick, read off the watchdog's queue.
+    private static let window = Atomic<Int>(wrappedValue: 0)
+    nonisolated static func takeWindow() -> Int {
+        var count = 0
+        window.mutate { count = $0; $0 = 0 }
+        return count
+    }
+
+    func start() {
+        guard link == nil, ProbeGate.isEnabled else { return }
+        let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+        // Back from the background, the first interval is the time away.
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.last = 0 }
+        }
+    }
+
+    private final class Ticker: NSObject {
+        weak var owner: FrameDrops?
+        init(_ owner: FrameDrops) { self.owner = owner }
+        @objc func tick(_ link: CADisplayLink) { MainActor.assumeIsolated { owner?.tick(link.timestamp) } }
+    }
+
+    private func tick(_ now: CFTimeInterval) {
+        defer { last = now }
+        guard last > 0, ProbeGate.isEnabled else { return }
+        let length = now - last
+        // A second or more is a hang (the watchdog's) or a pause.
+        guard length < 1 else { endStretch(); return }
+        let dropped = max(0, Int((length / frame).rounded()) - 1)
+        if dropped > 0 {
+            Self.window.mutate { $0 += dropped }
+            if stretchStart == nil {
+                stretchStart = last
+                stretchPress = Self.pressSince(last)
+            }
+            stretchDropped += dropped
+            stretchWorst = max(stretchWorst, length)
+            stretchLastDrop = now
+        } else if stretchStart != nil, now - stretchLastDrop > 0.5 {
+            endStretch()
+        }
+    }
+
+    private func endStretch() {
+        guard let start = stretchStart else { return }
+        defer { stretchStart = nil; stretchDropped = 0; stretchWorst = 0; stretchPress = nil }
+        // One lost frame on its own is noise.
+        guard stretchDropped >= 2 else { return }
+        let span = stretchLastDrop - start
+        CueLog.write("DROP", String(format: "%d frames in %.2f s, worst %.0f ms · %@%@",
+                                    stretchDropped, span, stretchWorst * 1000, AppProbe.place,
+                                    stretchPress.map { " · " + $0 } ?? ""))
+    }
+
+    /// The last press, if it came within a second of `time`.
+    private static func pressSince(_ time: CFTimeInterval) -> String? {
+        let ago = time - InputHold.lastPress
+        guard InputHold.lastPress > 0, ago < 1 else { return nil }
+        return String(format: "%@ %.2f s before", InputHold.lastPressName, max(0, ago))
     }
 }
 
@@ -938,6 +1029,14 @@ enum AppProbe {
         if let i = mounted.lastIndex(of: name) { mounted.remove(at: i) }
         screen = mounted.last ?? "—"
         nav(String(format: "← %@ after %.1fs   [%@]", name, seconds, breadcrumb))
+    }
+
+    /// Where you are: the tab, and the page over it if one is (every tab's
+    /// root stays mounted once built, so the breadcrumb lists them all).
+    @MainActor static var place: String {
+        let roots: Set<String> = ["Home", "Search", "Library", "Settings", "Discover", "Upcoming"]
+        guard let top = mounted.last, !roots.contains(top) else { return tab }
+        return tab + " › " + top
     }
 
     @MainActor static var breadcrumb: String {

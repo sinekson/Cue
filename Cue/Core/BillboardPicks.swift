@@ -2504,10 +2504,9 @@ extension CueRows {
         UserDefaults.standard.object(forKey: ProfileStore.activeKey) as? Int ?? 1
     }
 
-    /// Not a cache: Clear Cache leaves it.
+    /// Not a cache: Clear Cache leaves it (`KeptFiles`).
     private static func url(_ profile: Int) -> URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Cue/ratings-p\(profile).json")
+        KeptFiles.url("ratings-p\(profile).json")
     }
 
     private func load() {

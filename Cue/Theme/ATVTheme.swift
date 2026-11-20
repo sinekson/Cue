@@ -483,11 +483,8 @@ final class BackgroundPicks {
             .appendingPathComponent("CueCache/backgrounds")
     }
     private static var stateFile: URL { folder.appendingPathComponent("background.json") }
-    /// Kept with the settings, not the caches (Clear Cache leaves it).
-    private static var savedFile: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Cue/saved-backgrounds.json")
-    }
+    /// Not a cache: Clear Cache leaves it (`KeptFiles`).
+    private static var savedFile: URL { KeptFiles.url("saved-backgrounds.json") }
 
     private lazy var state: State = {
         // The scored picks of before.

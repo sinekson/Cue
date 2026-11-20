@@ -65,9 +65,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   engine's `liveTelemetry` and the session's history), Log (below).
 - **Log** (`CueLog`, `LogServer`, `Watchdog` in `PlayerTempSweep.swift`;
   `ProbeGate` is its switch, on by default in every build): every
-  `PlayerProbe`/`AppProbe` event to a file per launch in Application
-  Support/Logs (a week, 50 MB), the player's own events (`play`: links,
-  first frame, stalls, failovers), a `tick` every 10 s, HANG past 1 s on
+  `PlayerProbe`/`AppProbe` event to a file per launch in Caches/Logs
+  (tvOS writes nowhere else: Application Support can't be made on the box) (a week, 50 MB), the player's own events (`play`: links,
+  first frame, stalls, failovers), a `tick` every 10 s (with the frames
+  dropped in it), DROP for each stretch of dropped main-thread frames (how
+  many, the worst, the tab or page, the press before: `FrameDrops`), HANG past 1 s on
   the main thread, CRASH from an uncaught exception or fatal signal (tvOS
   has no MetricKit), EXIT for a foreground death caught at the next
   launch. Mark a moment: Play/Pause three times, in the player the flag on
@@ -474,8 +476,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (Halloween, Christmas, New Year, Thanksgiving, Valentine's, winter, Pride,
   summer), lifted while they last (This Anime Season was dropped
   2026-11-19: Discover's This Season pinned does it). Talk and news shows never in a row.
-  Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Application
-  Support, not a cache), decided 2026-11-18: watching already teaches
+  Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Caches/Kept, not a cache:
+  `KeptFiles`; tvOS writes nowhere else), decided 2026-11-18: watching already teaches
   the taste, so only the two ends are asked. Love: Details' fourth button
   (after About), a heart, Select toggles it, named "Like" / "Liked" (the rating stays Love).
   Not for Me: a hold menu entry, the cards' only (a crossed heart; ✕ was
@@ -1228,7 +1230,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the last goes), Never (fixed: set one, then Never). Saved backgrounds
   (2026-11-20): up to 12 (at the limit a toast, nothing dropped), on the
   device, the title and its colours (redrawn without its picture,
-  Application Support); a card's hold menu has Use as Background, which
+  Caches/Kept, `KeptFiles`); a card's hold menu has Use as Background, which
   becomes Save Background (checked once saved, Select again takes it
   off) once that title is up; the Background page: Change at Launch,
   Pick Another (from Saved under From Saved), Save This Background

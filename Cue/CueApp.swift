@@ -42,6 +42,8 @@ enum BackCatch {
 enum InputHold {
     /// The last press's start (any button).
     private(set) static var lastPress: CFTimeInterval = 0
+    /// Its button, for the Log's DROP lines.
+    private(set) static var lastPressName = ""
 
     /// `body` once the remote has been still for `idle` seconds — for
     /// main-thread work that's out of sight but long enough to delay a
@@ -75,6 +77,19 @@ enum InputHold {
         ToastCenter.shared.show("Marked in the log", icon: "flag")
     }
 
+    private static func name(_ type: UIPress.PressType) -> String {
+        switch type {
+        case .upArrow: "Up"
+        case .downArrow: "Down"
+        case .leftArrow: "Left"
+        case .rightArrow: "Right"
+        case .select: "Select"
+        case .menu: "Back"
+        case .playPause: "Play/Pause"
+        default: "press \(type.rawValue)"
+        }
+    }
+
     private typealias Send = @convention(c) (AnyObject, Selector, UIEvent) -> Void
     private static func hookSendEvent() {
         let selector = #selector(UIWindow.sendEvent(_:))
@@ -85,6 +100,7 @@ enum InputHold {
                presses.contains(where: { $0.phase == .began }) {
                 MainActor.assumeIsolated {
                     lastPress = CACurrentMediaTime()
+                    if let press = presses.first(where: { $0.phase == .began }) { lastPressName = name(press.type) }
                     if presses.contains(where: { $0.type == .playPause && $0.phase == .began }) { playPaused() }
                 }
             }
@@ -1097,6 +1113,7 @@ struct RootView: View {
     /// picture's edges carried on, and Search and Settings by a SwiftUI
     /// offset — stuttered.)
     private func switchTab(to new: Int) {
+        AppProbe.tab = Self.tabName(new)
         // Navigating pulls the account, as NuvioTV (at most every 2 min).
         sync?.syncOnAppOpen(reason: "tab switch")
         var instant = Transaction()
@@ -1347,14 +1364,7 @@ struct RootView: View {
     /// Rail tabs by name, for the probe. Numbers in a log are a second thing
     /// to decode while reading a focus bug.
     static func tabName(_ tab: Int) -> String {
-        switch tab {
-        case 1: return "Search"
-        case 2: return "Library"
-        case 3: return "Settings"
-        case 4: return "Movies"
-        case 5: return "Series"
-        default: return "Home"
-        }
+        AppTab(rawValue: tab)?.label ?? "Home"
     }
 
     /// The `[stores]` probe block: what the app is holding right now, which is
