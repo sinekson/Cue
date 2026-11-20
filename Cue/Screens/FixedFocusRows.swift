@@ -4394,7 +4394,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // The row's box, at once (the row shown, or its titles changed).
         guard let old = box else {
             let new = makeBox(item, index: index)
-            if let under { new.adoptPictures(from: under) }
+            // (Without animation: a reused box's logo, let go to nothing at its
+            // corner, grew from there in the press's move.)
+            if let under { UIView.performWithoutAnimation { new.adoptPictures(from: under) } }
             UIView.performWithoutAnimation {
                 new.frame = frame
                 new.setOpen(true)
@@ -4409,7 +4411,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         }
         let new = makeBox(item, index: index)
         // Before it opens (it chooses the poster or the backdrop by what it has).
-        if let under { new.adoptPictures(from: under) }
+        if let under { UIView.performWithoutAnimation { new.adoptPictures(from: under) } }
         // Along the row: the new title over the old, fading in (the old
         // stays whole under it: no dip), the posters sliding under.
         // Only the picture and words fade in: the outline and its shadow
