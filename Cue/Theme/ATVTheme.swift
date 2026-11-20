@@ -267,8 +267,7 @@ struct SeededRandom: RandomNumberGenerator {
 /// THE BACKGROUND, one still picture behind every page: a title's
 /// picture's colours as soft pools in a layout of their own, in tvOS's
 /// mode (`BackgroundPicks`): light, its colours lifted to tvOS's light
-/// grey; dark, sunk to a dark one's. A new title where it can't be seen
-/// changing — at launch or coming back, once 4 h have passed; a mode
+/// grey; dark, sunk to a dark one's. A new title at each launch; a mode
 /// change keeps the title (Automatic at sunset: the page changes anyway).
 /// Grey pools are the fallback (nothing picked yet: a first launch).
 /// (Tried: the title's picture blurred as Details' — too busy at times;
@@ -284,12 +283,12 @@ final class BackgroundStore: ObservableObject {
     @Published private(set) var chosen = false
     private var loading = false
 
-    /// At launch: the title up (a new one if due), else Bands (nil until in).
+    /// At launch: the next title, else Bands (nil until in).
     func load() {
         guard image == nil, !loading else { return }
         loading = true
         Task {
-            let pick = await BackgroundPicks.shared.pick(force: false)
+            let pick = await BackgroundPicks.shared.next()
             await show(pick, fade: false)
             loading = false
         }
@@ -299,7 +298,7 @@ final class BackgroundStore: ObservableObject {
     func firstReady() {
         guard shown == nil, image != nil, !loading else { return }
         Task {
-            let pick = await BackgroundPicks.shared.pick(force: false)
+            let pick = await BackgroundPicks.shared.next()
             if pick != nil { await show(pick, fade: true) }
         }
     }
@@ -314,21 +313,10 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
-    /// Back in the app: a new title if it's due (shown at once — the
-    /// system's own move covers it).
-    func cameBack() {
-        guard image != nil, !loading else { return }
-        Task {
-            guard BackgroundPicks.shared.due else { return }
-            let pick = await BackgroundPicks.shared.pick(force: false)
-            if pick?.entry != shown { await show(pick, fade: false) }
-        }
-    }
-
     /// Settings' Pick Another: another title now.
     func another() {
         Task {
-            let pick = await BackgroundPicks.shared.pick(force: true)
+            let pick = await BackgroundPicks.shared.next(fresh: true)
             await show(pick, fade: true)
         }
     }
@@ -382,7 +370,7 @@ final class BackgroundStore: ObservableObject {
 
 /// Which title's colours are the background (`BackgroundStore`): any title
 /// on Home (the billboard's, each row's first 15), at random, not one of
-/// the last 7. One title for both modes: its colours sunk for dark, lifted
+/// the last 7, a new one at each launch. One title for both modes: its colours sunk for dark, lifted
 /// for light (`BandsPicture.pools`), so any picture works in either and a
 /// mode change keeps the title. The next is drawn ahead in both modes, so
 /// a change is instant. (A brightness score and a dark / light split of
@@ -410,8 +398,7 @@ final class BackgroundPicks {
 
     private struct State: Codable {
         var shown: Entry?
-        var shownAt: Date?
-        /// The one up was chosen from a card's menu (until the next change).
+        /// The one up was chosen from a card's menu (until the next launch).
         var chosen = false
         /// Title ids.
         var recent: [String] = []
@@ -419,7 +406,6 @@ final class BackgroundPicks {
         var next: Entry?
     }
 
-    static let keep: TimeInterval = 4 * 60 * 60
     static let recentCount = 7
 
     nonisolated static var folder: URL {
@@ -466,12 +452,6 @@ final class BackgroundPicks {
         return FileManager.default.fileExists(atPath: file.path) ? (entry, file) : nil
     }
 
-    /// A new title is due: it's been up 4 h.
-    var due: Bool {
-        guard let at = state.shownAt else { return true }
-        return Date().timeIntervalSince(at) >= Self.keep
-    }
-
     /// The title up, in this mode's colours (drawn now if it isn't yet).
     func current() async -> (entry: Entry, file: URL)? {
         guard let shown = state.shown else { return nil }
@@ -480,11 +460,10 @@ final class BackgroundPicks {
         return await draw(shown.url, mode: mode) ? drawn(shown, mode) : nil
     }
 
-    /// The title to show: the one up while it isn't due (`force`: never),
-    /// else the next, drawn ahead; nil: none (Bands).
-    func pick(force: Bool) async -> (entry: Entry, file: URL)? {
-        if !force, !due, let current = await current() { return current }
-        if force {
+    /// The next title, drawn ahead (`fresh`: drawn now), else the one up;
+    /// nil: none (Bands).
+    func next(fresh: Bool = false) async -> (entry: Entry, file: URL)? {
+        if fresh {
             // Pick Another: drawn now, whatever's ready.
             state.next = nil
             await prepare()
@@ -495,11 +474,10 @@ final class BackgroundPicks {
         return next
     }
 
-    /// The one up was chosen from a card's menu (until the next change).
+    /// The one up was chosen from a card's menu (until the next launch).
     var chosen: Bool { state.chosen }
 
-    /// A title chosen from its card's menu: up now, until the next change
-    /// (`due`).
+    /// A title chosen from its card's menu: up now, until the next launch.
     func choose(_ item: MetaItem) async -> (entry: Entry, file: URL)? {
         guard let url = await TMDBService.backdrop(id: item.id, type: item.type) else { return nil }
         let entry = Entry(id: item.id, name: item.name, url: url)
@@ -512,7 +490,6 @@ final class BackgroundPicks {
 
     private func up(_ entry: Entry, chosen: Bool) {
         state.shown = entry
-        state.shownAt = Date()
         state.chosen = chosen
         state.recent = Array(([entry.id] + state.recent.filter { $0 != entry.id }).prefix(Self.recentCount))
         save()

@@ -47,9 +47,9 @@ private struct BackgroundPage: View {
 
     var body: some View {
         SettingsPage(title: "Background",
-                     subtitle: "The colours of a title on Home, in a layout of their own, a new title every few hours. "
+                     subtitle: "The colours of a title on Home, in a layout of their own, a new title at each launch. "
                         + "To use a title's own, hold its card and choose Use as Background; "
-                        + "it stays until the next change.") {
+                        + "it stays until the next launch.") {
             SettingsSection {
                 SettingsButtonRow(title: "Pick Another",
                                   description: "Another title from Home.") {

@@ -1157,11 +1157,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   and dark taking the darker half, light the lighter, were for the
   blurred picture; time-of-day thirds before that). A grey picture's
   grey bands are fine (Use as Background covers taste). A new title at
-  launch or on coming back once 4 h have passed; the next drawn ahead in
-  both modes. Grey pools (`BandsPicture`) only until the first title is
+  each launch, nothing else changes it (a 4 h rule on coming back was
+  dropped 2026-11-20); the next drawn ahead in both modes. Grey pools (`BandsPicture`) only until the first title is
   drawn (faded in then). Settings → Appearance → Background: the title
   up, Pick Another. A card's hold menu has Use as Background: that
-  title's colours until the next change.
+  title's colours until the next launch.
   (Dynamic, the focused title's colours, and the title's blurred picture
   behind the rows were too much going on.) Details' dim for bright pictures
   reaches 0.28 under it (`StageArt.brightestBelow`; 0.50 never took).

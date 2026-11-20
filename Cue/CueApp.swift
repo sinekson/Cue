@@ -2145,7 +2145,6 @@ final class LaunchPreloader: ObservableObject {
     func wentAway() { wentAwayAt = Date() }
     func cameBack(needed: Bool) {
         defer { wentAwayAt = nil }
-        BackgroundStore.shared.cameBack()
         if !curtain { deep() }
         guard let away = wentAwayAt else { return }
         let gateDue = needed && gate == nil && !curtain
