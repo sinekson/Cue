@@ -1020,26 +1020,38 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   and Series tabs (retired 2026-11-19).
 - **Upcoming** (prototype, 2026-11-19; `UpcomingModel`/`UpcomingView`
   at the end of `TMDBBrowseView.swift`): a calendar (the user rejected
-  rows here: a calendar look, after an anime release chart). Days as
-  columns along a strip, every day (an empty one too), five across (the
-  sixth peeking), opening with today second, moving focus: the strip
-  moves a column only when focus goes past the five in view (today
-  held at the second spot was before), one column a day:
-  hairline separators (ink 16 %, a week's start 34 %); each day's header
-  the day's first title's picture, edge to edge in the cell (no corners,
-  16:9), still whatever focus does, the weekday over the date on it over
-  a shade (white: on a picture), "TODAY" and its date on a light plate,
-  the month beside the 1st; an empty day's header on the page; a rule
-  under the headers; above them the first day in view's month at the rows' edge
-  ("November 2026"); under the rule the day's lines, no pictures (the
-  name over "S2:E7", the menus' row focus), moving focus, scrolling
-  under the rule as needed, a 28 pt fade there, each day on its own, a
-  day left stays as it was; a faint fill on today's column (trying
-  2026-11-20; tried before: a picture per line, beside the name
-  (cramped) and over it; a square tile per day atop its lines following
-  focus (standing still, the lines under it; then scrolling with them);
-  fixed focus; six columns, a day taking a second column, all days
-  scrolling together).
+  rows here: a calendar look, after an anime release chart). Every day
+  (an empty one too) a tall card along a strip (trying 2026-11-20): the
+  cards' corners, no rim (an outline was not wanted), the cards' 40 pt gap, four across between the rows' edges, the days
+  either side peeking alike (Home's rows; four and a half from the left
+  edge was before), running past the screen's foot (its end never
+  seen); opening with today second, moving focus: the strip moves a
+  card only when focus goes past the four in view. At the card's top
+  the day's first title's picture (16:9), still whatever focus does, the
+  date over the weekday low on it (the weekday lowest) over a shade to
+  85 % black (white: on a picture), "TODAY" and its date on a light
+  plate, the month beside the 1st; under it on the flat fill
+  (`FlatControl.rest`) its titles, the name over "S2:E7", focused the
+  white plate inside the card (corners concentric, 10 pt in, not
+  grown), scrolling as focus moves, each day on its own, a day left
+  stays as it was, fading out under the picture (20 pt) and over the
+  last 110 pt to the screen's foot (the focused line kept above it).
+  The day with focus grows 2 %, a soft shadow under it (the cards'
+  6 % was far too strong on a card this tall);
+  past days dimmed (`peekAlpha`). Above, the first day in view's month
+  as Home's row names (their font, ink, line and
+  indent) ("November 2026"): up by the card's
+  growth while the day under it (the first in view) has focus, as on
+  Home. (Before, committed 6ecd486: a
+  table — columns with hairline separators, a stronger one at a week's
+  start, the pictures as a header band edge to edge, a rule under them,
+  a faint fill on today's column: read as a spreadsheet beside the rest
+  of Cue. Tried in it: under text headers each title a card the
+  column's width, its name over the cards' fade; four columns with a
+  small poster or square beside each caption (posters took too much
+  height); a picture per line beside the name (cramped) and over it; a
+  square tile per day following focus; fixed focus; six columns, a day
+  taking a second column, all days scrolling together.)
   Yours first (followed: watched, started, saved), then TMDB's popular
   shows airing (no news, reality, soap, talk, nor dailies), films
   opening in your country, the season's popular anime (AniList, no key;

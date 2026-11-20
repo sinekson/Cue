@@ -1812,22 +1812,21 @@ struct UpcomingView: View {
     /// The first column in full view: moving focus, the strip moves only
     /// when focus goes past the five in view.
     @State private var shown = 0
-    static let across = 5
+    static let across = 4
     /// How far each day's lines are scrolled under its header (by column
     /// id): only the focused day's moves.
     @State private var scrolls: [String: CGFloat] = [:]
     /// Each line's place in its day's column (unscrolled).
     @State private var places: [String: ClosedRange<CGFloat>] = [:]
 
-    /// Inside a column, either side of its lines.
-    static let pad: CGFloat = 18
-    /// A column's width, separators between (no gap: a calendar): five
-    /// across, the sixth peeking 48 pt.
-    static var pitch: CGFloat { (1920 - (FixedFocusMetrics.inset - pad) - 48) / 5 }
-    /// A column's lines' width.
-    static var width: CGFloat { pitch - 2 * pad }
-    /// The month's line above the days.
-    static let monthRow: CGFloat = 64
+    /// A day's card: four across between the rows' edges, the cards' gap
+    /// between, so the days either side peek alike (Home's rows).
+    static var card: CGFloat {
+        ((1920 - 2 * FixedFocusMetrics.inset - CGFloat(across - 1) * FixedFocusMetrics.gap) / CGFloat(across)).rounded(.down)
+    }
+    static var pitch: CGFloat { card + FixedFocusMetrics.gap }
+    /// The month's line above the days: Home's row name's.
+    static let monthRow: CGFloat = FixedFocusMetrics.titleHeight
     static var stripTop: CGFloat { StagePictureView.homeCard.minY + monthRow }
 
     var body: some View {
@@ -1863,34 +1862,43 @@ struct UpcomingView: View {
 
     /// The month of the first day in view, standing still at the rows'
     /// edge ("November 2026"), the next crossfading in.
+    /// Focus on the day under the month's name.
+    private var lifted: Bool { focus != nil && spot == shown }
+
     private func month(_ columns: [UpcomingModel.Column]) -> some View {
         let day = columns[min(max(0, shown), columns.count - 1)].day
         let name = day.formatted(.dateTime.month(.wide).year())
         return Text(name)
-            .font(.system(size: 34, weight: .semibold))
+            .font(Font(FixedFocusRowCell.titleFont))
             .foregroundStyle(CueInk.primary)
             .id(name)
             .transition(.opacity)
             .animation(Motion.fade, value: name)
-            .padding(.leading, FixedFocusMetrics.inset)
+            // Home's row name: its 48 pt line, 6 pt low in it, at the
+            // names' indent.
+            .frame(height: FixedFocusMetrics.titleLine)
+            .offset(y: FixedFocusMetrics.titleDrop)
+            .padding(.leading, FixedFocusMetrics.titleInset)
             .padding(.top, StagePictureView.homeCard.minY)
+            // As a row's name over a grown card: up by the card's growth
+            // at its top while the day under it (the first in view) has focus.
+            .offset(y: lifted ? -UpcomingDay.height * (UpcomingDay.lift - 1) / 2 : 0)
+            .animation(Motion.focus, value: lifted)
     }
 
     private func strip(_ columns: [UpcomingModel.Column]) -> some View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        return HStack(alignment: .top, spacing: 0) {
+        return HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
                 UpcomingDay(column: column, focus: $focus, scroll: scrolls[column.id] ?? 0,
                             past: column.day < today, today: column.day == today,
                             showsMonth: calendar.component(.day, from: column.day) == 1,
-                            weekStart: calendar.component(.weekday, from: column.day) == calendar.firstWeekday,
-                            last: index == columns.count - 1,
                             watched: watched, onOpen: onOpen)
             }
         }
         .fixedSize()
-        .offset(x: FixedFocusMetrics.inset - Self.pad - CGFloat(shown) * Self.pitch)
+        .offset(x: FixedFocusMetrics.inset - CGFloat(shown) * Self.pitch)
         .animation(Motion.move, value: shown)
         .animation(Motion.move, value: scrolls)
         .padding(.top, Self.stripTop)
@@ -1915,13 +1923,13 @@ struct UpcomingView: View {
         }
     }
 
-    /// The lines' room under the headers.
-    static var room: CGFloat { 1080 - stripTop - UpcomingDay.header - UpcomingDay.line }
+    /// The lines' room under the pictures, to the screen's foot.
+    static var room: CGFloat { 1080 - stripTop - UpcomingDay.header }
 
-    /// Moving focus: scrolled just enough to show the focused line, 80 pt
-    /// clear at the foot, the top line just under the rule's fade.
+    /// Moving focus: scrolled just enough to show the focused line, clear
+    /// of the fade at the foot, the top line just under the rule's fade.
     private static func scroll(_ scroll: CGFloat, showing place: ClosedRange<CGFloat>) -> CGFloat {
-        let foot = room - 80
+        let foot = room - UpcomingDay.foot
         if place.upperBound - scroll > foot { return place.upperBound - foot }
         if place.lowerBound - scroll < UpcomingDay.edge { return max(0, place.lowerBound - UpcomingDay.edge) }
         return scroll
@@ -1935,14 +1943,13 @@ private struct UpcomingPlaces: PreferenceKey {
     }
 }
 
-/// A day of the calendar: its header the day's first title's picture,
-/// edge to edge in the cell, still (focus doesn't change it), the weekday
-/// over the date on it over a shade; a rule under it running the strip's
-/// width, a separator at its left from the top to the screen's foot
-/// (stronger where a week starts), under the rule its lines, scrolling as
-/// focus moves, each day on its own (a short fade under the rule, as
-/// Settings' rows under its title). Today a faint fill and its date on a
-/// light plate.
+/// A day of the calendar as a tall card (the cards' corners, no rim, the
+/// cards' gap between days), running past the screen's foot: at its top
+/// the day's first title's picture, still (focus doesn't change it), the
+/// date over the weekday low on it over a shade; under it on the flat
+/// fill its titles, scrolling as focus moves, each day on its own, fading
+/// out under the picture and toward the screen's foot. The day with focus
+/// grows a little, a soft shadow under it; past days dimmed.
 private struct UpcomingDay: View {
     let column: UpcomingModel.Column
     var focus: FocusState<String?>.Binding
@@ -1950,44 +1957,51 @@ private struct UpcomingDay: View {
     let past: Bool
     let today: Bool
     let showsMonth: Bool
-    let weekStart: Bool
-    let last: Bool
     let watched: WatchedStore
     let onOpen: (MetaItem) -> Void
 
-    /// The header's picture, the cell's width at 16:9.
-    static var header: CGFloat { (UpcomingView.pitch * 9 / 16).rounded() }
-    static let rule = CueInk.color(0.16)
-    static let weekRule = CueInk.color(0.34)
-    static let line: CGFloat = 2
-    /// From the rule to the first line, the lines fading out over it.
-    static let edge: CGFloat = 28
+    /// The picture, the card's width at 16:9.
+    static var header: CGFloat { (UpcomingView.card * 9 / 16).rounded() }
+    /// From the picture to the first line, the lines fading out over it.
+    static let edge: CGFloat = 20
+    /// The lines' fade at the screen's foot (the focused line kept above it).
+    static let foot: CGFloat = 110
+    /// The titles' plates inside the card, each side (their corners
+    /// concentric with the card's).
+    static let inset: CGFloat = 10
+    /// The card's height: past the screen's foot, its end never seen.
+    static var height: CGFloat { 1080 - UpcomingView.stripTop + 60 }
+    /// Grown a little: 2 % (22 pt across, 6 %, was far too strong on a
+    /// card this tall).
+    static let lift: CGFloat = 1.02
 
     private var focused: UpcomingModel.Entry? {
         column.entries.first { $0.id == focus.wrappedValue }
     }
 
     var body: some View {
-        let width = UpcomingView.pitch
+        let width = UpcomingView.card
+        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+        let on = focused != nil
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
                 if let picture = column.entries.first?.picture {
                     RemoteImage(url: picture, maxDimension: width * 2)
                         .frame(width: width, height: Self.header)
                         .clipped()
-                    LinearGradient(stops: [.init(color: .clear, location: 0.3),
-                                           .init(color: .black.opacity(0.75), location: 1)],
+                    LinearGradient(stops: [.init(color: .clear, location: 0.25),
+                                           .init(color: .black.opacity(0.5), location: 0.6),
+                                           .init(color: .black.opacity(0.85), location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                 }
                 header(onPicture: column.entries.first?.picture != nil)
-                    .padding(.leading, UpcomingView.pad)
+                    .padding(.leading, 24)
                     .padding(.bottom, 16)
             }
             .frame(width: width, height: Self.header, alignment: .bottomLeading)
-            Rectangle().fill(Self.rule).frame(width: width, height: Self.line)
             lines
                 .padding(.top, Self.edge)
-                .padding(.horizontal, UpcomingView.pad)
+                .padding(.horizontal, Self.inset)
                 .frame(width: width, alignment: .topLeading)
                 .coordinateSpace(name: column.id)
                 .offset(y: -scroll)
@@ -1997,14 +2011,19 @@ private struct UpcomingDay: View {
                         LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
                             .frame(height: Self.edge)
                         Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: Self.foot)
                     }
                 }
         }
-        .background(today ? CueInk.fill(dark: 0.05, light: 0.22) : .clear)
-        .overlay(alignment: .leading) { Rectangle().fill(weekStart ? Self.weekRule : Self.rule).frame(width: Self.line) }
-        .overlay(alignment: .trailing) { if last { Rectangle().fill(Self.rule).frame(width: Self.line) } }
-        .opacity(past && focused == nil ? FixedFocusMetrics.peekAlpha : 1)
-        .animation(Motion.fade, value: focused?.id)
+        .frame(width: width, height: Self.height, alignment: .topLeading)
+        .background(FlatControl.rest)
+        .clipShape(shape)
+        .shadow(color: .black.opacity(on ? 0.4 : 0), radius: 30, y: 14)
+        .scaleEffect(on ? Self.lift : 1)
+        .opacity(past && !on ? FixedFocusMetrics.peekAlpha : 1)
+        .zIndex(on ? 1 : 0)
+        .animation(Motion.focus, value: on)
     }
 
     private var lines: some View {
@@ -2026,15 +2045,13 @@ private struct UpcomingDay: View {
             }
     }
 
-    /// On the picture white (dark always), else the page's ink.
+    /// The date over the weekday, the weekday lowest (nearest the
+    /// shade's darkest); on the picture white (dark always), else the
+    /// page's ink.
     private func header(onPicture: Bool) -> some View {
         let day = column.day
         let ink: (CGFloat) -> Color = { onPicture ? .white.opacity($0) : CueInk.color($0) }
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(today ? "TODAY" : day.formatted(.dateTime.weekday(.wide)).uppercased())
-                .font(.system(size: 23, weight: .semibold))
-                .kerning(1)
-                .foregroundStyle(ink(today ? FixedFocusText.primary : FixedFocusText.body))
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(day.formatted(.dateTime.day()))
                     .font(.system(size: 48, weight: .bold).monospacedDigit())
@@ -2049,6 +2066,10 @@ private struct UpcomingDay: View {
                         .foregroundStyle(ink(FixedFocusText.body))
                 }
             }
+            Text(today ? "TODAY" : day.formatted(.dateTime.weekday(.wide)).uppercased())
+                .font(.system(size: 23, weight: .semibold))
+                .kerning(1)
+                .foregroundStyle(ink(today ? FixedFocusText.primary : FixedFocusText.body))
         }
     }
 
@@ -2059,24 +2080,22 @@ private struct UpcomingDay: View {
     }
 }
 
-/// One episode in a day's list: the show over its "S2:E7", the menus'
-/// row focus (the white plate, dark words).
+/// One title in a day's card: the show over its "S2:E7"; focused, the
+/// white plate behind it, dark words, inside the card (its corners
+/// concentric with the card's; not grown: the day's card grows).
 private struct UpcomingLine: View {
     @Environment(\.isFocused) private var isFocused
     let entry: UpcomingModel.Entry
     let seen: Bool
 
-    private static let pad: CGFloat = 14
     var body: some View {
         text
-        .padding(.horizontal, Self.pad)
+        .padding(.horizontal, 24 - UpcomingDay.inset)
         .padding(.vertical, 10)
-        .frame(width: UpcomingView.width + 2 * Self.pad, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Spotlight.cornerRadius - UpcomingDay.inset, style: .continuous)
             .fill(isFocused ? FlatControl.focus : .clear))
-        .scaleEffect(isFocused ? 1.05 : 1)
         .animation(FlatControl.focusChange, value: isFocused)
-        .padding(.horizontal, -Self.pad)
     }
 
     private var text: some View {
