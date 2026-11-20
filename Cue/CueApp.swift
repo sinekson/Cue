@@ -2338,7 +2338,7 @@ final class LaunchPreloader: ObservableObject {
         // The background's pool (`BackgroundPicks`): last, one job.
         let pool = picks + rows.flatMap { $0.items.prefix(15) }
         jobs.append(.init(key: "backgrounds", kind: "backgrounds", lane: .data, band: .deep,
-                          order: Int.max, source: "deep") { await BackgroundPicks.shared.score(pool) })
+                          order: Int.max, source: "deep") { await BackgroundPicks.shared.offer(pool) })
         LoadQueue.shared.replace(source: "deep", with: jobs)
     }
 }

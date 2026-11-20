@@ -1142,22 +1142,26 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
   bands; dark, light's mirror: sunk to 0.05–0.22 (`sunk`; 0.07–0.30 too light), a dark grey
-  with the colours a tint over it (dimmed as Details', no colour past
-  0.40, read too colourful beside light's silver), grained, app-wide,
+  with the colours a tint over it (read too colourful dimmed alone
+  beside light's silver); light: lifted to 0.62–0.90, base
+  `Color(white: 0.68)`; grained, app-wide,
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
   too busy at times, and with it the hue-runs rule went); the colours read
-  from the sharp picture, small, as Details' (read from the blurred one,
-  a busy picture came out grey: faint one day, loud the next).
-  Scored in the deep band (Home's picks and rows, first 15 each): the dimmed
-  picture's mean light ≥ 0.14. By appearance (`BackgroundPicks.Mode`):
-  dark takes the darker half, light the lighter, drawn bright (colours
-  lifted to 0.62–0.90, base `Color(white: 0.68)`, files "-light"); the
-  time-of-day thirds went with light mode ("dark should mean dark").
-  Changed only at launch, or on coming back when the appearance changed or
-  4 h passed; never one of the last 7; drawn ahead, one per appearance. Grey pools (`BandsPicture`) only
-  until the first scoring. Settings → Appearance → Background: what's up
-  and why, Pick Another. A card's hold menu has Use as Background: that
-  title's colours (any title) until the next change.
+  from the sharp picture, small, as Details' (`TitleBands.palette(for:)`;
+  read from the blurred one, a busy picture came out grey: faint one day,
+  loud the next).
+  Any title on Home (the billboard's picks, each row's first 15), at
+  random, never one of the last 7; one title for both appearances (sunk
+  or lifted, any picture works in either), so a mode change keeps the
+  title, faded (decided 2026-11-20: a brightness score, ≥ 0.14 dimmed,
+  and dark taking the darker half, light the lighter, were for the
+  blurred picture; time-of-day thirds before that). A grey picture's
+  grey bands are fine (Use as Background covers taste). A new title at
+  launch or on coming back once 4 h have passed; the next drawn ahead in
+  both modes. Grey pools (`BandsPicture`) only until the first title is
+  drawn (faded in then). Settings → Appearance → Background: the title
+  up, Pick Another. A card's hold menu has Use as Background: that
+  title's colours until the next change.
   (Dynamic, the focused title's colours, and the title's blurred picture
   behind the rows were too much going on.) Details' dim for bright pictures
   reaches 0.28 under it (`StageArt.brightestBelow`; 0.50 never took).

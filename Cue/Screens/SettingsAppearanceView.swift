@@ -40,19 +40,19 @@ struct AppearanceSettingsDetail: View {
     }
 }
 
-/// The background: what's up and why, and another now. A title's own is
+/// The background: the title up, and another now. A title's own is
 /// chosen from its card's menu ("Use as Background").
 private struct BackgroundPage: View {
     @ObservedObject private var background = BackgroundStore.shared
 
     var body: some View {
         SettingsPage(title: "Background",
-                     subtitle: "A title on Home's colours, in a layout of their own, changing with the time of day: lighter by day, "
-                        + "darkest at night. To use a title's own, hold its card and choose Use as Background; "
+                     subtitle: "The colours of a title on Home, in a layout of their own, a new title every few hours. "
+                        + "To use a title's own, hold its card and choose Use as Background; "
                         + "it stays until the next change.") {
             SettingsSection {
                 SettingsButtonRow(title: "Pick Another",
-                                  description: "Another picture for this time of day.") {
+                                  description: "Another title from Home.") {
                     background.another()
                 }
             }
@@ -65,7 +65,7 @@ private struct BackgroundPage: View {
     }
 
     private var reason: String {
-        guard background.shown != nil else { return "Until titles are picked" }
-        return background.chosen ? "Chosen by you" : BackgroundPicks.Mode.now.name
+        guard background.shown != nil else { return "Until a title is picked" }
+        return background.chosen ? "Chosen by you" : "From Home"
     }
 }
