@@ -642,8 +642,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   current one; more than fit scroll along with focus. The episodes keep
   focus at the first card's spot (`anchoredRowIDs`: the season's map
   above it, the eye stays put; moving focus made it go between them),
-  Left/Right: the slide, the old card's shrink and the new one's growth
-  together on the move's spring (tried, all worse: the spot dipping as
+  Left/Right: the slide on the move's spring, the old card's shrink at
+  the press (0.08 s, before the slide carries it off the spot) and the
+  new one's growth eased in and out over the slide (0.35 s), most of it
+  as it slows into the spot (trying 2026-11-20: on the slide's own
+  spring the grow and shrink were lost in it) (tried, all worse: the spot dipping as
   the large rows' box; focus handed over first, the slide 0.12 or
   0.06 s later; the large rows' box without its dip, the next episode
   dissolving in on a still card: lost the grow and shrink, which is

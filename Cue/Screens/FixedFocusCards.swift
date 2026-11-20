@@ -1432,6 +1432,22 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
             coordinator.addCoordinatedAnimations { self.applyFocus(focused) }
             return
         }
+        // Along a row whose focus stays at its spot (Details' episodes):
+        // the card sliding through it is never still, so on the slide's
+        // own spring the grow and shrink were lost in it. The one leaving
+        // drops at the press, while still at the spot; the one coming
+        // grows slowly at first, most of it as it slows into the spot.
+        if rowCell?.isAnchored == true, !PageFade.shared.busy,
+           context.focusHeading.contains(.left) || context.focusHeading.contains(.right) {
+            UIView.animate(withDuration: focused ? Self.anchoredGrow : Self.anchoredShrink, delay: 0,
+                           options: [focused ? .curveEaseInOut : .curveEaseOut,
+                                     .beginFromCurrentState, .allowUserInteraction]) {
+                self.applyFocus(focused)
+                self.layoutIfNeeded()
+            }
+            setOnCardFull(focused, animated: true)
+            return
+        }
         // On Home's curve and timing, with the row's scroll.
         let animated = FixedFocusMotion.focusChange(context) {
             self.applyFocus(focused)
@@ -1440,6 +1456,11 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         // (Its own timing: outside the move's spring.)
         setOnCardFull(focused, animated: animated)
     }
+    /// An anchored row's hand-over (above): the shrink before the slide
+    /// has carried the card off the spot (the spring's first 0.08 s moves
+    /// it about a third of the way), the growth over the slide's length.
+    private static let anchoredShrink = 0.08
+    private static let anchoredGrow = Motion.moveDuration
 
     /// Select pressed / held: the card sinks a little (back on release, or
     /// when the menu closes).

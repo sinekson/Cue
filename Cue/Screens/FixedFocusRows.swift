@@ -3357,6 +3357,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         return controller.rows[rowIndex]
     }
     private var selectedIndex: Int { row.flatMap { controller?.selected[$0.id] } ?? 0 }
+    /// Focus kept at the first card's spot (`FixedFocusRows.anchoredRowIDs`).
+    var isAnchored: Bool { row.map { controller?.anchoredRowIDs.contains($0.id) == true } ?? false }
     /// Only the focused row has a grown cell; the others are all posters.
     private var isFocusRow: Bool { controller?.focusedRow == rowIndex }
 
