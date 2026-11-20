@@ -1793,26 +1793,34 @@ enum TMDBService {
                 "language": preferredLanguage, "include_video_language": wanted,
             ], fresh: { (_: VideosResponse) in day }, keep: 30 * day))
         }
-        // Best first: a real trailer (not a recap or a clip under the
-        // Trailer label), in the user's language, then English; a Trailer
-        // over a Teaser; official; "Official / Main / Final Trailer" named;
-        // the larger upload; the newest (the final cut, a cleaner file).
-        let junk = /\b(recap|clips?|scenes?|featurettes?|behind the scenes|reactions?|fan[ -]?made|tv spots?|spots?|reviews?|explained|breakdown)\b/
-        let lead = /\b(official|main|final) trailer\b/
+        // Best first, as TMDB's own Play Trailer and then some: a real
+        // trailer (not a recap, a clip, a fan edit, a character trailer or a
+        // re-release promo under the Trailer label); a Trailer over a Teaser;
+        // official; in the user's language, then English; 1080p or more (720p
+        // over less); then
+        // the newest, the final cut (TMDB's choice). Subtitles burned in
+        // (anime's "[Subtitled]") give way to a clean one, the dub, out within
+        // 150 days of it; an older clean one is an earlier part's: the newest
+        // stays. (Preferring names saying "Official Trailer" took The
+        // Odyssey's first cut over its newest, and a 2014 720p over a 1080p.)
+        let junk = /\b(recap|clips?|scenes?|featurettes?|behind the scenes|reactions?|fan[ -]?made|fan edit|tv spots?|spots?|reviews?|best reviewed|explained|breakdown|anniversary|blu-?ray|dvd|vhs|collection|fest|screening|special look|sneak peek|livestream|character|visual|commercial|advert|available now)\b/
+        let burned = /\[subtitled\]|\b(subtitled|eng(lish)? ?subs?)\b|\[sub\]/
         func rank(_ v: VideosResponse.Video) -> [Int] {
             let name = (v.name ?? "").lowercased()
             let tongue = (v.iso_639_1 ?? "").lowercased()
             return [
                 name.contains(junk) ? 1 : 0,
-                tongue == language ? 0 : tongue == "en" ? 1 : 2,
                 v.type == "Trailer" ? 0 : 1,
                 (v.official ?? false) ? 0 : 1,
-                name.contains(lead) ? 0 : 1,
-                -(v.size ?? 0),
+                tongue == language ? 0 : tongue == "en" ? 1 : 2,
+                (v.size ?? 0) >= 1080 ? 0 : (v.size ?? 0) >= 720 ? 1 : 2,
             ]
         }
+        func day(_ v: VideosResponse.Video) -> Date? {
+            v.published_at.flatMap { TMDBService.localDay(String($0.prefix(10))) }
+        }
         func ranked(_ body: VideosResponse?) -> [String] {
-            (body?.results ?? [])
+            var list = (body?.results ?? [])
             .filter {
                 ($0.site?.caseInsensitiveCompare("YouTube") == .orderedSame)
                     && ["Trailer", "Teaser"].contains($0.type ?? "")
@@ -1822,7 +1830,15 @@ enum TMDBService {
                 if a.rank != b.rank { return a.rank.lexicographicallyPrecedes(b.rank) }
                 return (a.video.published_at ?? "") > (b.video.published_at ?? "")
             }
-            .compactMap { $0.video.key }
+            func isBurned(_ v: VideosResponse.Video) -> Bool { (v.name ?? "").lowercased().contains(burned) }
+            if let first = list.first, isBurned(first.video), let when = day(first.video),
+               let clean = list.firstIndex(where: { entry in
+                   guard entry.rank == first.rank, !isBurned(entry.video), let other = day(entry.video) else { return false }
+                   return abs(other.timeIntervalSince(when)) <= 150 * 24 * 60 * 60
+               }) {
+                list.insert(list.remove(at: clean), at: 0)
+            }
+            return list.compactMap { $0.video.key }
         }
         var keys: [String] = []
         for key in bodies.flatMap(ranked) where !keys.contains(key) { keys.append(key) }

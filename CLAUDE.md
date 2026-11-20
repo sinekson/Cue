@@ -859,7 +859,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   curtain waits on it), on coming back and on a tab switch (2.5 s settle, at
   most every 2 min, `openSyncFloor`), and every 15 min (`autoSyncInterval`;
   the light pass while playing). Pushes go on every change. No 30 s timers.
-- **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): 2 s rest on the
+- **Trailers** (`StageTrailer`, `TrailerPlayer.swift`): TMDB's list, chosen
+  (`trailerKeys`): a real trailer (no clips, fan edits, character or
+  re-release promos), official, the language, 1080p+, then the newest (TMDB's
+  Play Trailer: The Odyssey's Countdown, not its first cut); burned-in
+  subtitles give way to a clean one (anime: the dub) within 150 days, an older
+  clean one being an earlier part's (preferring "Official Trailer" names
+  took first cuts and old 720p). 2 s rest on the
   buttons, one `AVPlayer` handed between Home, Details and full screen, YouTube
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Full screen
   (`TrailerController`) has the player's bar and presses (`PlayerTransport`,
