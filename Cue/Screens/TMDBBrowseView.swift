@@ -1895,6 +1895,8 @@ struct UpcomingView: View {
         return HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
                 UpcomingDay(column: column, focus: $focus, scroll: scrolls[column.id] ?? 0,
+                            more: (above: (scrolls[column.id] ?? 0) > 0.5,
+                                   below: (scrolls[column.id] ?? 0) < maxScroll(column) - 0.5),
                             past: column.day < today, today: column.day == today,
                             showsMonth: calendar.component(.day, from: column.day) == 1,
                             watched: watched, onOpen: onOpen)
@@ -1922,15 +1924,28 @@ struct UpcomingView: View {
             if column < shown { shown = column }
             if column >= shown + Self.across { shown = column - Self.across + 1 }
             let id = columns[column].id
-            if let place = places[new] { scrolls[id] = Self.scroll(scrolls[id] ?? 0, showing: place) }
+            if let place = places[new] {
+                scrolls[id] = min(Self.scroll(scrolls[id] ?? 0, showing: place), maxScroll(columns[column]))
+            }
         }
     }
 
-    /// The lines' room under the pictures, to the screen's foot.
-    static var room: CGFloat { 1080 - stripTop - UpcomingDay.header }
+    /// The lines' room under the pictures, to the card's foot.
+    static var room: CGFloat { UpcomingDay.height - UpcomingDay.header }
 
     /// Moving focus: scrolled just enough to show the focused line, clear
     /// of the fade at the foot, the top line just under the rule's fade.
+    /// Below the last title, at the list's end: the card's inner margin
+    /// with the focused shadow.
+    static var endPad: CGFloat { UpcomingLine.shadowBelow + 8 }
+
+    /// As far as a day's list scrolls: its last title at the card's foot,
+    /// no fade there (nothing below); unknown yet, none.
+    private func maxScroll(_ column: UpcomingModel.Column) -> CGFloat {
+        guard let last = column.entries.last, let end = places[last.id]?.upperBound else { return .infinity }
+        return max(0, end + Self.endPad - Self.room)
+    }
+
     private static func scroll(_ scroll: CGFloat, showing place: ClosedRange<CGFloat>) -> CGFloat {
         // The focused plate's shadow kept out of the fades too: in them it
         // was cut by the gradient as the lines moved (a flicker).
@@ -1960,6 +1975,9 @@ private struct UpcomingDay: View {
     let column: UpcomingModel.Column
     var focus: FocusState<String?>.Binding
     let scroll: CGFloat
+    /// Titles out of sight above and below: only there do the lines fade
+    /// (at the list's end its last title sits clear at the card's foot).
+    let more: (above: Bool, below: Bool)
     let past: Bool
     let today: Bool
     let showsMonth: Bool
@@ -1970,13 +1988,14 @@ private struct UpcomingDay: View {
     static var header: CGFloat { (UpcomingView.card * 9 / 16).rounded() }
     /// From the picture to the first line, the lines fading out over it.
     static let edge: CGFloat = 20
-    /// The lines' fade at the screen's foot (the focused line kept above it).
-    static let foot: CGFloat = 110
+    /// The lines' fade at the card's foot (the focused line kept above it).
+    static let foot: CGFloat = 80
     /// The titles' plates inside the card, each side (their corners
     /// concentric with the card's).
     static let inset: CGFloat = 14
-    /// The card's height: past the screen's foot, its end never seen.
-    static var height: CGFloat { 1080 - UpcomingView.stripTop + 60 }
+    /// The card's height: whole, its foot 60 pt above the screen's (running
+    /// past the screen's foot was before).
+    static var height: CGFloat { 1080 - UpcomingView.stripTop - 60 }
     /// Grown a little: 2 % (22 pt across, 6 %, was far too strong on a
     /// card this tall).
     static let lift: CGFloat = 1.02
@@ -2018,12 +2037,20 @@ private struct UpcomingDay: View {
                 .frame(width: width, height: UpcomingView.room, alignment: .topLeading)
                 .mask {
                     VStack(spacing: 0) {
-                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                            .frame(height: Self.edge)
+                        ZStack {
+                            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            Rectangle().opacity(more.above ? 0 : 1)
+                        }
+                        .frame(height: Self.edge)
                         Rectangle()
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            .frame(height: Self.foot)
+                        ZStack {
+                            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            Rectangle().opacity(more.below ? 0 : 1)
+                        }
+                        .frame(height: Self.foot)
                     }
+                    .animation(Motion.move, value: more.above)
+                    .animation(Motion.move, value: more.below)
                 }
         }
         .frame(width: width, height: Self.height, alignment: .topLeading)
@@ -2040,8 +2067,9 @@ private struct UpcomingDay: View {
     }
 
     private var lines: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(column.entries) { entry in
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(column.entries.enumerated()), id: \.element.id) { index, entry in
+                    if index > 0 { separator(between: column.entries[index - 1], and: entry) }
                     Button { if let item = entry.item { onOpen(item) } } label: {
                         UpcomingLine(entry: entry, seen: seen(entry))
                     }
@@ -2056,6 +2084,20 @@ private struct UpcomingDay: View {
                     })
                 }
             }
+    }
+
+    /// Between two titles a gentle line, on the words' edges (not the
+    /// card's width), 5 pt either side; gone beside the focused one (its
+    /// highlight covers the gap).
+    private func separator(between above: UpcomingModel.Entry, and below: UpcomingModel.Entry) -> some View {
+        let hidden = focus.wrappedValue == above.id || focus.wrappedValue == below.id
+        return Rectangle()
+            .fill(CueInk.color(0.1))
+            .frame(width: UpcomingView.card - 2 * 24 - 2 * Self.inset, height: 1)
+            .padding(.horizontal, 24 - Self.inset)
+            .padding(.vertical, 5)
+            .opacity(hidden ? 0 : 1)
+            .animation(.linear(duration: UpcomingLine.time), value: hidden)
     }
 
     /// The date over the weekday, the weekday lowest (nearest the shade's

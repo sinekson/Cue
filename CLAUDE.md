@@ -1024,8 +1024,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (an empty one too) a tall card along a strip (trying 2026-11-20): the
   cards' corners, no rim (an outline was not wanted), the cards' 40 pt gap, four across between the rows' edges, the days
   either side peeking alike (Home's rows; four and a half from the left
-  edge was before), running past the screen's foot (its end never
-  seen); opening with today second, moving focus: the strip moves a
+  edge was before), whole, its foot 60 pt above the screen's (trying;
+  running past the screen's foot, its end never seen, was before); opening with today second, moving focus: the strip moves a
   card only when focus goes past the four in view. At the card's top
   the day's first title's picture (16:9), still whatever focus does, the
   date over the weekday low on it (the weekday lowest) over a shade to
@@ -1039,7 +1039,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   without); the picture fading into the colour was not
   liked: no colour on the picture); under it its titles, the name over "S2:E7" (anime with
   AniList's time: "E8 · 17:30"), nothing behind them at rest (Settings'
-  faint plates were not meant), 12 pt apart; focused shaped as Settings'
+  faint plates were not meant), 11 pt apart (12 before), a gentle line
+  between (ink 10 %, 1 pt, on the words' edges, not the card's width;
+  gone beside the focused one); focused shaped as Settings'
   tall rows (trying; 20 pt corners, 14 pt in from the card's sides):
   the top bar's focus: its solid white
   (`DetailActionButton.focusFill`), its shadow (35 %, 12 pt, 6 down),
@@ -1053,7 +1055,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   plate with dark words; a white barely of the card's hue; the card's
   colour lit with a shadow, grown 4 pt a side), scrolling as focus moves, each day on its own, a day left
   stays as it was, fading out under the picture (20 pt) and over the
-  last 110 pt to the screen's foot (the focused line kept above it).
+  last 80 pt inside the card's foot only where titles go on out of
+  sight (at the list's end its last title sits clear at the card's foot,
+  no fade; scrolling it to the fade's edge left an empty band under it) (the focused line kept above it).
   The day with focus grows 2 %, its grey a small step lighter
   (trying: 0.17 / 0.4 over the rest's 0.13 / 0.32), a soft shadow under it (the cards'
   6 % was far too strong on a card this tall);
