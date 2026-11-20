@@ -1066,7 +1066,7 @@ struct DetailView: View {
             // the buttons opens it, so it points where Up goes; gone with
             // focus off them (Up does nothing there).
             .overlay(alignment: .topTrailing) {
-                DetailTrailerHint(model: viewModel, trailer: trailer)
+                DetailTrailerHint(model: viewModel, trailer: trailer, seen: onButtons)
                     .environment(\.colorScheme, .dark)
                     .opacity(onButtons ? 1 : 0)
                     .animation(.linear(duration: Motion.fadeDuration), value: onButtons)
@@ -2250,10 +2250,13 @@ final class DetailPreparer {
 struct DetailTrailerHint: View {
     @ObservedObject var model: DetailViewModel
     @ObservedObject var trailer: StageTrailer
+    /// Faded in by its host (focus on the buttons).
+    var seen = true
     var body: some View {
         ZStack(alignment: .trailing) {
             if model.trailerReady || trailer.shown {
-                SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true)
+                SectionHint(title: trailer.shown ? "Watch full screen" : "Watch the trailer", up: true,
+                            seen: seen)
                     .transition(FixedFocusBillboardText.leadSwap)
             }
         }

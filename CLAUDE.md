@@ -309,9 +309,14 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Continue Watching's art is the episode's TMDB still as Details', else the
   add-on's, looked up under the launch curtain (`ContinueStills`).
 - **Home's rows** are loaded at every launch (under the curtain: the saved
-  ones, made again when due), then again once an hour old — on coming back, a tab switch, and while Home sits
-  open (checked every 5 min). A refresh's billboard picks swap in only while
-  no billboard is on screen (`BillboardSight`).
+  ones at once; whether new ones are due waits for the account's pull,
+  `LaunchPreloader.historySettled`: decided before it, a due build ran on a
+  history not yet in, "taste from 1 titles"), then checked only as Home
+  comes into view (back from the player, a page, a tab) and on coming back
+  to the app, rebuilt only when due (decided 2026-11-20: an hourly check,
+  every 5 min while open, rebuilt them as you browsed). A refresh's
+  billboard picks swap in only while no billboard is on screen
+  (`BillboardSight`).
 - **Rows: Cue's own, from TMDB only** (decided 2026-11-19: the add-ons'
   catalogs as rows, collections and personal lists on Home were dropped;
   TMDB is far better, and without TMDB the app would be barebones anyway).
@@ -442,8 +447,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   you finished it under each (`plain`, Saved for Later's look: nothing
   to inspect in what you've seen). Your
   own rows show at 5 and ignore the two-rows cap.
-  Rebuilt on a new day, after 6 h or when the recent watches change, shown
-  on the next load, never mid-browse. A build waits for every list, no
+  Rebuilt on a new day or when the recent titles change (after watching;
+  every 6 h too was before), never while Home sits open. A build waits for every list, no
   deadline (8 s per list cut most of them on the Apple TV's cold
   builds, and the thin rows stuck for the day); title lookups through one
   gate (48 in flight, `TMDBService.bulkGate`), a 429 retried in

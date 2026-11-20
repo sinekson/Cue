@@ -4005,6 +4005,11 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             // Scrolled by their own rule (see `windowOffset`).
             destinationStrip?.isScrollEnabled = false
             windowStart = 0
+            // The cards on screen let their pictures go first: a reload puts
+            // them back in the pool without `didEndDisplaying`, and parked
+            // there they kept them (226 MB once Home had sat open through
+            // its rows' refreshes). The ones shown again fill from memory.
+            releaseVisibleArt()
             destinationStrip?.reloadData()
             destinationStrip?.contentOffset = .zero
             // (Aimed before its cell was made: there at once — and again once
@@ -4044,6 +4049,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             return
         }
         dropBox()
+        releaseVisibleArt()
+    }
+
+    private func releaseVisibleArt() {
         for cv in [strip, destinationStrip].compactMap({ $0 }) {
             for cell in cv.visibleCells {
                 (cell as? FixedFocusShowcaseCell)?.releaseArt()

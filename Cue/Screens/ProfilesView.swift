@@ -235,6 +235,8 @@ struct ProfileGate: View {
         while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(100))
             if InputHold.lastPress > appeared { stopAutoPick() }
+            // Picked (by a press or by itself): nothing left to wait for.
+            if phase != .choosing { return }
             guard !touched, phase == .choosing, !adding, pinProfile == nil, editing == nil,
                   let id = focused, let profile = profiles.profiles.first(where: { $0.id == id }),
                   !profile.pinEnabled else {

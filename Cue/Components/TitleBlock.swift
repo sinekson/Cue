@@ -167,6 +167,9 @@ struct SectionHint: View {
     var pressed = false
     /// E.g. while a trailer plays: steps aside.
     var hidden = false
+    /// Seen (a host fading it out says so): the bob runs only then — hidden
+    /// by its host's opacity it woke every 3.5 s to animate nothing.
+    var seen = true
 
     /// Left-aligned (the chevron at the content margin, the text after
     /// it) or centred on screen. Every hint follows this.
@@ -196,7 +199,8 @@ struct SectionHint: View {
         .foregroundStyle(Color.white.opacity(Self.opacity))
         .opacity(hidden ? 0 : 1)
         .animation(.easeInOut(duration: 0.4), value: hidden)
-        .task {
+        .task(id: seen && !hidden) {
+            guard seen, !hidden else { bobbing = false; return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.bobEvery)
                 withAnimation(.easeInOut(duration: 0.45)) { bobbing = true }

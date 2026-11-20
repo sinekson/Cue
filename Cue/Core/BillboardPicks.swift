@@ -323,9 +323,10 @@ enum BillboardPicks {
 /// A taste is read from your watching (`Taste`); a catalogue of named
 /// rows (`catalogue`) is scored against it, with a daily seeded share of
 /// chance so rows rotate; each row's titles are ordered for you. Each tab
-/// has its own rows (`tabs`). Built on a new day, after `rebuildAge`, or when
-/// your last titles changed; saved per profile, so a launch paints the last
-/// ones at once and new ones show on the next load, never mid-browse.
+/// has its own rows (`tabs`). Built on a new day or when your last titles
+/// changed (after watching), checked at launch, coming back to the app and
+/// back from the player, never while Home sits open; saved per profile, so
+/// a launch paints the last ones at once.
 enum CueRows {
     typealias Title = TMDBService.CueTitle
     typealias Traits = TMDBService.TitleTraits
@@ -417,7 +418,6 @@ enum CueRows {
         var health: String? = nil
     }
 
-    static let rebuildAge: TimeInterval = 6 * 60 * 60
     /// Raised when a change to how rows are made should show at once.
     static let version = 26
     /// Today's Pick (the full-width card) doesn't show a title again for
@@ -488,12 +488,12 @@ enum CueRows {
         (history?.recent ?? []).map(\.id) + TitleRatings.shared.signature
     }
 
-    /// Time for new rows: none saved, degraded, older than `rebuildAge` or
-    /// from another day, or made from other titles.
+    /// Time for new rows: none saved, degraded, from another day, or made
+    /// from other titles. (Every 6 hours too was before: a rebuild while you
+    /// browsed, the rows changing under you.)
     static func due(_ saved: Saved?, seeds: [String], now: Date = Date()) -> Bool {
         guard let saved else { return true }
         return saved.degraded == true
-            || now.timeIntervalSince(saved.builtAt) > rebuildAge
             || saved.version != version
             || saved.day != dayKey(now)
             || saved.seeds != seeds

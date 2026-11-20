@@ -2023,6 +2023,26 @@ final class LaunchPreloader: ObservableObject {
     private var started = false
     private var finished = false
     private var stepsStarted = CACurrentMediaTime()
+    private let launchedAt = Date()
+
+    /// The launch's account pull done (or none to wait for): Home's rows
+    /// decide whether they're due only then — decided before it, a due
+    /// build ran on the history not yet in ("taste from 1 titles") and the
+    /// rows stayed that way. 10 s at most.
+    func historySettled() async {
+        let begun = CACurrentMediaTime()
+        var sawSyncing = false
+        while CACurrentMediaTime() - begun < 10 {
+            if let sync {
+                guard sync.signedIn else { return }
+                if let at = sync.lastSyncedAt, at >= launchedAt { return }
+                if sync.isSyncing { sawSyncing = true } else if sawSyncing { return }
+            } else if CACurrentMediaTime() - begun > 3 {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
     private var elapsed: Double { CACurrentMediaTime() - stepsStarted }
     private weak var home: HomeViewModel?
     private weak var addonManager: AddonManager?

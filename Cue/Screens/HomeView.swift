@@ -98,17 +98,24 @@ final class HomeViewModel: ObservableObject {
     @Published var entries: [HomeRow] = [] {
         didSet { rebuildItemIndex() }
     }
-    /// When the rows were last loaded (nil: not yet this launch) — Home
-    /// loads again when they're older than `refreshAge` (see `HomeView`).
-    private(set) var loadedAt: Date?
-    static let refreshAge: TimeInterval = 60 * 60
-    var isStale: Bool {
-        if let retryAt, Date() > retryAt { return true }
-        return loadedAt.map { Date().timeIntervalSince($0) > Self.refreshAge } ?? false
+    /// When the rows were last loaded (nil: not yet this launch). Published:
+    /// the billboard's picks are made for it (`.task(id:)`), and a load with
+    /// no new rows changes nothing else.
+    @Published private(set) var loadedAt: Date?
+    /// The titles the rows were last loaded for (`CueRows.seeds`).
+    private var loadedSeeds: [String]?
+    /// New rows may be due (`CueRows.due`): a new day since the last load,
+    /// other recent titles (you watched something), or a retry's time.
+    /// Cheap: no disk, no network.
+    var mightBeDue: Bool {
+        guard let loadedAt else { return false }
+        if let retryAt, Date() >= retryAt { return true }
+        return CueRows.dayKey(loadedAt) != CueRows.dayKey(Date())
+            || loadedSeeds != CueRows.seeds(cueHistory?())
     }
     /// Cue's rows came back degraded (`CueRows.Saved.degraded`): made again
-    /// from this time (`cueRetry` on), at the next refresh check.
-    private var retryAt: Date?
+    /// from this time (`cueRetry` on).
+    @Published private(set) var retryAt: Date?
     /// Cue's rows being made (`loadCueRows`).
     private var cueBuild: (seeds: [String], task: Task<CueRows.Saved, Never>)?
     static let cueRetry: TimeInterval = 5 * 60
@@ -218,16 +225,23 @@ final class HomeViewModel: ObservableObject {
         loadedOnce = true
         loadGeneration &+= 1
         let generation = loadGeneration
-        let history = cueHistory?()
-        let seeds = CueRows.seeds(history)
-        CueRows.modelSource = {
-            await CueRows.model(watches: history?.watches ?? [], standings: await CueRows.standings(history),
-                                ratings: TitleRatings.shared.snapshot())
-        }
         let saved = await CueRows.saved()
         guard loadGeneration == generation else { return }
         if let saved, entries.isEmpty {
             entries = Self.entries(saved.rows)
+        }
+        // The launch's first: the saved rows shown, whether new ones are due
+        // waits for the history (`LaunchPreloader.historySettled`).
+        if loadedAt == nil {
+            await LaunchPreloader.shared.historySettled()
+            guard loadGeneration == generation else { return }
+        }
+        let history = cueHistory?()
+        let seeds = CueRows.seeds(history)
+        loadedSeeds = seeds
+        CueRows.modelSource = {
+            await CueRows.model(watches: history?.watches ?? [], standings: await CueRows.standings(history),
+                                ratings: TitleRatings.shared.snapshot())
         }
         if CueRows.due(saved, seeds: seeds) {
             // A load arriving mid-build from the same titles takes its rows
@@ -281,7 +295,7 @@ final class HomeViewModel: ObservableObject {
         await loadCueRows()
     }
 
-    /// Once per profile; later loads come from `refreshIfStale`.
+    /// Once per profile; later loads come from `refreshIfDue`.
     func loadIfNeeded() async {
         guard entries.isEmpty || !loadedOnce else { return }
         await load()
@@ -357,11 +371,11 @@ struct HomeView: View {
     /// root can re-enable the sidebar only once content exists to hold focus.
     var onContentReady: () -> Void = {}
 
-    /// Fetch the catalogs again when they're older than `refreshAge` — only
-    /// for the tab in front, never while something plays (it competed with
-    /// the stream for bandwidth).
-    private func refreshIfStale() {
-        guard active, viewModel.isStale, !NuvioSyncManager.playbackActive else { return }
+    /// New rows when they're due (a new day, or you watched something) —
+    /// only for the tab in front, never while something plays (it competed
+    /// with the stream for bandwidth).
+    private func refreshIfDue() {
+        guard active, viewModel.mightBeDue, !NuvioSyncManager.playbackActive else { return }
         Task { await viewModel.load() }
     }
 
@@ -551,22 +565,19 @@ struct HomeView: View {
         }
         // Discover's sentences put on Home: their titles.
         .task { await pins.refresh() }
-        // Catalogs are pulled — add-ons can't push — so Home asks again when
-        // its lists are older than an hour: as it comes into view, and as
-        // Cue comes back to the front. Not a timer: a handful of refreshes
-        // a day. (The rows under your focus don't reshuffle: the row view
-        // only takes count changes while you're in it.)
-        .onChange(of: active) { _, isActive in if isActive { refreshIfStale() } }
-        // …and while it sits open: checked every 5 min, so a list an hour
-        // old is fetched again without a press (the row under focus held).
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5 * 60))
-                guard !Task.isCancelled else { return }
-                refreshIfStale()
-            }
+        // New rows only as Home comes into view (back from the player, a
+        // page or another tab) and as Cue comes back to the front, and only
+        // when due: a new day, or you watched something. Never while it sits
+        // open (an hourly check rebuilt them as you browsed, every 6 hours).
+        .onChange(of: active) { _, isActive in if isActive { refreshIfDue() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshIfDue() } }
+        // Degraded rows: made again at their retry time, once.
+        .task(id: viewModel.retryAt) {
+            guard let retryAt = viewModel.retryAt else { return }
+            try? await Task.sleep(for: .seconds(max(1, retryAt.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            refreshIfDue()
         }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshIfStale() } }
         // Another profile: its rows.
         .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
         .task(id: nextUpRefreshKey) { await refreshNextUpContinueItems() }
