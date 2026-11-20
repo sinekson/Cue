@@ -205,6 +205,14 @@ struct PlayStageView<Sources: View>: View {
                        value: stage.dark)
         }
         .frame(width: card.width, height: card.height, alignment: .topLeading)
+        // The cards' edge (Card Outlines), Details' card's; gone as the
+        // window grows to the screen.
+        .overlay {
+            RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
+                .opacity(stage.dark || FixedFocusRing.outlines == .off ? 0 : 1)
+                .animation(Motion.fade, value: stage.dark)
+        }
         .clipShape(RoundedRectangle(cornerRadius: stage.dark ? 0 : Spotlight.cornerRadius, style: .continuous))
         .offset(x: card.minX, y: card.minY)
         .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: stage.dark)

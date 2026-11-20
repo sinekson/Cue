@@ -618,7 +618,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   billboard card, opened: the picture a card at the top
   (`StagePictureView.detailsCard`: 24 pt from the screen's top and
   sides, `detailsInset` (the rows' edges, 84, was before), its foot
-  40 pt above the episodes' name, as Home's card's), the text in it as Home's card (`cardText`: logo, facts,
+  40 pt above the episodes' name, as Home's card's), the cards' edge by Card Outlines as Home's card, never the bright one (focus is on the buttons; the opening's window, Back's cover and the stage carry it too; at 24 pt from the screen it may read as a frame: judge on the TV), the text in it as Home's card (`cardText`: logo, facts,
   tagline; the trailer line, "Watch the trailer", is over the buttons, right-aligned, 24 pt above them, only while focus is on them, as Up from them opens it (over the logo, in Home's reason's place, was before)), its badges as the card's
   (`BillboardCorners(details:)`: status and one fact top left, all its
   ratings top right), the card's bottom fade (`StageArt.cardShade`); the
@@ -1028,7 +1028,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   at the end of `TMDBBrowseView.swift`): a calendar (the user rejected
   rows here: a calendar look, after an anime release chart). Every day
   (an empty one too) a tall card along a strip (trying 2026-11-20): the
-  cards' corners, no rim (an outline was not wanted), the cards' 40 pt gap, four across between the rows' edges, the days
+  cards' corners, the cards' edge by Card Outlines (bright on the day with focus; no rim was before), the cards' 40 pt gap, four across between the rows' edges, the days
   either side peeking alike (Home's rows; four and a half from the left
   edge was before), whole, its foot 60 pt above the screen's (trying;
   running past the screen's foot, its end never seen, was before); opening with today second, moving focus: the strip moves a

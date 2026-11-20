@@ -2015,6 +2015,9 @@ private struct UpcomingDay: View {
     let showsMonth: Bool
     let watched: WatchedStore
     let onOpen: (MetaItem) -> Void
+    /// Card Outlines: read through `FixedFocusRing.outlines`, here so a
+    /// change redraws the days.
+    @AppStorage(FixedFocusRing.outlinesKey) private var outlinesSetting: String?
 
     /// The picture, the card's width at 16:9.
     static var header: CGFloat { (UpcomingView.card * 9 / 16).rounded() }
@@ -2091,6 +2094,13 @@ private struct UpcomingDay: View {
         // as a tint, opaque or a thin wash, was tried: calmer without).
         .background(on ? Self.litFill : FlatControl.rest)
         .clipShape(shape)
+        // The cards' edge (Card Outlines): the thin rim, bright on the day
+        // with focus.
+        .overlay {
+            let outlines = outlinesSetting.flatMap(FixedFocusRing.Outlines.init) ?? FixedFocusRing.outlines
+            shape.strokeBorder(Color.white.opacity(on && outlines == .high ? 0.75 : 0.3), lineWidth: 2)
+                .opacity(outlines == .off ? 0 : 1)
+        }
         .shadow(color: .black.opacity(on ? 0.4 : 0), radius: 30, y: 14)
         .scaleEffect(on ? Self.lift : 1)
         .opacity(past && !on ? FixedFocusMetrics.peekAlpha : 1)

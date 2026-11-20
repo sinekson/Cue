@@ -83,6 +83,13 @@ final class StagePictureView: UIView {
     /// nil: the whole picture.
     var cardFrame: CGRect? { didSet { setNeedsLayout() } }
     private let cardMask = UIView()
+    /// The card's edge, as every card's (Card Outlines): the rim
+    /// (`FixedFocusCardEdge.rim`), and the bright edge while focused
+    /// (`cardLit`: Home's card). Inside the card's mask, over everything.
+    private let cardRim = UIImageView()
+    private let cardOutline = UIView()
+    /// Home's card in focus: the bright edge (with Edges and Focus).
+    var cardLit = false { didSet { cardOutline.alpha = cardLit ? 1 : 0 } }
 
     /// One title's picture with its own shade — and, on Home's billboard,
     /// its own text — on it: one card.
@@ -232,6 +239,15 @@ final class StagePictureView: UIView {
         dim.alpha = 0
         dim.isUserInteractionEnabled = false
         sheet.addSubview(dim)
+        for edge in [cardRim, cardOutline] {
+            edge.isUserInteractionEnabled = false
+            addSubview(edge)
+        }
+        cardOutline.layer.cornerRadius = Spotlight.cornerRadius
+        cardOutline.layer.cornerCurve = .continuous
+        cardOutline.layer.borderColor = FixedFocusRing.color.cgColor
+        cardOutline.alpha = 0
+        FixedFocusRing.follow(self)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -274,9 +290,13 @@ final class StagePictureView: UIView {
             cardMask.backgroundColor = .black
             cardMask.layer.cornerCurve = .continuous
             if mask !== cardMask { mask = cardMask }
+            cardRim.frame = cardFrame
+            cardOutline.frame = cardFrame
         } else if mask != nil {
             mask = nil
         }
+        cardRim.image = cardFrame == nil ? nil : FixedFocusCardEdge.rim
+        cardOutline.layer.borderWidth = cardFrame == nil ? 0 : FixedFocusRing.width
     }
 
     /// Details' trailer full screen: the card's window opens to the
@@ -318,6 +338,8 @@ final class StagePictureView: UIView {
         UIView.animate(withDuration: Self.fullPartsFade, delay: full ? 0 : duration - Self.fullPartsFade,
                        options: [.curveEaseInOut, .beginFromCurrentState]) {
             for part in parts { part.alpha = full ? 0 : (part is UIImageView ? self.shadeAlpha : 1) }
+            // The edge is the card's: gone while it's the screen.
+            self.cardRim.alpha = full ? 0 : 1
         }
     }
 

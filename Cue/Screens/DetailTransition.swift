@@ -432,8 +432,13 @@ final class DetailTransition {
     private static func shrink(_ cover: UIView, into: Window) {
         guard cover.subviews.count == 2 else { return }
         let background = cover.subviews[0], card = cover.subviews[1]
-        guard card.subviews.count == 2 else { return }
+        guard card.subviews.count >= 2 else { return }
         let picture = card.subviews[0], shade = card.subviews[1]
+        // The edge (`cardCover`), with the card.
+        if card.subviews.count > 2 {
+            move(card.subviews[2].layer, from: CGRect(origin: .zero, size: StagePictureView.detailsCard.size),
+                 to: CGRect(origin: .zero, size: into.card.size), shrinkTime * length, shrinkCurve)
+        }
         let target = StagePictureView.detailsCard
         let k = length
         let time = shrinkTime * k
@@ -485,6 +490,11 @@ final class DetailTransition {
         shade.contentMode = .scaleToFill
         shade.frame = screen.offsetBy(dx: -target.minX, dy: -target.minY)
         card.addSubview(shade)
+        if let rim = FixedFocusCardEdge.rim {
+            let edge = UIImageView(image: rim)
+            edge.frame = card.bounds
+            card.addSubview(edge)
+        }
         cover.addSubview(card)
         return cover
     }
@@ -926,6 +936,8 @@ final class DetailTransitionOverlay {
     /// Details' shade over the picture (the cover is Details without its
     /// text — the reveal only adds things).
     let shade = UIImageView()
+    /// The cards' edge (Card Outlines) on the window, going with it.
+    let edge = UIImageView()
     private let spinner = LoadingSymbol(size: 64)
 
     init() {
@@ -946,6 +958,8 @@ final class DetailTransitionOverlay {
         shade.contentMode = .scaleToFill
         shade.frame = root.bounds
         pictureFrame.addSubview(shade)
+        edge.contentMode = .scaleToFill
+        pictureFrame.addSubview(edge)
         placeOpen()
         root.addSubview(pictureFrame)
         spinner.center = CGPoint(x: 960, y: 540)
@@ -1028,6 +1042,8 @@ final class DetailTransitionOverlay {
                                 width: screen.width * sx, height: screen.height * sy)
         DetailTransition.set(shade.layer, "opacity", 1)
         DetailTransition.move(shade.layer, from: shadeStart, to: screen, duration, curve)
+        edge.image = FixedFocusCardEdge.rim
+        DetailTransition.move(edge.layer, from: grown.card, to: target, duration, curve)
         video.player = player
         video.alpha = player == nil ? 0 : 1
         if player != nil {
@@ -1050,7 +1066,8 @@ final class DetailTransitionOverlay {
         background.layer.removeAllAnimations()
         background.layer.opacity = 0
         background.image = nil
-        for layer in [pictureFrame.layer, picture.layer, video.layer] { layer.removeAllAnimations() }
+        for layer in [pictureFrame.layer, picture.layer, video.layer, edge.layer] { layer.removeAllAnimations() }
+        edge.image = nil
         video.player = nil
         video.alpha = 0
         for layer in [picture.layer, shade.layer] { layer.removeAllAnimations(); layer.opacity = 1 }

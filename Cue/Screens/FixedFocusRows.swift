@@ -1799,6 +1799,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                 .scaledBy(x: cardScale, y: cardScale)
             billboardShadow?.transform = stage.transform
             billboardShadow?.alpha = billboardLit ? 1 : 0
+            stage.cardLit = billboardLit
             // Home's top bar with the card — set here, in the same
             // animation, so it moves as printed on the page with it. Its
             // place, not its growth (following the top edge as it grew,
@@ -4641,3 +4642,4 @@ final class TopAlignedLabel: UILabel {
         super.drawText(in: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: fitted.height))
     }
 }
+
