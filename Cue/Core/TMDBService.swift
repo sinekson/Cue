@@ -2898,13 +2898,15 @@ extension TMDBService {
     }
 
     /// TMDB's "2026-11-20" as that day here (a calendar day, not a moment).
-    static func localDay(_ text: String) -> Date? { localDayFormat.date(from: text) }
-    private static let localDayFormat: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
+    /// Read as three numbers: a `DateFormatter` reloaded its locale's data
+    /// on every parse (~1 ms each; Upcoming's calendar blocked the main
+    /// thread 161 ms).
+    static func localDay(_ text: String) -> Date? {
+        let parts = text.prefix(10).split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              (1...12).contains(month), (1...31).contains(day) else { return nil }
+        return Calendar.current.date(from: DateComponents(year: year, month: month, day: day))
+    }
 
     /// A film's release dates in a country: in cinemas (TMDB's theatrical,
     /// 2 and 3) and streaming (digital, 4).

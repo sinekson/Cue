@@ -54,10 +54,19 @@ struct HomeRow: Identifiable {
         if calendar.isDateInYesterday(date) { return "Yesterday" }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date),
                                            to: calendar.startOfDay(for: Date())).day ?? 0
-        let formatter = DateFormatter()
-        formatter.setLocalizedDateFormatFromTemplate(days < 7 ? "EEEE" : "MMMd")
-        return formatter.string(from: date)
+        return (days < 7 ? weekdayFormat : dateFormat).string(from: date)
     }
+    /// Made once (a formatter per call loaded its locale's data each time).
+    private static let weekdayFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEE")
+        return formatter
+    }()
+    private static let dateFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter
+    }()
 
     /// The badges a card shows (`FixedFocusBadges`), at most two: the
     /// show's news, then the row's badge (For You's reason first), else the

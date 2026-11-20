@@ -250,7 +250,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 ## How things work
 
-- **Tabs** stay alive once built, built ahead after launch; a switch: the
+- **Tabs** stay alive once built, built ahead under the launch's curtain
+  while it waits on the network (`buildTabsAhead`; after the lift, 1.5 s
+  apart, each first layout cost 90–160 ms as you pressed); a switch: the
   old page gone and the new one there in the same frame, no fade, no
   drift (as Netflix) (`switchTab`). (A dissolve over the old felt heavy;
   the new page fading in over the old picture dipped at its end; a plain

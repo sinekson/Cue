@@ -1105,12 +1105,16 @@ struct RootView: View {
         withTransaction(instant) { selectedTab = new }
     }
 
-    /// Every tab built, hidden, once the launch is over — one at a time, so
-    /// the first visit is a switch like any other, not a build.
+    /// Every tab built, hidden, under the launch's curtain — while it waits
+    /// on the network, one at a time — so the first visit is a switch like
+    /// any other, not a build. (Built after the lift, 1.5 s apart, each
+    /// first layout cost 90–160 ms as you pressed, and Settings arrived
+    /// early had its title slide in.) A launch over before they're all in:
+    /// the rest 1.5 s apart.
     private func buildTabsAhead() async {
-        await LaunchPreloader.shared.lifted()
+        await LaunchPreloader.shared.homeOnScreen()
         for tab in AppTab.topBarOrder where !visitedTabs.contains(tab.rawValue) {
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: .milliseconds(LaunchPreloader.shared.curtain ? 300 : 1500))
             guard !Task.isCancelled else { return }
             visitedTabs.insert(tab.rawValue)
         }
@@ -2099,6 +2103,14 @@ final class LaunchPreloader: ObservableObject {
         while curtain, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
     }
 
+    /// Home's saved rows drawn under the curtain: from here the launch
+    /// mostly waits on the network, the main thread nearly idle — the
+    /// other tabs are built then (`buildTabsAhead`).
+    private var homeDrawn = false
+    func homeOnScreen() async {
+        while !homeDrawn, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+
     /// The curtain fades into Home and input comes back.
     func lift() {
         guard curtain else { return }
@@ -2201,6 +2213,7 @@ final class LaunchPreloader: ObservableObject {
         let loadedBefore = firstLaunch ? nil : home.loadedAt
         while home.entries.isEmpty, elapsed < 1.0 { try? await Task.sleep(for: .milliseconds(25)) }
         line(String(format: "Disk      rows %d · %.0f ms", home.entries.count, (CACurrentMediaTime() - t) * 1000))
+        homeDrawn = true
 
         // ② The minimum begins with the network: Home's rows (its own load,
         // started as it was built: the saved ones, made again when due) and
