@@ -715,12 +715,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   which draws the same card on the same background: only its parts
   appear, nothing moves (the cover's parts fading one by one let the
   page under show through mid-fade: a flicker). A trailer playing grows
-  with it. Settings → Appearance → Opening Details (`DetailOpening`):
-  Grow, that, the default (it looks better); Fade, calmer: no morph,
-  Details' card fading in where it lands with the background (0.3 s),
-  growing from 95 % as a whole as a card's focus, the rest the same;
-  from Home's billboard card it grows out of the card as Grow (the same
-  picture nearly in place: a second copy fading in read as doubled).
+  with it. (A Fade setting, Details' card fading in where it lands,
+  growing from 95 %, was removed 2026-11-20: Grow looks better.)
   Back, the same from everywhere, nothing moving: one dissolve into the
   page below (0.3 s, `detailsBack`; 0.25 for it all was before), Details'
   parts quicker inside it (0.18 s, `partsBack`: its text crossed the

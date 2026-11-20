@@ -4,7 +4,6 @@ import SwiftUI
 struct AppearanceSettingsDetail: View {
     @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
     @AppStorage(SourceCardStyle.key) private var sourceCards = SourceCardStyle.current.rawValue
-    @AppStorage(DetailOpening.key) private var detailOpening = DetailOpening.current.rawValue
     @ObservedObject private var background = BackgroundStore.shared
 
     var body: some View {
@@ -21,13 +20,6 @@ struct AppearanceSettingsDetail: View {
                     options: FixedFocusRing.Outlines.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
                     selection: outlines
                 ) { FixedFocusRing.outlines = FixedFocusRing.Outlines(rawValue: $0) ?? .high }
-                SettingsOptionsRow(
-                    title: "Opening Details",
-                    pageDescription: "Choose how a title opens. Grow opens the card you pressed into the title's "
-                        + "page. Fade brings the page's picture in where it stays, a little calmer.",
-                    options: DetailOpening.allCases.map { SettingsOption(id: $0.rawValue, label: $0.label) },
-                    selection: detailOpening
-                ) { detailOpening = $0 }
                 SettingsOptionsRow(
                     title: "Source Cards",
                     pageDescription: "Choose how links read when you pick a source. Styled makes a tidy card from "
