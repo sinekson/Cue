@@ -1060,7 +1060,6 @@ struct RootView: View {
                     // the tab gives them one.
                     .background { if tab == .search || tab == .library { ATVBackground() } }
                     .opacity(active ? 1 : 0)
-                    .disabled(!active)
                     .accessibilityHidden(!active)
                     .zIndex(active ? 1 : 0)
             }
@@ -1153,23 +1152,29 @@ struct RootView: View {
             homeStackWithLayers(path: $homePath, active: active)
         case .discover:
             NavigationStack(path: $discoverPath) {
-                DiscoverView(onOpenInPlace: { item in
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) { discoverPath.append(Route.detail(item)) }
-                }, onBack: { focusSidebar(tab.rawValue) })
+                MadeOnce {
+                    DiscoverView(onOpenInPlace: { item in
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { discoverPath.append(Route.detail(item)) }
+                    }, onBack: { focusSidebar(tab.rawValue) })
+                }
+                .equatable()
                 .probeScreen("Discover")
                 .navigationDestination(for: Route.self) { destination(for: $0, path: trail($discoverPath)) }
             }
         case .upcoming:
             NavigationStack(path: $upcomingPath) {
-                UpcomingView(onOpen: { item in
-                    DetailTransition.shared.open(item) {
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) { upcomingPath.append(Route.detail(item)) }
-                    }
-                }, onBack: { focusSidebar(tab.rawValue) })
+                MadeOnce {
+                    UpcomingView(onOpen: { item in
+                        DetailTransition.shared.open(item) {
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) { upcomingPath.append(Route.detail(item)) }
+                        }
+                    }, onBack: { focusSidebar(tab.rawValue) })
+                }
+                .equatable()
                 .probeScreen("Upcoming")
                 .navigationDestination(for: Route.self) { destination(for: $0, path: trail($upcomingPath)) }
             }
@@ -2913,4 +2918,14 @@ final class TitlePreloader {
         }
         return net
     }
+}
+
+/// A tab's page that takes nothing from its parent but closures, made
+/// once: they're new on every run of the app's body, so the page (Upcoming's
+/// days, Discover's grid) ran its body again on every tab switch. Its own
+/// state still updates it.
+private struct MadeOnce<Content: View>: View, Equatable {
+    @ViewBuilder let content: () -> Content
+    static func == (_: Self, _: Self) -> Bool { true }
+    var body: some View { content() }
 }

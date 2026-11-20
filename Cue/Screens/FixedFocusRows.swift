@@ -1297,7 +1297,27 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     private func beginMove() -> Int {
         lastMoveID += 1
         liveMoves.insert(lastMoveID)
+        holdNewRows()
         return lastMoveID
+    }
+    /// Rows coming into the list in this move, off screen, are made just
+    /// after it has started (`FixedFocusRowsLayout.holding`): the move is
+    /// with Core Animation by then, so it runs on while they're made.
+    /// (After the press's commit: a main-queue block can run before it.)
+    private var holdToken = 0
+    private func holdNewRows() {
+        guard let layout = outer.collectionViewLayout as? FixedFocusRowsLayout else { return }
+        if layout.holding == nil { layout.holding = Set(outer.indexPathsForVisibleItems.map(\.item)) }
+        holdToken += 1
+        let token = holdToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, token == self.holdToken, layout.holding != nil else { return }
+            layout.holding = nil
+            UIView.performWithoutAnimation {
+                layout.invalidateLayout()
+                self.outer.layoutIfNeeded()
+            }
+        }
     }
     /// False for a move already counted done (hurried).
     private func endMove(_ id: Int) -> Bool { liveMoves.remove(id) != nil }
@@ -4397,9 +4417,13 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         // drawn, the shadow doubled dark under the card, then dropped).
         // The old one goes when the new one has covered it.
         if animated {
-            new.dissolveIn { old.removeFromSuperview() }
+            new.dissolveIn { [weak self] in
+                guard let self else { return old.removeFromSuperview() }
+                // (Taken again for a newer box meanwhile: it stays.)
+                if old !== self.box { self.retire(old) }
+            }
         } else {
-            old.removeFromSuperview()
+            retire(old)
         }
         if let cv = destinationStrip {
             for case let cell as FixedFocusShowcaseCell in cv.visibleCells where cell.mirror === old {
@@ -4428,7 +4452,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             dip.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
             dip.duration = Motion.moveDuration
             let start = CACurrentMediaTime()
-            for case let view as FixedFocusShowcaseCell in stripHost.subviews {
+            for case let view as FixedFocusShowcaseCell in stripHost.subviews where !view.isHidden {
                 dip.beginTime = view.layer.convertTime(start, from: nil)
                 view.layer.add(dip, forKey: "dip")
             }
@@ -4463,14 +4487,38 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     private func makeBox(_ item: MetaItem, index: Int) -> FixedFocusShowcaseCell {
         var made: FixedFocusShowcaseCell!
         UIView.performWithoutAnimation {
-            let new = FixedFocusShowcaseCell()
-            new.isUserInteractionEnabled = false
+            let new: FixedFocusShowcaseCell
+            if let spare = spareBox {
+                spareBox = nil
+                spare.isHidden = false
+                stripHost.bringSubviewToFront(spare)
+                new = spare
+            } else {
+                new = FixedFocusShowcaseCell()
+                new.isUserInteractionEnabled = false
+                stripHost.addSubview(new)
+            }
             configureShowcase(new, item, index: index)
             new.setDetailsShown(isFocusRow, animated: false)
-            stripHost.addSubview(new)
             made = new
         }
         return made
+    }
+
+    /// A box gone, kept hidden for the next one: taken out of the window,
+    /// a box cost UIKit ~20 ms each time (its autofill check walks the
+    /// loaded libraries), and a row leaving the list drops its box in a
+    /// press. One kept per row; any more go.
+    private var spareBox: FixedFocusShowcaseCell?
+
+    private func retire(_ old: FixedFocusShowcaseCell) {
+        guard spareBox == nil, old.superview === stripHost else { return old.removeFromSuperview() }
+        UIView.performWithoutAnimation {
+            old.isHidden = true
+            old.layer.removeAllAnimations()
+            old.resetForSpare()
+        }
+        spareBox = old
     }
 
     /// The card sliding in under the box along the row, hidden once there.
@@ -4488,7 +4536,7 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
 
     private func dropBox() {
         slidingUnder = nil
-        box?.removeFromSuperview()
+        if let box { retire(box) }
         box = nil
         boxItem = nil
         guard let cv = destinationStrip else { return }

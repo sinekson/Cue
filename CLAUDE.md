@@ -254,7 +254,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   while it waits on the network (`buildTabsAhead`; after the lift, 1.5 s
   apart, each first layout cost 90–160 ms as you pressed); a switch: the
   old page gone and the new one there in the same frame, no fade, no
-  drift (as Netflix) (`switchTab`). (A dissolve over the old felt heavy;
+  drift (as Netflix) (`switchTab`). A hidden page is only transparent
+  (opacity 0 keeps focus out; `.disabled` too cost ~15 ms a switch in
+  trait changes); pages taking only closures are made once (`MadeOnce`:
+  new closures re-ran Upcoming's days on every switch). (A dissolve over the old felt heavy;
   the new page fading in over the old picture dipped at its end; a plain
   fade didn't feel good; the billboard's paging slide was too much and
   confused with the billboard's; Home drifting in 18–72 pt with its
@@ -301,6 +304,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Animation in `didUpdateFocus`. Every row moving focus (folders too:
   posters with names).
   SwiftUI scrolling was rejected (main-thread animation, lost targets).
+  A row coming into the list off screen in a move is made 50 ms later,
+  the move already with Core Animation (`FixedFocusRowsLayout.holding`:
+  made in the press, its cards cost 2–3 frames before the move began).
+  A large row's box is never taken out of the window: kept hidden and
+  reused (`spareBox`; removing it cost UIKit ~20 ms each time).
   What a row shows is what Select acts on: the row focus is in keeps its
   titles, order and pictures until focus leaves it (a reordered Continue
   Watching showed one title and played another); other rows update at once,

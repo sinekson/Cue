@@ -1426,11 +1426,15 @@ final class DiscoverPins: ObservableObject {
         }
     }
 
-    @Published private(set) var pins: [Pin] = []
+    @Published private(set) var pins: [Pin] = [] { didSet { madeRows = nil } }
     /// A pin to open in Discover's tab (Your Rows' Open in Discover).
     @Published var opening: Pin?
     /// Each pin's titles, by its id.
-    @Published private(set) var titles: [String: [MetaItem]] = [:]
+    @Published private(set) var titles: [String: [MetaItem]] = [:] { didSet { madeRows = nil } }
+    /// `rows` as last made, and the day (a name can say "This Season"):
+    /// Home's body asks on every run, a tab switch too, and the names are
+    /// worked out from Discover's lists (~15 ms each time in Debug).
+    private var madeRows: (day: String, rows: [HomeRow])?
     private var loadedFor: Int?
 
     private var key: String {
@@ -1511,10 +1515,14 @@ final class DiscoverPins: ObservableObject {
     /// Home's rows: large rows.
     var rows: [HomeRow] {
         load()
-        return pins.compactMap { pin in
+        let day = CueRows.dayKey(Date())
+        if let made = madeRows, made.day == day { return made.rows }
+        let rows = pins.compactMap { pin -> HomeRow? in
             guard let items = titles[pin.id], !items.isEmpty else { return nil }
             return HomeRow(id: Self.rowPrefix + pin.id, title: pin.rowName, items: items)
         }
+        madeRows = (day, rows)
+        return rows
     }
 
     /// Home's rows' names: title case, small words lower but first

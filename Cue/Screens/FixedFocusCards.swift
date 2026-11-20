@@ -784,6 +784,16 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         card.layer.add(fade, forKey: "dissolve")
     }
 
+    /// A large row's box kept hidden for its next (`FixedFocusRowCell.retire`):
+    /// its pictures let go, its fade and dip gone, its outline back.
+    func resetForSpare() {
+        releaseArt()
+        card.layer.removeAllAnimations()
+        mirror = nil
+        outline.alpha = 0
+        transform = .identity
+    }
+
     /// The box going out under a new one: its outline and shadow gone at
     /// once (the new one's are there).
     func dropOutline() {
@@ -1793,6 +1803,7 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
         let focusY = rowTop()
         // (The list's own height: the whole screen on Home.)
         let screen = (collectionView?.bounds.height).map { $0 - 2 * Self.overscan } ?? 1080
+        screenBand = CGRect(x: 0, y: Self.overscan, width: 1920, height: screen)
         let peek = peeks()
         /// The lowest the row below the focused one may start: its name and
         /// the minimum peek of its cards still on the screen.
@@ -1897,8 +1908,20 @@ final class FixedFocusRowsLayout: UICollectionViewLayout {
         CGSize(width: 1920, height: 1080 + 2 * Self.overscan)
     }
 
+    /// The rows on display as a move began (the controller's `beginMove`):
+    /// a row coming into the list in it, off screen, is left out of the
+    /// press's layout and made a moment later, the move already running
+    /// (made in the press, its cards cost 2–3 frames before the move began).
+    var holding: Set<Int>?
+    /// The screen, in the list's coordinates.
+    private var screenBand = CGRect.zero
+
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        frames.indices.compactMap { frames[$0].intersects(rect) ? attributes($0) : nil }
+        frames.indices.compactMap { r in
+            guard frames[r].intersects(rect) else { return nil }
+            if let holding, !holding.contains(r), !frames[r].intersects(screenBand) { return nil }
+            return attributes(r)
+        }
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
