@@ -2051,6 +2051,9 @@ enum TMDBService {
             let popularity: Double
             let votes: Int
             let date: String
+            var genres: [Int] = []
+            var language: String = ""
+            var average: Double = 0
         }
         fileprivate let entries: [Entry]
 
@@ -2066,7 +2069,7 @@ enum TMDBService {
             let poster_path: String?; let backdrop_path: String?
             let overview: String?; let release_date: String?; let first_air_date: String?
             let vote_average: Double?; let vote_count: Int?; let popularity: Double?
-            let genre_ids: [Int]?; let job: String?
+            let genre_ids: [Int]?; let job: String?; let original_language: String?
         }
         guard let body: Response = try? await get("/person/\(id)/combined_credits",
                                                    query: ["language": language]) else { return .empty }
@@ -2091,7 +2094,8 @@ enum TMDBService {
                     description: c.overview,
                     releaseInfo: date.isEmpty ? nil : String(date.prefix(4)),
                     rating: c.vote_average),
-                popularity: c.popularity ?? 0, votes: c.vote_count ?? 0, date: date)
+                popularity: c.popularity ?? 0, votes: c.vote_count ?? 0, date: date,
+                genres: c.genre_ids ?? [], language: c.original_language ?? "", average: c.vote_average ?? 0)
         }
         return PersonCredits(entries: entries)
     }
@@ -2110,9 +2114,42 @@ enum TMDBService {
         log1p(Double(entry.votes)) + log1p(entry.popularity)
     }
 
-    /// A page of a person's movies or shows, the best known first (`fame`).
-    static func credits(_ credits: PersonCredits, isMovie: Bool, page: Int) async -> BrowsePage {
-        let list = credits.entries.filter { $0.raw.isMovie == isMovie }.sorted { fame($0) > fame($1) }
+    /// A page of a person's movies or shows, read through a discover
+    /// query as TMDB would (Discover's words on a person's page): genres
+    /// (all asked), language, dates, votes, the order; keywords aren't in
+    /// credits (ignored). The best known: `fame`.
+    static func credits(_ credits: PersonCredits, filter: [String: String], isMovie: Bool,
+                        page: Int) async -> BrowsePage {
+        func ids(_ key: String) -> Set<Int> {
+            Set((filter[key] ?? "").split(whereSeparator: { $0 == "," || $0 == "|" }).compactMap { Int($0) })
+        }
+        let with = ids("with_genres"), without = ids("without_genres")
+        let languages = filter["with_original_language"].map { Set($0.split(separator: "|").map(String.init)) }
+        let dateKeys = isMovie ? ["primary_release_date"] : ["first_air_date", "air_date"]
+        let from = dateKeys.compactMap { filter["\($0).gte"] }.first
+        let to = dateKeys.compactMap { filter["\($0).lte"] }.first
+        let minAverage = filter["vote_average.gte"].flatMap(Double.init)
+        let minVotes = filter["vote_count.gte"].flatMap(Int.init)
+        let maxVotes = filter["vote_count.lte"].flatMap(Int.init)
+        let kept = credits.entries.filter { entry in
+            guard entry.raw.isMovie == isMovie else { return false }
+            let genres = Set(entry.genres)
+            if !with.isSubset(of: genres) || !without.isDisjoint(with: genres) { return false }
+            if let languages, !languages.contains(entry.language) { return false }
+            if let from, entry.date.isEmpty || entry.date < from { return false }
+            if let to, entry.date.isEmpty || entry.date > to { return false }
+            if let minAverage, entry.average < minAverage { return false }
+            if let minVotes, entry.votes < minVotes { return false }
+            if let maxVotes, entry.votes > maxVotes { return false }
+            return true
+        }
+        let order = filter["sort_by"] ?? "vote_count.desc"
+        let list: [PersonCredits.Entry] = kept.sorted { a, b in
+            if order.hasPrefix("popularity") { return a.popularity > b.popularity }
+            if order.hasPrefix("vote_average") { return a.average > b.average }
+            if order.contains("date") { return a.date > b.date }
+            return fame(a) > fame(b)
+        }
         let total = list.count
         let start = (page - 1) * browsePageSize
         guard start < list.count else { return BrowsePage(items: [], total: total, hasMore: false) }
@@ -2928,5 +2965,116 @@ extension TMDBService {
                 .compactMap { $0.release_date.flatMap { localDay(String($0.prefix(10))) } }.min()
         }
         return (first([2, 3]), first([4]))
+    }
+}
+
+// MARK: - A browse page's subject (Discover round a person, studio, network)
+
+extension TMDBService {
+    /// One of a subject's titles, as its starting points read them.
+    struct WorkTitle: Sendable {
+        let tmdbID: Int
+        let isMovie: Bool
+        let genres: [Int]
+        let language: String
+        let year: Int?
+        let votes: Int
+        let average: Double
+    }
+
+    /// A person's titles, the best known first (`fame`).
+    static func work(of credits: PersonCredits) -> [WorkTitle] {
+        credits.entries.sorted { fame($0) > fame($1) }.map { entry in
+            WorkTitle(tmdbID: entry.raw.tmdbID, isMovie: entry.raw.isMovie, genres: entry.genres,
+                      language: entry.language, year: Int(entry.date.prefix(4)), votes: entry.votes,
+                      average: entry.average)
+        }
+    }
+
+    /// A studio's or network's best-known titles (two pages a side, a
+    /// network's shows only), by votes.
+    static func work(brand id: Int, isNetwork: Bool) async -> [WorkTitle] {
+        struct Response: Decodable { let results: [Result]? }
+        struct Result: Decodable {
+            let id: Int; let genre_ids: [Int]?; let original_language: String?
+            let release_date: String?; let first_air_date: String?
+            let vote_count: Int?; let vote_average: Double?
+        }
+        let sides = isNetwork ? [false] : [true, false]
+        let pages = await withTaskGroup(of: [WorkTitle].self) { group in
+            for isMovie in sides {
+                for page in 1...2 {
+                    group.addTask {
+                        let query = [isNetwork ? "with_networks" : "with_companies": String(id),
+                                     "sort_by": "vote_count.desc", "page": String(page)]
+                        guard let body: Response = try? await get(isMovie ? "/discover/movie" : "/discover/tv",
+                                                                  query: query) else { return [] }
+                        return (body.results ?? []).map { r in
+                            WorkTitle(tmdbID: r.id, isMovie: isMovie, genres: r.genre_ids ?? [],
+                                      language: r.original_language ?? "",
+                                      year: (r.release_date ?? r.first_air_date).flatMap { Int($0.prefix(4)) },
+                                      votes: r.vote_count ?? 0, average: r.vote_average ?? 0)
+                        }
+                    }
+                }
+            }
+            var all: [WorkTitle] = []
+            for await titles in group { all += titles }
+            return all
+        }
+        return pages.sorted { $0.votes > $1.votes }
+    }
+
+    /// Who a person works with most: the top cast and directors (a
+    /// show's creators) of their ten best-known titles, twice at least,
+    /// the most often first. Names from the titles' records.
+    static func collaborators(of person: Int, in titles: [WorkTitle], limit: Int = 5) async -> [(id: Int, name: String)] {
+        let traits = await boundedConcurrentMap(Array(titles.prefix(10)), limit: 6) { title in
+            await TMDBService.traits(tmdbID: title.tmdbID, isMovie: title.isMovie, bulk: true)
+        }
+        var counts: [Int: Int] = [:]
+        var names: [Int: String] = [:]
+        for case let found? in traits {
+            for id in Set((found.cast ?? []) + (found.crew ?? [])) where id != person {
+                counts[id, default: 0] += 1
+                if let name = found.labels["p:\(id)"] { names[id] = name }
+            }
+        }
+        return counts.filter { $0.value >= 2 && names[$0.key] != nil }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .prefix(limit).map { ($0.key, names[$0.key]!) }
+    }
+
+    /// Studios (or networks) like this one: whose titles TMDB recommends
+    /// beside its six best known, three times at least, the most often
+    /// first.
+    static func kindred(brand id: Int, isNetwork: Bool, in titles: [WorkTitle],
+                        limit: Int = 5) async -> [(id: Int, name: String)] {
+        struct Response: Decodable { let results: [Result]? }
+        struct Result: Decodable { let id: Int }
+        let lists = await boundedConcurrentMap(Array(titles.prefix(6)), limit: 6) { title -> [WorkTitle] in
+            let path = title.isMovie ? "/movie/\(title.tmdbID)/recommendations" : "/tv/\(title.tmdbID)/recommendations"
+            guard let body: Response = try? await get(path) else { return [] }
+            return (body.results ?? []).prefix(8).map {
+                WorkTitle(tmdbID: $0.id, isMovie: title.isMovie, genres: [], language: "", year: nil, votes: 0, average: 0)
+            }
+        }
+        var seen = Set<String>()
+        let recommended = lists.flatMap { $0 }.filter { seen.insert("\($0.isMovie)\($0.tmdbID)").inserted }
+        let traits = await boundedConcurrentMap(recommended, limit: 8) { title in
+            await TMDBService.traits(tmdbID: title.tmdbID, isMovie: title.isMovie, bulk: true)
+        }
+        let prefix = isNetwork ? "n" : "c"
+        var counts: [Int: Int] = [:]
+        var names: [Int: String] = [:]
+        for case let found? in traits {
+            for other in Set(isNetwork ? found.networks : found.companies) where other != id {
+                counts[other, default: 0] += 1
+                if let name = found.labels["\(prefix):\(other)"] { names[other] = name }
+            }
+        }
+        return counts.filter { $0.value >= 3 && names[$0.key] != nil }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .prefix(limit).map { ($0.key, names[$0.key]!) }
     }
 }

@@ -169,8 +169,7 @@ extension Route {
     var probeName: String {
         switch self {
         case .detail: return "Detail"
-        case .person: return "Cast"
-        case .tmdbCompany: return "Studio"
+        case .browse(let subject, _): return subject.kind == .person ? "Cast" : "Studio"
         case .genre: return "Genre"
         case .keyword: return "Tag"
         case .discover: return "Discover"
@@ -180,8 +179,7 @@ extension Route {
     var probeDetail: String {
         switch self {
         case .detail(let item): return "\(item.name) [\(item.type) \(item.id)]"
-        case .person(_, let name, _): return name
-        case .tmdbCompany(_, let name, _, _): return name
+        case .browse(let subject, _): return subject.name
         case .genre(_, let name, _, _): return name
         case .keyword(_, let name, _, _): return name
         case .discover(let name, _, _): return name
@@ -208,7 +206,7 @@ extension Route {
     /// Details, a browse page — not a source list.
     var isTrailPage: Bool {
         switch self {
-        case .detail, .person, .tmdbCompany, .genre, .keyword, .discover: return true
+        case .detail, .browse, .genre, .keyword, .discover: return true
         default: return false
         }
     }
@@ -224,9 +222,8 @@ enum Route: Hashable {
     case detail(MetaItem)
     /// From Details: `backdrop`, that title's picture (behind the page,
     /// blurred).
-    case person(id: Int, name: String, backdrop: String? = nil)
-    /// A studio's titles — or a network's (`network`), its shows.
-    case tmdbCompany(id: Int, name: String, network: Bool = false, backdrop: String? = nil)
+    /// A person's, studio's or network's titles: Discover round them.
+    case browse(DiscoverModel.Subject, backdrop: String? = nil)
     /// A genre's titles (films or shows).
     case genre(id: Int, name: String, isMovie: Bool, backdrop: String? = nil)
     /// A tag's (TMDB keyword's) titles.
@@ -239,7 +236,7 @@ enum Route: Hashable {
     /// (`PageFade.push`).
     var pageBackground: AnyView? {
         switch self {
-        case .person(_, _, let backdrop), .tmdbCompany(_, _, _, let backdrop),
+        case .browse(_, let backdrop),
              .genre(_, _, _, let backdrop), .keyword(_, _, _, let backdrop), .discover(_, _, let backdrop):
             AnyView(TitleBandsBackground(url: backdrop))
         default: nil
@@ -525,11 +522,11 @@ struct RootView: View {
                        let id = Int(args[flag + 2]) {
                         let name = args[flag + 3]
                         let route: Route? = switch args[flag + 1] {
-                        case "person": .person(id: id, name: name)
+                        case "person": .browse(.init(kind: .person, id: id, name: name))
                         case "genre": .genre(id: id, name: name, isMovie: true)
                         case "keyword": .keyword(id: id, name: name, isMovie: true)
-                        case "company": .tmdbCompany(id: id, name: name, network: false)
-                        case "network": .tmdbCompany(id: id, name: name, network: true)
+                        case "company": .browse(.init(kind: .company, id: id, name: name))
+                        case "network": .browse(.init(kind: .network, id: id, name: name))
                         default: nil
                         }
                         if let route {
@@ -1064,13 +1061,20 @@ struct RootView: View {
             // Home's pages say for themselves (`HomeUIKitView`).
         }
         // Your Rows' Open in Discover: the tab at its root with that
-        // sentence, focus on its name in the bar.
-        .onReceive(DiscoverPins.shared.$opening.compactMap { $0 }) { _ in
+        // sentence, focus on its name in the bar; a person's, studio's or
+        // network's row: its page pushed on the tab, focus on its titles.
+        .onReceive(DiscoverPins.shared.$opening.compactMap { $0 }) { pin in
             let discover = AppTab.discover.rawValue
             visitedTabs.insert(discover)
             discoverPath = []
             switchTab(to: discover)
-            focusSidebar(discover)
+            guard let subject = pin.subject else { return focusSidebar(discover) }
+            DispatchQueue.main.async { DiscoverPins.shared.opening = nil }
+            let model = DiscoverModel(picks: pin.slots, extras: [:], subject: subject)
+            Task { await model.start() }
+            PagePreparer.shared.open(DiscoverModel.key(subject), model) {
+                pushPage(Route.browse(subject), $discoverPath)
+            }
         }
         .task { await buildTabsAhead() }
     }
@@ -1546,14 +1550,10 @@ struct RootView: View {
                 withTransaction(transaction) { searchPath.append(Route.detail(item)) }
             },
             onOpenPerson: { id, name in
-                TMDBBrowseViewModel.open(.person(id), title: name) {
-                    pushPage(Route.person(id: id, name: name), $searchPath)
-                }
+                browse(.init(kind: .person, id: id, name: name), backdrop: nil, $searchPath)
             },
             onOpenStudio: { id, name in
-                TMDBBrowseViewModel.open(.company(id), title: name) {
-                    pushPage(Route.tmdbCompany(id: id, name: name), $searchPath)
-                }
+                browse(.init(kind: .company, id: id, name: name), backdrop: nil, $searchPath)
             }
         )
         .probeScreen("Search")
@@ -1615,6 +1615,12 @@ struct RootView: View {
         }
     }
 
+    /// A person's, studio's or network's page: its titles start at the
+    /// press, the page in once they are (`PagePreparer`).
+    private func browse(_ subject: DiscoverModel.Subject, backdrop: String?, _ path: Binding<[Route]>) {
+        DiscoverModel.open(subject) { pushPage(Route.browse(subject, backdrop: backdrop), path) }
+    }
+
     /// A page (a browse page) in: `PageFade`'s crossfade, no slide.
     private func pushPage(_ route: Route, _ path: Binding<[Route]>) {
         PageFade.shared.push(key: route, background: route.pageBackground) { path.wrappedValue.append(route) }
@@ -1627,16 +1633,11 @@ struct RootView: View {
             item: item,
             onSelectItem: { openDetail($0) { path.wrappedValue.append($0) } },
             onSelectPerson: { id, name, backdrop in
-                TMDBBrowseViewModel.open(.person(id), title: name) {
-                    pushPage(Route.person(id: id, name: name, backdrop: backdrop), path)
-                }
+                browse(.init(kind: .person, id: id, name: name), backdrop: backdrop, path)
             },
             onSelectCompany: { company, backdrop in
-                TMDBBrowseViewModel.open(company.isNetwork ? .network(company.id) : .company(company.id),
-                                         title: company.name) {
-                    pushPage(Route.tmdbCompany(id: company.id, name: company.name,
-                                               network: company.isNetwork, backdrop: backdrop), path)
-                }
+                browse(.init(kind: company.isNetwork ? .network : .company, id: company.id, name: company.name),
+                       backdrop: backdrop, path)
             },
             onSelectGenre: { genre, isMovie, backdrop in
                 pushPage(Route.genre(id: genre.id, name: genre.name, isMovie: isMovie, backdrop: backdrop), path)
@@ -1664,10 +1665,9 @@ struct RootView: View {
                     }
                 }
             }
-        case .person(let id, let name, let backdrop):
-            TMDBBrowseView(personID: id, title: name,
-                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
+        case .browse(let subject, let backdrop):
+            DiscoverView(DiscoverModel.prepared(subject), backdrop: backdrop, onOpenInPlace: openInPlace(path),
+                         onOpenSubject: { browse($0, backdrop: backdrop, path) })
         // Discover, filled in.
         case .genre(let id, let name, let isMovie, let backdrop):
             DiscoverView(DiscoverModel.genre(id: id, name: name, isMovie: isMovie), backdrop: backdrop,
@@ -1679,10 +1679,6 @@ struct RootView: View {
             DiscoverView(DiscoverModel(picks: Dictionary(uniqueKeysWithValues: picks.compactMap { key, value in
                 DiscoverModel.Slot(rawValue: key).map { ($0, value) }
             }), extras: [:]), backdrop: backdrop, onOpenInPlace: openInPlace(path))
-        case .tmdbCompany(let id, let name, let network, let backdrop):
-            TMDBBrowseView(companyID: id, title: name, network: network,
-                          onSelect: { openDetail($0) { path.wrappedValue.append($0) } },
-                          onOpenInPlace: openInPlace(path), backdrop: backdrop)
         }
     }
 

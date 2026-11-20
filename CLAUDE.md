@@ -688,11 +688,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   scrolls the card away with the rows. (Full screen with the screen-wide
   bottom fade was just before; the strong left fade, `BillboardShade`,
   was disliked beside the card's.) Pages opened from Details (a person, a studio or network,
-  a genre, a tag: `TMDBBrowseView`) on Details' bands, following the
-  setting; a studio's logo and a person's initials on the page's grey
-  plate in its ink, as Details' Network & Studios cards (`BrandLogo`;
-  the blurred picture and a white plate were before). Its layout, and its
-  background opened from Discover, wait for Discover (the same page). Into Details is
+  a genre, a tag) are Discover's page (below) on Details' bands,
+  following the setting. Into Details is
   `DetailTransition`, all Core Animation, the same from every card: the
   page goes into Details' background (the title's bands, 0.3 s, with
   the window's start, not the press: a picture still loading left the
@@ -961,8 +958,34 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   movies & shows about cyberpunk"; the order said only for popular and
   newest, no commas), a name past 760 pt running while focused. Details' genres and tags open it filled in (`Route.genre`,
   `.keyword`: a pushed page on Details' bands, its sentence not kept; a
-  genre or tag the lists lack added to that word's choices); the browse
-  page keeps only people, studios and networks. A card's hold menu has
+  genre or tag the lists lack added to that word's choices). People,
+  studios and networks (Details' Cast & Crew and Network & Studios,
+  Search's people and studios; 2026-11-20) open the same page round its
+  subject (`DiscoverModel.Subject`, `Route.browse`, prepared at the press
+  as every page): "Show me [genre] [style] [movies &
+  shows] with Bryan Cranston / from A24 / on HBO" (a network: "shows",
+  no word), "from [year] · [rating] · [order] · [watched]", Best Known
+  the default; no theme or language (a person's credits carry no
+  keywords; one shape for all three); no portrait or logo (tried). The
+  line under it: Add to Home, up to five starting points read from the
+  subject's titles (`DiscoverModel.points`: the side it does less of, its
+  two biggest genres, drama only alone, anime / animated / live action,
+  its busiest decade, acclaimed; four titles each at least), then
+  related pages with their kind's symbol (a person: who's most often in
+  the top cast or directing of their ten best known, twice at least,
+  `collaborators`; a studio or network: the ones most behind what TMDB
+  recommends beside its six best known, three times, `kindred`) (the
+  orders as pills there were tried: a word, as Discover's). A studio's
+  year word joins with "of" ("from A24 of the 2020s"). Both lines'
+  pills shuffled at each load, Discover's too (`DiscoverModel.line`:
+  in order the tail was rarely reached); a browse page's come in
+  together, the related ones mixed in. A person's titles are their credits (roles, voice
+  too, and directing; no talk or news), filtered by the words on the
+  device (`TMDBService.credits(_:filter:…)`); a studio's or network's
+  TMDB's discover. Pinned, the row keeps its subject ("Movies & Shows
+  with Bryan Cranston"); Your Rows' Open in Discover pushes its page on
+  the tab. The old browse page (header with bio, Movies | Series pill)
+  is gone. A card's hold menu has
   Discover (`safari`, every title card but Continue Watching): the same
   pushed page filled from the title (`DiscoverModel.like`, `Route.discover`):
   its genre (a specific one over action, adventure, drama, comedy), style
