@@ -480,6 +480,9 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     /// Its row far from focus: the pictures go (the image cache keeps them,
     /// and the next configure, as the row comes back within reach, loads
     /// them again). Held, every row visited kept ~4 MB a card for good.
+    /// Its pictures let go (`releaseArt`) and not configured since.
+    var isReleased: Bool { item == nil }
+
     func releaseArt() {
         guard item != nil else { return }
         item = nil
@@ -1091,6 +1094,9 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private var shown: String?
 
     /// Its row far from focus: as `FixedFocusShowcaseCell.releaseArt`.
+    /// Its pictures let go (`releaseArt`) and not configured since.
+    var isReleased: Bool { shown == nil }
+
     func releaseArt() {
         guard shown != nil else { return }
         shown = nil

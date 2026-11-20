@@ -1112,6 +1112,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
                         forItemAt indexPath: IndexPath) {
         cell.contentView.alpha = rowAlpha(indexPath.item)
+        // Shown again without being dequeued: its pictures back.
+        if let row = cell as? FixedFocusRowCell, !row.artHeld { row.setArtHeld(true) }
         (cell as? FixedFocusRowCell)?.concealed = rowConcealed(indexPath.item)
         (cell as? FixedFocusRowCell)?.titleAlpha = titleAlpha(indexPath.item)
     }
@@ -4148,42 +4150,65 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
            controller.isShowcase(rowIndex) || controller.isRanked(rowIndex)
             || controller.isFeature(rowIndex) {
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "showcase", for: indexPath) as! FixedFocusShowcaseCell
-            if let row, row.items.indices.contains(indexPath.item) {
-                configureShowcase(cell, row.items[indexPath.item], index: indexPath.item)
-                cell.setDetailsShown(isFocusRow, animated: false)
-                if controller.isFeature(rowIndex) {
-                    showFeature(cell, animated: false)
-                    // The focused one under the box.
-                    let under = box != nil && indexPath.item == featureLayout.focused
-                    cell.mirror = under ? box : nil
-                    cell.hiddenUnderBox = under
-                }
-            }
+            fill(cell, at: indexPath)
             return cell
         }
         if cv === destinationStrip {
             let cell = cv.dequeueReusableCell(withReuseIdentifier: "destination", for: indexPath)
                 as! FixedFocusDestinationCell
-            if let row, let controller, row.items.indices.contains(indexPath.item) {
-                let item = row.items[indexPath.item]
-                cell.configure(item, subtitle: row.subtitles[item.id], index: indexPath.item, rowCell: self,
-                               card: controller.destinationCard(rowIndex),
-                               progress: controller.isContinue(rowIndex) ? controller.progress[item.id] : nil,
-                               // The episode rows' state by title: not Continue Watching's (its own progress).
-                               cardState: controller.isLandscape(rowIndex) && !controller.isContinue(rowIndex)
-                                   ? controller.cardStates[item.id] : nil,
-                               art: row.art[item.id],
-                               isLogo: controller.isLogo(rowIndex),
-                               captionOnCard: controller.captionsOnCards(rowIndex))
-                cell.setCaptionShown(captionsShown)
-                cell.setDetailsShown(isFocusRow, animated: false)
-                cell.alpha = controller.gridAlpha(rowIndex, item: indexPath.item)
-            }
+            fill(cell, at: indexPath)
             return cell
         }
         let cell = cv.dequeueReusableCell(withReuseIdentifier: "poster", for: indexPath) as! FixedFocusPosterCell
         cell.configure(index: indexPath.item, rowCell: self)
         return cell
+    }
+
+    /// A card coming into view whose pictures were let go (`releaseArt`)
+    /// while it stayed the row's: shown again without being dequeued (the
+    /// collection view keeps cells just out of view), it's filled anew —
+    /// else it came back empty.
+    func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        guard cv === destinationStrip else { return }
+        if let showcase = cell as? FixedFocusShowcaseCell, showcase.isReleased {
+            fill(showcase, at: indexPath)
+        } else if let card = cell as? FixedFocusDestinationCell, card.isReleased {
+            fill(card, at: indexPath)
+        }
+    }
+
+    private func fill(_ cell: FixedFocusShowcaseCell, at indexPath: IndexPath) {
+        guard let controller else { return }
+        if let row, row.items.indices.contains(indexPath.item) {
+            configureShowcase(cell, row.items[indexPath.item], index: indexPath.item)
+            cell.setDetailsShown(isFocusRow, animated: false)
+            if controller.isFeature(rowIndex) {
+                showFeature(cell, animated: false)
+                // The focused one under the box.
+                let under = box != nil && indexPath.item == featureLayout.focused
+                cell.mirror = under ? box : nil
+                cell.hiddenUnderBox = under
+            }
+        }
+    }
+
+    private func fill(_ cell: FixedFocusDestinationCell, at indexPath: IndexPath) {
+        if let row, let controller, row.items.indices.contains(indexPath.item) {
+            let item = row.items[indexPath.item]
+            cell.configure(item, subtitle: row.subtitles[item.id], index: indexPath.item, rowCell: self,
+                           card: controller.destinationCard(rowIndex),
+                           progress: controller.isContinue(rowIndex) ? controller.progress[item.id] : nil,
+                           // The episode rows' state by title: not Continue Watching's (its own progress).
+                           cardState: controller.isLandscape(rowIndex) && !controller.isContinue(rowIndex)
+                               ? controller.cardStates[item.id] : nil,
+                           art: row.art[item.id],
+                           isLogo: controller.isLogo(rowIndex),
+                           captionOnCard: controller.captionsOnCards(rowIndex))
+            cell.setCaptionShown(captionsShown)
+            cell.setDetailsShown(isFocusRow, animated: false)
+            cell.alpha = controller.gridAlpha(rowIndex, item: indexPath.item)
+        }
     }
 
     private var billboardCardsOff: Bool { isFeatured && controller?.billboardFocusOutside == true }
