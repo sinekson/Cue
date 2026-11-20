@@ -248,6 +248,23 @@ private final class PanelTab: UIView {
     /// Asks every add-on again, past the caches.
     static func refresh() -> PanelTab { PanelTab(symbol: "arrow.trianglehead.2.clockwise.rotate.90", named: "Refresh") }
 
+    /// A MARK in the log (the player's; elsewhere Play/Pause three times).
+    static func mark() -> PanelTab { PanelTab(symbol: "flag", named: "Mark") }
+
+    /// The symbol swapped a moment for another (the flag's check once marked).
+    func flash(_ symbol: String) {
+        let config = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+        let old = icon.image
+        UIView.transition(with: icon, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
+            self.icon.image = UIImage(systemName: symbol, withConfiguration: config)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            UIView.transition(with: self.icon, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
+                self.icon.image = old
+            }
+        }
+    }
+
     /// A symbol in place of the word: a round glass button.
     convenience init(symbol: String, named text: String) {
         self.init(text)
@@ -404,6 +421,14 @@ class PlayerSheet: UIView {
         place == .open && (fold.map { $0.tab == current || $0.extras.contains(current) } ?? false)
     }
     fileprivate let again = PanelTab.refresh()
+    /// The player's shelf: Mark, at the tab row's right end, while the log runs.
+    fileprivate var mark: PanelTab? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            if let mark { tabRow.addSubview(mark) }
+            setNeedsLayout()
+        }
+    }
     fileprivate let found = PlayerSheet.foundLabel()
     fileprivate static let foundGap: CGFloat = 16
     /// Unfolded, they stand a little apart from the tabs before them.
@@ -483,7 +508,7 @@ class PlayerSheet: UIView {
     private(set) var place = Place.away
     private var reachedEdge = Date.distantPast
 
-    private var onTabs: Bool { tabs.contains(where: \.isFocused) || again.isFocused }
+    private var onTabs: Bool { tabs.contains(where: \.isFocused) || again.isFocused || mark?.isFocused == true }
 
     init(tabs titles: [String], height: CGFloat) {
         let radius = FixedFocusMetrics.panelRadius
@@ -658,6 +683,8 @@ class PlayerSheet: UIView {
             found.frame = CGRect(x: after, y: 0, width: max(bounds.width - after, 0), height: PanelTab.height)
             x = end + PanelTab.height + Self.tabSpacing
         }
+        mark?.frame = CGRect(x: bounds.width - Self.inset - PanelTab.height, y: 0,
+                             width: PanelTab.height, height: PanelTab.height)
         for page in pages {
             page.frame = page is ShelfRow ? pageFrame.insetBy(dx: -ShelfRow.over, dy: 0) : pageFrame
         }
@@ -3454,7 +3481,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     }()
     private let shelf = PlayerShelf()
     private let promptView = PlayerPrompt()
-    private let readout = UILabel()
+    private let hud = PlaybackHUD()
+    /// What happened to this session, newest last: the HUD's history, and
+    /// each into the log (`note`).
+    private var history: [(at: Date, text: String)] = []
 
     /// The link playing, once failover has moved on from the request's.
     private var entry: StreamEntry
@@ -3622,7 +3652,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         surface.alpha = 0
         for sub in [focusView, surface, subtitles, fixedSubtitles, audioButton, subtitleButton, overlay,
                     promptView, trackList, shelf,
-                    readout] as [UIView] {
+                    hud] as [UIView] {
             view.addSubview(sub)
         }
 
@@ -3643,6 +3673,16 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             (self?.shelfEpisodes() ?? [], self?.shelfSources() ?? [])
         }
         shelf.again.action = { [weak self] in self?.refreshLinks() }
+        if ProbeGate.isEnabled {
+            let mark = PanelTab.mark()
+            mark.action = { [weak self, weak mark] in
+                guard let self else { return }
+                CueLog.mark(from: "in the player at \(Self.clock(self.engine?.currentTime ?? 0))")
+                self.history.append((Date(), "marked"))
+                mark?.flash("checkmark")
+            }
+            shelf.mark = mark
+        }
 
         transport.media = self
         transport.canScrub = { [weak self] in self?.hasPlayed ?? false }
@@ -3661,12 +3701,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         pan.delegate = self
         view.addGestureRecognizer(pan)
 
-        readout.numberOfLines = 0
-        readout.textColor = .white
-        readout.font = .monospacedSystemFont(ofSize: 23, weight: .regular)
-        readout.backgroundColor = UIColor.black.withAlphaComponent(0.6)
-        readout.layer.cornerRadius = 12
-        readout.clipsToBounds = true
+        hud.isHidden = true
 
         let center = NotificationCenter.default
         center.addObserver(
@@ -3705,9 +3740,25 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let link = CADisplayLink(target: self, selector: #selector(subtitleFrame))
         link.add(to: .main, forMode: .common)
         subtitleLink = link
+        var name = meta.name
+        if let season = video?.season, let episode = video?.episode { name += " S\(season):E\(episode)" }
+        note("open \(name)" + (resume.map { " from \(Self.clock($0))" } ?? ""))
         start()
         loadSegments()
         loadShow()
+    }
+
+    /// One thing that happened to the session: the HUD's history and the log.
+    private func note(_ text: String) {
+        history.append((Date(), text))
+        if history.count > 6 { history.removeFirst(history.count - 6) }
+        PlayerProbe.event("play", text)
+    }
+
+    static func clock(_ seconds: Double) -> String {
+        let s = Int(max(seconds, 0))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+            : String(format: "%d:%02d", s / 60, s % 60)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -3725,6 +3776,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         attempt += 1
         let attempt = attempt
         loadStarted = Date()
+        let file = entry.stream.behaviorHints?.filename ?? entry.stream.title?.split(separator: "\n").first.map(String.init) ?? ""
+        note("link \(attempt) · \(entry.addonName) · \(file.prefix(80))")
         var options = LoadOptions(
             httpHeaders: entry.stream.behaviorHints?.proxyHeaders?.requestHeaders ?? [:],
             matchContentEnabled: view.window?.avDisplayManager.isDisplayCriteriaMatchingEnabled ?? true,
@@ -3749,13 +3802,19 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             options.preferredSubtitleLanguages = self?.subtitleLanguages() ?? []
             do {
                 let probe = try await engine.load(url: url, startPosition: resume, options: options)
+                if let self {
+                    self.note(String(format: "opened in %.1f s · %@ · %@", Date().timeIntervalSince(self.loadStarted),
+                                     engine.playbackBackend.rawValue, engine.videoRoute.rawValue))
+                }
                 self?.probe = probe
                 self?.restorePicks(engine)
                 self?.autoSubtitles(engine)
                 self?.loadExternalSubtitles(engine)
             } catch is CancellationError {
             } catch {
-                if self?.attempt == attempt { self?.linkFailed() }
+                guard self?.attempt == attempt else { return }
+                self?.note("load failed: \(error.localizedDescription)")
+                self?.linkFailed()
             }
             // Left mid-load: the load outlives the stop, so stop what it started.
             if self?.closed ?? true { engine.stop() }
@@ -3817,6 +3876,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             !$0.stream.isTorrent && !tried.contains($0.rejectionKey)
         }
         guard tried.count <= Self.maxRetries, let next else {
+            note("no link played (\(tried.count) tried): the source list")
             let (meta, video, fromStart) = (meta, video, resume == nil)
             close()
             SourcePicker.shared.open(meta, video, fromStart: fromStart)
@@ -3836,6 +3896,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     /// The list is old, so its links likely are too. Nothing found: on through
     /// the old one.
     private func searchAgain() {
+        note("links over 5 min old: searching again")
         loadTask?.cancel()
         dropStills()
         engine?.stop()
@@ -3921,6 +3982,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 if dryAt == nil {
                     dryAt = time
                     drySince = Date()
+                    note(String(format: "stalled at %@, %.0f s ahead", Self.clock(time), engine.bufferedPosition - time))
                 }
                 lost = Date().timeIntervalSince(drySince) > Self.stuckSeconds
             } else {
@@ -3933,7 +3995,16 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             clockMoved = Date()
         }
         lastClock = time
-        if lost { recover(engine) }
+        if lost {
+            let why: String
+            switch engine.state {
+            case .error: why = engine.errorInfo?.message ?? "an error"
+            case .ended: why = "ended \(Self.clock(engine.duration - time)) early"
+            default: why = dryAt != nil ? "stalled \(Int(Self.stuckSeconds)) s" : "clock stuck \(Int(Self.stuckSeconds)) s"
+            }
+            note("stream lost at \(Self.clock(time)): \(why); the same link again")
+            recover(engine)
+        }
         return lost
     }
 
@@ -4161,6 +4232,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func close() {
         guard !closing else { return }
         closing = true
+        note("closed at \(Self.clock(engine?.currentTime ?? 0)), played \(Self.clock(played))")
         guard revealed else {
             teardown()
             return onClose()
@@ -4962,12 +5034,17 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
                 var errored = false
                 if case .error = engine.state { errored = true }
                 if errored || Date().timeIntervalSince(loadStarted) > Self.firstFrameSeconds {
+                    note(errored ? "error: \(engine.errorInfo?.message ?? "?")"
+                                 : "no picture in \(Int(Self.firstFrameSeconds)) s")
                     linkFailed()
                     return
                 }
             }
             // A resume reads near zero until its seek lands.
             if engine.state == .playing, engine.currentTime > 0, engine.currentTime >= resumeFloor - 5 {
+                if !hasPlayed {
+                    note(String(format: "first frame after %.1f s", Date().timeIntervalSince(loadStarted)))
+                }
                 hasPlayed = true
                 reveal()
                 resumeFloor = 0
@@ -4990,12 +5067,12 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             updatePrompt(engine)
             if shelfOpen { showFacts(engine) }
         }
-        let showReadout = failure != nil || PerformanceSettingsStore.shared.settings.showPlayerDiagnostics
-        readout.isHidden = !showReadout
-        guard showReadout else { return }
-        readout.text = "  " + lines().joined(separator: "  \n  ") + "  "
-        let size = readout.sizeThatFits(CGSize(width: 1200, height: 900))
-        readout.frame = CGRect(x: 60, y: 40, width: size.width, height: size.height + 16)
+        let showHUD = failure != nil || PerformanceSettingsStore.shared.settings.showPlaybackHUD
+        hud.isHidden = !showHUD
+        guard showHUD else { return }
+        hud.show(hudSections())
+        let size = hud.sizeThatFits(CGSize(width: 900, height: view.bounds.height - 80))
+        hud.frame = CGRect(x: 60, y: 40, width: size.width, height: size.height)
     }
 
     /// A prompt keeps its claim while the controls are gone, so they come up on it.
@@ -5290,52 +5367,180 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             .replacingOccurrences(of: "\\N", with: "\n")
     }
 
-    private func lines() -> [String] {
-        var out: [String] = []
-        if let failure { out.append("FAILED  \(failure)") }
-        guard let engine else { return out }
-
-        if let probe {
-            var source = "\(probe.videoCodecName ?? "?") \(probe.videoWidth)x\(probe.videoHeight)"
-            if let fps = probe.videoFrameRate { source += String(format: " %.3f fps", fps) }
-            if probe.isDolbyVision { source += " DV\(probe.dvProfile.map { " P\($0)" } ?? "")" }
-            out.append("source     \(source)")
-        } else {
-            out.append("source     (probing)")
+    /// The Playback HUD's sections (Settings → Developer): live numbers only;
+    /// what the stream claims is the shelf's Details.
+    private func hudSections() -> [PlaybackHUD.Section] {
+        typealias Row = PlaybackHUD.Row
+        var sections: [PlaybackHUD.Section] = []
+        if let failure { sections.append(.init(title: "Failed", rows: [Row(label: "Why", value: failure)])) }
+        guard let engine else { return sections }
+        let live = engine.liveTelemetry
+        func mbps(_ value: Double?) -> String? { value.map { String(format: "%.1f Mbps", $0) } }
+        func bytes(_ value: Int64?) -> String? {
+            value.flatMap { $0 > 0 ? ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) : nil }
         }
-        out.append("presenting \(engine.videoFormat)   route \(engine.videoRoute.rawValue)")
+        func join(_ parts: [String?]) -> String { parts.compactMap { $0 }.joined(separator: " · ") }
+
+        // Video
+        var video: [Row] = []
+        let decode: String = switch engine.playbackBackend {
+        case .native: "Hardware (VideoToolbox)"
+        case .software: "Software (FFmpeg)"
+        default: engine.playbackBackend.rawValue
+        }
+        video.append(Row(label: "Path", value: join([decode, engine.videoRoute.rawValue])))
+        if let probe {
+            video.append(Row(label: "Source", value: join([
+                probe.videoCodecName.map { $0.uppercased() }, "\(probe.videoWidth)×\(probe.videoHeight)",
+                probe.videoFrameRate.map { String(format: "%.3f fps", $0) },
+                probe.isDolbyVision ? "DV" + (probe.dvProfile.map { " P\($0)" } ?? "") : nil,
+                engine.sourceVideoBitrate > 0 ? String(format: "%.1f Mbps", Double(engine.sourceVideoBitrate) / 1e6) : nil,
+            ])))
+        }
+        let manager = view.window?.avDisplayManager
         let screen = AetherEngine.displayCapabilities
-        out.append("display    DV \(screen.supportsDolbyVision)  HDR10 \(screen.supportsHDR10)  HLG \(screen.supportsHLG)")
+        video.append(Row(label: "Showing", value: join([
+            "\(engine.videoFormat)",
+            engine.dolbyVisionConversion.map { "\($0)" },
+            manager.map { $0.isDisplayCriteriaMatchingEnabled ? "Match Content on" : "Match Content off" },
+            manager?.isDisplayModeSwitchInProgress == true ? "switching" : nil,
+            screen.supportsDolbyVision ? "screen DV" : screen.supportsHDR10 ? "screen HDR10" : "screen SDR",
+        ])))
+        video.append(Row(label: "Frames", value: join([
+            "dropped \(live?.droppedFrameCount.map(String.init) ?? "—")",
+            live?.observedFps.map { String(format: "%.1f fps", $0) },
+            live?.avSyncGapMs.map { String(format: "A/V %.0f ms", $0) },
+            live?.displayCushionSeconds.map { String(format: "cushion %.2f s", $0) },
+        ])))
+        sections.append(.init(title: "Video", rows: video))
 
+        // Network
+        let ahead = engine.bufferedPosition - engine.currentTime
+        sections.append(.init(title: "Network", rows: [
+            Row(label: "Playing", value: join([mbps(live?.instantBitrateMbps).map { "\($0) now" },
+                                               mbps(live?.averageBitrateMbps).map { "\($0) average" }])),
+            Row(label: "Link", value: join([mbps(live?.networkThroughputMbps) ?? "idle",
+                                            bytes(live?.demuxerBytesFetched).map { "\($0) fetched" }])),
+            Row(label: "Ahead", value: join([
+                engine.bufferedPosition > 0 ? String(format: "%.0f s", max(ahead, 0)) : nil,
+                live?.forwardBufferSeconds.map { String(format: "player %.0f s", $0) },
+                live?.readerWindowAheadBytes.map { bytes(Int64($0)).map { "reader \($0)" } ?? "" },
+                bytes(live?.cachedBytes).map { "disk \($0) of \(bytes(Int64(Self.windowBytes)) ?? "")" },
+            ])),
+        ]))
+
+        // Audio
         let audio = engine.audioTracks.first { $0.id == engine.activeAudioTrackIndex }
-        let atmos = audio?.isAtmos == true ? " Atmos" : audio?.isDTSX == true ? " DTS:X" : ""
-        out.append("audio      \(audio.map { "\($0.codec) \($0.channels)ch\(atmos) \($0.language ?? "")" } ?? "none")")
-        out.append("delivery   \(engine.audioDelivery.rawValue)   tracks \(engine.audioTracks.count)")
-        out.append("decoder    \(engine.activeAudioDecoder ?? "none")")
         let session = AVAudioSession.sharedInstance()
-        let port = session.currentRoute.outputs.first?.portType.rawValue ?? "none"
-        out.append("output     \(port)  \(session.outputNumberOfChannels)ch of \(session.maximumOutputNumberOfChannels)")
-        if let info = engine.errorInfo { out.append("error      \(info.message)") }
+        var sound: [Row] = [
+            Row(label: "Track", value: audio.map { join([$0.codec.uppercased(), "\($0.channels) ch",
+                                                       $0.isAtmos ? "Atmos" : $0.isDTSX ? "DTS:X" : nil,
+                                                       $0.language]) } ?? "none"),
+            Row(label: "Sent as", value: join([engine.audioDelivery.rawValue, engine.activeAudioDecoder,
+                                               mbps(live?.audioBridgeBitrateMbps)])),
+            Row(label: "Out", value: join([session.currentRoute.outputs.first?.portName,
+                                           "\(session.outputNumberOfChannels) of \(session.maximumOutputNumberOfChannels) ch"])),
+        ]
+        if let objects = live?.objectAudio { sound.append(Row(label: "Objects", value: "\(objects)")) }
+        sections.append(.init(title: "Audio", rows: sound))
 
+        // Subtitles
         let subtitle = engine.subtitleTracks.first { $0.id == engine.activeSubtitleTrackIndex }
-        out.append("subtitle   \(subtitle.map { "\($0.codec) \($0.language ?? "")" } ?? "off")   tracks \(engine.subtitleTracks.count)")
+        let renderer: String? = subtitle.map { track in
+            let codec = track.codec.lowercased()
+            if codec.contains("pgs") || codec.contains("dvd") || codec.contains("dvb") { return "a picture, as drawn" }
+            if codec == "ass" || codec == "ssa" { return assTrack != nil ? "ours, signs by libass" : "ours" }
+            return "ours"
+        }
+        sections.append(.init(title: "Subtitles", rows: [
+            Row(label: "Track", value: subtitle.map { join([subtitleFormat($0.codec), $0.language, renderer]) } ?? "off"),
+        ]))
 
-        out.append("state      \(engine.state)")
-        out.append(String(format: "time       %.0f / %.0f s   buffered to %.0f s",
-                          engine.currentTime, engine.duration, engine.clock.bufferedPosition))
-        out.append("memory     \(memoryMB()) MB")
-        return out
+        // Session
+        var rows = [
+            Row(label: "State", value: join(["\(engine.state)", "\(Self.clock(engine.currentTime)) of \(Self.clock(engine.duration))"])),
+            Row(label: "App", value: String(format: "%.0f MB · CPU %.0f %%", PlayerProbe.footprintMB(), PlayerProbe.cpuPercent())),
+        ]
+        if let error = engine.errorInfo { rows.append(Row(label: "Error", value: error.message)) }
+        let stamp = DateFormatter()
+        stamp.dateFormat = "HH:mm:ss"
+        for (index, event) in history.reversed().enumerated() {
+            rows.append(Row(label: index == 0 ? "History" : "", value: stamp.string(from: event.at) + "  " + event.text))
+        }
+        sections.append(.init(title: "Session", rows: rows))
+        return sections
+    }
+}
+
+/// The Playback HUD (Settings → Developer): sections of live numbers over
+/// the video, top left. A plain dark plate, not glass: a measuring tool
+/// shouldn't cost what it measures.
+final class PlaybackHUD: UIView {
+    struct Row { let label: String; let value: String }
+    struct Section { let title: String; let rows: [Row] }
+
+    private static let pad: CGFloat = 28
+    private static let labelColumn: CGFloat = 150
+    private let text = UILabel()
+    private var shownAt: CFTimeInterval = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = UIColor.black.withAlphaComponent(0.72)
+        layer.cornerRadius = 22
+        layer.cornerCurve = .continuous
+        text.numberOfLines = 0
+        addSubview(text)
     }
 
-    private func memoryMB() -> Int {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Twice a second at most: the player ticks at 5 Hz.
+    func show(_ sections: [Section]) {
+        let now = CACurrentMediaTime()
+        guard now - shownAt >= 0.5 || text.attributedText == nil else { return }
+        shownAt = now
+        let out = NSMutableAttributedString()
+        let style = NSMutableParagraphStyle()
+        style.tabStops = [NSTextTab(textAlignment: .left, location: Self.labelColumn)]
+        style.headIndent = Self.labelColumn
+        style.lineSpacing = 2
+        let heading = NSMutableParagraphStyle()
+        heading.paragraphSpacingBefore = 14
+        let font = UIFont.monospacedDigitSystemFont(ofSize: 23, weight: .regular)
+        for (index, section) in sections.enumerated() {
+            if index > 0 { out.append(NSAttributedString(string: "\n")) }
+            out.append(NSAttributedString(string: section.title.uppercased() + "\n", attributes: [
+                .font: UIFont.systemFont(ofSize: 23, weight: .semibold),
+                .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusText.tertiary),
+                .paragraphStyle: index > 0 ? heading : NSParagraphStyle(),
+            ]))
+            for (rowIndex, row) in section.rows.enumerated() {
+                out.append(NSAttributedString(string: row.label + "\t", attributes: [
+                    .font: font, .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusText.secondary),
+                    .paragraphStyle: style,
+                ]))
+                out.append(NSAttributedString(string: row.value + (rowIndex < section.rows.count - 1 ? "\n" : ""), attributes: [
+                    .font: font, .foregroundColor: UIColor.white.withAlphaComponent(FixedFocusText.primary),
+                    .paragraphStyle: style,
+                ]))
             }
         }
-        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : 0
+        text.attributedText = out
+        setNeedsLayout()
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let inner = text.sizeThatFits(CGSize(width: size.width - Self.pad * 2, height: .greatestFiniteMagnitude))
+        return CGSize(width: min(inner.width, size.width - Self.pad * 2) + Self.pad * 2,
+                      height: min(inner.height + Self.pad * 2, size.height))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        text.frame = bounds.insetBy(dx: Self.pad, dy: Self.pad)
     }
 }
 

@@ -2,38 +2,31 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// Developer switches (Settings → Performance): diagnostics, all off by
-/// default.
+/// Developer (Settings → Developer): the Frame Rate overlay and the
+/// Playback HUD, both off by default; the Log's switch is `ProbeGate`'s.
 ///
-/// Persisted per-device in UserDefaults and deliberately NOT synced to the
-/// account: a setting tuned for the living-room 4K gen 1 shouldn't downgrade
-/// a newer box on the same account.
+/// Per device in UserDefaults, never synced.
 @MainActor
 final class PerformanceSettingsStore: ObservableObject {
     static let shared = PerformanceSettingsStore()
 
+    enum FrameRate: String, Codable, CaseIterable {
+        case off, compact, full
+    }
+
     struct Settings: Codable, Equatable {
-        /// Developer: live FPS counter overlaid on the app. Off by default,
-        /// never set by the tier defaults — a diagnostic, not an effect.
-        var showFPSOverlay = false
-        /// In-player diagnostics HUD: engine, fps, dropped frames, A/V drift,
-        /// bitrate, buffer depth. Answers "why is this stuttering" on the
-        /// couch, without a Mac attached.
-        var showPlayerDiagnostics = false
+        var frameRate = FrameRate.off
+        var showPlaybackHUD = false
 
         init() {}
 
-        private enum CodingKeys: String, CodingKey {
-            case showFPSOverlay, showPlayerDiagnostics
-        }
+        private enum CodingKeys: String, CodingKey { case frameRate, showPlaybackHUD }
 
-        /// Lenient decode: a key missing from an older save keeps its default
-        /// instead of failing the whole decode (which would reset every
-        /// switch each time a new one ships).
+        /// Lenient: a key missing from an older save keeps its default.
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            showFPSOverlay = (try? c.decode(Bool.self, forKey: .showFPSOverlay)) ?? false
-            showPlayerDiagnostics = (try? c.decode(Bool.self, forKey: .showPlayerDiagnostics)) ?? false
+            frameRate = (try? c.decode(FrameRate.self, forKey: .frameRate)) ?? .off
+            showPlaybackHUD = (try? c.decode(Bool.self, forKey: .showPlaybackHUD)) ?? false
         }
     }
 
@@ -69,38 +62,14 @@ final class PerformanceSettingsStore: ObservableObject {
         motionOn ? animation : nil
     }
 
-    private static let key = "cue.performance.v1"
+    private static let key = "cue.developer.v1"
 
     private init() {
+        UserDefaults.standard.removeObject(forKey: "cue.performance.v1")
+        UserDefaults.standard.removeObject(forKey: "cue.performance.clearStickyDiagnostics.v1")
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let decoded = try? JSONDecoder().decode(Settings.self, from: data) {
             settings = decoded
-            // Property observers do NOT fire for assignments made inside a
-            // type's own initializer, so `didSet { save() }` cannot persist
-            // anything the migration below changes — `migrated` tracks it and
-            // the explicit `save()` writes it.
-            var migrated = false
-            // One-shot: clear the on-screen DIAGNOSTIC overlays.
-            //
-            // These are debugging tools that draw over the app, and they are
-            // sticky — once switched on for one investigation they stay on
-            // across launches and (until now) across a settings reset. That has
-            // twice been reported as a rendering bug: first as "garbage in the
-            // top black border" of the player, then as a "screen tear" over the
-            // poster rows, which was this HUD's own 640-wide panel. Nobody
-            // leaves one of these on deliberately for weeks, so clear them once
-            // and let the toggles be opt-in again from a known-off state.
-            let overlayKey = "cue.performance.clearStickyDiagnostics.v1"
-            if !UserDefaults.standard.bool(forKey: overlayKey) {
-                UserDefaults.standard.set(true, forKey: overlayKey)
-                if settings.showFPSOverlay || settings.showPlayerDiagnostics {
-                    settings.showFPSOverlay = false
-                    settings.showPlayerDiagnostics = false
-                    migrated = true
-                    NSLog("[CuePerf] cleared sticky on-screen diagnostics left on from a previous session")
-                }
-            }
-            if migrated { save() }
         } else {
             settings = Settings()
         }

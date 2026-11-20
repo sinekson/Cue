@@ -1,126 +1,142 @@
 import SwiftUI
 
-/// Settings → Developer, second half: the diagnostics (player HUD, the LAN
-/// log).
-struct PerformanceSettings: View {
+/// Settings → Developer: three tools — the Frame Rate overlay, the Playback
+/// HUD and the Log (its sessions on a page of their own). Per device,
+/// never synced.
+struct DeveloperSettingsDetail: View {
     @ObservedObject private var store = PerformanceSettingsStore.shared
-
-    private var s: Binding<PerformanceSettingsStore.Settings> {
-        Binding(get: { store.settings }, set: { store.settings = $0 })
-    }
+    @State private var logOn = ProbeGate.isEnabled
+    @State private var sessions: [CueLog.Session]?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: CueSpacing.xl) {
-            SettingsGroupCard(
-                title: "Developer",
-                subtitle: "Diagnostics — safe to leave off"
-            ) {
-                PerfToggleRow(
-                    icon: "waveform.path.ecg",
-                    title: "Playback diagnostics HUD",
-                    subtitle: "Live engine, fps, dropped frames, A/V drift, bitrate and buffer depth over the video. For chasing stutter on this box.",
-                    isOn: s.showPlayerDiagnostics
+        SettingsPage(title: SettingsCategory.developer.title,
+                     subtitle: "Tools for finding what's slow or broken. They stay on this Apple TV.") {
+            SettingsSection {
+                SettingsOptionsRow(
+                    title: "Frame Rate",
+                    description: "Frames per second over everything, top right. Full adds the last seconds' "
+                        + "frame times, dropped frames, CPU and memory. It sees the main thread's frames; "
+                        + "frames the GPU drops need Instruments.",
+                    options: PerformanceSettingsStore.FrameRate.allCases.map {
+                        SettingsOption(id: $0.rawValue, label: $0.rawValue.capitalized)
+                    },
+                    selection: store.settings.frameRate.rawValue
+                ) { id in
+                    store.settings.frameRate = PerformanceSettingsStore.FrameRate(rawValue: id) ?? .off
+                }
+                SettingsToggleRow(
+                    title: "Playback HUD",
+                    description: "Live numbers over the video: the decoding path, dropped frames, bitrate, "
+                        + "what's buffered, the audio sent and what happened to the session.",
+                    isOn: $store.settings.showPlaybackHUD
                 )
+            }
+            SettingsSection(title: "Log") {
+                SettingsToggleRow(
+                    title: "Log",
+                    description: "Writes what the app does to a file on this Apple TV, a week at most: "
+                        + "pages, loads, playback, stalls, hangs and crashes. To mark a moment, press "
+                        + "Play/Pause three times (in the player, the flag on the shelf).",
+                    isOn: Binding(get: { logOn }, set: { on in
+                        logOn = on
+                        ProbeGate.store(on)
+                    })
+                )
+                SettingsLinkRow(title: "Sessions", value: sessions.map(Self.summary)) {
+                    LogSessionsPage(sessions: $sessions)
+                }
+            }
+            if logOn, let address = LogServer.address {
+                SettingsSection {
+                    VStack(spacing: 0) {
+                        SettingsInfoRow(title: "Address", value: address)
+                    }
+                }
+            }
+        }
+        .task { sessions = await CueLog.sessions() }
+    }
 
-                // The one switch that makes everything else diagnosable on a
-                // Release/sideloaded build. Turn it on, reproduce the problem,
-                // then pull the log with scripts/record.sh (or probe.sh).
-                PerfToggleRow(
-                    icon: "dot.radiowaves.left.and.right",
-                    title: "Capture diagnostics (LAN log server)",
-                    subtitle: "Record app and playback events (navigation, buffering, stalls, seeks, source picks, errors, memory) and serve a live plain-text log at http://<this Apple TV's IP>:8123. Use scripts/record.sh <ip> to save a session. Off by default; costs a little CPU while on.",
-                    isOn: Binding(
-                        get: { ProbeGate.isEnabled },
-                        set: { on in
-                            UserDefaults.standard.set(on, forKey: ProbeGate.defaultsKey)
-                            ProbeGate.set(on)
-                            if on { ColorProbeServer.shared.start() }
-                            else { ColorProbeServer.shared.stop() }
+    private static func summary(_ sessions: [CueLog.Session]) -> String {
+        let marks = sessions.reduce(0) { $0 + $1.marks }
+        let crashes = sessions.filter(\.crashed).count
+        var parts = ["\(sessions.count)"]
+        if marks > 0 { parts.append(marks == 1 ? "1 mark" : "\(marks) marks") }
+        if crashes > 0 { parts.append(crashes == 1 ? "1 crash" : "\(crashes) crashes") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// The log's sessions, newest first, each with its marks and problems.
+private struct LogSessionsPage: View {
+    @Binding var sessions: [CueLog.Session]?
+
+    var body: some View {
+        SettingsPage(title: "Sessions",
+                     subtitle: "One per launch, kept a week (50 MB at most). Marks, warnings, hangs and "
+                        + "crashes are listed in each.") {
+            SettingsSection {
+                SettingsButtonRow(title: "Clear Log", description: "Removes every session but this one.") {
+                    CueLog.clear()
+                    Task { sessions = await CueLog.sessions() }
+                }
+            }
+            if let sessions, !sessions.isEmpty {
+                SettingsSection {
+                    ForEach(sessions) { session in
+                        SettingsLinkRow(title: Self.title(session), value: Self.value(session)) {
+                            LogSessionPage(session: session)
                         }
-                    )
-                )
+                    }
+                }
             }
-
-            Text("These switches are per-device and don't sync to your account.")
-                .font(.system(size: 18))
-                .foregroundStyle(CuePalette.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    static func title(_ session: CueLog.Session) -> String {
+        DateFormatter.settingsWhen.string(from: session.started) + (session.isCurrent ? " (now)" : "")
+    }
+
+    private static func value(_ session: CueLog.Session) -> String {
+        var parts: [String] = []
+        if session.crashed { parts.append("Crashed") }
+        if session.marks > 0 { parts.append(session.marks == 1 ? "1 mark" : "\(session.marks) marks") }
+        if session.hangs > 0 { parts.append(session.hangs == 1 ? "1 hang" : "\(session.hangs) hangs") }
+        parts.append(ByteCountFormatter.string(fromByteCount: session.bytes, countStyle: .file))
+        return parts.joined(separator: " · ")
     }
 }
 
-/// Toggle row matching the redesigned settings rows (icon tile, title, wrapped
-/// description, switch; flat until focused).
-private struct PerfToggleRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
+/// One session: what stood out in it, in order, its time on the right.
+private struct LogSessionPage: View {
+    let session: CueLog.Session
 
     var body: some View {
-        Button { isOn.toggle() } label: {
-            PerfRowLabel(icon: icon, title: title, subtitle: subtitle) {
-                CueSwitch(isOn: isOn)
+        SettingsPage(title: LogSessionsPage.title(session),
+                     subtitle: "Until \(session.ended.prefix(8)). The whole session: "
+                        + "/log?session=\(session.url.deletingPathExtension().lastPathComponent)") {
+            SettingsFocusHolder()
+            SettingsSection {
+                VStack(spacing: 0) {
+                    if session.notable.isEmpty {
+                        SettingsInfoRow(title: "Nothing stood out", value: "")
+                    }
+                    ForEach(session.notable) { line in
+                        SettingsInfoRow(title: Self.label(line), value: String(line.time.prefix(8)))
+                    }
+                }
             }
         }
-        .buttonStyle(PlainCardButtonStyle())
     }
-}
 
-/// Shared row body: accent icon tile + title + wrapped description + a trailing
-/// accessory (switch, or nothing). Flat until focused, matching the other
-/// redesigned settings panes.
-private struct PerfRowLabel<Accessory: View>: View {
-    @Environment(\.isFocused) private var isFocused
-    let icon: String
-    let title: String
-    let subtitle: String
-    @ViewBuilder let accessory: Accessory
-
-    var body: some View {
-        HStack(alignment: .top, spacing: CueSpacing.md) {
-            SettingsIconTile(symbol: icon)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(CuePalette.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 20))
-                    .foregroundStyle(CuePalette.textSecondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 1000, alignment: .leading)
-            }
-            Spacer(minLength: CueSpacing.lg)
-            accessory
-                .padding(.top, 4)
+    private static func label(_ line: CueLog.Line) -> String {
+        let name = switch line.tag {
+        case "MARK": "Mark"
+        case "WARN": "Warning"
+        case "HANG": "Hang"
+        case "EXIT": "Ended"
+        default: "Crash"
         }
-        .padding(.horizontal, CueSpacing.md)
-        .padding(.vertical, CueSpacing.md)
-        .frame(minHeight: 76)
-        .frame(maxWidth: .infinity)
-        .background(SettingsRowBackground(isFocused: isFocused))
-    }
-}
-
-/// Settings → Developer, first half: the FPS overlay.
-struct MeasureSettings: View {
-    @ObservedObject private var store = PerformanceSettingsStore.shared
-
-    private var s: Binding<PerformanceSettingsStore.Settings> {
-        Binding(get: { store.settings }, set: { store.settings = $0 })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CueSpacing.xl) {
-            SettingsGroupCard(title: "Measure", subtitle: "Live frame rate over the whole app") {
-                PerfToggleRow(
-                    icon: "speedometer",
-                    title: "Show FPS overlay",
-                    subtitle: "Overlay a live frames-per-second read-out on the whole app (green = smooth, amber = some drops, red = janky), while you browse. Off by default.",
-                    isOn: s.showFPSOverlay
-                )
-            }
-        }
+        return name + ": " + line.text
     }
 }

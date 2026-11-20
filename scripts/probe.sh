@@ -1,12 +1,14 @@
 #!/bin/bash
-# Live player probe. Tails the Apple TV's dev probe endpoint (:8123) so a
+# Live player probe. Tails the Apple TV's log server (:8123) so a
 # scrub, a seek or a stalled cache can be watched as it happens instead of
-# reconstructed from a log afterwards. DEBUG builds only.
+# reconstructed afterwards. Any build, while Settings → Developer → Log is on.
 #
 #   scripts/probe.sh 192.168.1.42            # levels every 2s + events live
 #   scripts/probe.sh 192.168.1.42 events     # events only, no level blocks
 #   scripts/probe.sh 192.168.1.42 once       # one snapshot and exit
 #   scripts/probe.sh 192.168.1.42 health     # just the counters
+#   scripts/probe.sh 192.168.1.42 log 2      # the log file, the last 2 days
+#   scripts/probe.sh 192.168.1.42 sessions   # the sessions on the box
 #   scripts/probe.sh 192.168.1.42 mark "froze here"   # anchor the live tail
 #
 # Set CUE to skip the argument:  export CUE=192.168.1.42
@@ -32,7 +34,7 @@ urlencode() {
 }
 
 if [ -z "$HOST" ]; then
-    echo "usage: $0 <apple-tv-ip> [live|events|once|health|trail|mark <note>]" >&2
+    echo "usage: $0 <apple-tv-ip> [live|events|once|health|log [days]|sessions|mark <note>]" >&2
     echo "  (or export CUE=<ip>)" >&2
     exit 64
 fi
@@ -42,7 +44,9 @@ case "$MODE" in
     events) PATH_="/events" ;;
     once)   PATH_="/probe" ;;
     health) PATH_="/health" ;;
-    trail)  PATH_="/" ;;
+    # The log on disk: this session, or the last N days (`log 2`).
+    log)    PATH_="/log${3:+?days=$3}" ;;
+    sessions) PATH_="/" ;;
     # A mark is an anchor in the tail: what the viewer just reported, written
     # into the same clock as the events, so the two can be lined up later
     # instead of guessed at.

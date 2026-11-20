@@ -78,17 +78,13 @@ enum PlayerTempSweep {
     }
 }
 
-/// Master switch for the whole probe suite (bus + LAN server + flight recorder).
-///
-/// DEBUG builds default ON. RELEASE builds — what `make-ipa.sh` produces and
-/// what a sideloaded install actually runs — default OFF and are turned on from
-/// Settings → Performance → "Capture diagnostics". The old `#if DEBUG` gate
-/// compiled every probe away in release, so the build people really use had no
-/// instrumentation at all; this makes the same suite available there without
-/// paying for it unless someone asks.
+/// The Log's switch (Settings → Developer → Log): the file log, the LAN
+/// server and the watchdog together. On unless switched off, in every build:
+/// the beta is daily driven with it, and a problem is only worth anything if
+/// the log was running when it happened.
 enum ProbeGate {
-    /// Persisted choice. Absent means "DEBUG default" (see `configureFromDefaults`).
-    static let defaultsKey = "cue.diag.capture.v1"
+    /// Persisted choice; absent means on.
+    static let defaultsKey = "cue.log.on.v1"
 
     private static let lock = NSLock()
     private static var enabled = false
@@ -100,41 +96,45 @@ enum ProbeGate {
         return enabled
     }
 
-    /// Called once from the app's `init`, before any probe is started.
+    /// Once, from the app's `init`, before anything logs.
     static func configureFromDefaults() {
-        let stored = UserDefaults.standard.object(forKey: defaultsKey) as? Bool
-        #if DEBUG
-        set(stored ?? true)
-        #else
-        set(stored ?? false)
-        #endif
+        // The old capture switch and the UserDefaults trails it fed.
+        for key in ["cue.diag.capture.v1", "cue.sync.log.v1", "dev.flight", "dev.colorTrail", "dev.dvTrail"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        set(UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
     }
 
-    static func set(_ on: Bool) {
+    private static func set(_ on: Bool) {
         lock.lock(); enabled = on; lock.unlock()
+    }
+
+    /// Settings' switch: everything it runs starts or stops with it.
+    @MainActor static func store(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: defaultsKey)
+        if on {
+            set(true)
+            CueLog.start()
+            LogServer.shared.start()
+            Watchdog.start()
+        } else {
+            CueLog.write("life", "log switched off")
+            set(false)
+            LogServer.shared.stop()
+            CueLog.stop()
+        }
     }
 }
 
 /// Live probe bus: timestamped EVENTS from anywhere, plus LEVELS pulled on
-/// demand from whoever holds them.
-///
-/// The colour and DV trails are the wrong shape for watching an interaction.
-/// They go through `UserDefaults` (a disk-backed write per line, capped at a
-/// few dozen entries), which is fine for a handful of decisions per session and
-/// useless for a scrub, where the interesting part is dozens of events a second
-/// against levels that are moving the whole time.
-///
-/// So: an in-memory ring for events, a registry of sampler closures for levels,
-/// and a monotonically increasing sequence number so a streaming reader can ask
-/// for "everything since N" without re-reading what it already has.
+/// demand from whoever holds them. Every event also goes to the file log
+/// (`CueLog`); the ring is what the live tail reads.
 ///
 /// Gated by `ProbeGate`. When off, the `@autoclosure` message is never built,
 /// so the call sites (including the scrub path) stay cheap.
 enum PlayerProbe {
-    /// Ring capacity. Big enough to hold a whole scrub gesture at full rate —
-    /// and, since the live tail only drains it twice a second, big enough that
-    /// a burst (a source switch, a failover, a flood of engine states) can
-    /// never push an event out before the reader has seen it.
+    /// Ring capacity: a whole scrub at full rate, so the live tail (drained
+    /// twice a second) never loses an event.
     private static let capacity = 2000
 
     private static let lock = NSLock()
@@ -142,19 +142,17 @@ enum PlayerProbe {
     private static var nextSeq: UInt64 = 1
     static let startedAt = Date()
 
-    /// Record one event. Safe from any thread or queue — the cache server
-    /// calls it from its own serial queue, the player from the main actor.
-    ///
-    /// The message is an autoclosure so it is never even BUILT in release: the
-    /// call sites sit on the scrub publish path and in every seek, and a
-    /// `String(format:)` per call there is real work for a log nobody can read.
+    /// Record one event. Safe from any thread or queue.
     nonisolated static func event(_ tag: String, _ line: @autoclosure () -> String) {
         guard ProbeGate.isEnabled else { return }
+        let text = line()
+        let at = Date()
         lock.lock()
-        ring.append((nextSeq, Date(), tag, line()))
+        ring.append((nextSeq, at, tag, text))
         nextSeq &+= 1
         if ring.count > capacity { ring.removeFirst(ring.count - capacity) }
         lock.unlock()
+        CueLog.write(tag, text, at: at)
     }
 
     /// Events newer than `seq`, formatted, with the sequence to ask from next.
@@ -172,20 +170,12 @@ enum PlayerProbe {
 
     // MARK: Counters and sticky notes
 
-    /// Monotonic counters and last-value notes, surfaced as a `[health]` block.
-    ///
-    /// Events answer "what just happened"; these answer "what has been
-    /// happening" — the questions a live session actually turns on. A stall
-    /// that fires once is a blip, the same stall forty times in an hour is the
-    /// bug, and there is no way to tell those apart by watching a tail scroll
-    /// past. Every number here is something that should be ZERO (or one) in a
-    /// healthy session, so the block reads as a defect list rather than stats.
+    /// Monotonic counters and last-value notes, the `[health]` block: every
+    /// number here should be zero (or one) in a healthy session.
     private static var counters: [String: Int] = [:]
     private static var notes: [(key: String, value: String, at: Date)] = []
-    /// Insertion order, so the block doesn't reshuffle between reads.
     private static var counterOrder: [String] = []
 
-    /// Bump a counter. Same threading contract as `event`.
     nonisolated static func count(_ name: String, by amount: Int = 1) {
         guard ProbeGate.isEnabled else { return }
         lock.lock()
@@ -194,9 +184,6 @@ enum PlayerProbe {
         lock.unlock()
     }
 
-    /// Record a last-known value (with the time it was set). Use for the one
-    /// fact whose LATEST value matters — the last error, the URL in play, how
-    /// long the open took.
     nonisolated static func note(_ key: String, _ value: @autoclosure () -> String) {
         guard ProbeGate.isEnabled else { return }
         let v = value()
@@ -219,7 +206,6 @@ enum PlayerProbe {
         }
         lock.unlock()
         var out: [String] = []
-        // Counters wrap at ~100 columns: a terminal is the client.
         var row = ""
         for item in c {
             if row.count + item.count + 2 > 96 { out.append(row); row = "" }
@@ -233,8 +219,6 @@ enum PlayerProbe {
     // MARK: Levels
 
     /// Named sampler closures, called on the main actor when a reader asks.
-    /// The player registers itself on `init` and clears on `deinit`, so a
-    /// finished session's model is never held alive by this.
     @MainActor private static var samplers: [(name: String, sample: () -> [String])] = []
 
     @MainActor static func register(_ name: String, _ sample: @escaping () -> [String]) {
@@ -246,15 +230,7 @@ enum PlayerProbe {
         samplers.removeAll { $0.name == name }
     }
 
-    /// One block of every registered level, newest state at the moment of the
-    /// call. The cache is always included — it outlives any one player.
-    /// When the running executable was built.
-    ///
-    /// Earned its place: four hours of device observation were spent verifying a
-    /// fix against a binary that turned out to predate it, because nothing in the
-    /// probe said which build was answering. `strings` on the app cannot settle
-    /// it (Swift literals do not surface), and "the install said Launched" is not
-    /// evidence the install replaced anything.
+    /// When the running executable was built: which build is answering.
     static let buildStamp: String = {
         guard let exe = Bundle.main.executableURL,
               let date = try? exe.resourceValues(forKeys: [.contentModificationDateKey])
@@ -264,10 +240,7 @@ enum PlayerProbe {
         return f.string(from: date)
     }()
 
-    /// Resident footprint in MB, or 0 if the kernel won't say. A 3 GB Apple TV
-    /// jetsams the app somewhere north of ~650 MB, and "it just closed" is one
-    /// of the most common player complaints — a number climbing across a
-    /// session is the difference between guessing and knowing.
+    /// Resident footprint in MB, or 0 if the kernel won't say.
     nonisolated static func footprintMB() -> Double {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
@@ -278,6 +251,30 @@ enum PlayerProbe {
         }
         guard result == KERN_SUCCESS else { return 0 }
         return Double(info.phys_footprint) / (1024 * 1024)
+    }
+
+    /// The process's CPU use, all threads, in percent of one core.
+    nonisolated static func cpuPercent() -> Double {
+        var threads: thread_act_array_t?
+        var count: mach_msg_type_number_t = 0
+        guard task_threads(mach_task_self_, &threads, &count) == KERN_SUCCESS, let threads else { return 0 }
+        defer {
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threads)),
+                          vm_size_t(Int(count) * MemoryLayout<thread_t>.stride))
+        }
+        var total = 0.0
+        for index in 0..<Int(count) {
+            var info = thread_basic_info()
+            var size = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.size / MemoryLayout<integer_t>.size)
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+                    thread_info(threads[index], thread_flavor_t(THREAD_BASIC_INFO), $0, &size)
+                }
+            }
+            guard result == KERN_SUCCESS, info.flags & TH_FLAGS_IDLE == 0 else { continue }
+            total += Double(info.cpu_usage) / Double(TH_USAGE_SCALE) * 100
+        }
+        return total
     }
 
     @MainActor static func levels() -> [String] {
@@ -291,8 +288,6 @@ enum PlayerProbe {
             out.append("[\(sampler.name)]")
             out.append(contentsOf: lines.map { "  " + $0 })
         }
-        // Last, and deliberately so: it is the block to read when nothing in
-        // the live state looks wrong but the session still feels broken.
         let health = healthLines()
         if !health.isEmpty {
             out.append("[health]")
@@ -303,27 +298,274 @@ enum PlayerProbe {
 }
 
 extension Bool {
-    /// Compact yes/no for probe lines — `true`/`false` doubles the width of
-    /// every state line for no gain when a dozen of them share a row.
+    /// Compact yes/no for probe lines.
     var probe: String { self ? "Y" : "n" }
 }
 
-/// Dev-only: serves the colour trail over the LAN as plain text.
+/// The log on disk: one file per launch in Application Support/Logs, every
+/// probe event as a line ("14:03:22.123  tag    text"), kept 7 days and
+/// 50 MB at most. Lines are written as they come (one `write` each, no
+/// buffer), so a crash loses nothing that was already logged.
 ///
-/// The point is to be able to WATCH a playback session live. The alternative —
-/// pulling the app container with `devicectl` — briefly backgrounds the app,
-/// which pops auto-PiP over whatever is playing and, worse, fires the
-/// `didEnterBackground` observer that clears `SessionDisplayMode`'s pin. That
-/// destroys the exact state a colour investigation is trying to observe. A
-/// read-only socket costs the session nothing.
-///
-/// Lives here rather than in its own file purely so it needs no project-file
-/// change. Debug builds only, read-only, and it parses nothing the client sends.
-@MainActor
-final class ColorProbeServer {
-    static let shared = ColorProbeServer()
+/// tvOS has no MetricKit, so crashes are caught here: an uncaught exception
+/// and the fatal signals (Swift's traps are SIGTRAP) write a CRASH line and
+/// the stack before the app goes. A session that ended in the foreground
+/// with neither (killed for memory, a watchdog, a force stop) gets an EXIT
+/// line at the next launch.
+enum CueLog {
+    static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs", isDirectory: true)
+    private static let keepDays: TimeInterval = 7
+    private static let keepBytes: Int64 = 50 * 1_048_576
+    private static let queue = DispatchQueue(label: "cue.log", qos: .utility)
 
-    /// High, fixed, and distinct from the add-on import server's 8099.
+    /// The open session file. Read by the crash handlers, so a plain global.
+    nonisolated(unsafe) private static var fd: Int32 = -1
+    nonisolated(unsafe) private(set) static var current: URL?
+
+    /// Tags the Log's pages pick out of a session.
+    static let markTag = "MARK"
+    static let notable: Set<String> = ["MARK", "WARN", "CRASH", "EXIT", "HANG"]
+
+    /// Only on `queue`.
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    static let fileName: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        return f
+    }()
+
+    static func start() {
+        guard ProbeGate.isEnabled else { return }
+        queue.sync {
+            guard fd < 0 else { return }
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if let previous = files().first { closeOut(previous) }
+            prune()
+            let url = folder.appendingPathComponent(fileName.string(from: Date()) + ".log")
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            fd = open(url.path, O_WRONLY | O_APPEND)
+            current = url
+        }
+        installCrashHandlers()
+        write("life", header)
+    }
+
+    static func stop() {
+        queue.sync {
+            if fd >= 0 { close(fd) }
+            fd = -1
+            current = nil
+        }
+    }
+
+    /// One line, from anywhere.
+    nonisolated static func write(_ tag: String, _ text: String, at: Date = Date()) {
+        queue.async {
+            guard fd >= 0 else { return }
+            let pad = tag.count < 6 ? String(repeating: " ", count: 6 - tag.count) : ""
+            put(stamp.string(from: at) + "  " + tag + pad + " " + text + "\n")
+        }
+    }
+
+    private static func put(_ line: String) {
+        line.utf8CString.withUnsafeBufferPointer { buffer in
+            _ = Darwin.write(fd, buffer.baseAddress, buffer.count - 1)
+        }
+    }
+
+    /// A moment marked from the remote: the line to look for later.
+    @MainActor static func mark(from place: String) {
+        PlayerProbe.event(markTag, "marked \(place) · \(AppProbe.breadcrumb)")
+    }
+
+    private static var header: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        var system = utsname()
+        uname(&system)
+        let model = withUnsafeBytes(of: &system.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        #if DEBUG
+        let kind = "Debug"
+        #else
+        let kind = "Release"
+        #endif
+        return "Cue \(version) (\(build)) \(kind), built \(PlayerProbe.buildStamp) · \(model) · tvOS "
+            + ProcessInfo.processInfo.operatingSystemVersionString
+            + String(format: " · %.0f MB", PlayerProbe.footprintMB())
+    }
+
+    // MARK: Files
+
+    /// Session files, newest first.
+    static func files() -> [URL] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])) ?? []
+        return urls.filter { $0.pathExtension == "log" }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+    }
+
+    static func started(_ url: URL) -> Date? {
+        fileName.date(from: url.deletingPathExtension().lastPathComponent)
+    }
+
+    static func size(_ url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+
+    /// Older than a week, then the oldest past 50 MB.
+    private static func prune() {
+        var total: Int64 = 0
+        for url in files() {
+            let old = started(url).map { Date().timeIntervalSince($0) > keepDays * 86_400 } ?? true
+            total += size(url)
+            if old || total > keepBytes { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    /// Everything but the session being written.
+    static func clear() {
+        queue.sync {
+            for url in files() where url != current { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    /// The last session ended in the foreground with no crash line: an EXIT.
+    /// In the background is a normal end (tvOS reclaims suspended apps).
+    private static func closeOut(_ url: URL) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        let length = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: length > 65_536 ? length - 65_536 : 0)
+        let tail = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
+        try? handle.close()
+        let lines = tail.split(separator: "\n")
+        if lines.contains(where: { $0.contains("  CRASH ") || $0.contains("  EXIT ") }) { return }
+        let lastLife = lines.last { $0.contains("  life   lifecycle ") }
+        if lastLife?.hasSuffix("background") == true || lines.last?.contains("log switched off") == true { return }
+        let last = lines.last.map { String($0.prefix(12)) } ?? "?"
+        let line = "\(last)  EXIT   ended unexpectedly in the foreground after \(last): "
+            + "killed (memory, a watchdog) or stopped from Xcode; no crash was caught\n"
+        if let out = try? FileHandle(forWritingTo: url) {
+            _ = try? out.seekToEnd()
+            try? out.write(contentsOf: Data(line.utf8))
+            try? out.close()
+        }
+    }
+
+    // MARK: Crashes
+
+    private static let fatalSignals: [Int32] = [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGFPE]
+    /// Prepared at install, so the handler only writes what's ready.
+    nonisolated(unsafe) private static var signalLines = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 32)
+    nonisolated(unsafe) private static var frames = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 128)
+    nonisolated(unsafe) private static var exceptionWritten = false
+    nonisolated(unsafe) private static var installed = false
+
+    private static func installCrashHandlers() {
+        guard !installed else { return }
+        installed = true
+        let names: [Int32: String] = [
+            SIGABRT: "SIGABRT (abort)", SIGSEGV: "SIGSEGV (bad memory access)",
+            SIGBUS: "SIGBUS (bad memory access)", SIGILL: "SIGILL (illegal instruction)",
+            SIGTRAP: "SIGTRAP (a Swift trap: force unwrap, fatalError, out of range)",
+            SIGFPE: "SIGFPE (arithmetic)",
+        ]
+        for index in 0..<32 { signalLines[index] = nil }
+        for (signal, name) in names {
+            signalLines[Int(signal)] = strdup("--:--:--.---  CRASH  \(name)\n")
+        }
+        NSSetUncaughtExceptionHandler { exception in
+            CueLog.exceptionWritten = true
+            let stack = exception.callStackSymbols.joined(separator: "\n")
+            let text = "--:--:--.---  CRASH  \(exception.name.rawValue): \(exception.reason ?? "")\n\(stack)\n"
+            if CueLog.fd >= 0 { CueLog.put(text) }
+        }
+        for signal in fatalSignals {
+            Darwin.signal(signal) { number in
+                if CueLog.fd >= 0 {
+                    if !CueLog.exceptionWritten, number >= 0, number < 32, let line = CueLog.signalLines[Int(number)] {
+                        _ = Darwin.write(CueLog.fd, line, strlen(line))
+                    }
+                    let count = backtrace(CueLog.frames, 128)
+                    backtrace_symbols_fd(CueLog.frames, count, CueLog.fd)
+                }
+                Darwin.signal(number, SIG_DFL)
+                raise(number)
+            }
+        }
+    }
+
+    // MARK: Reading back
+
+    struct Line: Identifiable, Hashable {
+        let id: Int
+        let time: String
+        let tag: String
+        let text: String
+    }
+
+    struct Session: Identifiable {
+        let url: URL
+        var id: String { url.lastPathComponent }
+        let started: Date
+        let bytes: Int64
+        /// The last line's time.
+        let ended: String
+        let notable: [Line]
+        let isCurrent: Bool
+        var marks: Int { notable.filter { $0.tag == CueLog.markTag }.count }
+        var crashed: Bool { notable.contains { $0.tag == "CRASH" || $0.tag == "EXIT" } }
+        var hangs: Int { notable.filter { $0.tag == "HANG" }.count }
+        var warnings: Int { notable.filter { $0.tag == "WARN" }.count }
+    }
+
+    /// Every session with its marks and problems. Reads the files: off main.
+    static func sessions() async -> [Session] {
+        let current = queue.sync { CueLog.current }
+        return await Task.detached(priority: .userInitiated) {
+            files().compactMap { url -> Session? in
+                guard let started = started(url), let data = try? Data(contentsOf: url) else { return nil }
+                var notable: [Line] = []
+                var ended = ""
+                var index = 0
+                String(decoding: data, as: UTF8.self).enumerateLines { raw, _ in
+                    index += 1
+                    guard raw.count > 21 else { return }
+                    let time = String(raw.prefix(12))
+                    if time.first?.isNumber == true { ended = time }
+                    let rest = raw.dropFirst(14)
+                    let tag = String(rest.prefix { $0 != " " })
+                    guard notable.count < 200, CueLog.notable.contains(tag) else { return }
+                    let text = rest.dropFirst(tag.count).drop { $0 == " " }
+                    notable.append(Line(id: index, time: time, tag: tag, text: String(text)))
+                }
+                return Session(url: url, started: started, bytes: size(url), ended: ended,
+                               notable: notable, isCurrent: url == current)
+            }
+        }.value
+    }
+}
+
+/// Serves the log over the LAN as plain text, on :8123, read-only.
+///
+///     curl http://<ip>:8123/            the sessions, and these routes
+///     curl http://<ip>:8123/log         this session
+///     curl http://<ip>:8123/log?days=2  every session of the last 2 days
+///     curl http://<ip>:8123/log?session=2026-11-20%2014-03-22
+///     curl http://<ip>:8123/live        levels and events as they happen
+///     curl http://<ip>:8123/mark?froze  a MARK line from the Mac
+@MainActor
+final class LogServer {
+    static let shared = LogServer()
+
     private static let port: UInt16 = 8123
     private var listener: NWListener?
 
@@ -335,308 +577,224 @@ final class ColorProbeServer {
         guard let listener = try? NWListener(using: params, on: port) else { return }
         listener.newConnectionHandler = { connection in
             connection.start(queue: .main)
-            // One read is enough to see the request line, which is all that
-            // picks the route.
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { chunk, _, _, _ in
                 let head = chunk.map { String(decoding: $0, as: UTF8.self) } ?? ""
-                let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
-                Task { @MainActor in
-                    switch path {
-                    case let p where p.hasPrefix("/live"):
-                        Self.stream(on: connection, eventsOnly: false)
-                    case let p where p.hasPrefix("/events"):
-                        Self.stream(on: connection, eventsOnly: true)
-                    // `/mark?<anything>` drops a labelled line into the event
-                    // stream. During a live session the observer and the
-                    // person watching are not the same person: "it just
-                    // froze" arrives seconds after the fact, over a tail that
-                    // has scrolled on. A mark is an anchor in the ONE clock
-                    // both sides share, so the complaint can be lined up with
-                    // the events around it afterwards instead of estimated.
-                    case let p where p.hasPrefix("/mark"):
-                        let note = p.split(separator: "?", maxSplits: 1).dropFirst().first
-                            .map { $0.replacingOccurrences(of: "+", with: " ")
-                                     .removingPercentEncoding ?? String($0) } ?? "mark"
-                        PlayerProbe.event("MARK", "──────── \(note) ────────")
-                        Self.sendText(on: connection, "marked: \(note)\n")
-                    // `/cachecheck` runs the cache listener check a new playback
-                    // session would run and reports the listener's state — the
-                    // way to prove, from outside, that a listener killed by a
-                    // suspension is rebuilt rather than handed out dead.
-                    case let p where p.hasPrefix("/health"):
-                        Self.sendText(on: connection,
-                                      PlayerProbe.healthLines().joined(separator: "\n") + "\n")
-                    case let p where p.hasPrefix("/probe"):
-                        Self.sendText(on: connection, PlayerProbe.levels()
-                            .joined(separator: "\n") + "\n\n"
-                            + PlayerProbe.events(since: 0, limit: 120).lines.joined(separator: "\n") + "\n")
-                    default:
-                        Self.send(on: connection)
-                    }
-                }
+                let target = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                let parts = target.split(separator: "?", maxSplits: 1)
+                let path = parts.first.map(String.init) ?? "/"
+                let query = parts.count > 1 ? String(parts[1]) : ""
+                Task { @MainActor in Self.route(path, query, on: connection) }
             }
         }
         listener.start(queue: .main)
         self.listener = listener
     }
 
-    /// Tear the listener down when the Diagnostics toggle is switched off.
     func stop() {
         listener?.cancel()
         listener = nil
     }
 
-    /// Live tail: an HTTP response with NO Content-Length that simply never
-    /// ends, so `curl` prints it as it arrives. Levels every half second (the
-    /// rate a scrub is worth watching at), events the moment they land.
-    ///
-    /// Deliberately not SSE or JSON — the client for this is a terminal.
-    private static func stream(on connection: NWConnection, eventsOnly: Bool) {
-        let head = """
-        HTTP/1.1 200 OK\r
-        Content-Type: text/plain; charset=utf-8\r
-        Cache-Control: no-store\r
-        Connection: close\r
-        \r
+    private static func value(_ name: String, in query: String) -> String? {
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard kv.first.map(String.init) == name else { continue }
+            return kv.count > 1 ? String(kv[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding : ""
+        }
+        return nil
+    }
 
-        """
-        let banner = "=== cue live probe — \(eventsOnly ? "events" : "levels + events") ===\n"
-        connection.send(content: Data(head.utf8) + Data(banner.utf8),
-                        completion: .contentProcessed { error in
+    private static func route(_ path: String, _ query: String, on connection: NWConnection) {
+        switch path {
+        case "/live": stream(on: connection, eventsOnly: false)
+        case "/events": stream(on: connection, eventsOnly: true)
+        case "/mark":
+            let note = query.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? query
+            PlayerProbe.event(CueLog.markTag, "marked from the Mac: \(note.isEmpty ? "mark" : note)")
+            sendText(on: connection, "marked: \(note)\n")
+        case "/health":
+            sendText(on: connection, PlayerProbe.healthLines().joined(separator: "\n") + "\n")
+        case "/probe":
+            sendText(on: connection, PlayerProbe.levels().joined(separator: "\n") + "\n\n"
+                + PlayerProbe.events(since: 0, limit: 120).lines.joined(separator: "\n") + "\n")
+        case "/log":
+            let files = CueLog.files()
+            var chosen: [URL]
+            if let days = value("days", in: query).flatMap(Double.init) {
+                let since = Date().addingTimeInterval(-days * 86_400)
+                chosen = files.filter { (CueLog.started($0) ?? .distantPast) >= since }.reversed()
+            } else if let session = value("session", in: query) {
+                chosen = files.filter { $0.lastPathComponent.hasPrefix(session) }
+            } else {
+                chosen = CueLog.current.map { [$0] } ?? []
+            }
+            DispatchQueue.global(qos: .utility).async {
+                var body = Data()
+                for url in chosen {
+                    body.append(Data("==== \(url.deletingPathExtension().lastPathComponent) ====\n".utf8))
+                    body.append((try? Data(contentsOf: url)) ?? Data())
+                }
+                send(on: connection, body.isEmpty ? Data("no log\n".utf8) : body)
+            }
+        default:
+            let list = CueLog.files().map {
+                "  \($0.deletingPathExtension().lastPathComponent)   "
+                    + ByteCountFormatter.string(fromByteCount: CueLog.size($0), countStyle: .file)
+            }
+            sendText(on: connection, """
+            Cue log — \(PlayerProbe.buildStamp)
+              /log              this session
+              /log?days=2       the last 2 days
+              /log?session=<name>
+              /live  /events    as it happens
+              /mark?<note>      a MARK line
+
+            sessions:
+            \(list.joined(separator: "\n"))
+
+            """)
+        }
+    }
+
+    /// This Apple TV's address on the LAN, for Settings.
+    nonisolated static var address: String? {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        defer { freeifaddrs(list) }
+        var found: String?
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let entry = pointer.pointee
+            guard let addr = entry.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let name = String(cString: entry.ifa_name)
+            guard name.hasPrefix("en") else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            found = String(cString: host)
+            if name == "en0" { break }
+        }
+        return found.map { "\($0):\(port)" }
+    }
+
+    /// Live tail: no Content-Length, it never ends; `curl` prints it as it
+    /// arrives. Events at once, levels every 2 s.
+    private static func stream(on connection: NWConnection, eventsOnly: Bool) {
+        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        let banner = "=== cue live — \(eventsOnly ? "events" : "levels + events") ===\n"
+        connection.send(content: Data(head.utf8) + Data(banner.utf8), completion: .contentProcessed { error in
             guard error == nil else { connection.cancel(); return }
             Task { @MainActor in tick(on: connection, since: 0, eventsOnly: eventsOnly, ticks: 0) }
         })
     }
 
-    @MainActor
-    private static func tick(on connection: NWConnection, since: UInt64,
-                             eventsOnly: Bool, ticks: Int) {
+    private static func tick(on connection: NWConnection, since: UInt64, eventsOnly: Bool, ticks: Int) {
         var body = ""
         let fresh = PlayerProbe.events(since: since)
         if !fresh.lines.isEmpty { body += fresh.lines.joined(separator: "\n") + "\n" }
-        // Levels every fourth tick (~2s) rather than every one: they are two
-        // dozen lines, and at 2 Hz they would bury the events, which are the
-        // part that says what just happened.
         if !eventsOnly, ticks % 4 == 0 {
             let stamp = String(format: "%8.3f", Date().timeIntervalSince(PlayerProbe.startedAt))
-            body += "\n\(stamp)  ---- levels ----\n"
-            body += PlayerProbe.levels().joined(separator: "\n") + "\n\n"
+            body += "\n\(stamp)  ---- levels ----\n" + PlayerProbe.levels().joined(separator: "\n") + "\n\n"
         }
-        let payload = body.isEmpty ? "" : body
-        let send: (@escaping () -> Void) -> Void = { done in
-            guard !payload.isEmpty else { done(); return }
-            connection.send(content: Data(payload.utf8), completion: .contentProcessed { error in
-                if error != nil { connection.cancel() } else { done() }
-            })
-        }
-        send {
+        let next = {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                Task { @MainActor in
-                    tick(on: connection, since: fresh.next, eventsOnly: eventsOnly, ticks: ticks + 1)
-                }
+                Task { @MainActor in tick(on: connection, since: fresh.next, eventsOnly: eventsOnly, ticks: ticks + 1) }
             }
         }
+        guard !body.isEmpty else { return next() }
+        connection.send(content: Data(body.utf8), completion: .contentProcessed { error in
+            if error != nil { connection.cancel() } else { next() }
+        })
     }
 
     private static func sendText(on connection: NWConnection, _ text: String) {
-        let body = Data(text.utf8)
-        let head = """
-        HTTP/1.1 200 OK\r
-        Content-Type: text/plain; charset=utf-8\r
-        Content-Length: \(body.count)\r
-        Cache-Control: no-store\r
-        Connection: close\r
-        \r
-
-        """
-        connection.send(content: Data(head.utf8) + body,
-                        completion: .contentProcessed { _ in connection.cancel() })
+        send(on: connection, Data(text.utf8))
     }
 
-    private static func send(on connection: NWConnection) {
-        var trail = UserDefaults.standard.stringArray(forKey: "dev.colorTrail") ?? []
-        // The DV trail as well. It lives under its own key, so every line the
-        // native-DV path writes — "display settled at Nfps" above all — was
-        // invisible to this endpoint and readable only on a console-attached
-        // device, which is exactly the situation this server exists to avoid.
-        let dv = UserDefaults.standard.stringArray(forKey: "dev.dvTrail") ?? []
-        if !dv.isEmpty {
-            trail.append("--- dv trail ---")
-            trail.append(contentsOf: dv)
-        }
-        let body = Data((trail.joined(separator: "\n") + "\n").utf8)
-        let head = """
-        HTTP/1.1 200 OK\r
-        Content-Type: text/plain; charset=utf-8\r
-        Content-Length: \(body.count)\r
-        Cache-Control: no-store\r
-        Connection: close\r
-        \r
-
-        """
-        connection.send(content: Data(head.utf8) + body,
-                        completion: .contentProcessed { _ in connection.cancel() })
+    nonisolated private static func send(on connection: NWConnection, _ body: Data) {
+        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
     }
 }
 
-/// App-wide flight recorder: one compact line every few seconds, kept in
-/// UserDefaults so it SURVIVES the failure.
+/// The main thread's watchdog and the app's pulse, into the log.
 ///
-/// The `:8123` live probe is the better read-out right up until the moment it
-/// matters, and then it is gone — a suspended app stops answering, a wedged one
-/// never accepts the connection, and a kernel panic takes the whole box with it.
-/// On 2026-09-14 the app froze and the Apple TV then died of an out-of-memory
-/// panic, and none of the live tooling could say a word about it. What DID
-/// survive was the persisted trail in UserDefaults, readable afterwards with
-/// `devicectl device copy from … Library/Preferences/<bundle>.plist`.
-///
-/// So this records the handful of numbers that incident needed and nobody had:
-///
-/// - **mainStall** — seconds since the main thread last ticked. THE datum that
-///   separates "deadlocked" from "out of memory", and the one whose absence
-///   sent that investigation down the wrong path for an hour. A heartbeat is
-///   bumped on the main queue; this thread only ever READS how stale it is, so
-///   a blocked main thread makes the number climb instead of hiding.
-/// - **mem** — footprint in MB, app-wide and continuous. The existing memory
-///   line only runs while the player is open, which is why the staircase that
-///   ended in the panic was invisible.
-/// - **state** — foreground / inactive / background, tracked from the lifecycle
-///   notifications rather than read from `UIApplication`, because
-///   `applicationState` is main-thread-only and this runs on a utility queue.
-///
-/// Deliberately cheap and deliberately boring: two timers, a few lock-guarded
-/// reads, a bounded ring, no retained references to anything it observes, and
-/// no UIKit access off the main thread.
-enum FlightRecorder {
-    /// Read it back with:
-    /// `plistlib.load(open(prefs))["dev.flight"]`
-    private static let key = "dev.flight"
-    /// ~40 minutes at the tick below. Bounded so it can never grow without
-    /// limit.
-    private static let capacity = 240
-    private static let tick: TimeInterval = 10
-    /// How often the main queue stamps its heartbeat. Finer than the tick so a
-    /// stall is dated to within a second rather than within ten.
-    private static let beat: TimeInterval = 1
+/// - A main thread stuck past a second: a HANG line when it comes back, with
+///   how long ("stuck 1.4 s"), and one at 5 s in case it never does. The beat
+///   is stamped on main; a utility queue only reads how stale it is.
+/// - Every 10 s in the foreground a `tick` line: memory, CPU, thermal state.
+/// - The lifecycle (active, background…) and memory warnings, at once: the
+///   state the app went away in is what the next launch reads (`CueLog`).
+enum Watchdog {
+    private static let beat: TimeInterval = 0.25
+    private static let check: TimeInterval = 0.5
+    private static let hangAfter: TimeInterval = 1
+    private static let tickEvery: TimeInterval = 10
 
-    private static let queue = DispatchQueue(label: "cue.flight", qos: .utility)
-
-    /// When the main queue last proved it was alive (`timeIntervalSince1970`).
-    /// An `Atomic` because it is written on main and read on `queue`.
-    private static let mainBeatAt = Atomic<TimeInterval>(
-        wrappedValue: Date().timeIntervalSince1970
-    )
-    private static let appState = Atomic<String>(wrappedValue: "launching")
-    /// A one-off marker the next tick will carry (see `mark`).
-    private static let pendingMark = Atomic<String?>(wrappedValue: nil)
+    private static let queue = DispatchQueue(label: "cue.watchdog", qos: .utility)
+    private static let beatAt = Atomic<TimeInterval>(wrappedValue: CACurrentMediaTime())
+    private static let active = Atomic<Bool>(wrappedValue: true)
 
     nonisolated(unsafe) private static var started = false
-    nonisolated(unsafe) private static var beatTimer: DispatchSourceTimer?
-    nonisolated(unsafe) private static var tickTimer: DispatchSourceTimer?
-
-    /// Annotate the recording — "the freeze started here", a build stamp, a
-    /// deliberate reproduction step. Carried on the next tick. Safe from any
-    /// thread.
-    static func mark(_ note: String) {
-        pendingMark.wrappedValue = note
-        NSLog("[CueFlight] MARK %@", note)
-    }
+    nonisolated(unsafe) private static var timers: [DispatchSourceTimer] = []
+    /// Only on `queue`.
+    nonisolated(unsafe) private static var stuckSince: TimeInterval?
+    nonisolated(unsafe) private static var toldOngoing = false
+    nonisolated(unsafe) private static var lastTick: TimeInterval = 0
 
     static func start() {
-        guard ProbeGate.isEnabled else { return }
-        guard !started else { return }
+        guard ProbeGate.isEnabled, !started else { return }
         started = true
-        NSLog("[CueFlight] recorder armed — tick %.0fs, ring %d, key %@",
-              tick, capacity, key)
-
-        // A new run is a new recording. Keeping the previous launch's lines
-        // would make "what happened just before it died" ambiguous, and the
-        // crash/panic reports already carry the boundary.
-        //
-        // WRITTEN THROUGH `queue` like every other write, so the first tick
-        // cannot race the reset and lose itself.
-        let opening = line(mainStall: 0, note: "=== launch ===")
-        queue.async { UserDefaults.standard.set([opening], forKey: key) }
-
-        // Main-thread heartbeat. All it does is stamp the clock; if the main
-        // thread is blocked this simply stops happening and the tick below sees
-        // the gap grow.
         let heart = DispatchSource.makeTimerSource(queue: .main)
-        heart.schedule(deadline: .now() + beat, repeating: beat, leeway: .milliseconds(200))
-        heart.setEventHandler { mainBeatAt.wrappedValue = Date().timeIntervalSince1970 }
+        heart.schedule(deadline: .now() + beat, repeating: beat, leeway: .milliseconds(20))
+        heart.setEventHandler { beatAt.wrappedValue = CACurrentMediaTime() }
         heart.resume()
-        beatTimer = heart
-
-        let recorder = DispatchSource.makeTimerSource(queue: queue)
-        recorder.schedule(deadline: .now() + tick, repeating: tick, leeway: .seconds(1))
-        recorder.setEventHandler { record() }
-        recorder.resume()
-        tickTimer = recorder
-
+        let watch = DispatchSource.makeTimerSource(queue: queue)
+        watch.schedule(deadline: .now() + check, repeating: check, leeway: .milliseconds(50))
+        watch.setEventHandler { look() }
+        watch.resume()
+        timers = [heart, watch]
         observeLifecycle()
     }
 
-    // MARK: - Internals
+    private static func look() {
+        guard ProbeGate.isEnabled else { return }
+        let now = CACurrentMediaTime()
+        // Suspended or just back: the beat's age says nothing.
+        guard active.wrappedValue else { stuckSince = nil; return }
+        let stall = now - beatAt.wrappedValue
+        if stall > hangAfter {
+            if stuckSince == nil { stuckSince = beatAt.wrappedValue }
+            if stall > 5, !toldOngoing {
+                toldOngoing = true
+                CueLog.write("HANG", String(format: "main thread stuck %.0f s and counting · %.0f MB",
+                                            stall, PlayerProbe.footprintMB()))
+            }
+        } else if let since = stuckSince {
+            CueLog.write("HANG", String(format: "main thread stuck %.1f s", beatAt.wrappedValue - since))
+            PlayerProbe.count("hang")
+            stuckSince = nil
+            toldOngoing = false
+        }
+        if now - lastTick >= tickEvery {
+            lastTick = now
+            CueLog.write("tick", String(format: "mem %.0f MB · cpu %.0f %% · thermal %@",
+                                        PlayerProbe.footprintMB(), PlayerProbe.cpuPercent(),
+                                        AppProbe.thermalLabel(ProcessInfo.processInfo.thermalState)))
+        }
+    }
 
-    /// Lifecycle tracked from notifications, NOT from `UIApplication.shared
-    /// .applicationState`: that is main-thread-only, and reading UIKit off the
-    /// main thread is precisely the defect the Main Thread Checker caught in
-    /// the sample engine the same night this file was written.
     private static func observeLifecycle() {
         let centre = NotificationCenter.default
-        func watch(_ name: Notification.Name, _ label: String) {
+        func watch(_ name: Notification.Name, _ label: String, active now: Bool) {
             centre.addObserver(forName: name, object: nil, queue: .main) { _ in
-                appState.wrappedValue = label
-                // Flush immediately: a suspension can freeze the process before
-                // the next tick, and the state it went away in is exactly what
-                // the next investigation wants.
-                queue.async { record(note: "lifecycle \(label)") }
+                beatAt.wrappedValue = CACurrentMediaTime()
+                active.wrappedValue = now
+                AppProbe.life("lifecycle \(label)")
             }
         }
-        watch(UIApplication.didBecomeActiveNotification, "active")
-        watch(UIApplication.willResignActiveNotification, "inactive")
-        watch(UIApplication.didEnterBackgroundNotification, "background")
-        watch(UIApplication.willEnterForegroundNotification, "foreground")
-        centre.addObserver(
-            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
-        ) { _ in queue.async { record(note: "MEMORY WARNING") } }
-    }
-
-    /// Build one line. Pure reads — nothing here can block on the main thread,
-    /// which is the whole point: it has to keep recording while main is stuck.
-    private static func line(mainStall: Double, note: String?) -> String {
-        var out = String(
-            format: "%@ mem=%.0fMB state=%@ mainStall=%.0fs",
-            Self.stamp(),
-            PlayerProbe.footprintMB(),
-            appState.wrappedValue,
-            mainStall
-        )
-        if let note { out += " | " + note }
-        return out
-    }
-
-    private static func stamp() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "MM-dd HH:mm:ss"
-        return f.string(from: Date())
-    }
-
-    /// Append one line. Always on `queue`.
-    private static func record(note: String? = nil) {
-        let stall = max(0, Date().timeIntervalSince1970 - mainBeatAt.wrappedValue)
-        var text = line(mainStall: stall, note: note)
-        if let mark = pendingMark.wrappedValue {
-            pendingMark.wrappedValue = nil
-            text += " | MARK: " + mark
-        }
-        // A stalled main thread is the headline, not a field to squint at.
-        if stall >= 3 { text += "  <-- MAIN THREAD STALLED" }
-
-        var trail = UserDefaults.standard.stringArray(forKey: key) ?? []
-        trail.append(text)
-        if trail.count > capacity { trail.removeFirst(trail.count - capacity) }
-        UserDefaults.standard.set(trail, forKey: key)
+        watch(UIApplication.didBecomeActiveNotification, "active", active: true)
+        watch(UIApplication.willResignActiveNotification, "inactive", active: false)
+        watch(UIApplication.didEnterBackgroundNotification, "background", active: false)
+        watch(UIApplication.willEnterForegroundNotification, "foreground", active: false)
     }
 }
 

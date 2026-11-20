@@ -63,6 +63,18 @@ enum InputHold {
         hookSendEvent()
     }
 
+    /// Play/Pause three times quickly, outside the player: a MARK in the log
+    /// (the player has its shelf's flag: there Play/Pause pauses).
+    private static var playPauses: [CFTimeInterval] = []
+    private static func playPaused() {
+        let now = CACurrentMediaTime()
+        playPauses = playPauses.filter { now - $0 < 1 } + [now]
+        guard playPauses.count >= 3, ProbeGate.isEnabled, !PlayerController.isPlaying else { return }
+        playPauses = []
+        CueLog.mark(from: "with Play/Pause")
+        ToastCenter.shared.show("Marked in the log", icon: "flag")
+    }
+
     private typealias Send = @convention(c) (AnyObject, Selector, UIEvent) -> Void
     private static func hookSendEvent() {
         let selector = #selector(UIWindow.sendEvent(_:))
@@ -71,7 +83,10 @@ enum InputHold {
         let wrapped: @convention(block) (AnyObject, UIEvent) -> Void = { window, event in
             if let presses = (event as? UIPressesEvent)?.allPresses,
                presses.contains(where: { $0.phase == .began }) {
-                MainActor.assumeIsolated { lastPress = CACurrentMediaTime() }
+                MainActor.assumeIsolated {
+                    lastPress = CACurrentMediaTime()
+                    if presses.contains(where: { $0.type == .playPause && $0.phase == .began }) { playPaused() }
+                }
             }
             original(window, selector, event)
         }
@@ -109,18 +124,13 @@ struct CueApp: App {
         UserDefaults.standard.removeObject(forKey: "dev.pipTrail")
         #endif
         PlayerTempSweep.sweepAtLaunch()
-        // Diagnostics capture (Settings → Performance). Resolved BEFORE any
-        // probe starts so a Release install can be probed without a Debug
-        // rebuild: DEBUG defaults on, Release defaults off, and the stored
-        // choice wins either way.
+        // The Log (Settings → Developer): on unless switched off. Resolved
+        // before anything logs; the file log, its LAN server (:8123) and the
+        // main thread's watchdog start with it.
         ProbeGate.configureFromDefaults()
-        // LAN read-out of the probe bus, so a session can be watched live
-        // without `devicectl` backgrounding the app mid-playback.
-        ColorProbeServer.shared.start()
-        // …and a recording that SURVIVES the failure, for when the live probe
-        // cannot answer: a suspended app, a wedged one, or a box that panics.
-        // See FlightRecorder for what it records and why each field is there.
-        FlightRecorder.start()
+        CueLog.start()
+        LogServer.shared.start()
+        Watchdog.start()
         // The browse half of the same probe. Armed HERE, not on a screen's
         // appear, so the tail covers launch itself — a cold start that hangs
         // before any view exists is exactly the session with no other witness.
@@ -797,10 +807,8 @@ struct RootView: View {
 
     private var mainContent: some View {
         tabLayout
-        // Developer FPS read-out over the whole UI (Settings → Performance).
-        .overlay {
-            if perf.settings.showFPSOverlay { FPSOverlay() }
-        }
+        // Settings → Developer → Frame Rate: a window of its own above everything.
+        .onChange(of: perf.settings.frameRate, initial: true) { _, mode in FrameRateOverlay.shared.apply(mode) }
         // App-wide toast (Fusion): Added to Library / Marked Watched / etc.
         .overlay { FusionToastHost() }
         // Playing: no billboard trailer under it.
