@@ -18,7 +18,7 @@ struct PlaybackRequest: Identifiable {
 
 /// The player: AetherEngine's picture, Cue's subtitles, progress to the same
 /// `ProgressStore` calls the sync reads. Remote: select pause, left/right or a
-/// swipe scrub, up the Audio and Subtitles buttons, down the shelf (Details,
+/// swipe scrub, up the Subtitles and Audio buttons, down the shelf (Details,
 /// Episodes, Sources), Back out.
 struct CuePlayer: UIViewControllerRepresentable {
     let request: PlaybackRequest
@@ -445,7 +445,6 @@ class PlayerSheet: UIView {
         again.available = false
         found.alpha = 0
         tabRow.addSubview(found)
-        tabRow.transform = rowTransform(for: place)
         addLayoutGuide(guide)
         NSLayoutConstraint.activate([
             guide.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -729,7 +728,6 @@ class PlayerSheet: UIView {
         for tab in tabs { tab.marksChosen = new == .open }
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
             self.transform = self.transform(for: new)
-            self.tabRow.transform = self.rowTransform(for: new)
         }
         UIView.animate(withDuration: Motion.fadeDuration) {
             self.alpha = new == .away ? 0 : 1
@@ -746,11 +744,6 @@ class PlayerSheet: UIView {
         case .peek: return CGAffineTransform(translationX: 0, y: page - Self.tabRow - top)
         case .away: return CGAffineTransform(translationX: 0, y: page - Self.tabRow - top + Self.drop)
         }
-    }
-
-    /// Peeking, the words line up with the bar; open, the pills with the page.
-    private func rowTransform(for place: Place) -> CGAffineTransform {
-        place == .open ? .identity : CGAffineTransform(translationX: -PanelTab.padding, y: 0)
     }
 
     /// How far it rises from the peek when it opens.
@@ -3383,6 +3376,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private let subtitleText = SubtitleText()
     private let subtitleImage = UIImageView()
     private let subtitleTop = SubtitleText()
+    /// A line to style by: at the top while Subtitles' list is open.
+    private let subtitleSample = SubtitleText()
     /// What stays where it is when the controls come up: signs, and lines
     /// asking for the top.
     private let fixedSubtitles = UIView()
@@ -3515,7 +3510,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var nextSubtitleEdge = Double.infinity
     /// External tracks whose address doesn't say the format.
     private var unknownFormats: Set<Int> = []
-    private var buttons: [PlayerButton] { [audioButton, subtitleButton] }
+    private var buttons: [PlayerButton] { [subtitleButton, audioButton] }
     private var shelfOpen = false
     private var controlsShift: CGFloat = 0
     private var show: (meta: MetaItem, episodes: [MetaVideo])?
@@ -3557,7 +3552,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if shelfOpen { return [shelf] }
         switch menu {
         case .none: return [promptView.takesFocus ? promptView : focusView]
-        case .buttons: return [lastButton ?? audioButton]
+        case .buttons: return [lastButton ?? buttons[0]]
         case .tracks: return [trackList]
         }
     }
@@ -3576,6 +3571,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         for sub in [subtitleImage, subtitleText] as [UIView] { subtitles.addSubview(sub) }
         subtitles.isUserInteractionEnabled = false
         fixedSubtitles.addSubview(subtitleTop)
+        fixedSubtitles.addSubview(subtitleSample)
+        subtitleSample.alpha = 0
         fixedSubtitles.isUserInteractionEnabled = false
 
         trackList.isHidden = true
@@ -4618,10 +4615,10 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
 
     private func setMenu(_ new: Menu) {
         if new != .none { transport.commit() }
-        // Audio first; the button a list opened from only when the list closes.
+        // Subtitles first; the button a list opened from only when the list closes.
         if menu == .none { lastButton = nil }
         menu = new
-        // Left off Audio reaches a prompt.
+        // Left off Subtitles reaches a prompt.
         promptView.takesFocus = new == .buttons && promptView.alpha > 0
         focusView.takesFocus = new == .none && !shelfOpen
         for button in buttons { button.takesFocus = new == .buttons }
@@ -4634,6 +4631,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         if let engine { updateOverlay(engine) }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
+        showSample()
     }
 
     @objc private func buttonPressed(_ button: PlayerButton) {
@@ -4859,7 +4857,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             MenuPanel.Row(title: name, active: name == choice.name, stays: true) { [weak self] in
                 guard let self else { return }
                 choice.name = name
-                for text in [subtitleText, subtitleTop] { text.render(within: view.bounds.width * 0.7) }
+                for text in [subtitleText, subtitleTop, subtitleSample] { text.render(within: view.bounds.width * 0.7) }
                 fitSubtitles()
             }
         })
@@ -4873,6 +4871,26 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let top = subtitleTop.fitted
         subtitleTop.frame = CGRect(x: (bounds.width - top.width) / 2, y: Self.subtitleTopInset,
                                    width: top.width, height: top.height)
+        let sample = subtitleSample.fitted
+        subtitleSample.frame = CGRect(x: (bounds.width - sample.width) / 2, y: Self.subtitleTopInset,
+                                      width: sample.width, height: sample.height)
+    }
+
+    private static let sampleLines: [SubtitleText.Run] = [
+        .init(text: "I didn't think you'd come back.\n", italic: false),
+        .init(text: "Neither did I.", italic: true)
+    ]
+
+    /// The sample line up while Subtitles is in use, a top line making way.
+    private func showSample() {
+        let shown = menu == .tracks && lastButton === subtitleButton
+        if shown, subtitleSample.show(Self.sampleLines, within: view.bounds.width * 0.7) { fitSubtitles() }
+        let alpha: CGFloat = shown ? 1 : 0
+        guard subtitleSample.alpha != alpha else { return }
+        UIView.animate(withDuration: Motion.fadeDuration, delay: 0, options: [.beginFromCurrentState]) {
+            self.subtitleSample.alpha = alpha
+            self.subtitleTop.alpha = 1 - alpha
+        }
     }
 
     // MARK: Screen

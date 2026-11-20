@@ -1482,7 +1482,8 @@ struct RootView: View {
     static var demoMode: Bool {
         let args = ProcessInfo.processInfo.arguments
         return ["-detailDemo", "-detailDemoSeries", "-homeDemo", "-settingsDemo", "-searchDemo", "-libraryDemo",
-                "-discoverDemo", "-accountDemo", "-settingsTabDemo", "-settingsPage"].contains { args.contains($0) }
+                "-discoverDemo", "-accountDemo", "-settingsTabDemo", "-settingsPage",
+                "-playerDemo", "-playerDemoMKV", "-playerDemoFailover", "-playerDemoDead"].contains { args.contains($0) }
     }
 
     /// The gate gone. A profile picked: focus to Home's billboard (its first
