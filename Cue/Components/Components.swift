@@ -91,6 +91,9 @@ final class ImageCache: @unchecked Sendable {
     }()
 
     private let memory = NSCache<NSString, UIImage>()
+    /// What the memory cache holds now, in bytes (the census, Settings).
+    var memoryCost: Int { costs.total }
+    private let costs = CostLedger()
     /// CONCURRENT and user-initiated. As a serial `.utility` queue this made
     /// the best-cached path the slowest one: every newly visible poster queued
     /// behind every other one, single file, at background priority, while the
@@ -118,6 +121,7 @@ final class ImageCache: @unchecked Sendable {
         // decoded-pixel cache there gets the app jetsammed.
         memory.countLimit = PerformanceProfile.imageCacheCount
         memory.totalCostLimit = PerformanceProfile.imageCacheBytes
+        memory.delegate = costs
         let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         diskURL = caches.appendingPathComponent("cue-images", isDirectory: true)
         try? fm.createDirectory(at: diskURL, withIntermediateDirectories: true)
@@ -356,6 +360,8 @@ final class ImageCache: @unchecked Sendable {
 
     private func insertMemory(_ image: UIImage, for key: String) {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale) * 4
+        if let old = memory.object(forKey: key as NSString) { costs.remove(old) }
+        costs.add(image, cost)
         memory.setObject(image, forKey: key as NSString, cost: cost)
     }
 
@@ -2048,5 +2054,28 @@ struct WrapRow: Layout {
             x += size.width
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+/// The image cache's bytes, kept as it adds and evicts (NSCache won't say).
+private final class CostLedger: NSObject, NSCacheDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var costs: [ObjectIdentifier: Int] = [:]
+    private var sum = 0
+    var total: Int { lock.lock(); defer { lock.unlock() }; return sum }
+
+    func add(_ image: UIImage, _ cost: Int) {
+        lock.lock(); defer { lock.unlock() }
+        sum += cost - (costs[ObjectIdentifier(image)] ?? 0)
+        costs[ObjectIdentifier(image)] = cost
+    }
+
+    func remove(_ image: AnyObject) {
+        lock.lock(); defer { lock.unlock() }
+        sum -= costs.removeValue(forKey: ObjectIdentifier(image)) ?? 0
+    }
+
+    func cache(_ cache: NSCache<AnyObject, AnyObject>, willEvictObject obj: Any) {
+        remove(obj as AnyObject)
     }
 }

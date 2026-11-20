@@ -476,6 +476,20 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         }
     }
 
+    /// Its row far from focus: the pictures go (the image cache keeps them,
+    /// and the next configure, as the row comes back within reach, loads
+    /// them again). Held, every row visited kept ~4 MB a card for good.
+    func releaseArt() {
+        guard item != nil else { return }
+        item = nil
+        extras?.cancel()
+        tintTask?.cancel()
+        FixedFocusImages.load(nil, into: picture, maxDimension: 0)
+        FixedFocusImages.load(nil, into: backdrop, maxDimension: 0)
+        FixedFocusImages.load(nil, into: logo, maxDimension: 0)
+        backdropWanted = false
+    }
+
     func wantBackdrop() {
         guard feature, !backdropWanted, let backdropArt else { return }
         backdropWanted = true
@@ -1074,6 +1088,14 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
 
     private var cardHeight: CGFloat = 0
     private var shown: String?
+
+    /// Its row far from focus: as `FixedFocusShowcaseCell.releaseArt`.
+    func releaseArt() {
+        guard shown != nil else { return }
+        shown = nil
+        FixedFocusImages.load(nil, into: picture, maxDimension: 0)
+        FixedFocusImages.load(nil, into: logo, maxDimension: 0)
+    }
     private static var lift: Bool { FixedFocusMetrics.destinationSystemLift }
     /// Still loading: the placeholder card.
     private let placeholderCard = FixedFocusPlaceholder()

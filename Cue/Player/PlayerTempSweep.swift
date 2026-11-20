@@ -612,6 +612,10 @@ final class LogServer {
             let note = query.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? query
             PlayerProbe.event(CueLog.markTag, "marked from the Mac: \(note.isEmpty ? "mark" : note)")
             sendText(on: connection, "marked: \(note)\n")
+        case "/census":
+            let text = MemoryCensus.report()
+            PlayerProbe.event("mem", text.replacingOccurrences(of: "\n", with: " | "))
+            sendText(on: connection, text + "\n")
         case "/health":
             sendText(on: connection, PlayerProbe.healthLines().joined(separator: "\n") + "\n")
         case "/probe":
@@ -1046,5 +1050,73 @@ extension View {
     /// a model that is being rebuilt continuously.
     func probeScreen(_ name: String, _ detail: @escaping () -> String = { "" }) -> some View {
         modifier(ProbeScreen(name: name, detail: detail))
+    }
+}
+
+/// What the views hold in decoded pictures (`/census` on the log server):
+/// every window's views and layers, each picture counted once, on screen or
+/// not, grouped by the cell or view that holds it. Against the footprint it
+/// says whether memory is pictures in views, or somewhere else.
+@MainActor
+enum MemoryCensus {
+    static func report() -> String {
+        var seen = Set<ObjectIdentifier>()
+        var shown = 0, hidden = 0
+        var owners: [String: (count: Int, bytes: Int)] = [:]
+        let screen = UIScreen.main.bounds
+        func bytes(_ image: CGImage) -> Int { image.bytesPerRow * image.height }
+        func owner(_ view: UIView) -> String {
+            var current: UIView? = view
+            while let v = current {
+                if v is UICollectionViewCell || v is UITableViewCell { return String(describing: type(of: v)) }
+                current = v.superview
+            }
+            return String(describing: type(of: view))
+        }
+        func visit(_ layer: CALayer, view: UIView, visible: Bool, parked: Bool) {
+            if let contents = layer.contents, CFGetTypeID(contents as CFTypeRef) == CGImage.typeID {
+                let image = contents as! CGImage
+                if seen.insert(ObjectIdentifier(image)).inserted {
+                    let size = bytes(image)
+                    if visible { shown += size } else { hidden += size }
+                    let key = owner(view) + (visible ? "" : parked ? " (hidden)" : " (off screen)")
+                    owners[key, default: (0, 0)].count += 1
+                    owners[key, default: (0, 0)].bytes += size
+                }
+            }
+            for sub in layer.sublayers ?? [] where sub.delegate == nil { visit(sub, view: view, visible: visible, parked: parked) }
+        }
+        func walk(_ view: UIView, visible: Bool, hiddenAbove: Bool = false) {
+            let frame = view.convert(view.bounds, to: nil)
+            let on = visible && !view.isHidden && view.alpha > 0.01 && frame.intersects(screen)
+            let isHidden = hiddenAbove || view.isHidden
+            if let imageView = view as? UIImageView, let image = imageView.image?.cgImage,
+               seen.insert(ObjectIdentifier(image)).inserted {
+                let size = bytes(image)
+                if on { shown += size } else { hidden += size }
+                let key = owner(view) + (on ? "" : isHidden ? " (hidden)" : " (off screen)")
+                owners[key, default: (0, 0)].count += 1
+                owners[key, default: (0, 0)].bytes += size
+            }
+            visit(view.layer, view: view, visible: on, parked: isHidden)
+            for sub in view.subviews { walk(sub, visible: on, hiddenAbove: isHidden) }
+        }
+        var windows = 0
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows {
+                windows += 1
+                walk(window, visible: !window.isHidden)
+            }
+        }
+        let mb = { (b: Int) in String(format: "%.0f MB", Double(b) / 1_048_576) }
+        var lines = [
+            "footprint \(String(format: "%.0f MB", PlayerProbe.footprintMB())) · pictures in views \(mb(shown + hidden))"
+                + " (on screen \(mb(shown)), off screen or hidden \(mb(hidden))) · \(windows) windows",
+            "image cache \(mb(ImageCache.shared.memoryCost)) of \(mb(PerformanceProfile.imageCacheBytes))",
+        ]
+        for (key, value) in owners.sorted(by: { $0.value.bytes > $1.value.bytes }).prefix(20) {
+            lines.append("  \(mb(value.bytes).padding(toLength: 8, withPad: " ", startingAt: 0)) \(value.count) × \(key)")
+        }
+        return lines.joined(separator: "\n")
     }
 }

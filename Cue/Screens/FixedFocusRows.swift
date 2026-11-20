@@ -753,6 +753,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             belowGuide.isEnabled = isFeatured(focusedRow)
         }
     }
+
     private var outer: UICollectionView!
     /// Reuse identifiers registered so far (one per catalog).
     private var registeredRows = Set<String>()
@@ -1098,6 +1099,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
     }
 
     func collectionView(_ cv: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool { false }
+
+    /// A row gone from view lets its cards' pictures go: parked for reuse
+    /// it kept them (700 MB after a short browse). Shown again, it's
+    /// configured anew and they come back from the image cache.
+    func collectionView(_ cv: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        (cell as? FixedFocusRowCell)?.setArtHeld(false)
+    }
 
     /// A row coming into view mid-animation gets its dimming too.
     func collectionView(_ cv: UICollectionView, willDisplay cell: UICollectionViewCell,
@@ -3934,6 +3943,9 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     func configure(rowIndex: Int, controller: FixedFocusRowsController) {
         self.rowIndex = rowIndex
         self.controller = controller
+        // Reused after letting its pictures go: they and the box come back
+        // (after this configure has set the row up).
+        if !artHeld { DispatchQueue.main.async { [weak self] in self?.setArtHeld(true) } }
         setTitle(row?.title)
         title.isHidden = isFeatured
         titleBar.isHidden = row?.id.hasPrefix("placeholder-") != true
@@ -3999,6 +4011,28 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         strip.reloadData()
         strip.layoutIfNeeded()
         strip.contentOffset = CGPoint(x: offset(for: selectedIndex), y: 0)
+    }
+
+    /// Its cards' pictures held, or let go while the row is out of view:
+    /// let go, the cards drop them and the box goes; held again, the cards
+    /// are configured anew (from the image cache, which the preload keeps
+    /// warm for the rows within reach) and the box comes back.
+    private(set) var artHeld = true
+    func setArtHeld(_ held: Bool) {
+        guard held != artHeld else { return }
+        artHeld = held
+        if held {
+            refreshArt()
+            UIView.performWithoutAnimation { syncBox(animated: false) }
+            return
+        }
+        dropBox()
+        for cv in [strip, destinationStrip].compactMap({ $0 }) {
+            for cell in cv.visibleCells {
+                (cell as? FixedFocusShowcaseCell)?.releaseArt()
+                (cell as? FixedFocusDestinationCell)?.releaseArt()
+            }
+        }
     }
 
     /// The same titles with new pictures: the cards on screen reconfigured
@@ -4146,6 +4180,14 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
             guard let index = cv.indexPath(for: cell)?.item else { continue }
             cell.alpha = controller.gridAlpha(rowIndex, item: index)
         }
+    }
+
+    /// A card gone from the row's view (parked for reuse) lets its
+    /// pictures go; shown again, it's configured anew.
+    func collectionView(_ cv: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
+                        forItemAt indexPath: IndexPath) {
+        (cell as? FixedFocusShowcaseCell)?.releaseArt()
+        (cell as? FixedFocusDestinationCell)?.releaseArt()
     }
 
     func collectionView(_ cv: UICollectionView, canFocusItemAt indexPath: IndexPath) -> Bool {

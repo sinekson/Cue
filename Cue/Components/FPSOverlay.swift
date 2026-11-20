@@ -75,8 +75,13 @@ private final class FrameRatePanel: UIView {
     private let system = UILabel()
 
     private var link: CADisplayLink?
-    /// Frame times with their timestamps, the last few seconds.
-    private var frames: [(at: CFTimeInterval, length: CFTimeInterval)] = []
+    /// The last few seconds' frames, a ring: one write per frame, nothing
+    /// allocated or filtered at 60 Hz (the meter mustn't cost what it measures).
+    private static let capacity = 600
+    private var ringAt = [CFTimeInterval](repeating: 0, count: capacity)
+    private var ringLength = [CFTimeInterval](repeating: 0, count: capacity)
+    private var head = 0
+    private var count = 0
     private var last: CFTimeInterval = 0
     private var textAt: CFTimeInterval = 0
     private var graphAt: CFTimeInterval = 0
@@ -115,7 +120,7 @@ private final class FrameRatePanel: UIView {
 
     func start() {
         guard link == nil else { return }
-        frames = []
+        count = 0
         last = 0
         let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick(_:)))
         link.add(to: .main, forMode: .common)
@@ -136,25 +141,42 @@ private final class FrameRatePanel: UIView {
 
     private func tick(_ link: CADisplayLink) {
         let now = link.timestamp
-        if last > 0 { frames.append((now, now - last)) }
+        if last > 0 {
+            ringAt[head] = now
+            ringLength[head] = now - last
+            head = (head + 1) % Self.capacity
+            count = min(count + 1, Self.capacity)
+        }
         last = now
-        frames.removeAll { now - $0.at > Self.statSeconds }
         if now - textAt >= 0.5 { textAt = now; showText(now) }
-        if mode == .full, now - graphAt >= 0.1 { graphAt = now; drawGraph(now) }
+        if mode == .full, now - graphAt >= 0.2 { graphAt = now; drawGraph(now) }
         if mode == .full, now - systemAt >= 1 { systemAt = now; showSystem() }
     }
 
+    /// The frames within `seconds` of `now`, newest first, until `body` says stop.
+    private func recent(_ now: CFTimeInterval, within seconds: Double, _ body: (CFTimeInterval) -> Void) {
+        var index = head
+        for _ in 0..<count {
+            index = (index - 1 + Self.capacity) % Self.capacity
+            guard now - ringAt[index] <= seconds else { return }
+            body(ringLength[index])
+        }
+    }
+
     private func showText(_ now: CFTimeInterval) {
-        let second = frames.filter { now - $0.at <= 1 }
-        let span = second.reduce(0) { $0 + $1.length }
-        let fps = span > 0 ? Double(second.count) / span : 0
+        var frames = 0, span = 0.0
+        recent(now, within: 1) { frames += 1; span += $0 }
+        let fps = span > 0 ? Double(frames) / span : 0
         rate.text = String(format: "%.0f", min(fps, refresh))
         let share = fps / refresh
         dot.backgroundColor = share >= 0.95 ? .systemGreen : share >= 0.8 ? .systemYellow : .systemRed
         guard mode == .full else { return }
-        let dropped = frames.reduce(0) { $0 + max(0, Int(($1.length / interval).rounded()) - 1) }
-        let worst = (frames.map(\.length).max() ?? 0) * 1000
-        drops.text = String(format: "dropped %d · worst %.0f ms · 5 s", dropped, worst)
+        var dropped = 0, worst = 0.0
+        recent(now, within: Self.statSeconds) { length in
+            dropped += max(0, Int((length / interval).rounded()) - 1)
+            worst = max(worst, length)
+        }
+        drops.text = String(format: "dropped %d · worst %.0f ms · 5 s", dropped, worst * 1000)
     }
 
     private func showSystem() {
@@ -167,14 +189,16 @@ private final class FrameRatePanel: UIView {
         let size = graph.bounds.size
         let slots = Int(Self.graphSeconds * refresh)
         let bar = size.width / CGFloat(slots)
-        let shown = frames.filter { now - $0.at <= Self.graphSeconds }.suffix(slots)
         let calmPath = CGMutablePath(), latePath = CGMutablePath()
-        let start = slots - shown.count
-        for (index, frame) in shown.enumerated() {
-            let height = min(CGFloat(frame.length / Self.graphTop), 1) * size.height
-            let rect = CGRect(x: CGFloat(start + index) * bar, y: size.height - height,
+        var slot = slots
+        // Newest at the right, going left.
+        recent(now, within: Self.graphSeconds) { length in
+            guard slot > 0 else { return }
+            slot -= 1
+            let height = min(CGFloat(length / Self.graphTop), 1) * size.height
+            let rect = CGRect(x: CGFloat(slot) * bar, y: size.height - height,
                               width: max(bar - 0.5, 1), height: height)
-            (frame.length > interval * 1.5 ? latePath : calmPath).addRect(rect)
+            (length > interval * 1.5 ? latePath : calmPath).addRect(rect)
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)

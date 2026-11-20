@@ -803,7 +803,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details' one picture as focus settles (`TitlePreloader`; Search and the
   grids through `TitlePictures.resting`: without it the first opening
   waited on the picture at the press). A grown card's
-  picture still late: the poster stays until it's in. The same titles'
+  picture still late: the poster stays until it's in. Home's rows and
+  cards let their pictures go once out of view (`didEndDisplaying`:
+  `setArtHeld`, `releaseArt`) and take them back from the image cache when
+  shown again: parked for reuse they kept them, ~700 MB after a short
+  browse. The census (`curl <ip>:8123/census`) says what views hold. The same titles'
   records are brought up to date ahead too, after a 0.3 s rest (MDBList
   counts requests), chips drawn ahead (`TitleExtras`).
 - **Title records** (`TitleRecords`, end of `RequestCache.swift`): per title
