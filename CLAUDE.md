@@ -1322,6 +1322,11 @@ mid-move).
 
 ## Open / later
 
+- On the TV (next time on it): in light mode the launch starts on a
+  dark screen for a moment, tvOS's own launch snapshot (cached dark on
+  the sim whatever the app gave: a light launch image variant, a launch
+  storyboard on the named colour, `UIUserInterfaceStyle` Automatic; all
+  reverted). Check if the TV does the same, then try those there.
 - Genres, soon: TMDB's show genres lack Romance (done by keywords for
   now, `TMDBService.showGenres`), Horror, Thriller, History; a person's
   page ignores keywords (Romance, Fantasy for shows); look at it again.

@@ -293,10 +293,10 @@ final class BackgroundStore: ObservableObject {
         guard image == nil, !loading else { return }
         loading = true
         Task {
+            _ = await BackgroundPicks.Mode.known()
             let pick = await BackgroundPicks.shared.next()
             await show(pick, fade: false)
             loading = false
-            modeChanged()
         }
     }
 
@@ -312,9 +312,8 @@ final class BackgroundStore: ObservableObject {
     /// The mode the picture up is drawn in.
     private var drawnMode: BackgroundPicks.Mode?
 
-    /// tvOS's mode changed, or isn't the one drawn (the page shown): the
-    /// same title in the mode's colours (the page's text turns with it),
-    /// faded in.
+    /// tvOS's mode changed: the same title in the mode's colours (the
+    /// page's text turns with it), faded in.
     func modeChanged() {
         guard image != nil, !loading, drawnMode != BackgroundPicks.Mode.now else { return }
         Task {
@@ -386,8 +385,6 @@ final class BackgroundStore: ObservableObject {
         transaction.disablesAnimations = !fade
         withTransaction(transaction) { image = picture }
         drawnMode = mode
-        // The mode turned while it was drawn: once more.
-        if BackgroundPicks.Mode.now != mode { modeChanged() }
         shown = picked ? pick?.entry : nil
         source = BackgroundPicks.shared.source
     }
@@ -462,10 +459,17 @@ final class BackgroundPicks {
     enum Mode: Int, CaseIterable, Codable {
         case dark, light
         static var now: Mode {
-            // Before a window (the launch's pick, in the app's init) the
-            // screen's: the current traits there are only the default dark.
-            let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-            return (window?.traitCollection ?? UIScreen.main.traitCollection).userInterfaceStyle == .light ? .light : .dark
+            (window?.traitCollection ?? UITraitCollection.current).userInterfaceStyle == .light ? .light : .dark
+        }
+        private static var window: UIWindow? {
+            UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        }
+        /// Once there's a window: before it (the app's init) tvOS's mode
+        /// is unspecified, read as dark, and the launch drew dark bands,
+        /// then light over them (a flicker).
+        static func known() async -> Mode {
+            for _ in 0..<100 where window == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            return now
         }
     }
 
@@ -876,7 +880,7 @@ struct ATVBackground: View {
         }
         .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
-        .onAppear { picture.load(); picture.modeChanged() }
+        .onAppear { picture.load() }
         .onChange(of: scheme) { _, _ in picture.modeChanged() }
     }
 }
