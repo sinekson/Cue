@@ -296,6 +296,7 @@ final class BackgroundStore: ObservableObject {
             let pick = await BackgroundPicks.shared.next()
             await show(pick, fade: false)
             loading = false
+            modeChanged()
         }
     }
 
@@ -308,10 +309,14 @@ final class BackgroundStore: ObservableObject {
         }
     }
 
-    /// tvOS's mode changed: the same title in the mode's colours (the
-    /// page's text turns with it), faded in.
+    /// The mode the picture up is drawn in.
+    private var drawnMode: BackgroundPicks.Mode?
+
+    /// tvOS's mode changed, or isn't the one drawn (the page shown): the
+    /// same title in the mode's colours (the page's text turns with it),
+    /// faded in.
     func modeChanged() {
-        guard image != nil, !loading else { return }
+        guard image != nil, !loading, drawnMode != BackgroundPicks.Mode.now else { return }
         Task {
             let pick = await BackgroundPicks.shared.current()
             await show(pick, fade: true)
@@ -368,7 +373,8 @@ final class BackgroundStore: ObservableObject {
     }
 
     private func show(_ pick: (entry: BackgroundPicks.Entry, file: URL)?, fade: Bool) async {
-        let light = BackgroundPicks.Mode.now == .light
+        let mode = BackgroundPicks.Mode.now
+        let light = mode == .light
         let loaded = await Task.detached(priority: .userInitiated) { () -> (UIImage, Bool)? in
             if let pick, let image = UIImage(contentsOfFile: pick.file.path)?.preparingForDisplay() {
                 return (image, true)
@@ -379,6 +385,9 @@ final class BackgroundStore: ObservableObject {
         var transaction = Transaction()
         transaction.disablesAnimations = !fade
         withTransaction(transaction) { image = picture }
+        drawnMode = mode
+        // The mode turned while it was drawn: once more.
+        if BackgroundPicks.Mode.now != mode { modeChanged() }
         shown = picked ? pick?.entry : nil
         source = BackgroundPicks.shared.source
     }
@@ -453,8 +462,10 @@ final class BackgroundPicks {
     enum Mode: Int, CaseIterable, Codable {
         case dark, light
         static var now: Mode {
+            // Before a window (the launch's pick, in the app's init) the
+            // screen's: the current traits there are only the default dark.
             let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-            return (window?.traitCollection ?? UITraitCollection.current).userInterfaceStyle == .light ? .light : .dark
+            return (window?.traitCollection ?? UIScreen.main.traitCollection).userInterfaceStyle == .light ? .light : .dark
         }
     }
 
@@ -865,7 +876,7 @@ struct ATVBackground: View {
         }
         .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
-        .onAppear { picture.load() }
+        .onAppear { picture.load(); picture.modeChanged() }
         .onChange(of: scheme) { _, _ in picture.modeChanged() }
     }
 }
