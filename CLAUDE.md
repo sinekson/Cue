@@ -266,7 +266,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   picture's edges carried on was liked at 36, then not wanted; Search and
   Settings drifting by a SwiftUI offset stuttered; a parallax and a
   grown picture were tried.)
-- **Top bar** (`GlassSidebar`): part of the page, not floating: the tabs,
+- **Top bar** (`TopBar`, `TopBarStrip`, measures in `GlassSidebar`): part of the page, not floating: the tabs,
   each its icon and name (`AppTab.topBarOrder`: Search, Home, Discover,
   Upcoming, Settings; Movies and Series retired 2026-11-19, Discover
   replaces them) from the rows' text edge, where their names
@@ -290,17 +290,37 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   switches tab. Pages are laid out below it. On Home it
   sits above the billboard card and goes up with it into the rows (its
   place, not its growth: the bar stepped as focus came and went), focused
-  or not: drawn in UIKit
-  (`TopBarFace`), moved by the rows in the card's own animation
+  or not: moved by the rows in the card's own animation
   (`TopBarFollow`, set in `applyPinnedStage`; the paging dip not
-  followed); the SwiftUI bar (`GlassSidebar`) holds focus at the same
-  spots and draws nothing (SwiftUI's focus state runs Back and the tab
-  switches; a SwiftUI offset, even set frame by frame, lagged the card
-  whenever the main thread skipped frames); off a tab's root (into Details, a pushed
+  followed; a SwiftUI offset, even set frame by frame, lagged the card
+  whenever the main thread skipped frames). UIKit, focus and drawing in
+  one view in the window, right above the SwiftUI root (rebuilt
+  2026-11-21: a SwiftUI ghost bar held focus in a `@FocusState` at the
+  root, so every move along, into or out of it redrew every tab, and Up
+  came in through a failed move and a focus set a runloop later): each
+  item a focusable view drawing its SwiftUI face (`TopBarItem`,
+  `TopNavLabel`), redrawn alone; the root only passes the current tab
+  and is told of a switch (`TopBarView`, a zero-sized anchor: a
+  hit-testable view of its own over the page kept SwiftUI's focus from
+  it). Coming in, only the current tab can take focus; a focus guide the
+  screen's width under the bar sends Up there from anywhere. Down: the
+  engine's move, or with nothing in line below (Settings' rows) the
+  page's own pick, as Back in the bar; a page with a way in of its own
+  takes Down instead (`TopBar.entries`: Discover's sentence, the page at
+  its top), through the bar's own guide pointed at it while the bar has
+  focus, one move (a guide inside SwiftUI's page is ignored: its own
+  search found the first title; a request into it is refused; SwiftUI's
+  focus set a turn later read as a delay). Back on a page: focus to the bar
+  by the window seeding focus anew with SwiftUI's root out of
+  interaction for that one update (SwiftUI's host refuses a request
+  from outside while it holds focus). Not focusable for 0.25 s after
+  Select on a tab, Back in the bar, a pop, the gate (`settle`), 0.5 s as
+  the stage goes, so focus seeds in the page. Fades out while the
+  root's covers are up (curtain, gate, stage, welcome: they're under it
+  now). Off a tab's root (into Details, a pushed
   page) it's gone and back in place at once under the page's change
-  (`hidden`; moving back in, a second bar slid over the one in the
-  page's still on Back); always in the view tree,
-  disabled while hidden. (The floating glass pill, and auto-hiding it,
+  (moving back in, a second bar slid over the one in the page's still
+  on Back). (The floating glass pill, and auto-hiding it,
   were dropped, the setting with them.)
 - **Home rows are UIKit**: native focus, scrolling off, rows moved with Core
   Animation in `didUpdateFocus`. Every row moving focus (folders too:

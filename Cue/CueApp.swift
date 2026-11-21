@@ -347,14 +347,6 @@ struct RootView: View {
     /// When Home last popped back from a pushed screen — used to swallow the
     /// stray Menu that otherwise opens the sidebar right after backing out.
     @State private var lastHomePopAt: Date?
-    @FocusState private var sidebarFocus: Int?
-    /// The top bar's item held down (its face's press dip).
-    @State private var topBarPressed: Int?
-    /// The rail is briefly non-focusable at launch so initial focus lands in
-    /// the CONTENT (the app boots with the rail collapsed and a card focused).
-    @State private var sidebarEnabled = false
-    /// Settings lists lock the top bar out while an entry is moved.
-    @ObservedObject private var topBarLock = TopBarLock.shared
     /// The billboard's trailer on its picture: the top bar moves out.
 
     @ObservedObject private var launch = LaunchPreloader.shared
@@ -396,11 +388,9 @@ struct RootView: View {
             // The stage gone: focus leaves it a moment later (its fade off),
             // and the top bar took it before the rows could (`returnFocus`).
             .onChange(of: stage.scene == nil) { _, gone in
-                if gone { setSidebarEnabled(false, reenableAfter: Self.stageSettle) }
+                if gone { TopBar.shared.settle(for: Self.stageSettle) }
             }
             .onOpenURL { handleDeepLink($0) }
-            .onChange(of: sidebarFocus) { old, new in traceSidebar(old, new) }
-            .onChange(of: sidebarEnabled) { _, new in traceSidebarEnabled(new) }
             .onAppear {
                 NSLog("[CuePlayer] RootView content onAppear")
                 FocusTrace.installIfRequested()
@@ -615,8 +605,7 @@ struct RootView: View {
                     if args.contains("-railDemo") {
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 4_000_000_000)
-                            sidebarEnabled = true
-                            sidebarFocus = 0
+                            TopBar.shared.focus(AppTab.home.rawValue)
                         }
                     }
                     // Dev: jump straight to the profile gate.
@@ -706,21 +695,6 @@ struct RootView: View {
                     }
                 }
             }
-    }
-
-    private func traceSidebar(_ old: Int?, _ new: Int?) {
-        #if DEBUG
-        guard FocusTrace.enabled else { return }
-        NSLog("[FocusTrace] sidebarFocus %@ -> %@ (enabled=%d)",
-              old.map(String.init) ?? "nil", new.map(String.init) ?? "nil", sidebarEnabled ? 1 : 0)
-        #endif
-    }
-
-    private func traceSidebarEnabled(_ enabled: Bool) {
-        #if DEBUG
-        guard FocusTrace.enabled else { return }
-        NSLog("[FocusTrace] sidebarEnabled=%d", enabled ? 1 : 0)
-        #endif
     }
 
     private static var playerDemoStarted = false
@@ -875,31 +849,11 @@ struct RootView: View {
         }
     }
 
-    /// When the rail was last ASKED for — a summon, or focus actually landing
-    /// in it. Read only by the rail's exit-move handler; see the note there.
-    /// Not drawn, so not state: a change re-ran the whole root (every tab)
-    /// on each move into the bar.
-    @State private var engaged = Stamp()
-    private final class Stamp { var at = Date.distantPast }
-    private var sidebarEngagedAt: Date {
-        get { engaged.at }
-        nonmutating set { engaged.at = newValue }
-    }
-
-    /// How long after engaging the rail an exit move is treated as an echo of
-    /// the gesture that opened it rather than a fresh instruction to leave.
-    ///
-    /// Short enough that a deliberate press pair is never swallowed (two
-    /// separate presses on the clickpad are far slower than this), long enough
-    /// to cover the tail of ONE swipe on the old remote's touch surface.
-    private static let sidebarExitEchoWindow: TimeInterval = 0.3
     /// A Back right after a pop: tvOS sometimes delivers the pop's Back a
     /// second time, within a frame or two — a real second press comes later.
     private static let popEchoWindow: TimeInterval = 0.25
-    /// The top bar non-focusable for a moment, so the engine seeds focus in
-    /// the content (after a tab switch, leaving the bar, a pop): as short as
-    /// focus needs to settle — every Up in it is lost.
-    private static let railSettle: Double = 0.25
+    /// The top bar off while the stage goes, so focus returns to the rows.
+    static let stageSettle: Double = 0.5
 
     private var showSidebar: Bool { !sidebarMovedOut }
     /// Out with the page's parts: off a tab's root.
@@ -915,144 +869,39 @@ struct RootView: View {
                 // switch — below 10 fps. Tabs stay alive; `selectedContent`.)
                 .animation(nil, value: selectedTab)
                 .focusSection()
-                // Summon a hidden bar — but ONLY from the top edge. A
-                // section's move handler fires on EVERY press anywhere in the
-                // content; `movementDidFailNotification` is the engine's own
-                // "I looked and found nothing" — exactly the press from the
-                // top row, and nothing else.
+                // Up that found nothing (a disabled moment, or nothing above
+                // in reach): the top bar, as Back would (its focus guide
+                // catches the rest).
                 .onReceive(NotificationCenter.default.publisher(
                     for: UIFocusSystem.movementDidFailNotification)) { note in
                     guard let ctx = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey]
-                            as? UIFocusUpdateContext else { return }
-                    // The press that reaches for the bar: Up.
-                    guard ctx.focusHeading.contains(.up) else { return }
-                    // Search root with the rail ON SCREEN but inside one of its
-                    // short `.disabled` windows (the moments after a tab switch
-                    // or a rail exit, kept so the engine seeds focus into the
-                    // content). A disabled rail can't take focus, so this Left
-                    // failed and was swallowed: the search bar read as a trap
-                    // while Back, which force-enables the rail, still worked.
-                    // A deliberate Left now takes Back's path. Search only.
-                    if selectedTab == 1, showSidebar, !sidebarEnabled, sidebarFocus == nil,
-                       playback == nil, launch.gate == nil, !showWelcome {
-                        focusSidebar(selectedTab)
-                    } else if showSidebar, sidebarFocus == nil, atTabRoot,
-                              playback == nil, launch.gate == nil, !showWelcome {
-                        // TOP BAR, already on screen, and Up found nothing: put
-                        // focus in it.
-                        //
-                        // The bar sits OVER content that
-                        // spans the full height, and from a page whose own
-                        // topmost row is close under it the engine answers "no
-                        // candidate" instead of stepping up into it. The press
-                        // then did nothing at all: Library's filter chips were
-                        // a dead end upward, and with "Hide the sidebar" on
-                        // there was no way to call the bar back either, because
-                        // the branch below only reveals a bar that is OFF
-                        // screen. Same remedy the Search case above uses, which
-                        // is the same problem on the other axis.
-                        focusSidebar(selectedTab)
-                    }
+                            as? UIFocusUpdateContext, ctx.focusHeading.contains(.up),
+                          TopBar.shared.focused == nil, atTabRoot, !TopBarLock.shared.locked,
+                          playback == nil, launch.gate == nil, !showWelcome else { return }
+                    TopBar.shared.focus(selectedTab)
                 }
 
-            // Always there: hidden, it moves out the top (and back in) — one
-            // motion app-wide (`GlassSidebar.hidden`); on Home, Movies and
-            // Series it goes up with the billboard (`TopBarFollow`, `TopBarFace`).
-            do {
-                let barHidden = !showSidebar
-                // What's seen: drawn in UIKit, moved by Home's rows with the
-                // billboard card (`TopBarFollow`); the bar below holds focus.
-                TopBarFace(profiles: profiles, selected: selectedTab, focused: sidebarFocus,
-                           pressed: topBarPressed, hidden: !atTabRoot,
-                           follows: AppTab(rawValue: selectedTab).flatMap {
-                               $0 == .home ? "home" : $0 == .discover ? "discover" : $0 == .upcoming ? "upcoming" : nil
-                           })
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                // (Focus moving along it switches — `switchTab`.)
-                GlassSidebar(selected: Binding(get: { selectedTab },
-                                               set: { switchTab(to: $0) }),
-                             focusBinding: $sidebarFocus,
-                             onProfileTap: { launch.showGate(.topBar) },
-                             onTabSelected: { newTab in selectTab(newTab) },
-                             hidden: !atTabRoot,
-                             onPress: { topBarPressed = $0 })
-                    .focusSection()
-                    .disabled(barHidden || !sidebarEnabled || !atTabRoot || topBarLock.locked)
-                    // Back while IN the rail collapses it into content instead
-                    // of falling through to the system (which quit the app).
-                    .onExitCommand { collapseSidebarFromExit() }
-                    // Swipe/press RIGHT exits into content: the content's focus
-                    // section is UNDER the panel (overlapping, not beside it),
-                    // so the engine sees no candidate to the right — catch it
-                    // and run the same collapse Back uses.
-                    .onMoveCommand { direction in
-                        // Out of the bar and into the content: Down.
-                        guard direction == .down else { return }
-                        // …unless this is the tail of the swipe that just
-                        // OPENED the rail.
-                        //
-                        // The old Siri Remote's touch surface reports a swipe
-                        // as a stream of move commands, and the settling end of
-                        // one carries a move back the other way; the clickpad
-                        // on the current remote emits a single discrete press
-                        // and never does this. So a swipe left landed focus in
-                        // the rail and the same gesture's tail immediately
-                        // exited it — the panel opened and bounced straight
-                        // back, only ever on the old remote. The race below
-                        // makes it worse: this block is async, so a tail that
-                        // arrives before focus has settled sees `sidebarFocus`
-                        // still nil and disables the rail exactly as focus is
-                        // arriving, which pushes it back to the content too.
-                        //
-                        // A leaving move is only real once the opening one has
-                        // had time to finish.
-                        guard Date().timeIntervalSince(sidebarEngagedAt)
-                                > Self.sidebarExitEchoWindow else { return }
-                        // The engine acts on this press too: on tabs whose
-                        // content clears only the COLLAPSED rail, cards past
-                        // the panel's edge are real right candidates, so focus
-                        // may already have moved by the next tick. Then the
-                        // engine's pick stands — only the housekeeping runs —
-                        // instead of a second, visible teleport on top of it.
-                        DispatchQueue.main.async {
-                            if sidebarFocus != nil {
-                                collapseSidebarFromExit()
-                            } else {
-                                setSidebarEnabled(false, reenableAfter: Self.railSettle)
-                            }
-                        }
-                    }
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    // Stays non-focusable until Home has content to hold
-                    // initial focus (onContentReady); timer is the fallback.
-                    .task {
-                        await LaunchPreloader.shared.lifted()
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                        guard !Task.isCancelled else { return }
-                        // Cold-launch fallback ONLY. When a tab switch is
-                        // deliberately waiting on onContentReady, this timer
-                        // used to flip the rail focusable over slow addons
-                        // and the panel reclaimed initial focus.
-                        if sidebarReenableTask == nil, !sidebarAwaitingContent {
-                            sidebarEnabled = true
-                        }
-                    }
-            }
+            // The top bar (`TopBar`): UIKit, focus and drawing; on Home,
+            // Discover and Upcoming it goes up with the page (`TopBarFollow`).
+            // Off a tab's root it's out of the way at once.
+            TopBarView(profiles: profiles, profile: profiles.active, selected: selectedTab,
+                       hidden: !atTabRoot,
+                       blocked: stage.scene != nil || launch.curtain || launch.gate != nil
+                           || showWelcome || playback != nil,
+                       follows: AppTab(rawValue: selectedTab).flatMap {
+                           $0 == .home ? "home" : $0 == .discover ? "discover" : $0 == .upcoming ? "upcoming" : nil
+                       },
+                       onSwitch: { switchTab(to: $0) },
+                       onProfile: { launch.showGate(.topBar) })
+                // Nothing of it in SwiftUI's way: a hit-testable view over
+                // the page keeps SwiftUI's focus from what's under it.
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .task { await TopBar.shared.start() }
         }
         .animation(perf.motionOn
                    ? .spring(response: 0.34, dampingFraction: 0.86)
                    : nil, value: showSidebar)
-        .animation(perf.motionOn
-                   ? .spring(response: 0.34, dampingFraction: 0.86) : nil, value: sidebarFocus != nil)
-        // Focus ARRIVING in the rail counts as engaging it, however it got
-        // there. `focusSidebar` stamps its own way in, but
-        // the common case — an always-visible rail that the focus engine simply
-        // moves into from the first card of a row — goes through neither, and
-        // that is exactly the case a swipe hits.
-        .onChange(of: sidebarFocus) { old, new in
-            if old == nil, new != nil { sidebarEngagedAt = Date() }
-        }
         .background(ATVBackground())
     }
 
@@ -1170,9 +1019,7 @@ struct RootView: View {
             NavigationStack {
                 // Only while Settings is the tab: its environment change
                 // ran through the whole hidden page on every bar move.
-                ATVSettingsView(barFocused: sidebarFocus != nil && selectedTab == AppTab.settings.rawValue) {
-                    focusSidebar(3)
-                }
+                SettingsRoot { focusSidebar(3) }
                     .probeScreen("Settings")
                     .environmentObject(searchViewModel)
             }
@@ -1292,7 +1139,7 @@ struct RootView: View {
             withTransaction(instant) { detailLayers[tab.rawValue]?.leaving = true }
             // As after a pop: focus lands on the page, not the rail.
             lastHomePopAt = Date()
-            setSidebarEnabled(false, reenableAfter: Self.railSettle)
+            TopBar.shared.settle(for: TopBar.settleTime)
         }
         // Hidden by then; taken down once the remote is still (it holds
         // the main thread ~0.3 s: done as the move landed, a press just
@@ -1366,7 +1213,7 @@ struct RootView: View {
                     // Popping all the way back: keep the rail non-focusable
                     // for a beat so focus lands on a card instead of the rail
                     // springing open.
-                    setSidebarEnabled(false, reenableAfter: Self.railSettle)
+                    TopBar.shared.settle(for: TopBar.settleTime)
                 }
                 .navigationDestination(for: Route.self) { destination(for: $0, path: trail(path)) }
         }
@@ -1412,109 +1259,10 @@ struct RootView: View {
         }
     }
 
-    /// Handles tapping a rail tab: collapse the panel and force focus into the
-    /// fresh tab's content by making the rail momentarily unfocusable.
-    private func selectTab(_ newTab: Int) {
-        let enteringHomeFresh = selectedTab != 0 && newTab == 0
-        AppProbe.nav("tab \(Self.tabName(selectedTab)) → \(Self.tabName(newTab))"
-                     + (enteringHomeFresh ? "  (Home rebuilds; rail waits on content)" : ""))
-        AppProbe.tab = Self.tabName(newTab)
-        switchTab(to: newTab)
-        sidebarFocus = nil
-        // Through the owner, so a pending re-enable (a rail exit moments ago)
-        // is CANCELLED — it used to flip the rail focusable before the fresh
-        // tab's content could hold focus, and the panel sprang open over it.
-        setSidebarEnabled(false)
-        // Entering Home fresh rebuilds HomeView; its onContentReady is the
-        // sole re-enabler there (a blind timer could beat the rows to
-        // focusability and the rail would reclaim focus).
-        sidebarAwaitingContent = enteringHomeFresh
-        guard enteringHomeFresh else {
-            setSidebarEnabled(false, reenableAfter: Self.railSettle)
-            return
-        }
-    }
-
-    /// Open the rail on `tab`. The rail is `.disabled` for short windows after
-    /// every tab switch / collapse / pop (so the engine seeds focus into the
-    /// content instead), and a focus request into a disabled view is silently
-    /// dropped — a Menu press in one of those windows did nothing. A deliberate
-    /// Back always wins: enable now, focus on the next tick.
+    /// Focus to the top bar on `tab` (Back on a tab's page, the gate
+    /// closed from the avatar).
     private func focusSidebar(_ tab: Int) {
-        AppProbe.focus("focusSidebar(\(Self.tabName(tab)))  enabled=\(sidebarEnabled.probe)")
-        sidebarEngagedAt = Date()
-        setSidebarEnabled(true)
-        DispatchQueue.main.async { sidebarFocus = tab }
-    }
-
-    /// Back pressed while the rail itself is focused: close the panel. Always
-    /// the fast fixed-delay re-enable — nothing is being freshly mounted.
-    private func collapseSidebarFromExit() {
-        // Hand focus to the FIRST tile of the row the viewer left, when that
-        // row is mounted to take it. Dropping the rail's focus with no
-        // destination let the engine pick whatever card sat nearest the
-        // rail's centre — the fourth along, with the first two under the
-        // panel. The rail stays enabled for the turn the hand-off needs; a
-        // request into a `.disabled` view is silently dropped.
-        if ContentFocusRouter.shared.focusLastRowStart() {
-            DispatchQueue.main.async {
-                sidebarFocus = nil   // a no-op once the tile holds focus
-                setSidebarEnabled(false, reenableAfter: Self.railSettle)
-            }
-            return
-        }
-        sidebarFocus = nil
-        setSidebarEnabled(false, reenableAfter: Self.railSettle)
-    }
-
-    /// The ONE owner of every timed rail re-enable. Five independent timers
-    /// used to race each other: exit the rail (400ms re-enable pending), then
-    /// switch tabs — the tab switch disabled the rail to keep initial focus in
-    /// the content, and the stale 400ms timer flipped it back early, so the
-    /// panel sprang open over the fresh screen. Scheduling through one task
-    /// cancels whatever was pending first.
-    @State private var sidebarReenableTask: Task<Void, Never>?
-
-    /// The top bar off while the stage goes, so focus returns to the rows.
-    static let stageSettle: Double = 0.5
-
-    private func setSidebarEnabled(_ enabled: Bool, reenableAfter delay: Double? = nil) {
-        // The rail's `.disabled` windows swallow directional presses, which is
-        // the shape of half the focus bugs this app has had — so every open and
-        // close of one is on the record, with how long it is meant to last.
-        AppProbe.focus("rail " + (enabled ? "enabled" : "disabled")
-                       + (delay.map { String(format: " for %.2fs", $0) } ?? ""))
-        AppProbe.rail = enabled ? "enabled" : "disabled"
-        if enabled { sidebarAwaitingContent = false }
-        sidebarReenableTask?.cancel()
-        sidebarReenableTask = nil
-        sidebarEnabled = enabled
-        guard !enabled, let delay else { return }
-        scheduleSidebarReenable(after: delay)
-    }
-
-    /// Waiting on HomeView's onContentReady before the rail may take focus
-    /// (the entering-Home-fresh tab switch). Distinct from a pending timer,
-    /// so the cold-launch 3s fallback can tell the two disables apart.
-    @State private var sidebarAwaitingContent = false
-
-    /// Re-enable the rail after `delay` WITHOUT touching its current state —
-    /// for callers that merely want "focusable again soon" (onContentReady),
-    /// where disabling first would break a rail the viewer has open.
-    private func scheduleSidebarReenable(after delay: Double) {
-        sidebarAwaitingContent = false
-        sidebarReenableTask?.cancel()
-        sidebarReenableTask = Task { @MainActor in
-            // Counted from the launch curtain's lift: under it Home is ready
-            // but disabled, and an enabled rail took the first focus.
-            await LaunchPreloader.shared.lifted()
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            AppProbe.focus("rail re-enabled by timer")
-            AppProbe.rail = "enabled"
-            sidebarEnabled = true
-            sidebarReenableTask = nil
-        }
+        TopBar.shared.focus(tab)
     }
 
     /// Launched into a screen to look at: no gate covering it.
@@ -1533,7 +1281,7 @@ struct RootView: View {
             focusSidebar(-1)
             return
         }
-        setSidebarEnabled(false, reenableAfter: Self.railSettle)
+        TopBar.shared.settle(for: TopBar.settleTime)
         if selectedTab == 0 { HomeBack.shared.toBillboard?() }
     }
 
@@ -1555,7 +1303,7 @@ struct RootView: View {
                 // ONLY schedule the re-enable — it fires on every catalog
                 // refresh, and disabling first would kick focus off an OPEN
                 // rail whenever a background sync reloaded Home.
-                scheduleSidebarReenable(after: 0.8)
+                TopBar.shared.enable(after: 0.8)
             }
         )
         .probeScreen("Home")

@@ -1061,7 +1061,8 @@ struct DiscoverView: View {
                 headerTop: headerTop,
                 // The bar is on the page: it goes up with it, as Home's.
                 onScroll: opened ? nil : { TopBarFollow.shared.set(-$0, for: "discover") },
-                bleedTop: barRoom)
+                bleedTop: barRoom,
+                barTab: opened ? nil : .discover)
                 .padding(.top, barRoom)
                 .ignoresSafeArea()
             if model.loadedOnce, !model.isLoading, model.items.isEmpty {
@@ -1175,6 +1176,7 @@ private struct DiscoverSentence: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .disabled(waitsForTitles && !model.loadedOnce)
         .defaultFocus($focused, .genre)
+        // The tab's (a filled-in page has no bar to come from).
     }
 
     /// Discover's: "Show me [genre] [style] [movies] about [theme]"; a
