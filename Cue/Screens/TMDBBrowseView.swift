@@ -1871,6 +1871,10 @@ struct UpcomingView: View {
     /// How far each day's lines are scrolled under its header (by column
     /// id): only the focused day's moves.
     @State private var scrolls: [String: CGFloat] = [:]
+    /// The days built: those in view and two either side, widened only once
+    /// a slide has settled (building a day in the press cost it ~35 ms).
+    @State private var built = 0...0
+    @State private var buildToken = 0
 
     /// A day's card: four across between the rows' edges, the cards' gap
     /// between, so the days either side peek alike (Home's rows).
@@ -1909,6 +1913,7 @@ struct UpcomingView: View {
             await model.load()
             spot = model.calendar?.start ?? 0
             shown = max(0, spot - 1)
+            built = Self.around(shown)
         }
         .onExitCommand(perform: onBack)
     }
@@ -1944,18 +1949,38 @@ struct UpcomingView: View {
         let today = calendar.startOfDay(for: Date())
         return HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
-                UpcomingDay(column: column, focus: $focus, scroll: scrolls[column.id] ?? 0,
+                // Only the days in view and two either side are built: every
+                // line is a button, and SwiftUI walks them all on a move into
+                // the page (all 21 days' cost ~140 ms coming in from the bar).
+                if !built.contains(index), !(shown - 1...shown + Self.across).contains(index) {
+                    Color.clear.frame(width: Self.card, height: UpcomingDay.height)
+                } else {
+                // Each day gets only what it draws (which of its lines has
+                // focus, its scroll), equatable: a press redraws the day it
+                // left and the one it reached, not every day and line (all
+                // of them read the focus before: 35–58 ms a press).
+                UpcomingDay(column: column, focus: $focus,
+                            focusedID: column.entries.contains { $0.id == focus } ? focus : nil,
+                            scroll: scrolls[column.id] ?? 0,
                             more: (above: (scrolls[column.id] ?? 0) > 0,
                                    below: (scrolls[column.id] ?? 0) < Self.maxScroll(column)),
                             past: column.day < today, today: column.day == today,
                             showsMonth: calendar.component(.day, from: column.day) == 1,
-                            watched: watched, onOpen: onOpen)
+                            watched: watched, watchedRevision: watched.revision, onOpen: onOpen)
+                    .equatable()
+                }
             }
         }
         .fixedSize()
         .offset(x: FixedFocusMetrics.inset - CGFloat(shown) * Self.pitch)
         .animation(Motion.move, value: shown)
-        .animation(Motion.move, value: scrolls)
+        .onChange(of: shown) { _, now in
+            buildToken += 1
+            let token = buildToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if token == buildToken { built = Self.around(now) }
+            }
+        }
         .padding(.top, Self.stripTop)
         .frame(width: 1920, height: 1080, alignment: .topLeading)
         .focusSection()
@@ -1977,6 +2002,10 @@ struct UpcomingView: View {
             scrolls[id] = min(Self.scroll(scrolls[id] ?? 0, showing: Self.place(line)),
                               Self.maxScroll(columns[column]))
         }
+    }
+
+    private static func around(_ shown: Int) -> ClosedRange<Int> {
+        max(0, shown - 2)...shown + across + 1
     }
 
     /// The lines' room under the pictures, to the card's foot.
@@ -2025,9 +2054,11 @@ struct UpcomingView: View {
 /// apart, on the page's flat grey its titles, scrolling as focus moves, each day on its own, fading
 /// out under the picture and toward the screen's foot. The day with focus
 /// grows a little, a soft shadow under it; past days dimmed.
-private struct UpcomingDay: View {
+private struct UpcomingDay: View, Equatable {
     let column: UpcomingModel.Column
     var focus: FocusState<String?>.Binding
+    /// The line with focus, when it's one of this day's.
+    let focusedID: String?
     let scroll: CGFloat
     /// Titles out of sight above and below: only there do the lines fade
     /// (at the list's end its last title sits clear at the card's foot).
@@ -2036,7 +2067,15 @@ private struct UpcomingDay: View {
     let today: Bool
     let showsMonth: Bool
     let watched: WatchedStore
+    let watchedRevision: Int
     let onOpen: (MetaItem) -> Void
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.column.id == b.column.id && a.focusedID == b.focusedID && a.scroll == b.scroll
+            && a.more == b.more && a.past == b.past && a.today == b.today
+            && a.showsMonth == b.showsMonth && a.watchedRevision == b.watchedRevision
+            && a.column.entries.map(\.id) == b.column.entries.map(\.id)
+    }
     /// Card Outlines: read through `FixedFocusRing.outlines`, here so a
     /// change redraws the days.
     @AppStorage(FixedFocusRing.outlinesKey) private var outlinesSetting: String?
@@ -2064,7 +2103,7 @@ private struct UpcomingDay: View {
     static let litFill = CueInk.fill(dark: 0.17, light: 0.4)
 
     private var focused: UpcomingModel.Entry? {
-        column.entries.first { $0.id == focus.wrappedValue }
+        column.entries.first { $0.id == focusedID }
     }
 
     var body: some View {
@@ -2094,6 +2133,7 @@ private struct UpcomingDay: View {
                 .padding(.horizontal, Self.inset)
                 .frame(width: width, alignment: .topLeading)
                 .offset(y: -scroll)
+                .animation(Motion.move, value: scroll)
                 .frame(width: width, height: UpcomingView.room, alignment: .topLeading)
                 .mask {
                     VStack(spacing: 0) {
@@ -2139,6 +2179,7 @@ private struct UpcomingDay: View {
                     if index > 0 { separator(between: column.entries[index - 1], and: entry) }
                     Button { if let item = entry.item { onOpen(item) } } label: {
                         UpcomingLine(entry: entry, seen: seen(entry))
+                            .equatable()
                     }
                     .buttonStyle(PlainCardButtonStyle())
                     .focused(focus, equals: entry.id)
@@ -2152,7 +2193,7 @@ private struct UpcomingDay: View {
     /// card's width), 5 pt either side; gone beside the focused one (its
     /// highlight covers the gap).
     private func separator(between above: UpcomingModel.Entry, and below: UpcomingModel.Entry) -> some View {
-        let hidden = focus.wrappedValue == above.id || focus.wrappedValue == below.id
+        let hidden = focusedID == above.id || focusedID == below.id
         return Rectangle()
             .fill(CueInk.color(0.1))
             .frame(width: UpcomingView.card - 2 * 24 - 2 * Self.inset, height: Self.rule)
@@ -2205,7 +2246,8 @@ private struct UpcomingDay: View {
 /// dark words,
 /// the platter 4.5 pt larger each side, a soft shadow (Settings' own
 /// values, `SettingsMetrics`), inside the card.
-private struct UpcomingLine: View {
+private struct UpcomingLine: View, Equatable {
+    static func == (a: Self, b: Self) -> Bool { a.entry.id == b.entry.id && a.seen == b.seen }
     @Environment(\.isFocused) private var isFocused
     let entry: UpcomingModel.Entry
     let seen: Bool

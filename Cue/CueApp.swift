@@ -877,7 +877,14 @@ struct RootView: View {
 
     /// When the rail was last ASKED for — a summon, or focus actually landing
     /// in it. Read only by the rail's exit-move handler; see the note there.
-    @State private var sidebarEngagedAt = Date.distantPast
+    /// Not drawn, so not state: a change re-ran the whole root (every tab)
+    /// on each move into the bar.
+    @State private var engaged = Stamp()
+    private final class Stamp { var at = Date.distantPast }
+    private var sidebarEngagedAt: Date {
+        get { engaged.at }
+        nonmutating set { engaged.at = newValue }
+    }
 
     /// How long after engaging the rail an exit move is treated as an echo of
     /// the gesture that opened it rather than a fresh instruction to leave.
@@ -1161,7 +1168,11 @@ struct RootView: View {
             }
         case .settings:
             NavigationStack {
-                ATVSettingsView(barFocused: sidebarFocus != nil) { focusSidebar(3) }
+                // Only while Settings is the tab: its environment change
+                // ran through the whole hidden page on every bar move.
+                ATVSettingsView(barFocused: sidebarFocus != nil && selectedTab == AppTab.settings.rawValue) {
+                    focusSidebar(3)
+                }
                     .probeScreen("Settings")
                     .environmentObject(searchViewModel)
             }

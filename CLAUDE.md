@@ -1139,6 +1139,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   height); a picture per line beside the name (cramped) and over it; a
   square tile per day following focus; fixed focus; six columns, a day
   taking a second column, all days scrolling together.)
+  Speed (2026-11-21): each day an equatable view given only its focused
+  line and scroll (every day read the focus: 35–58 ms a press); only the
+  days in view and two either side built, widened 0.5 s after a slide
+  (all 21 cost ~140 ms coming in from the bar; in the press ~35 ms).
   Yours first (followed: watched, started, saved), then TMDB's popular
   shows airing (no news, reality, soap, talk, nor dailies), films
   opening in your country, the season's popular anime (AniList, no key;
