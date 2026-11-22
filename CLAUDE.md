@@ -1142,9 +1142,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   last 80 pt inside the card's foot only where titles go on out of
   sight (at the list's end its last title sits clear at the card's foot,
   no fade; scrolling it to the fade's edge left an empty band under it) (the focused line kept above it).
-  The day with focus grows 2 %, its grey a small step lighter
-  (trying: 0.17 / 0.4 over the rest's 0.13 / 0.32), a soft shadow under it (the cards'
-  6 % was far too strong on a card this tall);
+  The day with focus grows 2 % (the cards' 6 % was far too strong on a
+  card this tall), the cards' shadow under it, outside the card only
+  (`FixedFocusCardEdge.shadowImage`; a SwiftUI shadow behind the whole
+  card was before), the grey the same (a lighter grey on focus looked
+  ugly);
   past days dimmed (`peekAlpha`). Above, the first day in view's month
   as Home's row names (their font, ink, line and
   indent) ("November 2026"): up by the card's
@@ -1159,10 +1161,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   height); a picture per line beside the name (cramped) and over it; a
   square tile per day following focus; fixed focus; six columns, a day
   taking a second column, all days scrolling together.)
-  Speed (2026-11-21): each day an equatable view given only its focused
-  line and scroll (every day read the focus: 35–58 ms a press); only the
-  days in view and two either side built, widened 0.5 s after a slide
-  (all 21 cost ~140 ms coming in from the bar; in the press ~35 ms).
+  UIKit (2026-11-21, `UpcomingStripController`, `UpcomingDayView`,
+  `UpcomingLineView`): focus native, the strip's slide, each day's scroll
+  and growth on Core Animation, the lines' fades a static mask; no frames
+  dropped on the sim where SwiftUI's strip was the slowest page (every
+  press re-rendered days, masks and a large shadow; equatable days and
+  building only those near view helped only a little). Down from the bar
+  lands on the day the strip holds (`TopBar.entries`, its first title).
   Yours first (followed: watched, started, saved), then TMDB's popular
   shows airing (no news, reality, soap, talk, nor dailies), films
   opening in your country, the season's popular anime (AniList, no key;

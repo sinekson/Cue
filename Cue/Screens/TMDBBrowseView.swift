@@ -1863,31 +1863,6 @@ struct UpcomingView: View {
     let onOpen: (MetaItem) -> Void
     let onBack: () -> Void
 
-    @FocusState private var focus: String?
-    /// The column focus is in (or last was).
-    @State private var spot = 0
-    /// The first column in full view: moving focus, the strip moves only
-    /// when focus goes past the five in view.
-    @State private var shown = 0
-    static let across = 4
-    /// How far each day's lines are scrolled under its header (by column
-    /// id): only the focused day's moves.
-    @State private var scrolls: [String: CGFloat] = [:]
-    /// The days built: those in view and two either side, widened only once
-    /// a slide has settled (building a day in the press cost it ~35 ms).
-    @State private var built = 0...0
-    @State private var buildToken = 0
-
-    /// A day's card: four across between the rows' edges, the cards' gap
-    /// between, so the days either side peek alike (Home's rows).
-    static var card: CGFloat {
-        ((1920 - 2 * FixedFocusMetrics.inset - CGFloat(across - 1) * FixedFocusMetrics.gap) / CGFloat(across)).rounded(.down)
-    }
-    static var pitch: CGFloat { card + FixedFocusMetrics.gap }
-    /// The month's line above the days: Home's row name's.
-    static let monthRow: CGFloat = FixedFocusMetrics.titleHeight
-    static var stripTop: CGFloat { StagePictureView.homeCard.minY + monthRow }
-
     var body: some View {
         ZStack(alignment: .topLeading) {
             ATVBackground()
@@ -1898,8 +1873,9 @@ struct UpcomingView: View {
                         .foregroundStyle(CueInk.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    month(built.columns)
-                    strip(built.columns)
+                    UpcomingStrip(columns: built.columns, start: built.start, watched: watched,
+                                  watchedRevision: watched.revision, onOpen: onOpen)
+                        .frame(width: 1920, height: 1080)
                 }
             } else {
                 LoadingSpinner()
@@ -1913,177 +1889,187 @@ struct UpcomingView: View {
             model.following = BillboardPicks.History(progress: progressStore, watched: watched,
                                                      library: library).following
             await model.load()
-            spot = model.calendar?.start ?? 0
-            shown = max(0, spot - 1)
-            built = Self.around(shown)
         }
         .onExitCommand(perform: onBack)
     }
-
-    /// The month of the first day in view, standing still at the rows'
-    /// edge ("November 2026"), the next crossfading in.
-    /// Focus on the day under the month's name.
-    private var lifted: Bool { focus != nil && spot == shown }
-
-    private func month(_ columns: [UpcomingModel.Column]) -> some View {
-        let day = columns[min(max(0, shown), columns.count - 1)].day
-        let name = day.formatted(.dateTime.month(.wide).year())
-        return Text(name)
-            .font(Font(FixedFocusRowCell.titleFont))
-            .foregroundStyle(CueInk.primary)
-            .id(name)
-            .transition(.opacity)
-            .animation(Motion.fade, value: name)
-            // Home's row name: its 48 pt line, 6 pt low in it, at the
-            // names' indent.
-            .frame(height: FixedFocusMetrics.titleLine)
-            .offset(y: FixedFocusMetrics.titleDrop)
-            .padding(.leading, FixedFocusMetrics.titleInset)
-            .padding(.top, StagePictureView.homeCard.minY)
-            // As a row's name over a grown card: up by the card's growth
-            // at its top while the day under it (the first in view) has focus.
-            .offset(y: lifted ? -UpcomingDay.height * (UpcomingDay.lift - 1) / 2 : 0)
-            .animation(Motion.focus, value: lifted)
-    }
-
-    private func strip(_ columns: [UpcomingModel.Column]) -> some View {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        return HStack(alignment: .top, spacing: FixedFocusMetrics.gap) {
-            ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
-                // Only the days in view and two either side are built: every
-                // line is a button, and SwiftUI walks them all on a move into
-                // the page (all 21 days' cost ~140 ms coming in from the bar).
-                if !built.contains(index), !(shown - 1...shown + Self.across).contains(index) {
-                    Color.clear.frame(width: Self.card, height: UpcomingDay.height)
-                } else {
-                // Each day gets only what it draws (which of its lines has
-                // focus, its scroll), equatable: a press redraws the day it
-                // left and the one it reached, not every day and line (all
-                // of them read the focus before: 35–58 ms a press).
-                UpcomingDay(column: column, focus: $focus,
-                            focusedID: column.entries.contains { $0.id == focus } ? focus : nil,
-                            scroll: scrolls[column.id] ?? 0,
-                            more: (above: (scrolls[column.id] ?? 0) > 0,
-                                   below: (scrolls[column.id] ?? 0) < Self.maxScroll(column)),
-                            past: column.day < today, today: column.day == today,
-                            showsMonth: calendar.component(.day, from: column.day) == 1,
-                            watched: watched, watchedRevision: watched.revision, onOpen: onOpen)
-                    .equatable()
-                }
-            }
-        }
-        .fixedSize()
-        .offset(x: FixedFocusMetrics.inset - CGFloat(shown) * Self.pitch)
-        .animation(Motion.move, value: shown)
-        .onChange(of: shown) { _, now in
-            buildToken += 1
-            let token = buildToken
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if token == buildToken { built = Self.around(now) }
-            }
-        }
-        .padding(.top, Self.stripTop)
-        .frame(width: 1920, height: 1080, alignment: .topLeading)
-        .focusSection()
-        .onChange(of: focus) { old, new in
-            guard let new, let column = columns.firstIndex(where: { $0.entries.contains { $0.id == new } }),
-                  let line = columns[column].entries.firstIndex(where: { $0.id == new })
-            else { return }
-            // Coming in from the bar: the column the strip holds, not the
-            // one nearest the tab.
-            if old == nil, column != spot, columns.indices.contains(spot),
-               let first = columns[spot].entries.first(where: { $0.item != nil }) {
-                focus = first.id
-                return
-            }
-            spot = column
-            if column < shown { shown = column }
-            if column >= shown + Self.across { shown = column - Self.across + 1 }
-            let id = columns[column].id
-            scrolls[id] = min(Self.scroll(scrolls[id] ?? 0, showing: Self.place(line)),
-                              Self.maxScroll(columns[column]))
-        }
-    }
-
-    private static func around(_ shown: Int) -> ClosedRange<Int> {
-        max(0, shown - 2)...shown + across + 1
-    }
-
-    /// The lines' room under the pictures, to the card's foot.
-    static var room: CGFloat { UpcomingDay.height - UpcomingDay.header }
-
-    /// Moving focus: scrolled just enough to show the focused line, clear
-    /// of the fade at the foot, the top line just under the rule's fade.
-    /// Below the last title, at the list's end: the card's inner margin
-    /// with the focused shadow.
-    static var endPad: CGFloat { UpcomingLine.shadowBelow + 8 }
-
-    /// A day's lines are all one height (`UpcomingLine.height`, the rule
-    /// between them `UpcomingDay.ruleRoom`), so where each is follows from
-    /// its place in the list: the scroll, its end and the fades from one
-    /// sum, never measured (measured, a list laid out again after a scroll
-    /// left the fade over its last title, the scroll and its end
-    /// disagreeing).
-    /// Line `index`'s top and foot in its day's list, unscrolled.
-    private static func place(_ index: Int) -> ClosedRange<CGFloat> {
-        let top = UpcomingDay.edge + CGFloat(index) * (UpcomingLine.height + UpcomingDay.ruleRoom)
-        return top...top + UpcomingLine.height
-    }
-
-    /// As far as a day's list scrolls: its last title at the card's foot,
-    /// no fade there (nothing below).
-    private static func maxScroll(_ column: UpcomingModel.Column) -> CGFloat {
-        guard !column.entries.isEmpty else { return 0 }
-        return max(0, place(column.entries.count - 1).upperBound + endPad - room)
-    }
-
-    private static func scroll(_ scroll: CGFloat, showing place: ClosedRange<CGFloat>) -> CGFloat {
-        // The focused plate's shadow kept out of the fades too: in them it
-        // was cut by the gradient as the lines moved (a flicker).
-        let foot = room - UpcomingDay.foot - UpcomingLine.shadowBelow
-        if place.upperBound - scroll > foot { return place.upperBound - foot }
-        let top = UpcomingDay.edge + UpcomingLine.shadowAbove
-        if place.lowerBound - scroll < top { return max(0, place.lowerBound - top) }
-        return scroll
-    }
 }
 
-/// A day of the calendar as a tall card (the cards' corners, no rim, the
-/// cards' gap between days), running past the screen's foot: at its top
-/// the day's first title's picture, still (focus doesn't change it), the
-/// date over the weekday low on it over a shade; under it, a hard edge
-/// apart, on the page's flat grey its titles, scrolling as focus moves, each day on its own, fading
-/// out under the picture and toward the screen's foot. The day with focus
-/// grows a little, a soft shadow under it; past days dimmed.
-private struct UpcomingDay: View, Equatable {
-    let column: UpcomingModel.Column
-    var focus: FocusState<String?>.Binding
-    /// The line with focus, when it's one of this day's.
-    let focusedID: String?
-    let scroll: CGFloat
-    /// Titles out of sight above and below: only there do the lines fade
-    /// (at the list's end its last title sits clear at the card's foot).
-    let more: (above: Bool, below: Bool)
-    let past: Bool
-    let today: Bool
-    let showsMonth: Bool
+/// The calendar's strip, UIKit (`UpcomingStripController`): every day a
+/// tall card, focus, the strip's slide and each day's scroll on Core
+/// Animation (in SwiftUI every press re-rendered the days, their masks and
+/// a large shadow frame by frame).
+private struct UpcomingStrip: UIViewControllerRepresentable {
+    let columns: [UpcomingModel.Column]
+    let start: Int
     let watched: WatchedStore
     let watchedRevision: Int
     let onOpen: (MetaItem) -> Void
 
-    static func == (a: Self, b: Self) -> Bool {
-        a.column.id == b.column.id && a.focusedID == b.focusedID && a.scroll == b.scroll
-            && a.more == b.more && a.past == b.past && a.today == b.today
-            && a.showsMonth == b.showsMonth && a.watchedRevision == b.watchedRevision
-            && a.column.entries.map(\.id) == b.column.entries.map(\.id)
+    func makeUIViewController(context: Context) -> UpcomingStripController {
+        let controller = UpcomingStripController()
+        TopBar.shared.entries[AppTab.upcoming.rawValue] = { [weak controller] in controller?.barEntry }
+        return controller
     }
-    /// Card Outlines: read through `FixedFocusRing.outlines`, here so a
-    /// change redraws the days.
-    @AppStorage(FixedFocusRing.outlinesKey) private var outlinesSetting: String?
+
+    func updateUIViewController(_ controller: UpcomingStripController, context: Context) {
+        controller.onOpen = onOpen
+        let watched = watched
+        controller.seen = { entry in
+            guard let id = entry.item?.id else { return false }
+            guard let episode = entry.episode else {
+                return entry.item?.type == "movie" && watched.isWatched(contentID: id)
+            }
+            return watched.isWatched(contentID: id, season: episode.season, episode: episode.number)
+        }
+        controller.show(columns, start: start, revision: watchedRevision)
+    }
+}
+
+/// The calendar (Upcoming): every day (an empty one too) a tall card along
+/// a strip, four across between the rows' edges, the days either side
+/// peeking alike; opening with today second; moving focus: the strip moves
+/// a card only when focus goes past the four in view. Above, the first day
+/// in view's month as Home's row names, up by the card's growth while the
+/// day under it has focus.
+final class UpcomingStripController: UIViewController {
+    var onOpen: (MetaItem) -> Void = { _ in }
+    var seen: (UpcomingModel.Entry) -> Bool = { _ in false }
+
+    static let across = 4
+    /// A day's card: four across between the rows' edges, the cards' gap
+    /// between, so the days either side peek alike (Home's rows).
+    static var card: CGFloat {
+        ((1920 - 2 * FixedFocusMetrics.inset - CGFloat(across - 1) * FixedFocusMetrics.gap) / CGFloat(across)).rounded(.down)
+    }
+    static var pitch: CGFloat { card + FixedFocusMetrics.gap }
+    static var stripTop: CGFloat { StagePictureView.homeCard.minY + FixedFocusMetrics.titleHeight }
+
+    private let strip = UIView()
+    private let month = UILabel()
+    private var days: [UpcomingDayView] = []
+    private var ids: [String] = []
+    private var revision = -1
+    /// The day focus is in (or last was).
+    private var spot = 0
+    /// The first day in full view.
+    private var shown = 0
+    /// The day with focus now (nil: focus elsewhere).
+    private var lit: Int?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.addSubview(strip)
+        month.font = FixedFocusRowCell.titleFont
+        month.textColor = CueInk.ui(FixedFocusText.primary)
+        month.frame = CGRect(x: FixedFocusMetrics.titleInset,
+                             y: StagePictureView.homeCard.minY + FixedFocusMetrics.titleDrop,
+                             width: 1200, height: FixedFocusMetrics.titleLine)
+        view.addSubview(month)
+    }
+
+    /// Down from the tab's bar: the day the strip holds, its first title
+    /// (the engine's way went to the day nearest the tab).
+    var barEntry: UIView? { days.indices.contains(spot) ? days[spot].firstFocusable : nil }
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        barEntry.map { [$0] } ?? []
+    }
+
+    func show(_ columns: [UpcomingModel.Column], start: Int, revision: Int) {
+        loadViewIfNeeded()
+        let newIDs = columns.map { $0.id + ":" + $0.entries.map(\.id).joined(separator: ",") }
+        if newIDs != ids {
+            ids = newIDs
+            build(columns, start: start)
+        } else if revision != self.revision {
+            days.forEach { $0.refreshSeen(seen) }
+        }
+        self.revision = revision
+    }
+
+    private func build(_ columns: [UpcomingModel.Column], start: Int) {
+        days.forEach { $0.removeFromSuperview() }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        days = columns.enumerated().map { index, column in
+            let day = UpcomingDayView(column: column, past: column.day < today, today: column.day == today,
+                                      showsMonth: calendar.component(.day, from: column.day) == 1,
+                                      seen: seen, onOpen: { [weak self] in self?.onOpen($0) })
+            day.frame = CGRect(x: CGFloat(index) * Self.pitch, y: 0, width: Self.card, height: UpcomingDayView.height)
+            strip.addSubview(day)
+            return day
+        }
+        strip.frame = CGRect(x: 0, y: Self.stripTop, width: CGFloat(columns.count) * Self.pitch,
+                             height: UpcomingDayView.height)
+        spot = min(max(0, start), max(0, columns.count - 1))
+        shown = max(0, spot - 1)
+        lit = nil
+        place(animated: false)
+    }
+
+    /// The strip at `shown`, the month of its first day, pictures near it.
+    private func place(animated: Bool) {
+        let moves = { self.strip.transform = CGAffineTransform(translationX: FixedFocusMetrics.inset - CGFloat(self.shown) * Self.pitch, y: 0) }
+        if animated { FixedFocusMotion.run(duration: Motion.moveDuration, animations: moves) { _ in } } else { moves() }
+        if days.indices.contains(shown) {
+            let name = days[shown].column.day.formatted(.dateTime.month(.wide).year())
+            if month.text != name {
+                if animated, month.text != nil {
+                    UIView.transition(with: month, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
+                        self.month.text = name
+                    }
+                } else {
+                    month.text = name
+                }
+            }
+        }
+        for index in max(0, shown - 2)...min(days.count - 1, shown + Self.across + 1) where days.indices.contains(index) {
+            days[index].loadPicture()
+        }
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let line = context.nextFocusedView as? UpcomingLineView
+        let index = line.flatMap { line in days.firstIndex { line.isDescendant(of: $0) } }
+        if let index, let line {
+            spot = index
+            if index < shown { shown = index; place(animated: true) }
+            if index >= shown + Self.across { shown = index - Self.across + 1; place(animated: true) }
+            days[index].focus(line)
+        }
+        guard index != lit else { return }
+        let old = lit
+        lit = index
+        if let index { strip.bringSubviewToFront(days[index]) }
+        FixedFocusMotion.run(duration: Motion.focusDuration, animations: {
+            if let old, self.days.indices.contains(old) { self.days[old].setOn(false) }
+            if let index { self.days[index].setOn(true) }
+            // As a row's name over a grown card: up by the card's growth at
+            // its top while the day under it (the first in view) has focus.
+            self.month.transform = index == self.shown
+                ? CGAffineTransform(translationX: 0, y: -UpcomingDayView.height * (UpcomingDayView.lift - 1) / 2)
+                : .identity
+        }) { _ in }
+    }
+}
+
+/// A day as a tall card: the cards' corners, the cards' edge by Card
+/// Outlines (bright on the day with focus), on the page's flat grey. At its
+/// top the day's first title's picture (16:9), still, the date over the
+/// weekday low on it over a shade; under it its titles, scrolling as focus
+/// moves, each day on its own, fading out under the picture and at the
+/// card's foot only where titles go on out of sight. The day with focus
+/// grows 2 %, the cards' shadow under it (outside the card only); past
+/// days dimmed.
+final class UpcomingDayView: UIView {
+    let column: UpcomingModel.Column
+    private let past: Bool
+    private let onOpen: (MetaItem) -> Void
 
     /// The picture, the card's width at 16:9.
-    static var header: CGFloat { (UpcomingView.card * 9 / 16).rounded() }
+    static var header: CGFloat { (UpcomingStripController.card * 9 / 16).rounded() }
     /// From the picture to the first line, the lines fading out over it.
     static let edge: CGFloat = 20
     /// The lines' fade at the card's foot (the focused line kept above it).
@@ -2092,187 +2078,320 @@ private struct UpcomingDay: View, Equatable {
     static let rule: CGFloat = 1
     static let ruleGap: CGFloat = 5
     static var ruleRoom: CGFloat { rule + 2 * ruleGap }
-    /// The titles' plates inside the card, each side (their corners
-    /// concentric with the card's).
+    /// The titles' plates inside the card, each side.
     static let inset: CGFloat = 14
-    /// The card's height: whole, its foot 60 pt above the screen's (running
-    /// past the screen's foot was before).
-    static var height: CGFloat { 1080 - UpcomingView.stripTop - 60 }
-    /// Grown a little: 2 % (22 pt across, 6 %, was far too strong on a
-    /// card this tall).
+    /// Whole, its foot 60 pt above the screen's.
+    static var height: CGFloat { 1080 - UpcomingStripController.stripTop - 60 }
+    /// Grown a little: 2 % (6 % was far too strong on a card this tall).
     static let lift: CGFloat = 1.02
-    /// The focused day's fill: `FlatControl.rest` (0.13 / 0.32) a step on.
-    static let litFill = CueInk.fill(dark: 0.17, light: 0.4)
+    /// The lines' room under the picture, to the card's foot.
+    static var room: CGFloat { height - header }
+    /// Below the last title, at the list's end: the card's inner margin
+    /// with the focused shadow.
+    static var endPad: CGFloat { UpcomingLineView.shadowBelow + 8 }
 
-    private var focused: UpcomingModel.Entry? {
-        column.entries.first { $0.id == focusedID }
-    }
+    private let shadow = UIImageView(image: FixedFocusCardEdge.shadowImage)
+    private let content = UIView()
+    private let picture = UIImageView()
+    private let rim = UIImageView()
+    private let edgeLine = UIView()
+    private let linesClip = UIView()
+    private let linesContent = UIView()
+    private let fades = CALayer()
+    private let topSolid = CALayer()
+    private let footSolid = CALayer()
+    private var lines: [UpcomingLineView] = []
+    private var rules: [UIView] = []
+    private var scroll: CGFloat = 0
+    private var pictureAsked = false
 
-    var body: some View {
-        let width = UpcomingView.card
-        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
-        let on = focused != nil
-        VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .bottomLeading) {
-                if let picture = column.entries.first?.picture {
-                    RemoteImage(url: picture, maxDimension: width * 2)
-                        .frame(width: width, height: Self.header)
-                        .clipped()
-                    // The cards' shade, no colour in it: the picture ends in
-                    // a hard edge on the card's colour.
-                    LinearGradient(stops: [.init(color: .clear, location: 0.25),
-                                           .init(color: .black.opacity(0.5), location: 0.6),
-                                           .init(color: .black.opacity(0.85), location: 1)],
-                                   startPoint: .top, endPoint: .bottom)
-                }
-                header(onPicture: column.entries.first?.picture != nil)
-                    .padding(.leading, 24)
-                    .padding(.bottom, 16)
-            }
-            .frame(width: width, height: Self.header, alignment: .bottomLeading)
-            lines
-                .padding(.top, Self.edge)
-                .padding(.horizontal, Self.inset)
-                .frame(width: width, alignment: .topLeading)
-                .offset(y: -scroll)
-                .animation(Motion.move, value: scroll)
-                .frame(width: width, height: UpcomingView.room, alignment: .topLeading)
-                .mask {
-                    VStack(spacing: 0) {
-                        ZStack {
-                            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                            Rectangle().opacity(more.above ? 0 : 1)
-                        }
-                        .frame(height: Self.edge)
-                        Rectangle()
-                        ZStack {
-                            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                            Rectangle().opacity(more.below ? 0 : 1)
-                        }
-                        .frame(height: Self.foot)
-                    }
-                    .animation(Motion.move, value: more.above)
-                    .animation(Motion.move, value: more.below)
-                }
+    init(column: UpcomingModel.Column, past: Bool, today: Bool, showsMonth: Bool,
+         seen: (UpcomingModel.Entry) -> Bool, onOpen: @escaping (MetaItem) -> Void) {
+        self.column = column
+        self.past = past
+        self.onOpen = onOpen
+        let width = UpcomingStripController.card
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: Self.height))
+        let bounds = self.bounds
+        let pad = FixedFocusCardEdge.shadowPad
+        shadow.frame = bounds.insetBy(dx: -pad, dy: -pad)
+        shadow.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        shadow.alpha = 0
+        addSubview(shadow)
+
+        content.frame = bounds
+        content.clipsToBounds = true
+        content.layer.cornerRadius = Spotlight.cornerRadius
+        content.layer.cornerCurve = .continuous
+        content.backgroundColor = CueInk.uiFill(dark: 0.13, light: 0.32)
+        addSubview(content)
+
+        // The picture with the cards' shade, no colour in it: a hard edge
+        // on the card's grey.
+        let onPicture = column.entries.first?.picture != nil
+        if onPicture {
+            picture.frame = CGRect(x: 0, y: 0, width: width, height: Self.header)
+            picture.contentMode = .scaleAspectFill
+            picture.clipsToBounds = true
+            content.addSubview(picture)
+            let shade = UpcomingShade(frame: picture.frame)
+            content.addSubview(shade)
         }
-        .frame(width: width, height: Self.height, alignment: .topLeading)
-        // The page's flat grey, a small step lighter for the day with focus
-        // (toward the selected grey), with its growth (the picture's colour
-        // as a tint, opaque or a thin wash, was tried: calmer without).
-        .background(on ? Self.litFill : FlatControl.rest)
-        .clipShape(shape)
-        // The cards' edge (Card Outlines): the thin rim, bright on the day
-        // with focus.
-        .overlay {
-            let outlines = outlinesSetting.flatMap(FixedFocusRing.Outlines.init) ?? FixedFocusRing.outlines
-            shape.strokeBorder(Color.white.opacity(on && outlines == .high ? 0.75 : 0.3), lineWidth: 2)
-                .opacity(outlines == .off ? 0 : 1)
-        }
-        .shadow(color: .black.opacity(on ? 0.4 : 0), radius: 30, y: 14)
-        .scaleEffect(on ? Self.lift : 1)
-        .opacity(past && !on ? FixedFocusMetrics.peekAlpha : 1)
-        .zIndex(on ? 1 : 0)
-        .animation(Motion.focus, value: on)
-    }
+        let header = Self.headerView(day: column.day, today: today, showsMonth: showsMonth, onPicture: onPicture)
+        header.frame.origin = CGPoint(x: 24, y: Self.header - 16 - header.frame.height)
+        content.addSubview(header)
 
-    private var lines: some View {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(column.entries.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 { separator(between: column.entries[index - 1], and: entry) }
-                    Button { if let item = entry.item { onOpen(item) } } label: {
-                        UpcomingLine(entry: entry, seen: seen(entry))
-                            .equatable()
-                    }
-                    .buttonStyle(PlainCardButtonStyle())
-                    .focused(focus, equals: entry.id)
-                    // An anime with no IMDb id known can't open: not focusable.
-                    .disabled(entry.item == nil)
-                }
+        linesClip.frame = CGRect(x: 0, y: Self.header, width: width, height: Self.room)
+        linesClip.clipsToBounds = true
+        content.addSubview(linesClip)
+        linesContent.frame = linesClip.bounds
+        linesClip.addSubview(linesContent)
+        let lineWidth = width - 2 * Self.inset
+        for (index, entry) in column.entries.enumerated() {
+            let top = Self.place(index).lowerBound
+            if index > 0 {
+                let rule = UIView(frame: CGRect(x: 24, y: top - Self.ruleGap - Self.rule,
+                                                width: width - 48, height: Self.rule))
+                rule.backgroundColor = CueInk.ui(0.1)
+                linesContent.addSubview(rule)
+                rules.append(rule)
             }
+            let line = UpcomingLineView(entry: entry, seen: seen(entry), width: lineWidth)
+            line.frame.origin = CGPoint(x: Self.inset, y: top)
+            line.onSelect = { [weak self] in if let item = entry.item { self?.onOpen(item) } }
+            linesContent.addSubview(line)
+            lines.append(line)
+        }
+        buildFades()
+        updateFades(animated: false)
+
+        // The cards' edge (Card Outlines): the thin rim, bright on focus.
+        rim.image = FixedFocusCardEdge.rim
+        rim.frame = bounds
+        rim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(rim)
+        edgeLine.frame = bounds
+        edgeLine.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        edgeLine.layer.cornerRadius = Spotlight.cornerRadius
+        edgeLine.layer.cornerCurve = .continuous
+        edgeLine.layer.borderWidth = 2
+        edgeLine.layer.borderColor = FixedFocusRing.color.cgColor
+        edgeLine.alpha = 0
+        edgeLine.isUserInteractionEnabled = false
+        addSubview(edgeLine)
+        alpha = past ? FixedFocusMetrics.peekAlpha : 1
     }
 
-    /// Between two titles a gentle line, on the words' edges (not the
-    /// card's width), 5 pt either side; gone beside the focused one (its
-    /// highlight covers the gap).
-    private func separator(between above: UpcomingModel.Entry, and below: UpcomingModel.Entry) -> some View {
-        let hidden = focusedID == above.id || focusedID == below.id
-        return Rectangle()
-            .fill(CueInk.color(0.1))
-            .frame(width: UpcomingView.card - 2 * 24 - 2 * Self.inset, height: Self.rule)
-            .padding(.horizontal, 24 - Self.inset)
-            .padding(.vertical, Self.ruleGap)
-            .opacity(hidden ? 0 : 1)
-            .animation(.linear(duration: UpcomingLine.time), value: hidden)
+    required init?(coder: NSCoder) { fatalError() }
+
+    var firstFocusable: UIView? { lines.first { $0.canBecomeFocused } }
+
+    /// Line `index`'s top and foot in its day's list, unscrolled: every
+    /// line one height, so the scroll, its end and the fades follow from
+    /// its place (measured, they fell out of step).
+    private static func place(_ index: Int) -> ClosedRange<CGFloat> {
+        let top = edge + CGFloat(index) * (UpcomingLineView.height + ruleRoom)
+        return top...top + UpcomingLineView.height
+    }
+
+    /// As far as the list scrolls: its last title at the card's foot.
+    private var maxScroll: CGFloat {
+        guard !column.entries.isEmpty else { return 0 }
+        return max(0, Self.place(column.entries.count - 1).upperBound + Self.endPad - Self.room)
+    }
+
+    /// The fades: under the picture and at the foot, each only where titles
+    /// go on out of sight (a solid over it otherwise).
+    private func buildFades() {
+        let w = linesClip.bounds.width, h = linesClip.bounds.height
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fades.frame = linesClip.bounds
+        let top = CAGradientLayer()
+        top.colors = [UIColor.clear.cgColor, UIColor.black.cgColor]
+        top.frame = CGRect(x: 0, y: 0, width: w, height: Self.edge)
+        let middle = CALayer()
+        middle.backgroundColor = UIColor.black.cgColor
+        middle.frame = CGRect(x: 0, y: Self.edge, width: w, height: h - Self.edge - Self.foot)
+        let bottom = CAGradientLayer()
+        bottom.colors = [UIColor.black.cgColor, UIColor.clear.cgColor]
+        bottom.frame = CGRect(x: 0, y: h - Self.foot, width: w, height: Self.foot)
+        topSolid.backgroundColor = UIColor.black.cgColor
+        topSolid.frame = top.frame
+        footSolid.backgroundColor = UIColor.black.cgColor
+        footSolid.frame = bottom.frame
+        [top, middle, bottom, topSolid, footSolid].forEach(fades.addSublayer)
+        linesClip.layer.mask = fades
+        CATransaction.commit()
+    }
+
+    private func updateFades(animated: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        CATransaction.setAnimationDuration(Motion.moveDuration)
+        topSolid.opacity = scroll > 0 ? 0 : 1
+        footSolid.opacity = scroll < maxScroll ? 0 : 1
+        CATransaction.commit()
+    }
+
+    /// The day with focus: grown, the cards' shadow under it, its edge
+    /// bright (Card Outlines high); past days at full brightness then.
+    func setOn(_ on: Bool) {
+        transform = on ? CGAffineTransform(scaleX: Self.lift, y: Self.lift) : .identity
+        shadow.alpha = on ? 1 : 0
+        edgeLine.alpha = on && FixedFocusRing.outlines == .high ? 1 : 0
+        alpha = past && !on ? FixedFocusMetrics.peekAlpha : 1
+    }
+
+    /// Focus on one of its lines: scrolled just enough to show it, clear of
+    /// the fades (its shadow too: cut by them as lines moved, it flickered);
+    /// the rules beside it gone.
+    func focus(_ line: UpcomingLineView) {
+        guard let index = lines.firstIndex(of: line) else { return }
+        for (i, rule) in rules.enumerated() {
+            let hidden = i == index - 1 || i == index
+            UIView.animate(withDuration: UpcomingLineView.time, delay: 0, options: [.curveLinear, .beginFromCurrentState]) {
+                rule.alpha = hidden ? 0 : 1
+            }
+        }
+        let place = Self.place(index)
+        var target = scroll
+        let footLimit = Self.room - Self.foot - UpcomingLineView.shadowBelow
+        let topLimit = Self.edge + UpcomingLineView.shadowAbove
+        if place.upperBound - target > footLimit { target = place.upperBound - footLimit }
+        if place.lowerBound - target < topLimit { target = max(0, place.lowerBound - topLimit) }
+        target = min(target, maxScroll)
+        guard target != scroll else { return }
+        scroll = target
+        FixedFocusMotion.run(duration: Motion.moveDuration, animations: {
+            self.linesContent.transform = CGAffineTransform(translationX: 0, y: -target)
+        }) { _ in }
+        updateFades(animated: true)
+    }
+
+    /// The rules come back when focus leaves the day.
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard let next = context.nextFocusedView, !next.isDescendant(of: self) else { return }
+        UIView.animate(withDuration: UpcomingLineView.time, delay: 0, options: [.curveLinear, .beginFromCurrentState]) {
+            self.rules.forEach { $0.alpha = 1 }
+        }
+    }
+
+    func refreshSeen(_ seen: (UpcomingModel.Entry) -> Bool) {
+        for line in lines { line.setSeen(seen(line.entry)) }
+    }
+
+    /// The day's first title's picture, once near the strip's view.
+    func loadPicture() {
+        guard !pictureAsked, let url = column.entries.first?.picture else { return }
+        pictureAsked = true
+        let maxDimension = UpcomingStripController.card * 2
+        let key = RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil)
+        if let cached = ImageCache.shared.image(for: key) { picture.image = cached; return }
+        Task { [weak self] in
+            guard let image = await Self.load(url, key: key, maxDimension: maxDimension), let self else { return }
+            UIView.transition(with: self.picture, duration: 0.28, options: .transitionCrossDissolve) {
+                self.picture.image = image
+            }
+        }
+    }
+
+    /// As `RemoteImage` loads: disk, else the network, decoded off the
+    /// main thread at the card's size.
+    private static func load(_ url: String, key: String, maxDimension: CGFloat) async -> UIImage? {
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        if let disk = await ImageCache.shared.diskImage(for: url, budget: budget, memoryKey: key) { return disk }
+        guard let parsed = URL(string: url), let data = try? await ImageCache.shared.download(parsed),
+              let image = await DecodeGate.shared.run(.now, { ImageCache.decodeDownsampled(data, budget: budget) })
+        else { return nil }
+        ImageCache.shared.insert(image, for: url, data: data, memoryKey: key)
+        return image
     }
 
     /// The date over the weekday, the weekday lowest (nearest the shade's
     /// darkest); on the picture white (dark always), else the page's ink.
-    private func header(onPicture: Bool) -> some View {
-        let day = column.day
-        let ink: (CGFloat) -> Color = { onPicture ? .white.opacity($0) : CueInk.color($0) }
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(day.formatted(.dateTime.day()))
-                    .font(.system(size: 48, weight: .bold).monospacedDigit())
-                    .foregroundStyle(today && onPicture ? FlatControl.contentOnFocus : ink(FixedFocusText.primary))
-                    .padding(.horizontal, today ? 14 : 0)
-                    // On the picture the selected tab's pill as light mode
-                    // draws it (white 55 %), the number dark (a faint white,
-                    // the badges' dark plate and solid white were tried),
-                    // else the selected grey.
-                    .background(today ? RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(onPicture ? Color.white.opacity(0.55) : FlatControl.selected) : nil)
-                    .padding(.leading, today ? -14 : 0)
-                if showsMonth {
-                    Text(day.formatted(.dateTime.month(.abbreviated)).uppercased())
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(ink(FixedFocusText.body))
-                }
-            }
-            Text(today ? "TODAY" : day.formatted(.dateTime.weekday(.wide)).uppercased())
-                .font(.system(size: 23, weight: .semibold))
-                .kerning(1)
-                .foregroundStyle(ink(today ? FixedFocusText.primary : FixedFocusText.body))
+    /// Today: the number dark on the selected tab's pill as light mode
+    /// draws it (white 55 %) on the picture, else on the selected grey.
+    private static func headerView(day: Date, today: Bool, showsMonth: Bool, onPicture: Bool) -> UIView {
+        let ink: (CGFloat) -> UIColor = { onPicture ? UIColor.white.withAlphaComponent($0) : CueInk.ui($0) }
+        let box = UIView()
+        let number = UILabel()
+        number.text = day.formatted(.dateTime.day())
+        number.font = .monospacedDigitSystemFont(ofSize: 48, weight: .bold)
+        number.textColor = today && onPicture ? .black : ink(FixedFocusText.primary)
+        number.sizeToFit()
+        var x: CGFloat = 0
+        if today {
+            let pill = UIView(frame: CGRect(x: -14, y: 0, width: number.frame.width + 28, height: number.frame.height))
+            pill.layer.cornerRadius = 10
+            pill.layer.cornerCurve = .continuous
+            pill.backgroundColor = onPicture ? UIColor.white.withAlphaComponent(0.55)
+                : CueInk.uiFill(dark: 0.28, light: 0.55)
+            box.addSubview(pill)
         }
-    }
-
-    private func seen(_ entry: UpcomingModel.Entry) -> Bool {
-        guard let id = entry.item?.id else { return false }
-        guard let episode = entry.episode else { return entry.item?.type == "movie" && watched.isWatched(contentID: id) }
-        return watched.isWatched(contentID: id, season: episode.season, episode: episode.number)
+        number.frame.origin = CGPoint(x: x, y: 0)
+        box.addSubview(number)
+        x += number.frame.width + (today ? 14 : 0) + 10
+        if showsMonth {
+            let monthName = UILabel()
+            monthName.text = day.formatted(.dateTime.month(.abbreviated)).uppercased()
+            monthName.font = .systemFont(ofSize: 24, weight: .semibold)
+            monthName.textColor = ink(FixedFocusText.body)
+            monthName.sizeToFit()
+            // On the number's baseline.
+            monthName.frame.origin = CGPoint(x: x, y: number.font.ascender - monthName.font.ascender
+                                             + (number.frame.height - number.font.lineHeight) / 2)
+            box.addSubview(monthName)
+        }
+        let weekday = UILabel()
+        weekday.attributedText = NSAttributedString(
+            string: today ? "TODAY" : day.formatted(.dateTime.weekday(.wide)).uppercased(),
+            attributes: [.font: UIFont.systemFont(ofSize: 23, weight: .semibold), .kern: 1,
+                         .foregroundColor: ink(today ? FixedFocusText.primary : FixedFocusText.body)])
+        weekday.sizeToFit()
+        weekday.frame.origin = CGPoint(x: 0, y: number.frame.maxY + 2)
+        box.addSubview(weekday)
+        box.frame.size = CGSize(width: 600, height: weekday.frame.maxY)
+        return box
     }
 }
 
-/// One title in a day's card: nothing behind it at rest; focused, shaped
-/// as Settings' tall rows with the top bar's focus: its white, its shadow,
-/// dark words,
-/// the platter 4.5 pt larger each side, a soft shadow (Settings' own
-/// values, `SettingsMetrics`), inside the card.
-private struct UpcomingLine: View, Equatable {
-    static func == (a: Self, b: Self) -> Bool { a.entry.id == b.entry.id && a.seen == b.seen }
-    @Environment(\.isFocused) private var isFocused
-    let entry: UpcomingModel.Entry
-    let seen: Bool
+/// The cards' shade under a day's date: clear, then to 85 % black.
+private final class UpcomingShade: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        let gradient = layer as! CAGradientLayer
+        gradient.colors = [UIColor.clear, UIColor.black.withAlphaComponent(0.5), UIColor.black.withAlphaComponent(0.85)]
+            .map(\.cgColor)
+        gradient.locations = [0.25, 0.6, 1]
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
 
-    /// Settings' tall rows' corners (30 on 119 pt) for a row this tall.
+/// One title in a day's card: nothing behind it at rest; focused, shaped
+/// as Settings' tall rows with the top bar's focus: its white, its shadow
+/// (35 %, 12 pt, 6 down), dark words, the platter 4.5 pt larger each side;
+/// the same quick move both ways (0.12 s), growing while fading in,
+/// shrinking while fading out. A press takes it back to its resting size,
+/// then up again.
+final class UpcomingLineView: UIView {
+    let entry: UpcomingModel.Entry
+    var onSelect: () -> Void = {}
+    private var seen: Bool
+    private let plate = UIView()
+    private let name = UILabel()
+    private let info = UILabel()
+    private var lit = false
+
     static let radius: CGFloat = 20
-    /// The focused shadow (the top bar's focus: 35 %, 12 pt, 6 down), kept
-    /// out of the lines' fades by the scroll (in them it was cut as lines
-    /// moved).
     static let shadowRadius: CGFloat = 12
     static let shadowDrop: CGFloat = 6
     static var shadowAbove: CGFloat { shadowRadius - shadowDrop + SettingsMetrics.focusGrowth }
     static var shadowBelow: CGFloat { shadowRadius + shadowDrop + SettingsMetrics.focusGrowth }
-
-    /// The highlight shown, and grown: the same quick move both ways
-    /// (0.12 s), growing from the row's size while fading in, shrinking
-    /// back while fading out, so the old is gone as the new comes. Always
-    /// there, only its size and opacity animated (a swapped view blinked;
-    /// the top bar's slow fade out, 0.28 s, was tiring in a list).
-    @State private var lit = false
-    @State private var grown = false
     static let time = 0.12
-
     /// Every line one height: the name and the info a line each, 14 pt
     /// above and below (the day's scroll is reckoned from it).
     static let pad: CGFloat = 14
@@ -2281,42 +2400,110 @@ private struct UpcomingLine: View, Equatable {
         + UIFont.systemFont(ofSize: 24, weight: .medium).lineHeight.rounded(.up)
         + UIFont.systemFont(ofSize: 24, weight: .regular).lineHeight.rounded(.up)
 
-    var body: some View {
-        text
-            .padding(.horizontal, 24 - UpcomingDay.inset)
-            .frame(width: UpcomingView.card - 2 * UpcomingDay.inset, height: Self.height, alignment: .leading)
-            .background {
-                let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                shape.fill(DetailActionButton.focusFill)
-                    .padding(grown ? -SettingsMetrics.focusGrowth : 0)
-                    .shadow(color: .black.opacity(0.35), radius: Self.shadowRadius, y: Self.shadowDrop)
-                    .compositingGroup()
-                    .opacity(lit ? 1 : 0)
-            }
-            .scaleEffect(grown ? SettingsMetrics.focusScale : 1)
-            .onAppear { if isFocused { lit = true; grown = true } }
-            .onChange(of: isFocused) { _, focused in
-                withAnimation(.linear(duration: Self.time)) { lit = focused }
-                withAnimation(.easeOut(duration: Self.time)) { grown = focused }
-            }
+    init(entry: UpcomingModel.Entry, seen: Bool, width: CGFloat) {
+        self.entry = entry
+        self.seen = seen
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: Self.height))
+        plate.frame = bounds
+        plate.backgroundColor = .white
+        plate.layer.cornerRadius = Self.radius
+        plate.layer.cornerCurve = .continuous
+        plate.layer.shadowColor = UIColor.black.cgColor
+        plate.layer.shadowOpacity = 0.35
+        plate.layer.shadowRadius = Self.shadowRadius
+        plate.layer.shadowOffset = CGSize(width: 0, height: Self.shadowDrop)
+        plate.layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: Self.radius).cgPath
+        plate.alpha = 0
+        addSubview(plate)
+        let textX = 24 - UpcomingDayView.inset
+        let nameFont = UIFont.systemFont(ofSize: 24, weight: .medium)
+        name.font = nameFont
+        name.text = entry.name
+        name.frame = CGRect(x: textX, y: Self.pad, width: width - 2 * textX, height: nameFont.lineHeight.rounded(.up))
+        addSubview(name)
+        info.font = .systemFont(ofSize: 24, weight: .regular)
+        info.frame = CGRect(x: textX, y: name.frame.maxY + Self.gap, width: width - 2 * textX,
+                            height: info.font.lineHeight.rounded(.up))
+        addSubview(info)
+        paint()
     }
 
-    private var text: some View {
-        VStack(alignment: .leading, spacing: Self.gap) {
-            Text(entry.name)
-                .font(.system(size: 24, weight: .medium))
-                .lineLimit(1)
-                .foregroundStyle(lit ? SettingsMetrics.focusedText
-                                 : CueInk.color(seen ? FixedFocusText.secondary : FixedFocusText.primary))
-            HStack(spacing: 8) {
-                if seen { Image(systemName: "checkmark") }
-                Text(entry.info)
-                    .lineLimit(1)
-            }
-            .font(.system(size: 24, weight: .regular))
-            .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6)
-                             : CueInk.color(seen ? FixedFocusText.tertiary : FixedFocusText.body))
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// An anime with no IMDb id known can't open: not focusable.
+    override var canBecomeFocused: Bool { entry.item != nil }
+
+    func setSeen(_ seen: Bool) {
+        guard seen != self.seen else { return }
+        self.seen = seen
+        paint()
+    }
+
+    private func paint() {
+        name.textColor = lit ? .black : CueInk.ui(seen ? FixedFocusText.secondary : FixedFocusText.primary)
+        let infoColor = lit ? UIColor.black.withAlphaComponent(0.6)
+            : CueInk.ui(seen ? FixedFocusText.tertiary : FixedFocusText.body)
+        let text = NSMutableAttributedString()
+        if seen, let check = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(font: info.font)) {
+            text.append(NSAttributedString(attachment: NSTextAttachment(image: check.withTintColor(infoColor, renderingMode: .alwaysOriginal))))
+            text.append(NSAttributedString(string: "  "))
         }
+        text.append(NSAttributedString(string: entry.info))
+        text.addAttributes([.foregroundColor: infoColor, .font: info.font!], range: NSRange(location: 0, length: text.length))
+        info.attributedText = text
+    }
+
+    private var grownPlate: CGAffineTransform {
+        let g = SettingsMetrics.focusGrowth
+        return CGAffineTransform(scaleX: (bounds.width + 2 * g) / bounds.width, y: (bounds.height + 2 * g) / bounds.height)
+    }
+    private var grownLine: CGAffineTransform {
+        CGAffineTransform(scaleX: SettingsMetrics.focusScale, y: SettingsMetrics.focusScale)
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let focused = context.nextFocusedView === self
+        guard focused != lit, focused || context.previouslyFocusedView === self else { return }
+        lit = focused
+        // The words' colour crossfades with the plate (labels' colours don't animate).
+        for label in [name, info] {
+            UIView.transition(with: label, duration: Self.time, options: [.transitionCrossDissolve, .beginFromCurrentState]) {}
+        }
+        paint()
+        UIView.animate(withDuration: Self.time, delay: 0, options: [.curveLinear, .beginFromCurrentState]) {
+            self.plate.alpha = focused ? 1 : 0
+        }
+        UIView.animate(withDuration: Self.time, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.plate.transform = focused ? self.grownPlate : .identity
+            self.transform = focused ? self.grownLine : .identity
+        }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }), isFocused else { return super.pressesBegan(presses, with: event) }
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.transform = .identity
+            self.plate.transform = .identity
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }), isFocused else { return super.pressesEnded(presses, with: event) }
+        lift()
+        onSelect()
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesCancelled(presses, with: event) }
+        lift()
+    }
+
+    private func lift() {
+        FixedFocusMotion.run(duration: Motion.focusDuration, animations: {
+            self.transform = self.isFocused ? self.grownLine : .identity
+            self.plate.transform = self.isFocused ? self.grownPlate : .identity
+        }) { _ in }
     }
 }
 

@@ -1828,8 +1828,11 @@ enum CueInk {
     /// dark; on light, white at `light` (tvOS's light rows are lighter than
     /// the grey, not darker).
     static func fill(dark: CGFloat, light: CGFloat) -> Color {
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .light
-            ? UIColor.white.withAlphaComponent(light) : UIColor.white.withAlphaComponent(dark) })
+        Color(uiColor: uiFill(dark: dark, light: light))
+    }
+    static func uiFill(dark: CGFloat, light: CGFloat) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .light
+            ? UIColor.white.withAlphaComponent(light) : UIColor.white.withAlphaComponent(dark) }
     }
 }
 
