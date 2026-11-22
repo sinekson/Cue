@@ -1107,8 +1107,10 @@ private struct DiscoverSentence: View {
     @ObservedObject private var pins = DiscoverPins.shared
     /// Each word's place on the screen: its list opens under it.
     @State private var anchors = DiscoverAnchors()
-    /// Coming in: the sentence's first word.
-    @FocusState private var focused: DiscoverModel.Slot?
+    /// Coming in: the sentence's first word. Only it is bound (a focus
+    /// value for every word redrew the whole sentence and its line on each
+    /// move between words); a scope's default only held the first time.
+    @FocusState private var onFirst: Bool
 
     /// From the screen's top to the first line (the grid's room above
     /// the header): its pills' tops where Home's billboard card's top is.
@@ -1175,7 +1177,7 @@ private struct DiscoverSentence: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .disabled(waitsForTitles && !model.loadedOnce)
-        .defaultFocus($focused, .genre)
+        .defaultFocus($onFirst, true)
         // The tab's (a filled-in page has no bar to come from).
     }
 
@@ -1280,12 +1282,12 @@ private struct DiscoverSentence: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 case let .slot(slot):
-                    Button { open(slot) } label: {
+                    let word = Button { open(slot) } label: {
                         SentenceWord(text: model.option(slot).word, set: model.isSet(slot))
                             .background { AnchorView(anchors: anchors, key: slot.rawValue) }
                     }
                     .buttonStyle(PlainCardButtonStyle())
-                    .focused($focused, equals: slot)
+                    if slot == .genre { word.focused($onFirst) } else { word }
                 }
             }
         }

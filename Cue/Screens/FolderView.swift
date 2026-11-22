@@ -69,7 +69,7 @@ struct FolderPosterGrid: UIViewControllerRepresentable {
 }
 
 final class FolderGridController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,
-                                  UICollectionViewDelegateFlowLayout, HoldMenuProviding {
+                                  HoldMenuProviding {
     var onSelect: (MetaItem) -> Void = { _ in }
     var onOpenDetails: ((MetaItem) -> Void)?
     var onDisplay: ((MetaItem) -> Void)?
@@ -82,7 +82,7 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     private var subtitles: [String: String] = [:]
     private var collectionView: UICollectionView!
 
-    private static let columns = 6
+    fileprivate static let columns = 6
     static let defaultHeaderHeight: CGFloat = 150
     private var headerHeight = FolderGridController.defaultHeaderHeight
     private var filledOnce = false
@@ -128,13 +128,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
-        let layout = UICollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = FixedFocusMetrics.gap
-        // The cards' one gap, both ways: only the focused line has its
-        // caption's room (`captionLine`).
-        layout.minimumLineSpacing = FixedFocusMetrics.gap
-        layout.sectionInset = UIEdgeInsets(top: Self.firstLineGap, left: FixedFocusMetrics.inset, bottom: 48,
-                                           right: FixedFocusMetrics.inset)
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         collectionView.backgroundColor = .clear
@@ -374,13 +367,6 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         return cell
     }
 
-    func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout,
-                        sizeForItemAt indexPath: IndexPath) -> CGSize {
-        // Only the focused line with its caption's room.
-        return CGSize(width: Self.card.width, height: Self.card.height
-                      + (indexPath.item / Self.columns == captionLine ? FixedFocusMetrics.captionRoom : 0))
-    }
-
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
                         forItemAt indexPath: IndexPath) {
         guard items.indices.contains(indexPath.item) else { return }
@@ -490,7 +476,12 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// The focused line: only it has its captions and their room (Home's
     /// rows' way: the others are only their posters, a gap apart), on the
     /// move's spring with the scroll.
-    private var captionLine: Int?
+    private var captionLine: Int? { didSet { layout.captionLine = captionLine } }
+    /// The grid's places by arithmetic, only what's in view asked for (a
+    /// flow layout sized every title loaded on each line change: frames
+    /// dropped all through a long grid).
+    private let layout = FolderGridLayout(columns: FolderGridController.columns, card: FolderGridController.card,
+                                          top: FolderGridController.firstLineGap)
 
     private func showCaptions(on line: Int?, _ context: UIFocusUpdateContext) {
         guard line != captionLine else { return }
@@ -525,6 +516,72 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
         if prefersFirstTitle, context.previouslyFocusedView?.isDescendant(of: collectionView) == true {
             prefersFirstTitle = false
         }
+    }
+}
+
+/// The browsing grids' layout: `columns` cards a line between the rows'
+/// edges, the cards' one gap both ways, only the focused line with its
+/// caption's room (`captionLine`), the lines after it moved down by it.
+final class FolderGridLayout: UICollectionViewLayout {
+    let columns: Int
+    let card: CGSize
+    let top: CGFloat
+    let bottom: CGFloat = 48
+    var captionLine: Int?
+    private var count = 0
+
+    init(columns: Int, card: CGSize, top: CGFloat) {
+        self.columns = columns
+        self.card = card
+        self.top = top
+        super.init()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var pitch: CGFloat { card.height + FixedFocusMetrics.gap }
+    private var lines: Int { (count + columns - 1) / columns }
+
+    override func prepare() {
+        super.prepare()
+        count = collectionView.map { $0.numberOfSections > 0 ? $0.numberOfItems(inSection: 0) : 0 } ?? 0
+    }
+
+    override var collectionViewContentSize: CGSize {
+        let width = collectionView?.bounds.width ?? 0
+        guard lines > 0 else { return CGSize(width: width, height: top + bottom) }
+        return CGSize(width: width, height: top + CGFloat(lines) * pitch - FixedFocusMetrics.gap
+                      + (captionLine == nil ? 0 : FixedFocusMetrics.captionRoom) + bottom)
+    }
+
+    private func lineTop(_ line: Int) -> CGFloat {
+        top + CGFloat(line) * pitch + (captionLine.map { line > $0 ? FixedFocusMetrics.captionRoom : 0 } ?? 0)
+    }
+
+    private func attributes(_ item: Int) -> UICollectionViewLayoutAttributes {
+        let line = item / columns, column = item % columns
+        let attributes = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: item, section: 0))
+        attributes.frame = CGRect(x: FixedFocusMetrics.inset + CGFloat(column) * (card.width + FixedFocusMetrics.gap),
+                                  y: lineTop(line), width: card.width,
+                                  height: card.height + (line == captionLine ? FixedFocusMetrics.captionRoom : 0))
+        return attributes
+    }
+
+    override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        guard count > 0 else { return [] }
+        // A line either way past the rect: the caption's room may shift them.
+        let first = max(0, Int(((rect.minY - top) / pitch).rounded(.down)) - 1)
+        let last = min(lines - 1, Int(((rect.maxY - top) / pitch).rounded(.up)) + 1)
+        guard first <= last else { return [] }
+        return (first * columns..<min(count, (last + 1) * columns)).map(attributes)
+            .filter { $0.frame.intersects(rect) }
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        indexPath.item < count ? attributes(indexPath.item) : nil
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        newBounds.width != collectionView?.bounds.width
     }
 }
 
@@ -606,3 +663,5 @@ enum TileArt {
         return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
     }
 }
+
+

@@ -494,9 +494,15 @@ final class TopBarItem: UIView {
 
     override var canBecomeFocused: Bool { strip?.canFocus(self) == true }
 
+    /// Measured once per face (the strip is laid out on every frame the
+    /// bar follows a scroll: measuring SwiftUI each time cost ~3 ms a frame).
     var width: CGFloat {
-        host.sizeThatFits(in: CGSize(width: 800, height: GlassSidebar.topBarItemHeight)).width.rounded(.up)
+        if let measured { return measured }
+        let width = host.sizeThatFits(in: CGSize(width: 800, height: GlassSidebar.topBarItemHeight)).width.rounded(.up)
+        measured = width
+        return width
     }
+    private var measured: CGFloat?
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -504,6 +510,8 @@ final class TopBarItem: UIView {
     }
 
     private func render() {
+        measured = nil
+        strip?.setNeedsLayout()
         host.rootView = TopBarItemFace(tab: AppTab(rawValue: id), profiles: profiles, profile: profile,
                                        lit: lit, current: current, pressed: pressed)
     }
