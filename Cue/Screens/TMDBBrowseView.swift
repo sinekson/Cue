@@ -1955,6 +1955,8 @@ final class UpcomingStripController: UIViewController {
     private var shown = 0
     /// The day with focus now (nil: focus elsewhere).
     private var lit: Int?
+    /// The days whose guides are on (`UpcomingDayView.aim`).
+    private var aimed: Set<Int> = []
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2039,6 +2041,15 @@ final class UpcomingStripController: UIViewController {
             if index >= shown + Self.across { shown = index - Self.across + 1; place(animated: true) }
             days[index].focus(line)
         }
+        // Left/Right reach the next day even with nothing level there (a
+        // shorter day): each other day's guide aims at its title nearest
+        // the focused one's height, the last if it's shorter.
+        // Only the days either side: re-aiming every guide each press made
+        // the engine rebuild its map.
+        let height = line.map { $0.convert($0.bounds, to: nil).midY }
+        let near = index.map { Set([$0 - 1, $0 + 1]) } ?? []
+        for i in aimed.union(near) where days.indices.contains(i) { days[i].aim(near.contains(i) ? height : nil) }
+        aimed = near
         guard index != lit else { return }
         let old = lit
         lit = index
@@ -2063,7 +2074,7 @@ final class UpcomingStripController: UIViewController {
 /// card's foot only where titles go on out of sight. The day with focus
 /// grows 2 %, the cards' shadow under it (outside the card only); past
 /// days dimmed.
-final class UpcomingDayView: UIView {
+final class UpcomingDayView: UIView, UIScrollViewDelegate {
     let column: UpcomingModel.Column
     private let past: Bool
     private let onOpen: (MetaItem) -> Void
@@ -2096,7 +2107,10 @@ final class UpcomingDayView: UIView {
     private let rim = UIImageView()
     private let edgeLine = UIView()
     private let linesClip = UIView()
-    private let linesContent = UIView()
+    /// A scroll view, though scrolled only by us (`scrollTarget`): titles
+    /// out of a plain clip's view were "not visible" to the focus engine,
+    /// so Down to them and Right into them failed.
+    private let linesContent = UIScrollView()
     private let fades = CALayer()
     private let topSolid = CALayer()
     private let footSolid = CALayer()
@@ -2104,6 +2118,8 @@ final class UpcomingDayView: UIView {
     private var rules: [UIView] = []
     private var scroll: CGFloat = 0
     private var pictureAsked = false
+    /// The whole card, for Left/Right from a neighbouring day (`aim`).
+    private let guide = UIFocusGuide()
 
     init(column: UpcomingModel.Column, past: Bool, today: Bool, showsMonth: Bool,
          seen: (UpcomingModel.Entry) -> Bool, onOpen: @escaping (MetaItem) -> Void) {
@@ -2145,6 +2161,8 @@ final class UpcomingDayView: UIView {
         linesClip.clipsToBounds = true
         content.addSubview(linesClip)
         linesContent.frame = linesClip.bounds
+        linesContent.showsVerticalScrollIndicator = false
+        linesContent.delegate = self
         linesClip.addSubview(linesContent)
         let lineWidth = width - 2 * Self.inset
         for (index, entry) in column.entries.enumerated() {
@@ -2162,6 +2180,7 @@ final class UpcomingDayView: UIView {
             linesContent.addSubview(line)
             lines.append(line)
         }
+        linesContent.contentSize = CGSize(width: width, height: Self.room + maxScroll)
         buildFades()
         updateFades(animated: false)
 
@@ -2180,9 +2199,32 @@ final class UpcomingDayView: UIView {
         edgeLine.isUserInteractionEnabled = false
         addSubview(edgeLine)
         alpha = past ? FixedFocusMetrics.peekAlpha : 1
+        addLayoutGuide(guide)
+        NSLayoutConstraint.activate([
+            guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            guide.trailingAnchor.constraint(equalTo: trailingAnchor),
+            guide.topAnchor.constraint(equalTo: topAnchor),
+            guide.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        guide.isEnabled = false
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Focus in another day at `height` (on screen): the guide sends a move
+    /// here to the title nearest it; nil (focus here, or out of the strip):
+    /// off.
+    func aim(_ height: CGFloat?) {
+        let focusable = lines.filter(\.canBecomeFocused)
+        guard let height, !focusable.isEmpty else {
+            if guide.isEnabled { guide.isEnabled = false }
+            return
+        }
+        let nearest = focusable.map { ($0, abs($0.convert($0.bounds, to: nil).midY - height)) }
+            .min { $0.1 < $1.1 }!.0
+        if guide.preferredFocusEnvironments.first !== nearest { guide.preferredFocusEnvironments = [nearest] }
+        if !guide.isEnabled { guide.isEnabled = true }
+    }
 
     var firstFocusable: UIView? { lines.first { $0.canBecomeFocused } }
 
@@ -2254,19 +2296,31 @@ final class UpcomingDayView: UIView {
                 rule.alpha = hidden ? 0 : 1
             }
         }
+        let target = scrollTarget(index)
+        guard target != scroll else { return }
+        scroll = target
+        FixedFocusMotion.run(duration: Motion.moveDuration, animations: {
+            self.linesContent.contentOffset = CGPoint(x: 0, y: target)
+        }) { _ in }
+        updateFades(animated: true)
+    }
+
+    /// Where the list goes for line `index`: just enough to show it.
+    private func scrollTarget(_ index: Int) -> CGFloat {
         let place = Self.place(index)
         var target = scroll
         let footLimit = Self.room - Self.foot - UpcomingLineView.shadowBelow
         let topLimit = Self.edge + UpcomingLineView.shadowAbove
         if place.upperBound - target > footLimit { target = place.upperBound - footLimit }
         if place.lowerBound - target < topLimit { target = max(0, place.lowerBound - topLimit) }
-        target = min(target, maxScroll)
-        guard target != scroll else { return }
-        scroll = target
-        FixedFocusMotion.run(duration: Motion.moveDuration, animations: {
-            self.linesContent.transform = CGAffineTransform(translationX: 0, y: -target)
-        }) { _ in }
-        updateFades(animated: true)
+        return min(target, maxScroll)
+    }
+
+    /// The engine's own scroll to a title, stopped where the list is: its
+    /// animation runs on the main thread; ours (`focus`) on Core Animation.
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                   targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        targetContentOffset.pointee = scrollView.contentOffset
     }
 
     /// The rules come back when focus leaves the day.

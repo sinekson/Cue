@@ -1163,7 +1163,15 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   taking a second column, all days scrolling together.)
   UIKit (2026-11-21, `UpcomingStripController`, `UpcomingDayView`,
   `UpcomingLineView`): focus native, the strip's slide, each day's scroll
-  and growth on Core Animation, the lines' fades a static mask; no frames
+  and growth on Core Animation, the lines' fades a static mask, each day's
+  list a scroll view scrolled only by us, on Core Animation (its own
+  focus scroll is stopped: it runs on the main thread) (in a plain clip, titles out of
+  view were "not visible" to the focus engine: Down to a day's last title
+  and Right into it failed), the days either side a focus guide over
+  their card (only those: re-aiming every day's each press cost frames)
+  aimed at the title nearest the focused one's height (the engine looks
+  only level: Right from a fourth title found nothing in a day of three);
+  no frames
   dropped on the sim where SwiftUI's strip was the slowest page (every
   press re-rendered days, masks and a large shadow; equatable days and
   building only those near view helped only a little). Down from the bar
