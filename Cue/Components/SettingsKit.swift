@@ -245,7 +245,42 @@ struct SettingsRowsKey: PreferenceKey {
     static func reduce(value: inout [String], nextValue: () -> [String]) { value += nextValue() }
 }
 
+private struct SettingsCardsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct SettingsInCardKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct SettingsOpenTitleKey: EnvironmentKey {
+    static let defaultValue: ((MetaItem) -> Void)? = nil
+}
+
 extension EnvironmentValues {
+    /// Settings 2: a page's place ("Storage › Cache"), drawn at the top of
+    /// its scroll so it goes up with the page.
+    @Entry var settingsPath: AnyView? = nil
+
+    /// Settings 2's look (`CardSettingsRoot`): sections as flat cards, the
+    /// description inside the row, focus Upcoming's white plate.
+    var settingsCards: Bool {
+        get { self[SettingsCardsKey.self] }
+        set { self[SettingsCardsKey.self] = newValue }
+    }
+
+    /// Opens a title's Details from Settings (its tab's stack).
+    var settingsOpenTitle: ((MetaItem) -> Void)? {
+        get { self[SettingsOpenTitleKey.self] }
+        set { self[SettingsOpenTitleKey.self] = newValue }
+    }
+
+    /// Inside a section's card (Settings 2): a note draws no card of its own.
+    var settingsInCard: Bool {
+        get { self[SettingsInCardKey.self] }
+        set { self[SettingsInCardKey.self] = newValue }
+    }
+
     var settingsRowFocus: FocusState<String?>.Binding? {
         get { self[SettingsRowFocusKey.self] }
         set { self[SettingsRowFocusKey.self] = newValue }
@@ -285,16 +320,58 @@ struct SettingsPage<Content: View>: View {
     var subtitle: String = ""
     var accessory: AnyView? = nil
     @ViewBuilder let content: Content
+    @Environment(\.settingsCards) private var cards
 
     var body: some View {
         SettingsScrollingPage(title: title, subtitle: subtitle) {
             accessory
         } content: {
-            VStack(alignment: .leading, spacing: SettingsMetrics.sectionGap) {
-                content
+            if cards {
+                // Settings 2: rows not in a section go on a card together
+                // (a page of one button, Account's Sign Out).
+                Group(subviews: content) { parts in
+                    VStack(alignment: .leading, spacing: 40) {
+                        ForEach(Self.runs(parts), id: \.first!.id) { run in
+                            if run.count == 1, run[0].containerValues.settingsOwnCard {
+                                run[0]
+                            } else {
+                                SettingsSection { ForEach(run) { $0 } }
+                            }
+                        }
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: SettingsMetrics.sectionGap) {
+                    content
+                }
             }
         }
     }
+
+    /// Sections alone, the rest in runs between them.
+    private static func runs(_ parts: SubviewsCollection) -> [[Subview]] {
+        var runs: [[Subview]] = []
+        var loose: [Subview] = []
+        for part in parts {
+            if part.containerValues.settingsOwnCard {
+                if !loose.isEmpty { runs.append(loose); loose = [] }
+                runs.append([part])
+            } else {
+                loose.append(part)
+            }
+        }
+        if !loose.isEmpty { runs.append(loose) }
+        return runs
+    }
+}
+
+extension ContainerValues {
+    /// A page's part with a card of its own, or none to have (a section, a
+    /// note, the unseen focus holder): Settings 2 leaves it alone.
+    @Entry var settingsOwnCard = false
+    /// Only to read (`SettingsInfoRow`): sunk into the card, with the ones
+    /// beside it, so it doesn't look like it can be pressed.
+    @Entry var settingsEmbedded = false
 }
 
 /// A titled group of rows. Its label as Apple TV's Settings', measured:
@@ -305,8 +382,89 @@ struct SettingsSection<Content: View>: View {
     /// Rows holding buttons: `tallRowGap`.
     var spacing = SettingsMetrics.rowGap
     @ViewBuilder let content: Content
+    @Environment(\.settingsCards) private var cards
 
     var body: some View {
+        if cards {
+            VStack(alignment: .leading, spacing: 0) {
+                if !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(CueInk.tertiary)
+                        .padding(.leading, CardSettingsRow.textInset)
+                        .padding(.bottom, 12)
+                }
+                // A hairline between two rows (Upcoming's), under them: a
+                // focused row's plate covers the ones beside it.
+                // Rows only to read go together into a well sunk into the
+                // card, a gap instead of the hairline beside it.
+                Group(subviews: content) { rows in
+                    let runs = Self.runs(rows)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(runs.enumerated()), id: \.offset) { index, run in
+                            let sunk = run[0].containerValues.settingsEmbedded
+                            if index > 0 {
+                                if sunk || runs[index - 1][0].containerValues.settingsEmbedded {
+                                    // The well's bleed and a focus plate's, then
+                                    // the inset between them.
+                                    Color.clear.frame(height: 2 * CardSettingsRow.plateBleed + CardSettingsRow.plateInset)
+                                } else {
+                                    Self.hairline
+                                }
+                            }
+                            if sunk {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    ForEach(Array(run.enumerated()), id: \.element.id) { i, row in
+                                        if i > 0 { Self.hairline }
+                                        row
+                                    }
+                                }
+                                // Out to the card's edge by the plates' inset on
+                                // every side, as a focus plate.
+                                .background(EmbeddedWell().padding(.vertical, -CardSettingsRow.plateBleed))
+                            } else {
+                                run[0].zIndex(1)
+                            }
+                        }
+                    }
+                }
+                .padding(CardSettingsRow.cardPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                    .fill(CardFocusPlate.cardFill))
+                .environment(\.settingsInCard, true)
+            }
+            .focusSection()
+            .preference(key: CardFirstLabelKey.self, value: !title.isEmpty)
+            .containerValue(\.settingsOwnCard, true)
+        } else {
+            plain
+        }
+    }
+
+    private static var hairline: some View {
+        Rectangle()
+            .fill(CueInk.color(0.10))
+            .frame(height: 1)
+            .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+            .padding(.vertical, 4)
+    }
+
+    /// Each row alone, but rows only to read together.
+    private static func runs(_ rows: SubviewsCollection) -> [[Subview]] {
+        var runs: [[Subview]] = []
+        for row in rows {
+            if row.containerValues.settingsEmbedded, let last = runs.last?.first,
+               last.containerValues.settingsEmbedded {
+                runs[runs.count - 1].append(row)
+            } else {
+                runs.append([row])
+            }
+        }
+        return runs
+    }
+
+    private var plain: some View {
         VStack(alignment: .leading, spacing: spacing) {
             // Untitled: the rows alone, no label's room.
             if !title.isEmpty {
@@ -339,10 +497,65 @@ struct SettingsRowLabel: View {
     var leading: AnyView? = nil
     /// In the value's place (the ratings' order: their chips).
     var trailing: AnyView? = nil
+    /// What no menu undoes (Delete Profile): its name in red.
+    var danger = false
+
+    @Environment(\.settingsCards) private var cards
 
     private var lit: Bool { isFocused && !focusHidden }
 
     var body: some View {
+        if cards { card } else { apple }
+    }
+
+    /// Settings 2's: the name over the description; value and chevron at
+    /// the end, centred on the row (on the name's line, a two-line row's
+    /// chevron sat high).
+    private var card: some View {
+        let ink = danger ? Color.red : isFocused ? Color.black : CueInk.primary
+        let quiet = isFocused ? Color.black.opacity(0.6) : CueInk.body
+        return HStack(spacing: 16) {
+            leading
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(ink)
+                    .lineLimit(1)
+                if let description, !description.isEmpty {
+                    Text(description)
+                        .font(.system(size: 24))
+                        .foregroundStyle(quiet)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 24)
+            HStack(spacing: 12) {
+                if let value, !value.isEmpty {
+                    Text(value)
+                        .font(.system(size: 24))
+                        .foregroundStyle(quiet)
+                        .lineLimit(1)
+                }
+                trailing
+                if checked {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(ink)
+                }
+                if chevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(quiet)
+                }
+            }
+        }
+        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var apple: some View {
         HStack(spacing: 16) {
             leading
             Text(title)
@@ -392,6 +605,30 @@ struct SettingsInfoRow: View {
 
     var body: some View {
         SettingsRowLabel(title: title, value: value)
+            .containerValue(\.settingsEmbedded, true)
+    }
+}
+
+/// Rows only to read, sunk into their card: a darker well with the focus
+/// plates' corners, a soft shade along its top edge.
+struct EmbeddedWell: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: Spotlight.cornerRadius - CardSettingsRow.plateInset, style: .continuous)
+            .fill(Color.black.opacity(scheme == .dark ? 0.22 : 0.06)
+                .shadow(.inner(color: .black.opacity(scheme == .dark ? 0.35 : 0.12), radius: 3, y: 1.5)))
+    }
+}
+
+/// Rows only to read, together: tight in Apple's look; in Settings 2's
+/// each its own row in the section, a hairline between.
+struct SettingsInfoRows<Content: View>: View {
+    @Environment(\.settingsCards) private var cards
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if cards { Group { content } } else { VStack(spacing: 0) { content } }
     }
 }
 
@@ -403,6 +640,7 @@ struct SettingsFocusHolder: View {
             .frame(height: 1)
             .focusable()
             .modifier(SettingsRowEntry(id: "holder"))
+            .containerValue(\.settingsOwnCard, true)
     }
 }
 
@@ -446,7 +684,22 @@ struct SettingsRowStyle: ButtonStyle {
                 - SettingsMetrics.rowHeight * (SettingsMetrics.focusScale - 1) / 2
         }
 
+        @Environment(\.settingsCards) private var cards
+
         var body: some View {
+            if cards { card } else { apple }
+        }
+
+        /// Settings 2's: nothing at rest, focused Settings 1's glass, flat.
+        private var card: some View {
+            configuration.label
+                .background { CardFocusPlate(lit: isFocused) }
+                .animation(.easeOut(duration: 0.12), value: isFocused)
+                .animation(.smooth(duration: 0.1), value: configuration.isPressed)
+                .modifier(Hold(isPressed: configuration.isPressed, onHold: onHold, didHold: didHold, task: $holdTask))
+        }
+
+        private var apple: some View {
             configuration.label
                 .background {
                     pill.padding(.vertical, -growth)
@@ -455,20 +708,30 @@ struct SettingsRowStyle: ButtonStyle {
                              anchor: .top)
                 .animation(.smooth(duration: 0.18), value: lit)
                 .animation(.smooth(duration: 0.1), value: configuration.isPressed)
-                // Still pressed after `holdAfter`: the hold (the way Details'
-                // buttons watch for it — a long-press gesture is unreliable
-                // on tvOS buttons).
-                .onChange(of: configuration.isPressed) { _, pressed in
-                    holdTask?.cancel()
-                    holdTask = nil
-                    guard pressed, let onHold else { return }
-                    holdTask = Task { @MainActor in
-                        try? await Task.sleep(for: SettingsRowStyle.holdAfter)
-                        guard !Task.isCancelled else { return }
-                        didHold?.wrappedValue = true
-                        onHold()
-                    }
+                .modifier(Hold(isPressed: configuration.isPressed, onHold: onHold, didHold: didHold, task: $holdTask))
+        }
+    }
+
+    /// Still pressed after `holdAfter`: the hold (the way Details' buttons
+    /// watch for it — a long-press gesture is unreliable on tvOS buttons).
+    private struct Hold: ViewModifier {
+        let isPressed: Bool
+        let onHold: (() -> Void)?
+        let didHold: Binding<Bool>?
+        @Binding var task: Task<Void, Never>?
+
+        func body(content: Content) -> some View {
+            content.onChange(of: isPressed) { _, pressed in
+                task?.cancel()
+                task = nil
+                guard pressed, let onHold else { return }
+                task = Task { @MainActor in
+                    try? await Task.sleep(for: SettingsRowStyle.holdAfter)
+                    guard !Task.isCancelled else { return }
+                    didHold?.wrappedValue = true
+                    onHold()
                 }
+            }
         }
     }
 }
@@ -493,6 +756,8 @@ struct SettingsOption: Identifiable {
     let label: String
     /// Before the label on the options page (a colour's swatch).
     var leading: AnyView? = nil
+    /// What picking it means (a choice row says it while it's focused).
+    var detail: String? = nil
 }
 
 /// A choice that opens its options as a page in the column (no pop-up):
@@ -521,7 +786,7 @@ struct SettingsOptionsRow: View {
     }
 }
 
-private struct SettingsOptionsPage: View {
+struct SettingsOptionsPage: View {
     let title: String
     let subtitle: String
     let options: [SettingsOption]
@@ -530,7 +795,7 @@ private struct SettingsOptionsPage: View {
 
     var body: some View {
         SettingsPage(title: title, subtitle: subtitle) {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 ForEach(options) { option in
                     Button {
                         selection = option.id
@@ -601,6 +866,7 @@ struct SettingsTallRow: View {
 
     @FocusState private var focused: Bool
     @Environment(\.settingsFocusHidden) private var focusHidden
+    @Environment(\.settingsCards) private var cards
     private var lit: Bool { focused && !focusHidden }
 
     var body: some View {
@@ -611,43 +877,560 @@ struct SettingsTallRow: View {
     }
 
     private var face: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        let look = SettingsLook(cards: cards)
+        return HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: cards ? 2 : 4) {
                 Text(title)
-                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
+                    .font(look.name)
+                    .foregroundStyle(SettingsInk.name(lit, cards: cards))
                     .lineLimit(1)
                 if !preview.isEmpty {
                     Text(preview)
-                        .font(.system(size: SettingsMetrics.descriptionTextSize))
-                        .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
+                        .font(look.detail)
+                        .foregroundStyle(SettingsInk.quiet(lit, cards: cards))
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 24)
             Image(systemName: "chevron.right")
-                .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.45) : SettingsMetrics.secondaryText)
+                .font(look.chevron)
+                .foregroundStyle(SettingsInk.chevron(lit, cards: cards))
                 .padding(.leading, 14)
-                .padding(.trailing, SettingsMetrics.chevronInset)
+                .padding(.trailing, look.chevronGap)
         }
         // Both sides as the add-ons' rows (`SettingsReorderRow`): the
         // chevron as far in from the end.
-        .padding(.horizontal, SettingsMetrics.rowInset)
-        .frame(height: SettingsMetrics.tallRowHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
-            Group {
-                if lit { GlassHighlight(focused: true, shape: shape) }
-                else { shape.fill(SettingsMetrics.restingFill) }
-            }
-            .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
-                - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
-            .shadow(color: .black.opacity(lit ? 0.3 : 0), radius: 16, y: 8)
+        .padding(.horizontal, look.inset)
+        .settingsTallChrome(lit: lit, cards: cards)
+    }
+}
+
+/// A row's sizes in either look: Apple TV's measures, or Settings 2's
+/// (`settingsCards`: 24 pt words, the words 24 pt from the card's edge).
+struct SettingsLook {
+    let cards: Bool
+    var name: Font { .system(size: cards ? 24 : SettingsMetrics.rowTextSize, weight: .medium) }
+    var value: Font { .system(size: cards ? 24 : SettingsMetrics.valueTextSize) }
+    var detail: Font { .system(size: cards ? 24 : SettingsMetrics.descriptionTextSize) }
+    var chevron: Font {
+        cards ? .system(size: 20, weight: .semibold) : .system(size: SettingsMetrics.rowTextSize, weight: .medium)
+    }
+    /// The words from the row's edge.
+    var inset: CGFloat { cards ? CardSettingsRow.textInset - CardSettingsRow.plateInset : SettingsMetrics.rowInset }
+    /// A round button from the row's end.
+    var buttonInset: CGFloat { cards ? 8 : SettingsMetrics.rowButtonInset }
+    var buttonGap: CGFloat { cards ? 16 : SettingsMetrics.rowButtonGap }
+    var chevronGap: CGFloat { cards ? 0 : SettingsMetrics.chevronInset }
+}
+
+extension View {
+    /// A tall row's chrome (lists, Watched, Why These Rows): Apple's fill
+    /// and glass, or Settings 2's — nothing at rest, Upcoming's white plate.
+    func settingsTallChrome(lit: Bool, moving: Bool = false, cards: Bool) -> some View {
+        modifier(SettingsTallChrome(lit: lit, moving: moving, cards: cards))
+    }
+}
+
+struct SettingsTallChrome: ViewModifier {
+    let lit: Bool
+    var moving = false
+    let cards: Bool
+
+    func body(content: Content) -> some View {
+        if cards {
+            content
+                .padding(.vertical, 14)
+                .frame(minHeight: 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    // Flat when focused; a row being moved lifts.
+                    CardFocusPlate(lit: lit)
+                        .shadow(color: .black.opacity(moving ? 0.4 : 0), radius: 18, y: 9)
+                }
+                .scaleEffect(moving ? 1.03 : 1)
+                .animation(.easeOut(duration: 0.12), value: lit)
+                .animation(.smooth(duration: 0.18), value: moving)
+        } else {
+            content
+                .frame(height: SettingsMetrics.tallRowHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
+                    Group {
+                        if lit { GlassHighlight(focused: true, shape: shape) }
+                        else { shape.fill(SettingsMetrics.restingFill) }
+                    }
+                    .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
+                        - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
+                    .shadow(color: .black.opacity(moving ? 0.4 : (lit ? 0.3 : 0)),
+                            radius: moving ? 24 : 16, y: moving ? 12 : 8)
+                }
+                .scaleEffect(moving ? 1.03 : (lit ? SettingsMetrics.focusScale : 1))
+                .animation(.smooth(duration: 0.18), value: lit)
+                .animation(.smooth(duration: 0.18), value: moving)
         }
-        .scaleEffect(lit ? SettingsMetrics.focusScale : 1)
-        .animation(.smooth(duration: 0.18), value: lit)
+    }
+}
+
+/// A row's words in either look: dark on the lit plate, else the page's.
+enum SettingsInk {
+    static func name(_ lit: Bool, cards: Bool, dimmed: Bool = false) -> Color {
+        lit ? (cards ? .black : SettingsMetrics.focusedText)
+            : dimmed ? (cards ? CueInk.tertiary : SettingsMetrics.labelText)
+            : (cards ? CueInk.primary : SettingsMetrics.primaryText)
+    }
+    static func quiet(_ lit: Bool, cards: Bool) -> Color {
+        lit ? (cards ? .black.opacity(0.6) : SettingsMetrics.focusedText.opacity(0.6))
+            : (cards ? CueInk.body : SettingsMetrics.secondaryText)
+    }
+    static func chevron(_ lit: Bool, cards: Bool) -> Color {
+        lit ? (cards ? .black.opacity(0.6) : SettingsMetrics.focusedText.opacity(0.45))
+            : (cards ? CueInk.body : SettingsMetrics.secondaryText)
+    }
+}
+
+/// A line of text on a page (an empty list, About's running text), lined
+/// up with the rows' words; in Settings 2 on a card of its own.
+struct SettingsNote: View {
+    @Environment(\.settingsCards) private var cards
+    @Environment(\.settingsInCard) private var inCard
+    let text: String
+    /// Apple's look: a value's size (an empty list) or a description's.
+    var large = false
+    init(_ text: String, large: Bool = false) {
+        self.text = text
+        self.large = large
+    }
+
+    var body: some View {
+        if cards {
+            Text(text)
+                .font(.system(size: 24))
+                .foregroundStyle(CueInk.body)
+                .lineSpacing(6)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, inCard ? CardSettingsRow.textInset - CardSettingsRow.plateInset
+                                             : CardSettingsRow.textInset)
+                .padding(.vertical, inCard ? 10 : 22)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                    .fill(CardFocusPlate.cardFill).opacity(inCard ? 0 : 1))
+        } else {
+            Text(text)
+                .font(.system(size: large ? SettingsMetrics.valueTextSize : SettingsMetrics.descriptionTextSize))
+                .foregroundStyle(large ? SettingsMetrics.secondaryText : CueInk.body)
+                .lineSpacing(large ? 0 : 6)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, SettingsMetrics.rowInset)
+        }
+    }
+}
+
+/// Settings 2's colours, Settings 1's: the cards its rows' faint fill
+/// (`restingFill`); a focused row its glass highlight, flat (no lift or
+/// shadow: elevated, it didn't sit in the cards); the shown category the
+/// glass's resting tint. Concentric with the card, 6 pt in; over the
+/// hairlines beside its row.
+struct CardFocusPlate: View {
+    static let cardFill = SettingsMetrics.restingFill
+    let lit: Bool
+    var selected = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Spotlight.cornerRadius - CardSettingsRow.plateInset,
+                                     style: .continuous)
+        // Glass only where it shows: hidden at opacity 0 it was still drawn,
+        // two layers for every row.
+        Group {
+            if lit { GlassHighlight(focused: true, shape: shape) }
+            else if selected { GlassHighlight(focused: false, shape: shape) }
+        }
+        .padding(.vertical, -CardSettingsRow.plateBleed)
+    }
+}
+
+// MARK: - Rows with actions (Settings 2)
+
+/// One of a row's actions: a pill.
+struct SettingsAction: Identifiable {
+    let title: String
+    /// Its round button's symbol.
+    let icon: String
+    /// What no menu undoes (Remove): red words.
+    var danger = false
+    /// Lifts the row to move it (`ActionListRow.moving`).
+    var move = false
+    /// What stays the same as its title changes (Turn Off / Turn On), so
+    /// focus stays on it: a renamed button was a new one, and focus fell
+    /// to the page's top.
+    var key: String? = nil
+    /// An optical nudge for a lopsided symbol, in points (negative: left):
+    /// centred by its box, sign-out's door and arrow read off-centre.
+    var nudge: CGFloat = 0
+    var action: () -> Void = {}
+    var id: String { key ?? title }
+}
+
+/// A list item with its actions on the row itself (Settings 2): its
+/// picture, its name, a detail line under it, its actions at its end as
+/// round buttons; while focus is in the row it's on the selected tint, the
+/// focused button the glass. Up /
+/// Down: the next row's pill nearest. A Move pill lifts the row: Up / Down
+/// move it, Select or Back puts it down, nothing else takes focus meanwhile.
+struct ActionListRow: View {
+    @Environment(\.settingsScroll) private var scroll
+    let id: String
+    var leading: AnyView? = nil
+    /// The picture's room (a logo square, a poster tall).
+    var leadingSize = CGSize(width: 56, height: 56)
+    let title: String
+    let detail: String
+    var dimmed = false
+    let actions: [SettingsAction]
+    /// The page's focus, when it moves focus itself (to the next row after
+    /// a removal): the buttons by "row id.action id"; else the row's own.
+    var focus: FocusState<String?>.Binding? = nil
+    /// In the column's focus (`settingsRowFocus`): a row on a category's
+    /// own page, so Settings 2 knows focus is in the settings. Not for long
+    /// lists: every move would redraw the column.
+    var columnFocus = false
+    @Environment(\.settingsRowFocus) private var columnBinding
+    private var pageFocus: FocusState<String?>.Binding? { focus ?? (columnFocus ? columnBinding : nil) }
+    /// This row is lifted / any row is.
+    var moving = false
+    var anyMoving = false
+    var onMoveStep: (Int) -> Void = { _ in }
+    var onDrop: () -> Void = {}
+
+    @FocusState private var ownPill: String?
+    /// The focused button's action id.
+    private var pill: String? {
+        guard let focus = pageFocus else { return ownPill }
+        guard let value = focus.wrappedValue, value.hasPrefix(id + ".") else { return nil }
+        return String(value.dropFirst(id.count + 1))
+    }
+
+    static let buttonSize: CGFloat = 52
+
+    var body: some View {
+        HStack(spacing: 18) {
+            // Off: its picture grey and faded, its words faded, at a glance
+            // (its buttons stay as they are, to turn it on).
+            HStack(spacing: 18) {
+                if let leading {
+                    leading.frame(width: leadingSize.width, height: leadingSize.height).saturation(dimmed ? 0 : 1)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(CueInk.primary)
+                        .lineLimit(1)
+                    // No second line where a list has nothing to say: the
+                    // name centred (an empty line under it looked odd).
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 24))
+                            .foregroundStyle(CueInk.body)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .opacity(dimmed ? 0.6 : 1)
+            Spacer(minLength: 24)
+            // At the row's end, always shown.
+            HStack(spacing: 14) {
+                ForEach(actions) { action in
+                    pillButton(action)
+                }
+            }
+        }
+        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Only a lifted row has a plate: the buttons are separate items
+        // (a plate following focus from row to row flickered).
+        .background {
+            CardFocusPlate(lit: false, selected: moving)
+                .shadow(color: .black.opacity(moving ? 0.35 : 0), radius: 18, y: 9)
+        }
+        .scaleEffect(moving ? 1.02 : 1)
+        .animation(.smooth(duration: 0.18), value: moving)
+        .focusSection()
+        .id(id)
+    }
+
+    private func pillButton(_ action: SettingsAction) -> some View {
+        let focused = pill == action.id
+        let icon = action.move && moving ? "checkmark" : action.icon
+        return Button {
+            if action.move { moving ? onDrop() : action.action() } else { action.action() }
+        } label: {
+            // The pills' focus everywhere (the top bar, Discover, Details'
+            // buttons): flat at rest; focused the white circle, dark symbol,
+            // grown 10 % on focus's spring, the white quick in and out.
+            Image(systemName: icon)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(action.danger ? Color.red : focused ? FlatControl.contentOnFocus : CueInk.primary)
+                .offset(x: action.nudge)
+                .frame(width: Self.buttonSize, height: Self.buttonSize)
+                .background {
+                    ZStack {
+                        Circle().fill(FlatControl.rest)
+                        Circle().fill(DetailActionButton.focusFill)
+                            .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+                            .opacity(focused ? 1 : 0)
+                            .animation(focused ? DetailActionButton.open : DetailActionButton.outFade, value: focused)
+                    }
+                }
+                .scaleEffect(focused ? DetailActionButton.detailsFocusScale : 1)
+                .animation(Motion.focus, value: focused)
+                .accessibilityLabel(action.title)
+        }
+        .buttonStyle(SettingsPress(lift: DetailActionButton.detailsFocusScale))
+        .modifier(PillFocus(own: $ownPill, page: pageFocus, id: action.id, pageID: "\(id).\(action.id)"))
+        .disabled(anyMoving && !(action.move && moving))
+        // Only while lifted: otherwise the engine moves focus.
+        .onMoveCommand(perform: action.move && moving ? { direction in
+            switch direction {
+            case .up: withAnimation(.smooth(duration: 0.2)) { onMoveStep(-1) }
+            case .down: withAnimation(.smooth(duration: 0.2)) { onMoveStep(1) }
+            default: return
+            }
+            DispatchQueue.main.async {
+                withAnimation(.smooth(duration: 0.2)) { scroll?.scrollTo(id) }
+            }
+        } : nil)
+        .onExitCommand(perform: action.move && moving ? onDrop : nil)
+    }
+}
+
+/// A setting with a few choices, all on its row (Settings 2): its name and
+/// description left, the choices right as pills — the chosen one on the
+/// selected grey, the focused one the pills' white, grown as every pill.
+/// Select picks. The description is the row's at rest, the focused
+/// option's while one is focused, two lines' room always (nothing jumps).
+/// For two or three choices; more open their page (`SettingsOptionsRow`),
+/// On / Off is the row itself.
+struct SettingsChoiceRow: View {
+    @Environment(\.settingsRowFocus) private var columnFocus
+    let id: String
+    let title: String
+    var description: String? = nil
+    let options: [SettingsOption]
+    let selection: String
+    let onPick: (String) -> Void
+
+    /// The option whose pill has focus.
+    private var focusedOption: SettingsOption? {
+        guard let value = columnFocus?.wrappedValue, value.hasPrefix(id + ".") else { return nil }
+        let option = String(value.dropFirst(id.count + 1))
+        return options.first { $0.id == option }
+    }
+
+    /// The chosen one says what it means, until focus moves to another.
+    private var shownDetail: String {
+        focusedOption?.detail ?? options.first { $0.id == selection }?.detail ?? description ?? ""
+    }
+
+    var body: some View {
+        // Coming in, only the chosen pill takes focus (the top bar's way), so
+        // passing through the row keeps its line still.
+        let inRow = focusedOption != nil
+        HStack(spacing: 24) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(CueInk.primary)
+                    .lineLimit(1)
+                Text(shownDetail)
+                    .font(.system(size: 24))
+                    .foregroundStyle(CueInk.body)
+                    .lineLimit(1)
+                    .animation(nil, value: shownDetail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 12) {
+                ForEach(options) { option in
+                    ChoicePill(label: option.label, chosen: option.id == selection) { onPick(option.id) }
+                        .modifier(SettingsRowEntry(id: "\(id).\(option.id)"))
+                        .disabled(!inRow && option.id != selection)
+                }
+            }
+        }
+        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusSection()
+    }
+
+    private struct ChoicePill: View {
+        let label: String
+        let chosen: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) { Face(label: label, chosen: chosen) }
+                .buttonStyle(SettingsPress(lift: DetailActionButton.detailsFocusScale))
+        }
+
+        private struct Face: View {
+            @Environment(\.isFocused) private var focused
+            let label: String
+            let chosen: Bool
+
+            var body: some View {
+                Text(label)
+                    .font(.system(size: 23, weight: .medium))
+                    .foregroundStyle(focused ? FlatControl.contentOnFocus : chosen ? CueInk.primary : CueInk.secondary)
+                    .padding(.horizontal, 20)
+                    .frame(height: 48)
+                    .background {
+                        // The chosen one on the grey, the others nothing behind
+                        // them (the top bar's tabs).
+                        ZStack {
+                            if chosen { Capsule().fill(FlatControl.selected) }
+                            Capsule().fill(DetailActionButton.focusFill)
+                                .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+                                .opacity(focused ? 1 : 0)
+                                .animation(focused ? DetailActionButton.open : DetailActionButton.outFade, value: focused)
+                        }
+                    }
+                    .scaleEffect(focused ? DetailActionButton.detailsFocusScale : 1)
+                    .animation(Motion.focus, value: focused)
+            }
+        }
+    }
+}
+
+/// On / Off as a choice row: two pills, Off first (the lowest left, as every row), the row's description under its name.
+struct SettingsOnOffRow: View {
+    let id: String
+    let title: String
+    var description: String? = nil
+    let isOn: Bool
+    let set: (Bool) -> Void
+
+    var body: some View {
+        SettingsChoiceRow(id: id, title: title, description: description,
+                          options: [SettingsOption(id: "off", label: "Off"), SettingsOption(id: "on", label: "On")],
+                          selection: isOn ? "on" : "off") { set($0 == "on") }
+    }
+}
+
+/// A row's button in its row's focus, or in the page's.
+private struct PillFocus: ViewModifier {
+    var own: FocusState<String?>.Binding
+    let page: FocusState<String?>.Binding?
+    let id: String
+    let pageID: String
+
+    func body(content: Content) -> some View {
+        if let page { content.focused(page, equals: pageID) } else { content.focused(own, equals: id) }
+    }
+}
+
+/// A list of titles to open or remove (Settings 2's Watch Progress and
+/// Library): Remove All on top (confirmed), then a row per title, its
+/// poster, name and detail, at its end Open (its Details) and the bin. A
+/// removal stays in place, faded, its bin an undo arrow (focus on it): it
+/// reaches the account only as you leave the page — so an undo never has
+/// to be sent.
+struct RemovableListPage: View {
+    struct Item: Identifiable {
+        let id: String
+        let poster: String?
+        let name: String
+        let detail: String
+        let meta: MetaItem?
+        /// One more action, between Open and Remove (Watched: a show's
+        /// episodes).
+        var more: SettingsAction? = nil
+    }
+
+    let title: String
+    let items: [Item]
+    /// The list's records are in (else nothing yet, not "empty").
+    var ready = true
+    let empty: String
+    let removeAllTitle: String
+    let removeAllMessage: String
+    let remove: (String) -> Void
+    let removeAll: () -> Void
+
+    @Environment(\.settingsOpenTitle) private var openTitle
+    @FocusState private var focus: String?
+    @State private var confirmAll = false
+    /// Removed here, not yet sent (undone with a second press).
+    @State private var pending: Set<String> = []
+
+    var body: some View {
+        SettingsPage(title: title) {
+            if !ready {
+                EmptyView()
+            } else if items.isEmpty {
+                SettingsNote(empty)
+            } else {
+                SettingsSection {
+                    Button { confirmAll = true } label: {
+                        SettingsRowLabel(title: "Remove All", value: "\(items.count - pending.count)", danger: true)
+                    }
+                    .settingsRow(id: "remove-all")
+                }
+                SettingsSection {
+                    ForEach(items) { item in
+                        let gone = pending.contains(item.id)
+                        ActionListRow(
+                            id: item.id,
+                            leading: AnyView(Poster(url: item.poster)),
+                            leadingSize: CGSize(width: 44, height: 66),
+                            title: item.name,
+                            detail: gone ? "Removed" : item.detail,
+                            dimmed: gone,
+                            actions: actions(item, gone: gone),
+                            focus: $focus)
+                    }
+                }
+            }
+        }
+        .onDisappear { commit() }
+        .alert(removeAllTitle, isPresented: $confirmAll) {
+            Button("Remove All", role: .destructive) {
+                pending = []
+                removeAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(removeAllMessage)
+        }
+    }
+
+    private func actions(_ item: Item, gone: Bool) -> [SettingsAction] {
+        var list: [SettingsAction] = []
+        if let meta = item.meta, let openTitle, !gone {
+            list.append(SettingsAction(title: "Open", icon: "info.circle", key: "open") { openTitle(meta) })
+        }
+        if let more = item.more, !gone { list.append(more) }
+        // One key both ways: focus stays on it as it turns.
+        list.append(gone
+            ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") { pending.remove(item.id) }
+            : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") { pending.insert(item.id) })
+        return list
+    }
+
+    /// The removals made here, sent as the page goes.
+    private func commit() {
+        for id in pending { remove(id) }
+        pending = []
+    }
+
+    private struct Poster: View {
+        let url: String?
+        var body: some View {
+            let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RemoteImage(url: url, maxDimension: 66, fallback: AnyView(Color.white.opacity(0.08)))
+                .clipShape(shape)
+                .overlay { shape.strokeBorder(Color.white.opacity(0.15), lineWidth: 1) }
+        }
     }
 }
 
@@ -680,8 +1463,34 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
     /// The rows' fade above the first row, as Apple's: from ~18 pt under
     /// the title down to where the first row starts.
     static var edge: CGFloat { 47 }
+    @Environment(\.settingsCards) private var cards
+
+    @Environment(\.settingsPath) private var path
 
     var body: some View {
+        if cards { cardsBody } else { appleBody }
+    }
+
+    /// Settings 2's: the path, then the page, scrolling together under the
+    /// fade into the top bar's gap.
+    private var cardsBody: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    path
+                    content
+                }
+                .padding(.bottom, 80)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .settingsTopFade()
+            .environment(\.settingsScroll, proxy)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .preference(key: SettingsPageHeaderKey.self, value: .init(title: title, subtitle: subtitle))
+    }
+
+    private var appleBody: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 content
@@ -777,14 +1586,16 @@ struct SettingsCapsuleButton: View {
 
     private struct Face: View {
         @Environment(\.isFocused) private var focused
+        @Environment(\.settingsCards) private var cards
         let title: String
 
         var body: some View {
             Text(title)
-                .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                .foregroundStyle(focused ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
-                .padding(.horizontal, 36)
-                .frame(height: 71)
+                .font(SettingsLook(cards: cards).name)
+                .foregroundStyle(focused ? (cards ? .black : SettingsMetrics.focusedText)
+                                 : (cards ? CueInk.primary : SettingsMetrics.primaryText))
+                .padding(.horizontal, cards ? 24 : 36)
+                .frame(height: cards ? 52 : 71)
                 .background {
                     Capsule(style: .continuous).fill(focused ? FlatControl.focus : FlatControl.rest)
                         .shadow(color: .black.opacity(focused ? 0.3 : 0), radius: 16, y: 8)
@@ -829,6 +1640,7 @@ struct SettingsReorderRow: View {
 
     /// At rest and lifted: the row lights. In Edit otherwise: only a button.
     @Environment(\.settingsFocusHidden) private var focusHidden
+    @Environment(\.settingsCards) private var cards
     private var lit: Bool { (!editing && focused == .row && !focusHidden) || isMoving }
 
     var body: some View {
@@ -854,23 +1666,23 @@ struct SettingsReorderRow: View {
     }
 
     private var face: some View {
-        HStack(spacing: 16) {
-            if let leading { leading.frame(width: 40, height: 40) }
+        let look = SettingsLook(cards: cards)
+        return HStack(spacing: 16) {
+            if let leading { leading.frame(width: cards ? 32 : 40, height: cards ? 32 : 40) }
             Text(title)
-                .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                .foregroundStyle(lit ? SettingsMetrics.focusedText
-                                 : dimmed ? SettingsMetrics.labelText : SettingsMetrics.primaryText)
+                .font(look.name)
+                .foregroundStyle(SettingsInk.name(lit, cards: cards, dimmed: dimmed))
                 .lineLimit(1)
             Spacer(minLength: 24)
             // In Edit the on / off says it.
             if let value, !editing {
                 Text(value)
-                    .font(.system(size: SettingsMetrics.valueTextSize))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
+                    .font(look.value)
+                    .foregroundStyle(SettingsInk.quiet(lit, cards: cards))
                     .lineLimit(1)
             }
             if editing {
-                HStack(spacing: SettingsMetrics.rowButtonGap) {
+                HStack(spacing: look.buttonGap) {
                     if let toggle {
                         Button(action: toggle.toggle) {
                             SettingsRowButtonFace(icon: toggle.isOn ? "eye" : "eye.slash", focused: focused == .toggle, onLitRow: lit)
@@ -904,31 +1716,16 @@ struct SettingsReorderRow: View {
                 .transition(.opacity)
             } else if chevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.45) : SettingsMetrics.secondaryText)
+                    .font(look.chevron)
+                    .foregroundStyle(SettingsInk.chevron(lit, cards: cards))
                     .padding(.leading, 14)
-                    .padding(.trailing, SettingsMetrics.chevronInset - SettingsMetrics.rowButtonInset
-                             + SettingsMetrics.rowInset)
+                    .padding(.trailing, look.chevronGap - look.buttonInset + look.inset)
             }
         }
-        .padding(.leading, SettingsMetrics.rowInset)
-        .padding(.trailing, SettingsMetrics.rowButtonInset)
-        .frame(height: SettingsMetrics.tallRowHeight)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
-            Group {
-                if lit { GlassHighlight(focused: true, shape: shape) }
-                else { shape.fill(SettingsMetrics.restingFill) }
-            }
-            .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
-                - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
-            .shadow(color: .black.opacity(isMoving ? 0.4 : (lit ? 0.3 : 0)),
-                    radius: isMoving ? 24 : 16, y: isMoving ? 12 : 8)
-        }
-        .scaleEffect(isMoving ? 1.03 : (lit ? SettingsMetrics.focusScale : 1))
-        .animation(.smooth(duration: 0.18), value: lit)
+        .padding(.leading, look.inset)
+        .padding(.trailing, look.buttonInset)
+        .settingsTallChrome(lit: lit, moving: isMoving, cards: cards)
         .animation(.smooth(duration: 0.15), value: focused)
-        .animation(.smooth(duration: 0.18), value: isMoving)
         .animation(.smooth(duration: 0.2), value: editing)
     }
 }
@@ -950,23 +1747,29 @@ struct SettingsPress: ButtonStyle {
 /// symbol, lifted; on a lit row its symbol alone.
 struct SettingsRowButtonFace: View {
     static let focusScale: CGFloat = 1.12
+    @Environment(\.settingsCards) private var cards
     let icon: String
     let focused: Bool
     let onLitRow: Bool
 
     var body: some View {
         Image(systemName: icon)
-            .font(.system(size: 26, weight: .semibold))
-            .foregroundStyle(focused ? SettingsMetrics.focusedText
+            .font(.system(size: cards ? 21 : 26, weight: .semibold))
+            .foregroundStyle(cards
+                             ? (focused ? Color.black : onLitRow ? Color.black.opacity(0.6) : CueInk.primary)
+                             : focused ? SettingsMetrics.focusedText
                              : onLitRow ? SettingsMetrics.focusedText.opacity(0.45)
                              : SettingsMetrics.primaryText)
-        .frame(width: SettingsMetrics.rowButtonSize, height: SettingsMetrics.rowButtonSize)
+        .frame(width: cards ? 52 : SettingsMetrics.rowButtonSize, height: cards ? 52 : SettingsMetrics.rowButtonSize)
         .background {
-            if focused { GlassHighlight(focused: true, shape: Circle()) }
+            if cards {
+                if focused { GlassHighlight(focused: true, shape: Circle()) }
+                else { Circle().fill(SettingsMetrics.rowButtonFill).opacity(onLitRow ? 0 : 1) }
+            } else if focused { GlassHighlight(focused: true, shape: Circle()) }
             else { Circle().fill(SettingsMetrics.rowButtonFill).opacity(onLitRow ? 0 : 1) }
         }
-        .scaleEffect(focused ? Self.focusScale : 1)
-        .shadow(color: .black.opacity(focused ? 0.3 : 0), radius: 10, y: 5)
+        .scaleEffect(focused && !cards ? Self.focusScale : 1)
+        .shadow(color: .black.opacity(focused && !cards ? 0.3 : 0), radius: 10, y: 5)
     }
 }
 
@@ -1026,4 +1829,36 @@ struct KeyboardPresenter: UIViewRepresentable {
             return true
         }
     }
+}
+
+/// Settings 2's scrolls: up past the column's top into the gap under the
+/// top bar (room for focus shadows), cut just above the first labels with
+/// a short fade (fading across the whole gap left rows under the bar), so
+/// rows going up never run under it. Unclipped at the sides and foot.
+struct SettingsTopFade: ViewModifier {
+    /// The gap between the top bar and the columns.
+    static let height: CGFloat = 40
+    /// The fade, ending at the column's top.
+    static let fade: CGFloat = 16
+
+    func body(content: Content) -> some View {
+        content
+            .contentMargins(.top, Self.height, for: .scrollContent)
+            .scrollClipDisabled()
+            .mask {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: Self.height - Self.fade)
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: Self.fade)
+                    Rectangle()
+                }
+                .padding(.horizontal, -80)
+                .padding(.bottom, -200)
+            }
+            .padding(.top, -Self.height)
+    }
+}
+
+extension View {
+    func settingsTopFade() -> some View { modifier(SettingsTopFade()) }
 }

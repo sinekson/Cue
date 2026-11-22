@@ -11,7 +11,6 @@ struct AccountSettingsDetail: View {
     @EnvironmentObject private var progress: ProgressStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var addons: AddonManager
-    @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var profiles: ProfileStore
 
     @State private var signingIn = false
@@ -20,7 +19,7 @@ struct AccountSettingsDetail: View {
         Group {
             if case .signedIn(_, let email) = account.authState {
                 SettingsPage(title: SettingsCategory.account.title) {
-                    VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                    SettingsSection {
                         SettingsLinkRow(title: "Account", value: email.isEmpty ? "Nuvio account" : email) {
                             NuvioAccountPage(email: email)
                         }
@@ -34,11 +33,6 @@ struct AccountSettingsDetail: View {
                             WatchProgressPage()
                         }
                         SettingsLinkRow(title: "Library", value: library.items.count.formatted()) { LibraryPage() }
-                        // Its page: later.
-                        Button {} label: {
-                            SettingsRowLabel(title: "Collections", value: collections.library.count.formatted(), chevron: true)
-                        }
-                        .settingsRow(id: "Collections")
                         SettingsLinkRow(title: "Watched", value: watched.items.count.formatted()) { WatchedSettingsPage() }
                     }
                 }
@@ -78,7 +72,7 @@ private struct SyncNowRow: View {
 }
 
 /// Account → its page: Sign Out with the email on its right, confirmed.
-private struct NuvioAccountPage: View {
+struct NuvioAccountPage: View {
     @EnvironmentObject private var account: NuvioAccountManager
     @EnvironmentObject private var nav: SettingsNav
     let email: String
@@ -103,17 +97,23 @@ private struct NuvioAccountPage: View {
 /// Profiles → its page: every profile (avatar, name, "Primary, Active"),
 /// Select opening its page; Add Profile last (`ProfileSetup`, the guided
 /// steps, then the new profile's page).
-private struct NuvioProfilesPage: View {
+struct NuvioProfilesPage: View {
     @EnvironmentObject private var profiles: ProfileStore
     @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.settingsCards) private var cards
     @State private var adding = false
+
+    /// A profile's page: Settings 2's one page, else the old levels.
+    private func open(_ id: Int) {
+        if cards { nav.push(ProfileEditPage(profileID: id)) } else { nav.push(ProfileSettingsPage(profileID: id)) }
+    }
 
     var body: some View {
         SettingsPage(title: "Profiles",
                      subtitle: "\(profiles.profiles.count) of \(ProfileStore.maxProfiles) profiles") {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 ForEach(profiles.profiles) { profile in
-                    Button { nav.push(ProfileSettingsPage(profileID: profile.id)) } label: {
+                    Button { open(profile.id) } label: {
                         SettingsRowLabel(title: profile.name, value: profiles.notes(for: profile), chevron: true,
                                          leading: AnyView(ProfileAvatarView(profile: profile, size: 44)))
                     }
@@ -127,7 +127,7 @@ private struct NuvioProfilesPage: View {
         .fullScreenCover(isPresented: $adding) {
             ProfileSetup(onFinish: { created in
                 adding = false
-                nav.push(ProfileSettingsPage(profileID: created.id))
+                open(created.id)
             }, onCancel: { adding = false })
             .environmentObject(profiles)
         }
@@ -161,13 +161,283 @@ struct ProfilePinCheck: View {
     }
 }
 
+/// A profile in Settings 2, everything on one page: a header in its colour
+/// (the avatar, the name, "Primary, Active"), changing as you pick; Name,
+/// Colour (its swatches in the row) and the PIN's rows; the
+/// avatars to pick from in place; then Switch, Use Primary's
+/// Add-ons, Copy Settings, Delete Profile.
+struct ProfileEditPage: View {
+    @EnvironmentObject private var profiles: ProfileStore
+    @EnvironmentObject private var nav: SettingsNav
+    @Environment(\.fromProfileGate) private var fromGate
+    let profileID: Int
+
+    @State private var keyboard: KeyboardRequest?
+    @State private var unlocking = false
+    @State private var confirmDelete = false
+    @State private var pin: ProfilePinStep?
+
+    private var profile: UserProfile? { profiles.profiles.first { $0.id == profileID } }
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 10)
+
+    var body: some View {
+        if let profile { page(profile) }
+    }
+
+    private func page(_ profile: UserProfile) -> some View {
+        let primary = profile.id == 1
+        let active = profile.id == profiles.activeProfileID
+        return SettingsPage(title: "Edit Profile") {
+            ProfileEditHeader(profile: profile, notes: profiles.notes(for: profile))
+                .containerValue(\.settingsOwnCard, true)
+                .preference(key: CardFirstLabelKey.self, value: false)
+
+            SettingsSection(title: "Profile") {
+                Button {
+                    keyboard = KeyboardRequest(text: profile.name, placeholder: "Profile name") { name in
+                        let name = name.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty { profiles.rename(id: profile.id, to: name) }
+                    }
+                } label: {
+                    SettingsRowLabel(title: "Name", value: profile.name)
+                }
+                .settingsRow(id: "pe.name")
+                colourRow(profile)
+                // The PIN: its actions as rows.
+                if profile.pinEnabled {
+                    SettingsButtonRow(title: "Change PIN",
+                                      description: "Asked before \(profile.name) opens.") { pin = .current(thenNew: true) }
+                    SettingsButtonRow(title: "Remove PIN") { pin = .current(thenNew: false) }
+                } else {
+                    SettingsButtonRow(title: "Set PIN",
+                                      description: "A 4-digit PIN before \(profile.name) opens.") { pin = .set }
+                }
+            }
+
+            SettingsSection(title: "Avatar") {
+                Button { profiles.setAvatar(id: profile.id, avatarID: nil) } label: {
+                    SettingsRowLabel(title: "Use Initials", checked: profile.avatarID == nil,
+                                     description: "On the colour above.",
+                                     leading: AnyView(Circle().fill(Color(profileHex: profile.avatarColorHex))
+                                        .overlay(Text(profile.initial).font(.system(size: 24, weight: .heavy))
+                                            .foregroundStyle(.white))
+                                        .frame(width: 56, height: 56)))
+                }
+                .settingsRow(id: "pe.initials")
+                // Every kind in the same card, each under its name.
+                ForEach(AvatarChoices.groups(profiles.avatarCatalog), id: \.name) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(group.name)
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(CueInk.tertiary)
+                            .padding(.leading, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+                            .padding(.top, 12)
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(group.items) { item in
+                                Button { profiles.setAvatar(id: profile.id, avatarID: item.id) } label: {
+                                    ProfileEditAvatarTile(item: item, chosen: profile.avatarID == item.id)
+                                }
+                                // Not in the column's focus binding: each move
+                                // through the grid rebuilt the whole page.
+                                .buttonStyle(SettingsPress(lift: 1))
+                            }
+                        }
+                    }
+                    .focusSection()
+                }
+            }
+
+            if (!active && !fromGate) || !primary || profiles.profiles.count > 1 {
+            SettingsSection(title: "More") {
+                if !active, !fromGate {
+                    SettingsButtonRow(title: "Switch to This Profile") {
+                        if profile.pinEnabled { unlocking = true } else { profiles.setActive(profile.id) }
+                    }
+                }
+                if !primary {
+                    SettingsToggleRow(title: "Use Primary's Add-ons",
+                                      description: "Its add-ons instead of its own; changes to them show here too.",
+                                      isOn: Binding(get: { profile.usesPrimaryAddons },
+                                                    set: { profiles.setUsesPrimaryAddons(id: profile.id, $0) }))
+                }
+                if profiles.profiles.count > 1 {
+                    SettingsLinkRow(title: "Copy Settings") { ProfileCopyPage(targetID: profile.id) }
+                }
+                if !primary {
+                    Button { confirmDelete = true } label: {
+                        SettingsRowLabel(title: "Delete Profile", danger: true)
+                    }
+                    .settingsRow(id: "pe.delete")
+                }
+            }
+            }
+        }
+        .task { await profiles.loadAvatarCatalog() }
+        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        .fullScreenCover(isPresented: $unlocking) {
+            ProfilePinCheck(profile: profile) {
+                unlocking = false
+                profiles.setActive(profile.id)
+            } onCancel: { unlocking = false }
+        }
+        .fullScreenCover(item: $pin) { current in
+            ProfilePinEntry(profile: profile, current: current, step: $pin)
+        }
+        .alert("Delete \(profile.name)?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) {
+                nav.back()
+                profiles.delete(id: profile.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the profile and everything synced to it from this TV and your Nuvio account.")
+        }
+    }
+
+    /// Colour: its name, the swatches at the row's end (Left / Right along
+    /// them, Select picks; the chosen one ringed).
+    private func colourRow(_ profile: UserProfile) -> some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Colour")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(CueInk.primary)
+                Text("Behind the initials, when there's no avatar.")
+                    .font(.system(size: 24))
+                    .foregroundStyle(CueInk.body)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 24)
+            HStack(spacing: 14) {
+                ForEach(ProfileStore.avatarColors, id: \.self) { hex in
+                    Button { profiles.setColor(id: profile.id, hex: hex) } label: {
+                        ProfileEditSwatch(hex: hex, chosen: profile.avatarColorHex.uppercased() == hex.uppercased())
+                    }
+                    .buttonStyle(SettingsPress(lift: 1.15))
+                    .modifier(SettingsRowEntry(id: "pe.c.\(hex)"))
+                }
+            }
+        }
+        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+        .padding(.vertical, 14)
+        .focusSection()
+    }
+
+}
+
+/// The profile page's header: a card in a deep shade of the profile's
+/// colour (dark always: words on it white), the avatar large, the name and
+/// what applies beside it. Not focusable: it shows what you pick.
+private struct ProfileEditHeader: View {
+    let profile: UserProfile
+    let notes: String
+
+    var body: some View {
+        HStack(spacing: 32) {
+            ProfileAvatarView(profile: profile, size: 150)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(profile.name)
+                    .font(.system(size: 40, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                if !notes.isEmpty {
+                    Text(notes)
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+                .fill(Self.shade(profile.avatarColorHex))
+        }
+        .animation(.easeOut(duration: 0.25), value: profile.avatarColorHex)
+    }
+
+    /// The colour's deep shade: its hue, a little less saturated, dark.
+    static func shade(_ hex: String) -> Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(Color(profileHex: hex)).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(hue: h, saturation: s * 0.75, brightness: 0.26)
+    }
+}
+
+/// A colour to pick: its circle; chosen, a ring in the page's ink round it;
+/// focused, larger with a white ring.
+private struct ProfileEditSwatch: View {
+    @Environment(\.isFocused) private var isFocused
+    let hex: String
+    let chosen: Bool
+
+    var body: some View {
+        Circle()
+            .fill(Color(profileHex: hex))
+            .frame(width: 40, height: 40)
+            .overlay {
+                if chosen {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(5)
+            .overlay {
+                Circle().strokeBorder(isFocused ? Color.white : chosen ? CueInk.primary : .clear,
+                                      lineWidth: isFocused ? 4 : 2)
+            }
+            .scaleEffect(isFocused ? 1.15 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.25 : 0), radius: 8, y: 4)
+            .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
+/// An avatar to pick: its picture round, its name under it, on a plate
+/// a little smaller than the tile's room: focused, the rows' glass;
+/// chosen, the selected tint (as the shown category).
+private struct ProfileEditAvatarTile: View {
+    @Environment(\.isFocused) private var isFocused
+    let item: AvatarCatalogItem
+    let chosen: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // The app's cached loader, decoded at its size (AsyncImage kept
+            // nothing: every visit loaded them all again).
+            RemoteImage(url: item.imageURL, maxDimension: 80, fallback: AnyView(Color.white.opacity(0.08)))
+                .frame(width: 80, height: 80)
+                .clipShape(Circle())
+            Text(item.displayName)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .font(.system(size: 23, weight: .medium))
+                .foregroundStyle(isFocused ? Color.black : CueInk.primary)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity)
+        .background {
+            // Glass only where it shows: a hidden one is still drawn.
+            let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+            Group {
+                if isFocused { GlassHighlight(focused: true, shape: shape) }
+                else if chosen { GlassHighlight(focused: false, shape: shape) }
+            }
+            .padding(.horizontal, 4)
+        }
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
 /// One profile: Switch to This Profile (not the active one; a locked one
-/// asks its PIN), Name, Avatar, Colour, PIN, the active one's Collections,
+/// asks its PIN), Name, Avatar, Colour, PIN,
 /// Use Primary's Add-ons (not Primary), Copy Settings, Delete Profile (not
 /// Primary).
 struct ProfileSettingsPage: View {
     @EnvironmentObject private var profiles: ProfileStore
-    @EnvironmentObject private var collections: CollectionsStore
     @EnvironmentObject private var nav: SettingsNav
     @Environment(\.fromProfileGate) private var fromGate
     let profileID: Int
@@ -188,7 +458,7 @@ struct ProfileSettingsPage: View {
         let primary = profile.id == 1
         let active = profile.id == profiles.activeProfileID
         return SettingsPage(title: profile.name, subtitle: profiles.notes(for: profile)) {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 // On the gate, picking an avatar switches.
                 if !active, !fromGate {
                     SettingsButtonRow(title: "Switch to This Profile") {
@@ -214,9 +484,6 @@ struct ProfileSettingsPage: View {
                 SettingsLinkRow(title: "PIN", value: profile.pinEnabled ? "On" : "Off") {
                     ProfilePinPage(profileID: profile.id)
                 }
-                if active, !collections.library.isEmpty {
-                    SettingsLinkRow(title: "Collections", value: collectionsSummary) { ProfileCollectionsPage() }
-                }
             }
             if !primary {
                 SettingsSection(title: "Shared from Primary") {
@@ -227,7 +494,7 @@ struct ProfileSettingsPage: View {
                 }
             }
             if profiles.profiles.count > 1 || !primary {
-                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                SettingsSection {
                     if profiles.profiles.count > 1 {
                         SettingsLinkRow(title: "Copy Settings") { ProfileCopyPage(targetID: profile.id) }
                     }
@@ -253,11 +520,6 @@ struct ProfileSettingsPage: View {
         } message: {
             Text("This removes the profile and everything synced to it from this TV and your Nuvio account.")
         }
-    }
-
-    private var collectionsSummary: String {
-        let shown = collections.library.filter { collections.isVisible($0.id) }.count
-        return "\(shown) of \(collections.library.count)"
     }
 }
 
@@ -356,24 +618,65 @@ struct AvatarChoices: View {
     }
 }
 
+/// A PIN change's steps, full screen (`ProfilePinEntry`).
+enum ProfilePinStep: Identifiable {
+    case set, current(thenNew: Bool), new(current: String)
+    var id: String {
+        switch self {
+        case .set: return "set"
+        case .current(let thenNew): return "current-\(thenNew)"
+        case .new: return "new"
+        }
+    }
+}
+
+/// The PIN pad for a step: Set, Change (the current one, then the new),
+/// Remove (the current one). Done: `step` to nil.
+struct ProfilePinEntry: View {
+    @EnvironmentObject private var profiles: ProfileStore
+    let profile: UserProfile
+    let current: ProfilePinStep
+    @Binding var step: ProfilePinStep?
+
+    var body: some View {
+        ZStack {
+            ATVBackground()
+            switch current {
+            case .set, .new:
+                PinEntryView(title: "Choose a 4-digit PIN", subtitle: profile.name, onSubmit: { pin in
+                    var old: String?
+                    if case .new(let value) = current { old = value }
+                    switch await profiles.setPin(id: profile.id, pin: pin, currentPin: old) {
+                    case .success: step = nil; return nil
+                    case .currentPinRequired: return "This profile already has a PIN."
+                    case .failure(let message): return message
+                    }
+                }, onCancel: { step = nil })
+                .id(current.id)
+            case .current(let thenNew):
+                PinEntryView(title: "Enter the current PIN", subtitle: profile.name, onSubmit: { pin in
+                    if thenNew {
+                        let outcome = await profiles.verifyPin(id: profile.id, pin: pin)
+                        guard outcome.unlocked else { return outcome.message ?? "Incorrect PIN" }
+                        step = .new(current: pin)
+                        return nil
+                    }
+                    if await profiles.clearPin(id: profile.id, currentPin: pin) { step = nil; return nil }
+                    return "Incorrect PIN, or it couldn't be removed."
+                }, onCancel: { step = nil })
+                .id(current.id)
+            }
+        }
+    }
+}
+
 /// A profile's PIN: off, Set PIN; on, Change PIN (the current one, then the
 /// new) and Remove PIN (the current one).
 private struct ProfilePinPage: View {
     @EnvironmentObject private var profiles: ProfileStore
     let profileID: Int
 
-    private enum Step: Identifiable {
-        case set, current(thenNew: Bool), new(current: String)
-        var id: String {
-            switch self {
-            case .set: return "set"
-            case .current(let thenNew): return "current-\(thenNew)"
-            case .new: return "new"
-            }
-        }
-    }
-
-    @State private var step: Step?
+    @State private var step: ProfilePinStep?
 
     private var profile: UserProfile? { profiles.profiles.first { $0.id == profileID } }
 
@@ -382,7 +685,7 @@ private struct ProfilePinPage: View {
             SettingsPage(title: "PIN", subtitle: profile.pinEnabled
                          ? "\(profile.name) asks for its PIN before it opens."
                          : "Ask for a 4-digit PIN before \(profile.name) opens.") {
-                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                SettingsSection {
                     if profile.pinEnabled {
                         SettingsButtonRow(title: "Change PIN") { step = .current(thenNew: true) }
                         SettingsButtonRow(title: "Remove PIN") { step = .current(thenNew: false) }
@@ -391,97 +694,8 @@ private struct ProfilePinPage: View {
                     }
                 }
             }
-            .fullScreenCover(item: $step) { step in
-                ZStack {
-                    ATVBackground()
-                    entry(step, profile: profile)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func entry(_ current: Step, profile: UserProfile) -> some View {
-        switch current {
-        case .set, .new:
-            PinEntryView(title: "Choose a 4-digit PIN", subtitle: profile.name, onSubmit: { pin in
-                var old: String?
-                if case .new(let value) = current { old = value }
-                switch await profiles.setPin(id: profile.id, pin: pin, currentPin: old) {
-                case .success: step = nil; return nil
-                case .currentPinRequired: return "This profile already has a PIN."
-                case .failure(let message): return message
-                }
-            }, onCancel: { step = nil })
-            .id(current.id)
-        case .current(let thenNew):
-            PinEntryView(title: "Enter the current PIN", subtitle: profile.name, onSubmit: { pin in
-                if thenNew {
-                    let outcome = await profiles.verifyPin(id: profile.id, pin: pin)
-                    guard outcome.unlocked else { return outcome.message ?? "Incorrect PIN" }
-                    step = .new(current: pin)
-                    return nil
-                }
-                if await profiles.clearPin(id: profile.id, currentPin: pin) { step = nil; return nil }
-                return "Incorrect PIN, or it couldn't be removed."
-            }, onCancel: { step = nil })
-            .id(current.id)
-        }
-    }
-}
-
-/// The active profile's collections: each one's folders shown here (its
-/// page: the collection on or off, then its folders).
-private struct ProfileCollectionsPage: View {
-    @EnvironmentObject private var collections: CollectionsStore
-
-    var body: some View {
-        SettingsPage(title: "Collections") {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
-                ForEach(collections.library) { collection in
-                    if collections.isGloballyVisible(collection.id) {
-                        SettingsLinkRow(title: collection.title, value: summary(collection)) {
-                            ProfileCollectionFoldersPage(collectionID: collection.id)
-                        }
-                    } else {
-                        SettingsRowLabel(title: collection.title, value: "Off for everyone")
-                    }
-                }
-            }
-        }
-    }
-
-    private func summary(_ collection: CueCollection) -> String {
-        guard collections.isVisible(collection.id) else { return "Hidden" }
-        let total = collection.folders.count
-        let on = collection.folders.filter { collections.isFolderVisible($0.id) }.count
-        return on == total ? "All \(total) folders" : "\(on) of \(total) folders"
-    }
-}
-
-private struct ProfileCollectionFoldersPage: View {
-    @EnvironmentObject private var collections: CollectionsStore
-    let collectionID: String
-
-    var body: some View {
-        if let collection = collections.library.first(where: { $0.id == collectionID }) {
-            SettingsPage(title: collection.title) {
-                SettingsToggleRow(title: "Show This Collection",
-                                  isOn: Binding(get: { collections.isVisible(collection.id) },
-                                                set: { collections.setVisible($0, id: collection.id) }))
-                if collections.isVisible(collection.id) {
-                    SettingsSection(title: "Folders") {
-                        ForEach(collection.folders) { folder in
-                            if collections.isFolderGloballyVisible(folder.id) {
-                                SettingsToggleRow(title: folder.title,
-                                                  isOn: Binding(get: { collections.isFolderVisible(folder.id) },
-                                                                set: { collections.setFolderVisible($0, id: folder.id) }))
-                            } else {
-                                SettingsRowLabel(title: folder.title, value: "Off for everyone")
-                            }
-                        }
-                    }
-                }
+            .fullScreenCover(item: $step) { current in
+                ProfilePinEntry(profile: profile, current: current, step: $step)
             }
         }
     }
@@ -612,10 +826,7 @@ struct WatchedSettingsPage: View {
         SettingsPage(title: "Watched", subtitle: Self.count(watched), accessory: entries.isEmpty ? nil : AnyView(accessory)) {
             if ready {
                 if entries.isEmpty {
-                    Text("Nothing watched yet.")
-                        .font(.system(size: SettingsMetrics.valueTextSize))
-                        .foregroundStyle(SettingsMetrics.secondaryText)
-                        .padding(.horizontal, SettingsMetrics.labelIndent)
+                    SettingsNote("Nothing watched yet.", large: true)
                 } else {
                     LazyVStack(spacing: SettingsMetrics.tallRowGap) {
                         ForEach(entries) { entry in row(entry, in: entries) }
@@ -693,16 +904,29 @@ struct WatchedSettingsPage: View {
     /// fetched — only the rest go out), else TMDB's. The page shows once
     /// they're in (1.5 s at most); later ones fill in.
     private func resolve() async {
-        var known: [String: String] = [:]
-        for item in progress.items.values where !item.name.isEmpty { known[item.metaID] = item.name }
-        for item in library.items.values where !item.name.isEmpty { known[item.id] = item.name }
-        self.known = known
+        known = Self.knownNames(progress: progress, library: library)
         let wanted = entries.filter { metas[$0.id] == nil }.map { ($0.id, $0.type) }
         guard !wanted.isEmpty else { ready = true; return }
         let cap = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             ready = true
         }
+        await Self.resolveMetas(wanted, addonManager: addonManager) { metas[$0] = $1 }
+        cap.cancel()
+        ready = true
+    }
+
+    /// Names Continue Watching or the library already know.
+    static func knownNames(progress: ProgressStore, library: LibraryStore) -> [String: String] {
+        var known: [String: String] = [:]
+        for item in progress.items.values where !item.name.isEmpty { known[item.metaID] = item.name }
+        for item in library.items.values where !item.name.isEmpty { known[item.id] = item.name }
+        return known
+    }
+
+    /// Each title's record as it comes: the add-on's, else TMDB's.
+    static func resolveMetas(_ wanted: [(String, String)], addonManager: AddonManager,
+                             found: @MainActor (String, MetaItem) -> Void) async {
         let addons = Dictionary(wanted.map { ($0.0, addonManager.metaAddons(for: $0.1, id: $0.0).first) },
                                 uniquingKeysWith: { first, _ in first })
         await withTaskGroup(of: (String, MetaItem?).self) { group in
@@ -717,11 +941,163 @@ struct WatchedSettingsPage: View {
                 }
             }
             for await (id, meta) in group {
-                if let meta { metas[id] = meta }
+                if let meta { await found(id, meta) }
             }
         }
-        cap.cancel()
-        ready = true
+    }
+}
+
+/// Settings 2's Watched → a show's episodes: Remove All (the show's,
+/// confirmed), then a section per season, a row per episode ("E3: name",
+/// when), its bin; removed in place, undone with a second press, sent as
+/// the page goes.
+struct WatchedEpisodesCardPage: View {
+    @EnvironmentObject private var watched: WatchedStore
+    let id: String
+    let name: String
+    let meta: MetaItem?
+    @State private var pending: Set<String> = []
+    @State private var confirmAll = false
+
+    private var items: [WatchedItem] {
+        watched.items.values.filter { $0.contentID == id }
+            .sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }
+    }
+
+    var body: some View {
+        let items = items
+        let seasons = Dictionary(grouping: items) { $0.season ?? 0 }.sorted { $0.key < $1.key }
+        SettingsPage(title: name) {
+            if items.isEmpty {
+                SettingsNote("No episodes watched.")
+            } else {
+                SettingsSection {
+                    Button { confirmAll = true } label: {
+                        SettingsRowLabel(title: "Remove All", value: "\(items.count - pending.count)", danger: true)
+                    }
+                    .settingsRow(id: "remove-all")
+                }
+                ForEach(seasons, id: \.key) { season, episodes in
+                    SettingsSection(title: season == 0 ? "Specials" : "Season \(season)") {
+                        ForEach(episodes, id: \.key) { item in
+                            let gone = pending.contains(item.key)
+                            ActionListRow(
+                                id: item.key,
+                                title: title(of: item),
+                                detail: gone ? "Removed" : item.watchedAt.formatted(
+                                    .dateTime.day().month(.abbreviated).year().hour().minute()),
+                                dimmed: gone,
+                                actions: [gone
+                                    ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") {
+                                        pending.remove(item.key)
+                                    }
+                                    : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") {
+                                        pending.insert(item.key)
+                                    }])
+                        }
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            if !pending.isEmpty { watched.remove(keys: Array(pending)) }
+            pending = []
+        }
+        .alert("Remove all of \(name)?", isPresented: $confirmAll) {
+            Button("Remove All", role: .destructive) {
+                pending = []
+                watched.remove(keys: items.map(\.key))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every episode is marked unwatched, on all your devices.")
+        }
+    }
+
+    /// "E3: Episode title", else "E3".
+    private func title(of item: WatchedItem) -> String {
+        let number = "E\(item.episode ?? 0)"
+        let video = meta?.videos?.first { $0.season == item.season && $0.episode == item.episode }
+        let title = video?.title ?? (item.title == name || item.title == meta?.name ? "" : item.title)
+        return title.isEmpty ? number : "\(number): \(title)"
+    }
+}
+
+/// Settings 2's Watched: a row per title, newest first — a show's count and
+/// its last episode, a film's date — Open (its Details), a show's Episodes
+/// (its page, one by one) and Remove (the title, every episode; undone in
+/// place).
+struct WatchedCardPage: View {
+    @EnvironmentObject private var nav: SettingsNav
+    @EnvironmentObject private var watched: WatchedStore
+    @EnvironmentObject private var progress: ProgressStore
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var addonManager: AddonManager
+    @State private var metas: [String: MetaItem] = [:]
+    @State private var known: [String: String] = [:]
+    @State private var ready = false
+
+    private var entries: [WatchedSettingsPage.Entry] {
+        Dictionary(grouping: watched.items.values, by: \.contentID)
+            .map { WatchedSettingsPage.Entry(id: $0.key, items: $0.value) }
+            .sorted { $0.latest > $1.latest }
+    }
+
+    var body: some View {
+        let entries = entries
+        RemovableListPage(
+            title: "Watched",
+            items: entries.map { entry in
+                let name = name(of: entry)
+                let meta = metas[entry.id]
+                return .init(id: entry.id, poster: meta?.poster, name: name, detail: detail(of: entry),
+                             meta: meta ?? MetaItem(id: entry.id, type: entry.type, name: name),
+                             more: entry.isShow ? SettingsAction(title: "Episodes", icon: "list.bullet") {
+                                 nav.push(WatchedEpisodesCardPage(id: entry.id, name: name, meta: meta))
+                             } : nil)
+            },
+            ready: ready,
+            empty: "Nothing watched yet.",
+            removeAllTitle: "Remove all watch history?",
+            removeAllMessage: "Every title and episode is marked unwatched, on all your devices.",
+            remove: { id in
+                if let entry = entries.first(where: { $0.id == id }) { watched.remove(keys: entry.items.map(\.key)) }
+            },
+            removeAll: {
+                if let sync = NuvioSyncManager.shared {
+                    Task { await sync.clearWatchHistoryEverywhere() }
+                } else {
+                    watched.clearAll()
+                }
+            })
+        .animation(.easeOut(duration: 0.25), value: ready)
+        .task {
+            known = WatchedSettingsPage.knownNames(progress: progress, library: library)
+            let wanted = entries.filter { metas[$0.id] == nil }.map { ($0.id, $0.type) }
+            guard !wanted.isEmpty else { ready = true; return }
+            let cap = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                ready = true
+            }
+            await WatchedSettingsPage.resolveMetas(wanted, addonManager: addonManager) { metas[$0] = $1 }
+            cap.cancel()
+            ready = true
+        }
+    }
+
+    private func name(of entry: WatchedSettingsPage.Entry) -> String {
+        if let name = metas[entry.id]?.name, !name.isEmpty { return name }
+        if let name = known[entry.id] { return name }
+        if !entry.isShow, let film = entry.items.first, !film.title.isEmpty { return film.title }
+        return entry.id
+    }
+
+    /// "12 episodes · S2:E4, 14 Oct 2026"; a film its date.
+    private func detail(of entry: WatchedSettingsPage.Entry) -> String {
+        let date = entry.latest.formatted(.dateTime.day().month(.abbreviated).year())
+        guard entry.isShow, let last = entry.items.max(by: { $0.watchedAt < $1.watchedAt }) else { return date }
+        let count = entry.items.filter { $0.episode != nil }.count
+        return "\(count == 1 ? "1 episode" : "\(count) episodes") · S\(last.season ?? 0):E\(last.episode ?? 0), \(date)"
     }
 }
 
@@ -743,10 +1119,7 @@ struct WatchProgressPage: View {
         let rows = rows
         SettingsPage(title: "Watch Progress", subtitle: "", accessory: rows.isEmpty ? nil : AnyView(accessory)) {
             if rows.isEmpty {
-                Text("Nothing in progress.")
-                    .font(.system(size: SettingsMetrics.valueTextSize))
-                    .foregroundStyle(SettingsMetrics.secondaryText)
-                    .padding(.horizontal, SettingsMetrics.labelIndent)
+                SettingsNote("Nothing in progress.", large: true)
             } else {
                 LazyVStack(spacing: SettingsMetrics.tallRowGap) {
                     ForEach(rows) { row($0, ids: rows.map(\.id)) }
@@ -794,7 +1167,7 @@ struct WatchProgressPage: View {
     }
 
     /// "S1:E1, 14:43 of 25:00, 14 Oct 2026"; a film without the episode.
-    private static func detail(of item: WatchProgress) -> String {
+    static func detail(of item: WatchProgress) -> String {
         var parts = ["\(clock(item.positionSeconds)) of \(clock(item.durationSeconds))",
                      item.updatedAt.formatted(.dateTime.day().month(.abbreviated).year())]
         if let season = item.season, let episode = item.episode {
@@ -808,6 +1181,53 @@ struct WatchProgressPage: View {
         let total = Int(seconds)
         let minutes = String(format: "%02d", total / 60 % 60), rest = String(format: "%02d", total % 60)
         return total >= 3600 ? "\(total / 3600):\(minutes):\(rest)" : "\(total / 60):\(rest)"
+    }
+}
+
+/// Settings 2's Watch Progress: a row each, newest first, its bin.
+struct WatchProgressCardPage: View {
+    @EnvironmentObject private var progress: ProgressStore
+
+    var body: some View {
+        RemovableListPage(
+            title: "Watch Progress",
+            items: progress.items.values.sorted { $0.updatedAt > $1.updatedAt }.map {
+                .init(id: $0.id, poster: $0.poster, name: $0.name.isEmpty ? $0.metaID : $0.name,
+                      detail: WatchProgressPage.detail(of: $0),
+                      meta: MetaItem(id: $0.metaID, type: $0.type, name: $0.name,
+                                     poster: $0.poster, background: $0.background))
+            },
+            empty: "Nothing in progress.",
+            removeAllTitle: "Remove all watch progress?",
+            removeAllMessage: "Every position is removed, on all your devices.",
+            remove: { progress.remove(id: $0) },
+            removeAll: { progress.clearAllProgress() })
+    }
+}
+
+/// Settings 2's Library: a row each, newest first, its bin.
+struct LibraryCardPage: View {
+    @EnvironmentObject private var library: LibraryStore
+
+    var body: some View {
+        let items = library.items.values.sorted { $0.addedAt > $1.addedAt }
+        RemovableListPage(
+            title: "Library",
+            items: items.map {
+                .init(id: $0.key, poster: $0.poster, name: $0.name,
+                      detail: "Added \($0.addedAt.formatted(.dateTime.day().month(.abbreviated).year()))",
+                      meta: $0.metaItem)
+            },
+            empty: "Nothing saved yet.",
+            removeAllTitle: "Remove everything from your library?",
+            removeAllMessage: "Saved for Later is emptied, on all your devices.",
+            remove: { key in
+                if let item = items.first(where: { $0.key == key }) { library.remove(id: item.id, type: item.type) }
+            },
+            removeAll: {
+                // One by one: `clearAll` is the account switch's, it queues no deletes.
+                for item in items { library.remove(id: item.id, type: item.type) }
+            })
     }
 }
 
@@ -829,10 +1249,7 @@ struct LibraryPage: View {
         let rows = rows
         SettingsPage(title: "Library", subtitle: "", accessory: rows.isEmpty ? nil : AnyView(accessory)) {
             if rows.isEmpty {
-                Text("Nothing saved yet.")
-                    .font(.system(size: SettingsMetrics.valueTextSize))
-                    .foregroundStyle(SettingsMetrics.secondaryText)
-                    .padding(.horizontal, SettingsMetrics.labelIndent)
+                SettingsNote("Nothing saved yet.", large: true)
             } else {
                 LazyVStack(spacing: SettingsMetrics.tallRowGap) {
                     ForEach(rows, id: \.key) { row($0, ids: rows.map(\.key)) }
@@ -902,6 +1319,7 @@ private struct WatchedRow: View {
     @FocusState private var focused: Part?
 
     @Environment(\.settingsFocusHidden) private var focusHidden
+    @Environment(\.settingsCards) private var cards
     private var lit: Bool { !editing && focused == .row && !focusHidden }
 
     /// Focus after a removal: the next row's button, else the one before's.
@@ -931,21 +1349,22 @@ private struct WatchedRow: View {
     }
 
     private var face: some View {
-        HStack(spacing: 24) {
+        let look = SettingsLook(cards: cards)
+        return HStack(spacing: cards ? 18 : 24) {
             if let poster {
-                let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+                let shape = RoundedRectangle(cornerRadius: cards ? 6 : 8, style: .continuous)
                 RemoteImage(url: poster, maxDimension: 90, fallback: AnyView(Color.white.opacity(0.08)))
-                    .frame(width: 58, height: 87)
+                    .frame(width: cards ? 44 : 58, height: cards ? 66 : 87)
                     .clipShape(shape)
-                    .overlay { shape.strokeBorder(Color.white.opacity(0.3), lineWidth: 1.5) }
+                    .overlay { shape.strokeBorder(Color.white.opacity(cards ? 0.15 : 0.3), lineWidth: cards ? 1 : 1.5) }
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText : SettingsMetrics.primaryText)
+                    .font(look.name)
+                    .foregroundStyle(SettingsInk.name(lit, cards: cards))
                 Text(detail)
-                    .font(.system(size: SettingsMetrics.descriptionTextSize))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.6) : SettingsMetrics.secondaryText)
+                    .font(look.detail)
+                    .foregroundStyle(SettingsInk.quiet(lit, cards: cards))
             }
             .lineLimit(1)
             Spacer(minLength: 24)
@@ -959,27 +1378,14 @@ private struct WatchedRow: View {
                 .transition(.opacity)
             } else if chevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: SettingsMetrics.rowTextSize, weight: .medium))
-                    .foregroundStyle(lit ? SettingsMetrics.focusedText.opacity(0.45) : SettingsMetrics.secondaryText)
-                    .padding(.trailing, SettingsMetrics.chevronInset)
+                    .font(look.chevron)
+                    .foregroundStyle(SettingsInk.chevron(lit, cards: cards))
+                    .padding(.trailing, look.chevronGap)
             }
         }
-        .padding(.leading, poster == nil ? SettingsMetrics.rowInset : 16)
-        .padding(.trailing, editing ? SettingsMetrics.rowButtonInset : SettingsMetrics.rowInset)
-        .frame(height: SettingsMetrics.tallRowHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: SettingsMetrics.tallRowRadius, style: .continuous)
-            Group {
-                if lit { GlassHighlight(focused: true, shape: shape) }
-                else { shape.fill(SettingsMetrics.restingFill) }
-            }
-            .padding(.vertical, lit ? -(SettingsMetrics.focusGrowth
-                - SettingsMetrics.tallRowHeight * (SettingsMetrics.focusScale - 1) / 2) : 0)
-            .shadow(color: .black.opacity(lit ? 0.3 : 0), radius: 16, y: 8)
-        }
-        .scaleEffect(lit ? SettingsMetrics.focusScale : 1)
-        .animation(.smooth(duration: 0.18), value: lit)
+        .padding(.leading, poster == nil ? look.inset : (cards ? 10 : 16))
+        .padding(.trailing, editing ? look.buttonInset : look.inset)
+        .settingsTallChrome(lit: lit, cards: cards)
         .animation(.smooth(duration: 0.15), value: focused)
         .animation(.smooth(duration: 0.2), value: editing)
     }

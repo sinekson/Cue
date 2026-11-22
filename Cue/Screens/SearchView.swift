@@ -122,6 +122,20 @@ final class SearchViewModel: ObservableObject {
 
     var hasHistory: Bool { !recentTitles.isEmpty || !recentSearches.isEmpty }
 
+    /// Settings → Storage: one recent search, or one opened title, gone.
+    func forgetSearch(_ query: String) {
+        recentSearches.removeAll { $0 == query }
+        UserDefaults.standard.set(recentSearches.joined(separator: "\n"),
+                                  forKey: ProfileScopedDefaults.key(Self.recentSearchesKey, profile))
+    }
+
+    func forgetTitle(_ id: String) {
+        recentTitles.removeAll { $0.id == id }
+        if let data = try? JSONEncoder().encode(recentTitles) {
+            UserDefaults.standard.set(data, forKey: ProfileScopedDefaults.key(Self.recentTitlesKey, profile))
+        }
+    }
+
     /// The query joins the recent searches.
     func remember() {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)

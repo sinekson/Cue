@@ -76,7 +76,7 @@ enum ServiceKey {
 /// its last answer said (`/user` is asked as MDBList's page opens, with the
 /// key's check). Nothing here is a button, so `SettingsFocusHolder` keeps
 /// focus on the page.
-private struct MDBListUsagePage: View {
+struct MDBListUsagePage: View {
     @ObservedObject private var usage = MDBListUsage.shared
 
     var body: some View {
@@ -115,7 +115,7 @@ private struct MDBListUsagePage: View {
     }
 }
 
-private extension MDBListUsage.Snapshot {
+extension MDBListUsage.Snapshot {
     /// "312 of 1,000".
     var requestsToday: String { "\((limit - remaining).formatted()) of \(limit.formatted())" }
 }
@@ -127,7 +127,7 @@ struct TMDBServicePage: View {
 
     var body: some View {
         SettingsPage(title: ServiceKey.tmdb.name) {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 ServiceKeyRow(service: .tmdb, key: tmdb.settings.trimmedAPIKey) { tmdb.setAPIKey($0) }
                 SettingsOptionsRow(
                     title: "Language",
@@ -148,7 +148,7 @@ struct MDBListServicePage: View {
 
     var body: some View {
         SettingsPage(title: ServiceKey.mdblist.name) {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 ServiceKeyRow(service: .mdblist, key: mdblist.settings.apiKey) { key in
                     mdblist.settings.apiKey = key
                     // Kept true for older Cue versions, which still read it.
@@ -190,7 +190,7 @@ struct MDBListServicePage: View {
 /// each row its ≡ handle — Select lifts a row, Up / Down move it, Select or
 /// Back puts it down. Done keeps the order, Cancel (or Back) puts it back
 /// as it was.
-private struct RatingOrderPage: View {
+struct RatingOrderPage: View {
     @EnvironmentObject private var mdblist: MDBListSettingsStore
     @Environment(\.settingsRowFocus) private var rowFocus
     /// In Edit: the order before it, for Cancel.
@@ -279,7 +279,7 @@ private struct ServiceKeyRow: View {
 /// A service's key, its own page. With a key: Remove Key (the key on its
 /// right, confirmed). Without: Type Key, Send from Phone (the full-screen
 /// QR). A key saved or removed, back to the service's page.
-private struct ServiceKeyDetailPage: View {
+struct ServiceKeyDetailPage: View {
     @EnvironmentObject private var nav: SettingsNav
     let service: ServiceKey
     let key: String
@@ -300,7 +300,7 @@ private struct ServiceKeyDetailPage: View {
 
     var body: some View {
         SettingsPage(title: "API Key", subtitle: subtitle) {
-            VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+            SettingsSection {
                 if key.isEmpty {
                     SettingsButtonRow(title: "Type Key") {
                         keyboard = KeyboardRequest(text: "", placeholder: "\(service.name) API key") { text in
@@ -336,6 +336,83 @@ private struct ServiceKeyDetailPage: View {
             let valid = await service.validate(candidate)
             checking = false
             if valid { setKey(candidate); nav.pop() } else { failed = true }
+        }
+    }
+}
+
+/// Settings 2's key row: "API Key" over the key (masked) and whether it
+/// works, its actions on it — with a key: Type a new one, Send from Phone,
+/// Remove (confirmed); without: Type, Send from Phone. A new key is
+/// checked before it's saved. No page of its own.
+struct ServiceKeyActionRow: View {
+    let service: ServiceKey
+    let key: String
+    let setKey: (String) -> Void
+
+    @State private var keyboard: KeyboardRequest?
+    @State private var checking = false
+    @State private var failed = false
+    @State private var sending = false
+    @State private var confirmRemove = false
+    /// The saved key works: nil until known, or offline.
+    @State private var works: Bool?
+
+    private var detail: String {
+        if checking { return "Checking the key…" }
+        if failed { return "That key didn't work. Check you copied all of it." }
+        guard !key.isEmpty else { return "Not added" }
+        return ServiceKey.masked(key) + (works == false ? " · Not working" : works == true ? " · Working" : "")
+    }
+
+    var body: some View {
+        ActionListRow(
+            id: "key.\(service.name)",
+            title: "API Key",
+            detail: detail,
+            actions: actions,
+            columnFocus: true)
+            .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+            .fullScreenCover(isPresented: $sending) {
+                KeyHandoffPage(service: service, save: { setKey($0) }) { sending = false }
+            }
+            .alert("Remove the \(service.name) key?", isPresented: $confirmRemove) {
+                Button("Remove", role: .destructive) { setKey("") }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("\(service.name) stops working on this TV until you add a key again.")
+            }
+            .task(id: key) {
+                works = nil
+                guard !key.isEmpty else { return }
+                works = await service.check(key)
+            }
+    }
+
+    private var actions: [SettingsAction] {
+        var list = [
+            SettingsAction(title: key.isEmpty ? "Type Key" : "Type a New Key", icon: "keyboard", key: "type") {
+                keyboard = KeyboardRequest(text: "", placeholder: "\(service.name) API key") { text in
+                    check(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            },
+            SettingsAction(title: "Send from Phone", icon: "qrcode", key: "phone") { sending = true },
+        ]
+        if !key.isEmpty {
+            list.append(SettingsAction(title: "Remove Key", icon: "trash", danger: true, key: "remove") {
+                confirmRemove = true
+            })
+        }
+        return list
+    }
+
+    private func check(_ candidate: String) {
+        guard !candidate.isEmpty else { return }
+        checking = true
+        failed = false
+        Task {
+            let valid = await service.validate(candidate)
+            checking = false
+            if valid { setKey(candidate) } else { failed = true }
         }
     }
 }

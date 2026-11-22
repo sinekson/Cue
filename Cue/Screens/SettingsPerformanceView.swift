@@ -48,7 +48,7 @@ struct DeveloperSettingsDetail: View {
             }
             if logOn, let address = LogServer.address {
                 SettingsSection {
-                    VStack(spacing: 0) {
+                    SettingsInfoRows {
                         SettingsInfoRow(title: "Address", value: address)
                     }
                 }
@@ -68,7 +68,7 @@ struct DeveloperSettingsDetail: View {
 }
 
 /// The log's sessions, newest first, each with its marks and problems.
-private struct LogSessionsPage: View {
+struct LogSessionsPage: View {
     @Binding var sessions: [CueLog.Session]?
 
     var body: some View {
@@ -117,7 +117,7 @@ private struct LogSessionPage: View {
                         + "/log?session=\(session.url.deletingPathExtension().lastPathComponent)") {
             SettingsFocusHolder()
             SettingsSection {
-                VStack(spacing: 0) {
+                SettingsInfoRows {
                     if session.notable.isEmpty {
                         SettingsInfoRow(title: "Nothing stood out", value: "")
                     }

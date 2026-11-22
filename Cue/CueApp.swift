@@ -297,6 +297,7 @@ struct RootView: View {
     @State private var libraryPath: [Route] = []
     @State private var discoverPath: [Route] = []
     @State private var upcomingPath: [Route] = []
+    @State private var settings2Path: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -1023,6 +1024,16 @@ struct RootView: View {
                     .probeScreen("Settings")
                     .environmentObject(searchViewModel)
             }
+        case .settings2:
+            NavigationStack(path: $settings2Path) {
+                CardSettingsRoot { focusSidebar(tab.rawValue) }
+                    // A title's Details from a list (Watch Progress, Library).
+                    .environment(\.settingsOpenTitle) { item in
+                        openDetail(item) { settings2Path.append($0) }
+                    }
+                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settings2Path)) }
+            }
+            .environmentObject(searchViewModel)
         case .home:
             homeStackWithLayers(path: $homePath, active: active)
         case .discover:

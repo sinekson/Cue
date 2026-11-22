@@ -6,12 +6,14 @@ enum AppTab: Int, CaseIterable, Identifiable {
     case home, search, library, settings
     // (4 and 5 were Movies and Series.)
     case discover = 6, upcoming
+    /// Settings 2: the card layout's prototype (2026-11-22).
+    case settings2
     var id: Int { rawValue }
 
     /// The top navigation: Search first, left of Home; Upcoming the
     /// calendar of your shows. The library is a row
     /// on Home — its old tab stays reachable only from within the app.
-    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings]
+    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings, .settings2]
 
 
     var label: String {
@@ -22,6 +24,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "Settings"
         case .discover: return "Discover"
         case .upcoming: return "Upcoming"
+        case .settings2: return "Settings 2"
         }
     }
 
@@ -33,6 +36,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "gearshape.fill"
         case .discover: return "safari.fill"
         case .upcoming: return "calendar"
+        case .settings2: return "gearshape.2.fill"
         }
     }
 }

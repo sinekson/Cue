@@ -77,7 +77,7 @@ struct HomeContentSettingsDetail: View {
 /// profile's rows: what Cue read from your watching, then each tab's rows,
 /// each a tall row with a short preview; Select opens it in full in the
 /// About panel (`TextPanel`). When they were built, to read, last.
-private struct WhyTheseRowsPage: View {
+struct WhyTheseRowsPage: View {
     @State private var saved: CueRows.Saved?
     @State private var loaded = false
 
@@ -108,12 +108,7 @@ private struct WhyTheseRowsPage: View {
                                     value: DateFormatter.settingsWhen.string(from: saved.builtAt))
                 }
             } else if loaded {
-                SettingsSection {
-                    Text("Not built yet. Open Home and Cue builds its rows.")
-                        .font(.system(size: SettingsMetrics.descriptionTextSize))
-                        .foregroundStyle(CueInk.body)
-                        .padding(.horizontal, SettingsMetrics.rowInset)
-                }
+                SettingsNote("Not built yet. Open Home and Cue builds its rows.")
                 .background(alignment: .top) { SettingsFocusHolder() }
             }
         }
@@ -540,7 +535,7 @@ private struct WhyTitleLine: View {
 /// page (`YourRowPage`). Edit, on the title's line, gives each the ≡
 /// handle; Done or Back ends it. (Home & Details as Home Rows' and the
 /// add-ons' pages.)
-private struct YourRowsPage: View {
+struct YourRowsPage: View {
     @EnvironmentObject private var nav: SettingsNav
     @Environment(\.settingsRowFocus) private var rowFocus
     @ObservedObject private var pins = DiscoverPins.shared
@@ -672,7 +667,7 @@ struct AddonsPage: View {
                         onDrop: { moving = nil })
                 }
                 // Under the list as Apple's Add Language…, the rows' own gap between them.
-                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                SettingsSection {
                     SettingsButtonRow(title: "Add Add-on") { adding = true }
                     SettingsButtonRow(title: "Refresh Add-ons", value: refreshValue) {
                         guard !refreshing else { return }
@@ -714,6 +709,120 @@ struct AddonsPage: View {
     }
 }
 
+/// Settings 2's Add-ons, one page: Add Add-on and Refresh on top, then
+/// the add-ons in source order, each a row with its actions on it
+/// (`ActionListRow`): Configure (when it has settings), Turn Off / On,
+/// Move, Rename, Remove. No add-on page, no Edit mode.
+struct AddonsCardPage: View {
+    @EnvironmentObject private var addonManager: AddonManager
+    @State private var moving: String?
+    @State private var adding = false
+    @State private var configuring: InstalledAddon?
+    @State private var removing: InstalledAddon?
+    @State private var keyboard: KeyboardRequest?
+    @State private var refreshing = false
+    @State private var failed = 0
+    @AppStorage("cue.addons.refreshedAt") private var refreshedAt: Double = 0
+
+    private var refreshValue: String {
+        if refreshing { return "Refreshing…" }
+        if failed > 0 { return failed == 1 ? "1 didn't answer" : "\(failed) didn't answer" }
+        guard refreshedAt > 0 else { return "Not yet" }
+        return DateFormatter.settingsWhen.string(from: Date(timeIntervalSince1970: refreshedAt))
+    }
+
+    var body: some View {
+        SettingsPage(title: "Add-ons") {
+            SettingsSection {
+                SettingsButtonRow(title: "Add Add-on", description: "From your phone, with its link.") { adding = true }
+                SettingsButtonRow(title: "Refresh Add-ons", value: refreshValue) {
+                    guard !refreshing else { return }
+                    refreshing = true
+                    Task {
+                        failed = await addonManager.refreshManifests(bypassCache: true)
+                        refreshing = false
+                        if failed == 0 { refreshedAt = Date().timeIntervalSince1970 }
+                    }
+                }
+            }
+            .disabled(moving != nil)
+            if !addonManager.addons.isEmpty {
+                SettingsSection(title: "Higher Ones Come First for Sources") {
+                    ForEach(Array(addonManager.addons.enumerated()), id: \.element.id) { index, addon in
+                        ActionListRow(
+                            id: addon.id,
+                            leading: AnyView(AddonLogo(addon: addon)),
+                            title: addon.displayName,
+                            detail: Self.detail(addon),
+                            dimmed: !addon.enabled,
+                            actions: actions(addon),
+                            moving: moving == addon.id,
+                            anyMoving: moving != nil,
+                            onMoveStep: { addonManager.move(addon, to: index + $0) },
+                            onDrop: { moving = nil })
+                    }
+                }
+            }
+        }
+        .onChange(of: moving) { _, now in TopBarLock.shared.locked = now != nil }
+        .onDisappear { TopBarLock.shared.locked = false }
+        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
+        .fullScreenCover(isPresented: $adding) {
+            AddonPhoneAddView(addonManager: addonManager) { adding = false }
+        }
+        .fullScreenCover(item: $configuring) { addon in
+            AddonPhoneAddView(addonManager: addonManager, configuring: addon) { configuring = nil }
+        }
+        .alert("Remove \(removing?.displayName ?? "")?", isPresented: Binding(
+            get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let removing { addonManager.remove(removing) }
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: {
+            Text("It's removed from this device and your account. You can add it back later with its link.")
+        }
+    }
+
+    private func actions(_ addon: InstalledAddon) -> [SettingsAction] {
+        var list: [SettingsAction] = []
+        if addon.configureURL != nil {
+            list.append(SettingsAction(title: "Configure", icon: "gearshape") { configuring = addon })
+        }
+        list.append(SettingsAction(title: addon.enabled ? "Turn Off" : "Turn On",
+                                   icon: addon.enabled ? "eye.slash" : "eye", key: "toggle") {
+            addonManager.setEnabled(addon, !addon.enabled)
+        })
+        if addonManager.addons.count > 1 {
+            list.append(SettingsAction(title: "Move", icon: "arrow.up.arrow.down", move: true) { moving = addon.id })
+        }
+        list.append(SettingsAction(title: "Rename", icon: "pencil") {
+            keyboard = KeyboardRequest(text: addon.displayName, placeholder: addon.manifest.name) {
+                addonManager.rename(addon, to: $0)
+            }
+        })
+        list.append(SettingsAction(title: "Remove", icon: "trash", danger: true) { removing = addon })
+        return list
+    }
+
+    /// "v1.4 · Streams, Subtitles": its version and what it gives.
+    static func detail(_ addon: InstalledAddon) -> String {
+        let kinds = (addon.manifest.resources ?? []).map(\.name).filter { $0 != "manifest" }
+        let named = Array(Set(kinds)).sorted().map { name -> String in
+            switch name {
+            case "stream": return "Streams"
+            case "subtitles": return "Subtitles"
+            case "catalog": return "Catalogs"
+            case "meta": return "Details"
+            default: return name.capitalized
+            }
+        }
+        return ([addon.manifest.version.map { "v\($0)" }] + [named.isEmpty ? nil : named.joined(separator: ", ")])
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
 /// An add-on's own page: Configure (when it has settings — its page on
 /// your phone), Rename (the keyboard; empty: its own name again), Remove
 /// (confirmed; back to the list).
@@ -731,7 +840,7 @@ private struct AddonPage: View {
     var body: some View {
         if let addon {
             SettingsPage(title: addon.displayName, subtitle: addon.manifest.description ?? "") {
-                VStack(alignment: .leading, spacing: SettingsMetrics.rowGap) {
+                SettingsSection {
                     if addon.configureURL != nil {
                         SettingsButtonRow(title: "Configure") { configuring = true }
                     }

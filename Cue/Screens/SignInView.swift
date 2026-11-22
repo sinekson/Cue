@@ -16,6 +16,10 @@ struct NuvioSignInView: View {
     let onSignedIn: () -> Void
     /// First launch only: carry on without an account.
     var onContinueWithout: (() -> Void)? = nil
+    /// Straight to the email form, no code (Settings 2's email button);
+    /// Back there closes (`onClose`) instead of going to the code.
+    var emailOnly = false
+    var onClose: (() -> Void)? = nil
 
     @State private var usingEmail = false
     @State private var email = ""
@@ -48,7 +52,9 @@ struct NuvioSignInView: View {
         .onChange(of: account.authState.isSignedIn) { _, signedIn in
             if signedIn { onSignedIn() }
         }
-        .onAppear { if account.qrLogin == nil { account.startQRLogin() } }
+        .onAppear {
+            if emailOnly { usingEmail = true } else if account.qrLogin == nil { account.startQRLogin() }
+        }
         .onDisappear { account.cancelQRLogin() }
     }
 
@@ -162,11 +168,11 @@ struct NuvioSignInView: View {
             .padding(.top, 20)
         }
         .onAppear { focus = .emailField }
-        // Back returns to the code.
+        // Back returns to the code (email only: closes).
         .onExitCommand {
             account.errorMessage = nil
             password = ""
-            usingEmail = false
+            if emailOnly { onClose?() } else { usingEmail = false }
         }
     }
 }

@@ -638,6 +638,15 @@ final class BackgroundPicks {
         saveSaved()
     }
 
+    /// A background's colours, darkest first (Settings 2's strip): a saved
+    /// one's own, else read from its picture.
+    func colours(_ entry: Entry) async -> [BandsPicture.Colour]? {
+        let kept = saved.first { $0.entry.id == entry.id }?.palette
+            .filter { $0.count == 4 }.map { (r: $0[0], g: $0[1], b: $0[2], share: $0[3]) }
+        if let kept, !kept.isEmpty { return kept }
+        return await TitleBands.shared.palette(for: entry.url)
+    }
+
     /// A saved one drawn small, in this mode (Settings' list).
     func preview(_ entry: Entry) async -> UIImage? {
         let mode = Mode.now
