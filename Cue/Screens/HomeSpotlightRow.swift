@@ -241,8 +241,9 @@ enum HomeHideWatched {
     static let key = "cue.home.hideWatched"
 }
 
-/// Settings → Home & Details → Hide spoilers: Details' episodes not yet
-/// watched or started show their still blurred.
+/// Settings → Home & Details → Hide Spoilers: episodes not yet watched
+/// (Details' or started there too) show their still blurred, on Home's
+/// episode rows, Details and the player's shelf.
 enum DetailHideSpoilers {
     static let key = "cue.details.hideSpoilers"
 }

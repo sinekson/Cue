@@ -193,8 +193,10 @@ final class ProfileStore: ObservableObject {
     private var suppressChange = false
 
     static let maxProfiles = 5
+    /// Ten, round the colour wheel (a line of the profile page's grid).
     static let avatarColors = [
-        "#1E88E5", "#E53935", "#8E24AA", "#43A047", "#FB8C00", "#D81B60", "#00ACC1"
+        "#1E88E5", "#3949AB", "#8E24AA", "#D81B60", "#E53935",
+        "#FB8C00", "#43A047", "#00897B", "#00ACC1", "#546E7A",
     ]
 
     private static let listKey = "cue.profiles.v1"

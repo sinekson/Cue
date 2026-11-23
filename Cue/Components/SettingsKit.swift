@@ -258,10 +258,6 @@ private struct SettingsOpenTitleKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Settings 2: a page's place ("Storage › Cache"), drawn at the top of
-    /// its scroll so it goes up with the page.
-    @Entry var settingsPath: AnyView? = nil
-
     /// Settings 2's look (`CardSettingsRoot`): sections as flat cards, the
     /// description inside the row, focus Upcoming's white plate.
     var settingsCards: Bool {
@@ -274,6 +270,10 @@ extension EnvironmentValues {
         get { self[SettingsOpenTitleKey.self] }
         set { self[SettingsOpenTitleKey.self] = newValue }
     }
+
+    /// Settings 2: the room over a page whose first section has no label,
+    /// so its first card is level with the categories' first.
+    @Entry var settingsFirstRoom: CGFloat = 0
 
     /// Inside a section's card (Settings 2): a note draws no card of its own.
     var settingsInCard: Bool {
@@ -388,10 +388,12 @@ struct SettingsSection<Content: View>: View {
         if cards {
             VStack(alignment: .leading, spacing: 0) {
                 if !title.isEmpty {
+                    // The categories' labels' room: both columns' cards level.
                     Text(title)
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(CueInk.tertiary)
                         .padding(.leading, CardSettingsRow.textInset)
+                        .frame(height: CardSettingsSection.labelRoom - 12, alignment: .top)
                         .padding(.bottom, 12)
                 }
                 // A hairline between two rows (Upcoming's), under them: a
@@ -435,6 +437,7 @@ struct SettingsSection<Content: View>: View {
                 .environment(\.settingsInCard, true)
             }
             .focusSection()
+            .settingsSectionTop()
             .preference(key: CardFirstLabelKey.self, value: !title.isEmpty)
             .containerValue(\.settingsOwnCard, true)
         } else {
@@ -1067,6 +1070,9 @@ struct SettingsAction: Identifiable {
     /// An optical nudge for a lopsided symbol, in points (negative: left):
     /// centred by its box, sign-out's door and arrow read off-centre.
     var nudge: CGFloat = 0
+    /// Its title in words on a capsule, not a symbol (Remove All: a trash
+    /// symbol read as the rows' own Remove).
+    var spelled = false
     var action: () -> Void = {}
     var id: String { key ?? title }
 }
@@ -1464,24 +1470,25 @@ struct SettingsScrollingPage<Accessory: View, Content: View>: View {
     /// the title down to where the first row starts.
     static var edge: CGFloat { 47 }
     @Environment(\.settingsCards) private var cards
+    @Environment(\.settingsFirstRoom) private var firstRoom
 
-    @Environment(\.settingsPath) private var path
 
     var body: some View {
         if cards { cardsBody } else { appleBody }
     }
 
-    /// Settings 2's: the path, then the page, scrolling together under the
-    /// fade into the top bar's gap.
+    /// Settings 2's: the page, scrolling under the fade into the gap above
+    /// it (where you are is the breadcrumbs', over the columns).
     private var cardsBody: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
-                    path
                     content
                 }
-                .padding(.bottom, 80)
+                .padding(.top, firstRoom)
+                .padding(.bottom, SettingsTopFade.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .coordinateSpace(.named(SettingsTopFade.space))
             }
             .settingsTopFade()
             .environment(\.settingsScroll, proxy)
@@ -1831,19 +1838,34 @@ struct KeyboardPresenter: UIViewRepresentable {
     }
 }
 
-/// Settings 2's scrolls: up past the column's top into the gap under the
-/// top bar (room for focus shadows), cut just above the first labels with
-/// a short fade (fading across the whole gap left rows under the bar), so
-/// rows going up never run under it. Unclipped at the sides and foot.
+/// Settings 2's scrolls: one top line for both columns (the categories'
+/// first label's), what goes up past it fading over the gap to the
+/// breadcrumbs, the page stopping with a section on the line. Unclipped
+/// at the sides and foot.
 struct SettingsTopFade: ViewModifier {
     /// The gap between the top bar and the columns.
     static let height: CGFloat = 40
-    /// The fade, ending at the column's top.
-    static let fade: CGFloat = 16
+    /// The fade, ending at the column's top: most of the gap up to the
+    /// breadcrumbs, so what goes up dissolves rather than being cut (16 pt
+    /// read as a cut above the categories' first label).
+    static let fade: CGFloat = 32
+    /// Room under a page, so its last section too can come up to the line
+    /// (the page's end stopped it short, a card half in the fade).
+    static let tail: CGFloat = 640
+    /// The page's content, where its sections' tops are measured.
+    static let space = "settingsPage"
+    @State private var tops = SettingsSectionTops()
 
     func body(content: Content) -> some View {
         content
             .contentMargins(.top, Self.height, for: .scrollContent)
+            // The page stops with a section's top on the column's top line,
+            // never a card cut half in the fade.
+            .scrollTargetBehavior(SettingsSectionSnap(tops: tops))
+            .onPreferenceChange(SettingsSectionTopsKey.self) { frames in
+                tops.values = frames.map(\.lowerBound).sorted()
+                tops.end = frames.map(\.upperBound).max() ?? 0
+            }
             .scrollClipDisabled()
             .mask {
                 VStack(spacing: 0) {
@@ -1859,6 +1881,1973 @@ struct SettingsTopFade: ViewModifier {
     }
 }
 
+/// The sections' tops in the page (`SettingsTopFade.space`).
+final class SettingsSectionTops: @unchecked Sendable {
+    var values: [CGFloat] = []
+    /// Where the last section ends (the page's room under it is not
+    /// content).
+    var end: CGFloat = 0
+}
+
+struct SettingsSectionTopsKey: PreferenceKey {
+    static let defaultValue: [ClosedRange<CGFloat>] = []
+    static func reduce(value: inout [ClosedRange<CGFloat>], nextValue: () -> [ClosedRange<CGFloat>]) {
+        value += nextValue()
+    }
+}
+
+/// Where focus scrolls the page: the focused row's section's top on the
+/// line, so a section comes up whole (the engine's own stops left cards
+/// cut in the fade, and jumped further than needed). A section taller
+/// than the column (a long list): the engine's own stop, a row at a time.
+struct SettingsSectionSnap: ScrollTargetBehavior {
+    let tops: SettingsSectionTops
+
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard abs(target.rect.minY - context.originalTarget.rect.minY) > 0.5,
+              let row = MainActor.assumeIsolated({ Self.focusedInScroll() }) else { return }
+        // The scroll's content starts with the top margin; the sections'
+        // tops are measured under it.
+        let top = row.minY - SettingsTopFade.height
+        let view = context.containerSize.height - SettingsTopFade.height
+        guard let section = tops.values.last(where: { $0 <= top + 1 }),
+              top + row.height - section <= view else {
+            // A long list: the engine's stop, but never past its end into
+            // the room under the page.
+            target.rect.origin.y = min(target.rect.minY, max(0, tops.end - view))
+            return
+        }
+        // The first: the page as it opens (its room over the first card).
+        target.rect.origin.y = section == tops.values.first ? 0 : max(0, section)
+    }
+
+    /// The focused item's frame in its scroll's content (SwiftUI's focus
+    /// items report it so), when it is in one.
+    @MainActor private static func focusedInScroll() -> CGRect? {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first,
+              let item = window.windowScene?.focusSystem?.focusedItem else { return nil }
+        return item.frame
+    }
+}
+
 extension View {
     func settingsTopFade() -> some View { modifier(SettingsTopFade()) }
+
+    /// A section's top, for the page's scroll to stop on.
+    func settingsSectionTop() -> some View {
+        background {
+            GeometryReader { geo in
+                let frame = geo.frame(in: .named(SettingsTopFade.space))
+                Color.clear.preference(key: SettingsSectionTopsKey.self, value: [frame.minY...max(frame.minY, frame.maxY)])
+            }
+        }
+    }
+}
+
+// MARK: - Settings 2 in UIKit (2026-11-23)
+
+/// Settings 2's look in UIKit, value for value with the SwiftUI parts it
+/// replaces: the cards' fill and corners, the rows' insets, the pills' and
+/// round buttons' focus (the white in 0.15 s on a spring, out 0.15 s
+/// linear, grown 10 % on focus's 0.3 s spring, a press back to the resting
+/// size), the rows' plate (the glass, lit, 0.12 s).
+enum UISettings {
+    static let textSize: CGFloat = 24
+    /// The words from the card's edge, and a plate's inset from it.
+    static let textInset = CardSettingsRow.textInset
+    static let plateInset = CardSettingsRow.plateInset
+    static let plateBleed = CardSettingsRow.plateBleed
+    static let rowInset = textInset - plateInset
+    static let rowVertical: CGFloat = 14
+    static let lift = DetailActionButton.detailsFocusScale
+    /// A section's label's room over its card.
+    static let labelRoom = CardSettingsSection.labelRoom
+    static let sectionGap: CGFloat = 40
+    /// Between two rows: a hairline 4 pt either side; beside the well of
+    /// rows only to read, room for its bleed and a plate's.
+    static let hairlineRoom: CGFloat = 9
+    static var wellGap: CGFloat { 2 * plateBleed + plateInset }
+    static let plateRadius = Spotlight.cornerRadius - CardSettingsRow.plateInset
+    static var cardFill: UIColor { CueInk.uiFill(dark: 0.07, light: 0.24) }
+    static var restFill: UIColor { CueInk.uiFill(dark: 0.13, light: 0.32) }
+    static var selectedFill: UIColor { CueInk.uiFill(dark: 0.28, light: 0.55) }
+    static var hairline: UIColor { CueInk.ui(0.10) }
+    static var quietOnPlate: UIColor { UIColor.black.withAlphaComponent(0.6) }
+
+    static func label(_ size: CGFloat = textSize, _ weight: UIFont.Weight = .regular,
+                      _ level: CGFloat = FixedFocusText.primary) -> UILabel {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: size, weight: weight)
+        label.textColor = CueInk.ui(level)
+        label.adjustsFontForContentSizeCategory = false
+        return label
+    }
+
+    /// A row's name over its line.
+    static func titleStack(_ title: UILabel, _ detail: UILabel, spacing: CGFloat) -> UIStackView {
+        let stack = UIStackView(arrangedSubviews: [title, detail])
+        stack.axis = .vertical
+        stack.alignment = .leading
+        stack.spacing = spacing
+        return stack
+    }
+
+    static func symbol(_ name: String, _ size: CGFloat, _ weight: UIImage.SymbolWeight = .semibold) -> UIImage? {
+        UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: weight))
+    }
+
+    /// The view focus is on now, if any.
+    @MainActor static func focusedView(in view: UIView) -> UIView? {
+        view.window?.windowScene?.focusSystem?.focusedItem as? UIView
+    }
+}
+
+// MARK: Parts
+
+/// A SwiftUI view inside a UIKit row (an avatar, a rating's mark, a
+/// poster, the glass plate): not hit-testable, no safe area.
+final class UISettingsHosted: UIView {
+    private let host: UIHostingController<AnyView>
+
+    init(_ view: AnyView, size: CGSize? = nil) {
+        host = UIHostingController(rootView: view)
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        addSubview(host.view)
+        if let size {
+            translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([widthAnchor.constraint(equalToConstant: size.width),
+                                         heightAnchor.constraint(equalToConstant: size.height)])
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(_ view: AnyView) { host.rootView = view }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        host.view.frame = bounds
+    }
+}
+
+/// A row's plate: the glass (`GlassHighlight`), lit for focus, faint for
+/// the shown category or a lifted row; concentric with the card, past its
+/// row by the bleed above and below.
+final class UISettingsPlate {
+    private weak var row: UIView?
+    private var lit: UISettingsHosted?
+    private var faint: UISettingsHosted?
+
+    init(row: UIView) { self.row = row }
+
+    private func make(_ focused: Bool) -> UISettingsHosted {
+        let shape = RoundedRectangle(cornerRadius: UISettings.plateRadius, style: .continuous)
+        let view = UISettingsHosted(AnyView(GlassHighlight(focused: focused, shape: shape)))
+        view.alpha = 0
+        row?.insertSubview(view, at: 0)
+        return view
+    }
+
+    func layout() {
+        guard let row else { return }
+        let frame = row.bounds.insetBy(dx: 0, dy: -UISettings.plateBleed)
+        lit?.frame = frame
+        faint?.frame = frame
+    }
+
+    /// Glass only where it shows: made the first time it's wanted.
+    func show(lit on: Bool, faint faintOn: Bool, animated: Bool) {
+        if on, lit == nil { lit = make(true); layout() }
+        if faintOn, faint == nil { faint = make(false); layout() }
+        let change = {
+            self.lit?.alpha = on ? 1 : 0
+            self.faint?.alpha = faintOn && !on ? 1 : 0
+        }
+        if animated {
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: change)
+        } else {
+            change()
+        }
+    }
+}
+
+/// A focusable capsule or circle: its resting face (nothing, the grey of
+/// the chosen one, or the rest fill), the white platter with its shadow
+/// fading in and out over it, grown on focus, back to size on a press.
+class UISettingsPill: UIView {
+    let platter = UIView()
+    let white = UIView()
+    var onSelect: () -> Void = {}
+    /// While false, focus passes it by (a choice row's pills but the
+    /// chosen one, coming into the row; the other buttons while a row is
+    /// lifted).
+    var reachable: () -> Bool = { true }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        platter.isUserInteractionEnabled = false
+        white.isUserInteractionEnabled = false
+        white.backgroundColor = .white
+        white.alpha = 0
+        white.layer.shadowColor = UIColor.black.cgColor
+        white.layer.shadowOpacity = 0.35
+        white.layer.shadowRadius = 12
+        white.layer.shadowOffset = CGSize(width: 0, height: 6)
+        addSubview(platter)
+        addSubview(white)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var canBecomeFocused: Bool { reachable() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        for view in [platter, white] {
+            view.bounds = CGRect(origin: .zero, size: bounds.size)
+            view.center = CGPoint(x: bounds.midX, y: bounds.midY)
+            view.layer.cornerRadius = bounds.height / 2
+        }
+        white.layer.shadowPath = UIBezierPath(roundedRect: CGRect(origin: .zero, size: bounds.size),
+                                              cornerRadius: bounds.height / 2).cgPath
+    }
+
+    /// Words and symbols in their focused or resting colour.
+    func styleContent(focused: Bool) {}
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let focused = context.nextFocusedView === self
+        guard focused || context.previouslyFocusedView === self else { return }
+        if focused {
+            UIView.animate(springDuration: 0.15, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) { self.white.alpha = 1 }
+        } else {
+            UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .curveLinear]) {
+                self.white.alpha = 0
+            }
+        }
+        UIView.transition(with: self, duration: 0.15, options: [.transitionCrossDissolve, .beginFromCurrentState,
+                                                                .allowUserInteraction]) {
+            self.styleContent(focused: focused)
+        }
+        UIView.animate(springDuration: Motion.focusDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.transform = focused ? CGAffineTransform(scaleX: UISettings.lift, y: UISettings.lift) : .identity
+        }
+    }
+
+    // A press: back to the resting size (0.1 s), up again on release.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+            self.transform = .identity
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
+        settle()
+        onSelect()
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesCancelled(presses, with: event) }
+        settle()
+    }
+
+    private func settle() {
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut]) {
+            self.transform = self.isFocused ? CGAffineTransform(scaleX: UISettings.lift, y: UISettings.lift) : .identity
+        }
+    }
+}
+
+/// A choice's pill: its word, 23 pt medium, 20 pt either side, 48 tall;
+/// the chosen one on the selected grey.
+final class UISettingsChoicePill: UISettingsPill {
+    let label = UISettings.label(23, .medium)
+    var chosen = false {
+        didSet {
+            platter.backgroundColor = chosen ? UISettings.selectedFill : .clear
+            styleContent(focused: isFocused)
+        }
+    }
+
+    init(text: String) {
+        super.init(frame: .zero)
+        label.text = text
+        label.textAlignment = .center
+        addSubview(label)
+        styleContent(focused: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func styleContent(focused: Bool) {
+        label.textColor = focused ? .black : CueInk.ui(chosen ? FixedFocusText.primary : FixedFocusText.secondary)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: ceil(label.intrinsicContentSize.width) + 40, height: 48)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        label.frame = CGRect(origin: .zero, size: bounds.size).insetBy(dx: 20, dy: 0)
+    }
+}
+
+/// A round button: 52 pt, the rest fill, its symbol 21 pt semibold (red
+/// for what no menu undoes), nudged where a symbol is lopsided.
+final class UISettingsRoundButton: UISettingsPill {
+    let symbol = UIImageView()
+    /// Words in place of the symbol: a capsule as tall, 22 pt in each side.
+    private let words = UISettings.label(23, .medium)
+    private(set) var danger = false
+    private var nudge: CGFloat = 0
+    /// Lit row (a lifted one): no fill, the symbol dimmer.
+    var onLitRow = false { didSet { platter.alpha = onLitRow ? 0 : 1; styleContent(focused: isFocused) } }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        platter.backgroundColor = UISettings.restFill
+        symbol.contentMode = .center
+        addSubview(symbol)
+        words.textAlignment = .center
+        words.isHidden = true
+        addSubview(words)
+    }
+
+    /// The title in words instead of the symbol (`SettingsAction.spelled`).
+    func set(words text: String?) {
+        guard words.text != text || words.isHidden != (text == nil) else { return }
+        words.text = text
+        words.isHidden = text == nil
+        symbol.isHidden = text != nil
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(icon: String, danger: Bool, nudge: CGFloat) {
+        symbol.image = UISettings.symbol(icon, 21)?.withRenderingMode(.alwaysTemplate)
+        self.danger = danger
+        self.nudge = nudge
+        styleContent(focused: isFocused)
+        setNeedsLayout()
+    }
+
+    override func styleContent(focused: Bool) {
+        symbol.tintColor = danger ? .systemRed : focused ? .black
+            : onLitRow ? UISettings.quietOnPlate : CueInk.ui(FixedFocusText.primary)
+        words.textColor = symbol.tintColor
+    }
+
+    override var intrinsicContentSize: CGSize {
+        words.isHidden ? CGSize(width: 52, height: 52)
+            : CGSize(width: ceil(words.intrinsicContentSize.width) + 44, height: 52)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        symbol.frame = CGRect(origin: CGPoint(x: nudge, y: 0), size: bounds.size)
+        words.frame = bounds.insetBy(dx: 22, dy: 0)
+    }
+}
+
+/// A profile's avatar to press: 120 pt, focused a white ring round it
+/// (the pills' white, 6 pt past it) and grown as the pills.
+final class UISettingsAvatarButton: UISettingsPill {
+    private let avatar: UISettingsHosted
+    private var key = ""
+    static let size: CGFloat = 120
+    static let ring: CGFloat = 6
+
+    init() {
+        avatar = UISettingsHosted(AnyView(EmptyView()))
+        super.init(frame: .zero)
+        platter.backgroundColor = .clear
+        addSubview(avatar)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(key: String, _ view: () -> AnyView) {
+        guard key != self.key else { return }
+        self.key = key
+        avatar.set(AnyView(view().frame(width: Self.size, height: Self.size)))
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: Self.size + 2 * Self.ring, height: Self.size + 2 * Self.ring)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        avatar.frame = bounds.insetBy(dx: Self.ring, dy: Self.ring)
+    }
+}
+
+/// A profile's top row (`UISettingsRow.Profile`): the avatar (Select:
+/// change it), the name over what it is, its actions round buttons at the
+/// end. Coming in: the nearest across.
+final class UISettingsProfileRow: UISettingsControlRow, UISettingsRowView {
+    private var model: UISettingsRow.Profile
+    private let avatar = UISettingsAvatarButton()
+    private var buttons: [String: UISettingsRoundButton] = [:]
+
+    init(_ model: UISettingsRow.Profile) {
+        self.model = model
+        super.init(spacing: 14, textSpacing: 4)
+        title.font = .systemFont(ofSize: 36, weight: .semibold)
+        row.insertArrangedSubview(avatar, at: 0)
+        row.setCustomSpacing(26, after: avatar)
+        configure()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .profile(let model) = row else { return false }
+        self.model = model
+        configure()
+        return true
+    }
+
+    private func configure() {
+        title.text = model.title
+        detail.text = model.detail
+        detail.isHidden = model.detail.isEmpty
+        title.alpha = model.dimmed ? 0.6 : 1
+        detail.alpha = title.alpha
+        avatar.alpha = model.dimmed ? 0.4 : 1
+        avatar.set(key: model.key, model.avatar)
+        avatar.onSelect = { [weak self] in self?.model.onAvatar() }
+        let dimmed = model.dimmed
+        avatar.reachable = { !dimmed }
+        var kept: [UISettingsRoundButton] = []
+        for action in model.actions {
+            let button = buttons[action.id] ?? UISettingsRoundButton()
+            buttons[action.id] = button
+            button.set(icon: action.icon, danger: action.danger, nudge: action.nudge)
+            button.accessibilityLabel = action.title
+            button.onSelect = { action.action() }
+            kept.append(button)
+        }
+        for (key, button) in buttons where !kept.contains(where: { $0 === button }) {
+            button.removeFromSuperview()
+            buttons[key] = nil
+        }
+        for (index, button) in kept.enumerated() where controls.arrangedSubviews.firstIndex(of: button) != index {
+            controls.insertArrangedSubview(button, at: index)
+        }
+    }
+
+    override var entry: UIView? {
+        let ordered = ([avatar] + controls.arrangedSubviews).filter { $0.canBecomeFocused }
+        guard let from = UISettings.focusedView(in: self), let window else { return avatar }
+        let x = from.convert(CGPoint(x: from.bounds.midX, y: 0), to: window).x
+        return ordered.min { abs($0.convert(CGPoint(x: $0.bounds.midX, y: 0), to: window).x - x)
+            < abs($1.convert(CGPoint(x: $1.bounds.midX, y: 0), to: window).x - x) }
+    }
+}
+
+// MARK: Rows
+
+/// What a page's row is (`UISettingsSection.rows`): built anew on every
+/// change; the cards keep each row's view by its id and update it.
+enum UISettingsRow {
+    case link(Link)
+    case choice(Choice)
+    case actions(Actions)
+    case info(title: String, value: String)
+    case note(String)
+    /// A SwiftUI piece (the taste's columns, a profile's header).
+    case hosted(Hosted)
+    /// Tiles to pick from, ten across under their kinds' names (avatars).
+    case tiles(Tiles)
+    /// A profile's top row: the avatar to press, its name,
+    /// its actions as round buttons.
+    case profile(Profile)
+
+    struct Profile {
+        let id: String
+        /// Changes when the avatar does.
+        let key: String
+        let title: String
+        let detail: String
+        /// Going away (deleted when the page is left): faded, as a removed row.
+        var dimmed = false
+        let avatar: () -> AnyView
+        let onAvatar: () -> Void
+        let actions: [SettingsAction]
+    }
+
+    struct Hosted {
+        let id: String
+        /// Changes when the piece does.
+        let key: String
+        /// Only to read: in the well with rows to read.
+        var readOnly = false
+        let view: () -> AnyView
+    }
+
+    struct Tiles {
+        let id: String
+        let groups: [(name: String, tiles: [Tile])]
+    }
+
+    struct Tile {
+        enum Face {
+            case colour(hex: String, initial: String)
+            case avatar(url: String, name: String)
+        }
+        let id: String
+        let face: Face
+        let chosen: Bool
+        let action: () -> Void
+    }
+
+    /// A row that opens a page (a chevron) or does something (none).
+    struct Link {
+        let id: String
+        let title: String
+        var description: String? = nil
+        var value: String? = nil
+        var leading: Leading? = nil
+        var checked = false
+        var danger = false
+        var chevron = true
+        let action: () -> Void
+    }
+
+    /// Two or three choices on the row (`SettingsChoiceRow`).
+    struct Choice {
+        let id: String
+        let title: String
+        var description: String? = nil
+        let options: [SettingsOption]
+        let selection: String
+        let onPick: (String) -> Void
+    }
+
+    /// A list item with its actions on it as round buttons (`ActionListRow`).
+    struct Actions {
+        let id: String
+        var leading: Leading? = nil
+        let title: String
+        let detail: String
+        var dimmed = false
+        let actions: [SettingsAction]
+        /// This row is lifted / any row is.
+        var moving = false
+        var anyMoving = false
+        /// Dropped, how far it went (rows, + down): the store moves once.
+        var onMove: (Int) -> Void = { _ in }
+        var onDrop: () -> Void = {}
+    }
+
+    /// A picture before the name, drawn in SwiftUI; `key` says when it
+    /// changed.
+    struct Leading {
+        let key: String
+        var size = CGSize(width: 56, height: 56)
+        var view: (() -> AnyView)? = nil
+        /// A title's poster, small, drawn in UIKit (a long list: a SwiftUI
+        /// host each was too heavy).
+        var poster: String? = nil
+
+        static func poster(_ url: String?) -> Leading {
+            Leading(key: url ?? "none", size: CGSize(width: 44, height: 66), poster: url ?? "")
+        }
+    }
+
+    var id: String {
+        switch self {
+        case .link(let row): row.id
+        case .choice(let row): row.id
+        case .actions(let row): row.id
+        case .info(let title, _): "info." + title
+        case .note(let text): "note." + text
+        case .hosted(let row): row.id
+        case .tiles(let row): row.id
+        case .profile(let row): row.id
+        }
+    }
+
+    var onlyToRead: Bool {
+        switch self {
+        case .info: true
+        case .hosted(let row): row.readOnly
+        default: false
+        }
+    }
+
+    /// On / Off as a choice row: Off first.
+    static func onOff(id: String, title: String, description: String? = nil, isOn: Bool,
+                      set: @escaping (Bool) -> Void) -> UISettingsRow {
+        .choice(Choice(id: id, title: title, description: description,
+                       options: [SettingsOption(id: "off", label: "Off"), SettingsOption(id: "on", label: "On")],
+                       selection: isOn ? "on" : "off") { set($0 == "on") })
+    }
+}
+
+/// A row's view: takes a new model of its kind (false: another kind, made
+/// anew).
+@MainActor protocol UISettingsRowView: UIView {
+    func apply(_ row: UISettingsRow) -> Bool
+}
+
+/// A leading picture's view, remade only when its key changes.
+@MainActor private final class UISettingsLeadingView {
+    private(set) var view: UISettingsHosted?
+    private(set) var poster: UIView?
+    private var key: String?
+    private var size: CGSize = .zero
+
+    /// The picture's view, whichever kind.
+    var shown: UIView? { view ?? poster }
+
+    /// A poster: 6 pt corners, a faint edge, a faint fill while it loads.
+    private func posterView(size: CGSize) -> UIView {
+        let frame = UIView()
+        frame.translatesAutoresizingMaskIntoConstraints = false
+        frame.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        frame.layer.cornerRadius = 6
+        frame.layer.cornerCurve = .continuous
+        frame.layer.borderWidth = 1
+        frame.layer.borderColor = UIColor.white.withAlphaComponent(0.15).cgColor
+        frame.clipsToBounds = true
+        let image = UIImageView()
+        image.contentMode = .scaleAspectFill
+        image.translatesAutoresizingMaskIntoConstraints = false
+        frame.addSubview(image)
+        NSLayoutConstraint.activate([
+            frame.widthAnchor.constraint(equalToConstant: size.width),
+            frame.heightAnchor.constraint(equalToConstant: size.height),
+            image.leadingAnchor.constraint(equalTo: frame.leadingAnchor),
+            image.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
+            image.topAnchor.constraint(equalTo: frame.topAnchor),
+            image.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
+        ])
+        frame.bringSubviewToFront(image)
+        return frame
+    }
+
+    /// The view for this picture: the same one while its key holds.
+    func update(_ leading: UISettingsRow.Leading?, dimmed: Bool, in stack: UIStackView) {
+        guard let leading else {
+            view?.removeFromSuperview()
+            poster?.removeFromSuperview()
+            view = nil
+            poster = nil
+            key = nil
+            return
+        }
+        let wanted = leading.key + (dimmed ? ".dim" : "")
+        guard wanted != key || leading.size != size else { return }
+        key = wanted
+        if let url = leading.poster {
+            poster?.removeFromSuperview()
+            view?.removeFromSuperview()
+            view = nil
+            let made = posterView(size: leading.size)
+            UISettingsPicture.load(url.isEmpty ? nil : url, size: leading.size.height, into: made.subviews[0] as! UIImageView)
+            made.alpha = 1
+            (made.subviews[0] as! UIImageView).alpha = dimmed ? 0.4 : 1
+            stack.insertArrangedSubview(made, at: 0)
+            poster = made
+            size = leading.size
+            return
+        }
+        poster?.removeFromSuperview()
+        poster = nil
+        guard let make = leading.view else { return }
+        let content = AnyView(make().saturation(dimmed ? 0 : 1)
+            .frame(width: leading.size.width, height: leading.size.height))
+        if let view, leading.size == size {
+            view.set(content)
+        } else {
+            view?.removeFromSuperview()
+            let made = UISettingsHosted(content, size: leading.size)
+            stack.insertArrangedSubview(made, at: 0)
+            view = made
+        }
+        size = leading.size
+    }
+}
+
+/// A row that opens a page or does something (`SettingsRowLabel`'s card
+/// look): the name over its description at the left; value, checkmark and
+/// chevron at the end; focused, the lit plate, dark words. Also the
+/// categories (`compact`: 9 pt above and below), the one shown on the
+/// faint plate while focus is in its settings.
+final class UISettingsLinkRow: UIView, UISettingsRowView {
+    private var model: UISettingsRow.Link
+    private let compact: Bool
+    private let title = UISettings.label(UISettings.textSize, .medium)
+    private let detail = UISettings.label(UISettings.textSize, .regular, FixedFocusText.body)
+    private let value = UISettings.label(UISettings.textSize, .regular, FixedFocusText.body)
+    private let check = UIImageView(image: UISettings.symbol("checkmark", 22)?.withRenderingMode(.alwaysTemplate))
+    private let chevron = UIImageView(image: UISettings.symbol("chevron.right", 20)?.withRenderingMode(.alwaysTemplate))
+    private let row = UIStackView()
+    private let leading = UISettingsLeadingView()
+    private lazy var plate = UISettingsPlate(row: self)
+    /// The shown category (`compact` rows): the faint plate.
+    var selected = false { didSet { if selected != oldValue { plate.show(lit: isFocused, faint: selected, animated: true) } } }
+    var reachable: () -> Bool = { true }
+
+    init(_ model: UISettingsRow.Link, compact: Bool = false) {
+        self.model = model
+        self.compact = compact
+        super.init(frame: .zero)
+        detail.numberOfLines = 2
+        let text = UISettings.titleStack(title, detail, spacing: 2)
+        let trailing = UIStackView(arrangedSubviews: [value, check, chevron])
+        trailing.axis = .horizontal
+        trailing.spacing = 12
+        trailing.alignment = .center
+        let spacer = UIView()
+        spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 24 - 2 * 16).isActive = true
+        row.addArrangedSubview(text)
+        row.addArrangedSubview(spacer)
+        row.addArrangedSubview(trailing)
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 16
+        text.setContentHuggingPriority(.required, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        let vertical: CGFloat = compact ? 9 : UISettings.rowVertical
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.rowInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UISettings.rowInset),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: vertical),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -vertical),
+        ])
+        configure()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .link(let model) = row else { return false }
+        self.model = model
+        configure()
+        return true
+    }
+
+    private func configure() {
+        title.text = model.title
+        detail.text = model.description
+        detail.isHidden = (model.description ?? "").isEmpty
+        value.text = model.value
+        value.isHidden = (model.value ?? "").isEmpty
+        check.isHidden = !model.checked
+        chevron.isHidden = !model.chevron
+        leading.update(model.leading, dimmed: false, in: row)
+        paint(isFocused)
+    }
+
+    private func paint(_ lit: Bool) {
+        title.textColor = model.danger ? .systemRed : lit ? .black : CueInk.ui(FixedFocusText.primary)
+        let quiet = lit ? UISettings.quietOnPlate : CueInk.ui(FixedFocusText.body)
+        detail.textColor = quiet
+        value.textColor = quiet
+        chevron.tintColor = quiet
+        check.tintColor = lit ? .black : CueInk.ui(FixedFocusText.primary)
+    }
+
+    override var canBecomeFocused: Bool { reachable() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        plate.layout()
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let focused = context.nextFocusedView === self
+        guard focused || context.previouslyFocusedView === self else { return }
+        plate.show(lit: focused, faint: selected, animated: true)
+        UIView.transition(with: self, duration: 0.12, options: [.transitionCrossDissolve, .beginFromCurrentState,
+                                                                .allowUserInteraction]) {
+            self.paint(focused)
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
+        model.action()
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
+    }
+}
+
+/// A row: its name over its line at the left, its controls at the right,
+/// the rows' insets; coming in from another row, a guide over it sends
+/// focus to the control it prefers (`entry`): SwiftUI's `focusSection`.
+class UISettingsControlRow: UIView {
+    let title = UISettings.label(UISettings.textSize, .medium)
+    let detail = UISettings.label(UISettings.textSize, .regular, FixedFocusText.body)
+    let controls = UIStackView()
+    let row = UIStackView()
+    let text: UIStackView
+    private let guide = UIFocusGuide()
+
+    init(spacing: CGFloat, textSpacing: CGFloat) {
+        text = UISettings.titleStack(title, detail, spacing: textSpacing)
+        super.init(frame: .zero)
+        controls.axis = .horizontal
+        controls.spacing = spacing
+        controls.alignment = .center
+        row.addArrangedSubview(text)
+        row.addArrangedSubview(controls)
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 24
+        text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        controls.setContentHuggingPriority(.required, for: .horizontal)
+        controls.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        addLayoutGuide(guide)
+        guide.preferredFocusEnvironments = [self]
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.rowInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UISettings.rowInset),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: UISettings.rowVertical),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UISettings.rowVertical),
+            guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            guide.trailingAnchor.constraint(equalTo: trailingAnchor),
+            guide.topAnchor.constraint(equalTo: topAnchor),
+            guide.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Where focus goes coming into the row.
+    var entry: UIView? { nil }
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] { entry.map { [$0] } ?? [] }
+
+    var holdsFocus: Bool { UISettings.focusedView(in: self)?.isDescendant(of: self) ?? false }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        // The guide only from outside: inside, it would catch every move.
+        guide.isEnabled = !(context.nextFocusedView?.isDescendant(of: self) ?? false)
+    }
+}
+
+/// Two or three choices on their row (`SettingsChoiceRow`): the pills 12
+/// apart; coming in only the chosen one takes focus; the line under the
+/// name says what the focused choice means, else the chosen one's.
+final class UISettingsChoiceRow: UISettingsControlRow, UISettingsRowView {
+    private var model: UISettingsRow.Choice
+    private var pills: [UISettingsChoicePill] = []
+    private var focusedOption: String?
+
+    init(_ model: UISettingsRow.Choice) {
+        self.model = model
+        super.init(spacing: 12, textSpacing: 4)
+        for option in model.options {
+            let pill = UISettingsChoicePill(text: option.label)
+            pill.reachable = { [weak self, weak pill] in (pill?.chosen ?? false) || (self?.holdsFocus ?? false) }
+            pills.append(pill)
+            controls.addArrangedSubview(pill)
+        }
+        configure()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .choice(let model) = row, model.options.map(\.id) == self.model.options.map(\.id) else { return false }
+        self.model = model
+        configure()
+        return true
+    }
+
+    private func configure() {
+        title.text = model.title
+        for (pill, option) in zip(pills, model.options) {
+            pill.label.text = option.label
+            pill.chosen = option.id == model.selection
+            pill.onSelect = { [weak self] in
+                guard let self else { return }
+                self.model.onPick(option.id)
+            }
+        }
+        let shown = model.options.first { $0.id == (focusedOption ?? model.selection) }
+        detail.text = shown?.detail ?? model.description ?? ""
+    }
+
+    override var entry: UIView? { pills.first(where: \.chosen) ?? pills.first }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let index = pills.firstIndex { $0 === context.nextFocusedView }
+        focusedOption = index.map { model.options[$0].id }
+        configure()
+    }
+}
+
+/// A list item with its actions on the row as round buttons, 14 apart
+/// (`ActionListRow`): its picture, name over detail; dimmed (removed, to
+/// undo) its words and picture faded; lifted to move, the faint plate, a
+/// shadow, 2 % larger, Up and Down moving it.
+final class UISettingsActionRow: UISettingsControlRow, UISettingsRowView {
+    private var model: UISettingsRow.Actions
+    private var buttons: [String: UISettingsRoundButton] = [:]
+    private let leading = UISettingsLeadingView()
+    private lazy var plate = UISettingsPlate(row: self)
+
+    init(_ model: UISettingsRow.Actions) {
+        self.model = model
+        super.init(spacing: 14, textSpacing: 2)
+        row.spacing = 18
+        text.spacing = 2
+        configure()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .actions(let model) = row else { return false }
+        let wasMoving = self.model.moving
+        self.model = model
+        configure()
+        if wasMoving != model.moving {
+            lift(model.moving)
+            moveGuides.forEach { $0.isEnabled = model.moving }
+        }
+        return true
+    }
+
+    private func configure() {
+        title.text = model.title
+        detail.text = model.detail
+        detail.isHidden = model.detail.isEmpty
+        let fade: CGFloat = model.dimmed ? 0.6 : 1
+        title.alpha = fade
+        detail.alpha = fade
+        leading.update(model.leading, dimmed: model.dimmed, in: row)
+        leading.view?.alpha = fade
+        if let picture = leading.shown { row.setCustomSpacing(18, after: picture) }
+        // The buttons by their key: focus stays on one as it turns.
+        var kept: [UISettingsRoundButton] = []
+        for action in model.actions {
+            let button = buttons[action.id] ?? UISettingsRoundButton()
+            buttons[action.id] = button
+            let icon = action.move && model.moving ? "checkmark" : action.icon
+            button.set(icon: icon, danger: action.danger, nudge: action.nudge)
+            button.set(words: action.spelled ? action.title : nil)
+            button.accessibilityLabel = action.title
+            button.onLitRow = false
+            let moving = model.moving, anyMoving = model.anyMoving
+            button.reachable = { !anyMoving || (action.move && moving) }
+            button.onSelect = { [weak self] in
+                guard let self else { return }
+                if action.move, self.model.moving { self.drop() } else { action.action() }
+            }
+            kept.append(button)
+        }
+        for (key, button) in buttons where !kept.contains(where: { $0 === button }) {
+            button.removeFromSuperview()
+            buttons[key] = nil
+        }
+        for (index, button) in kept.enumerated() where controls.arrangedSubviews.firstIndex(of: button) != index {
+            controls.insertArrangedSubview(button, at: index)
+        }
+    }
+
+    private func lift(_ up: Bool) {
+        plate.show(lit: false, faint: up, animated: true)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowRadius = 18
+        layer.shadowOffset = CGSize(width: 0, height: 9)
+        UIView.animate(springDuration: 0.18, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.transform = up ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
+        }
+        let shadow = CABasicAnimation(keyPath: "shadowOpacity")
+        shadow.fromValue = layer.presentation()?.shadowOpacity ?? layer.shadowOpacity
+        layer.shadowOpacity = up ? 0.35 : 0
+        shadow.toValue = layer.shadowOpacity
+        shadow.duration = 0.18
+        layer.add(shadow, forKey: "lift")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        plate.layout()
+        layer.shadowPath = UIBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: -UISettings.plateBleed),
+                                        cornerRadius: UISettings.plateRadius).cgPath
+    }
+
+    /// Coming in: the button nearest the one focus leaves, across.
+    override var entry: UIView? {
+        let ordered = controls.arrangedSubviews.filter { $0.canBecomeFocused }
+        guard let from = UISettings.focusedView(in: self), let window else { return ordered.last }
+        let x = from.convert(CGPoint(x: from.bounds.midX, y: 0), to: window).x
+        return ordered.min { abs($0.convert(CGPoint(x: $0.bounds.midX, y: 0), to: window).x - x)
+            < abs($1.convert(CGPoint(x: $1.bounds.midX, y: 0), to: window).x - x) }
+    }
+
+    /// Lifted: Up and Down move the row (focus stays on its Move button),
+    /// nothing else takes focus.
+    override func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool {
+        guard model.moving else { return super.shouldUpdateFocus(in: context) }
+        if context.focusHeading.contains(.up) { step(-1) }
+        else if context.focusHeading.contains(.down) { step(1) }
+        return false
+    }
+
+    /// It can be lifted, so others can pass it.
+    var canMove: Bool { model.actions.contains(where: \.move) }
+
+    /// One step a press: a click reaches both the press and the guides,
+    /// and the engine asks again as the row moves. Only the card's views
+    /// move while it's lifted (the page and the store wait for the drop:
+    /// a rebuild, a save and a Nuvio push each step dropped frames).
+    private var lastStep = Date.distantPast
+    private var moved = 0
+    private func step(_ by: Int) {
+        guard Date().timeIntervalSince(lastStep) > 0.2 else { return }
+        lastStep = Date()
+        guard let card = sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? UISettingsCard }).first,
+              card.shift(self, by: by) else { return }
+        moved += by
+        if let page = sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? UISettingsPageView }).first,
+           let focused = UISettings.focusedView(in: self) {
+            page.scrollTo(focused, animated: true)
+        }
+    }
+
+    private func drop() {
+        let by = moved
+        moved = 0
+        if by != 0 { model.onMove(by) }
+        model.onDrop()
+    }
+
+    /// Lifted, a click Up or Down moves it (the engine has nowhere to go:
+    /// nothing else can take focus); a swipe reaches `shouldUpdateFocus`
+    /// through the guides above and below.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard model.moving else { return super.pressesBegan(presses, with: event) }
+        if presses.contains(where: { $0.type == .upArrow }) { step(-1) }
+        else if presses.contains(where: { $0.type == .downArrow }) { step(1) }
+        else if !presses.contains(where: { $0.type == .menu }) { super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard model.moving else { return super.pressesEnded(presses, with: event) }
+        if presses.contains(where: { $0.type == .menu }) { drop() }
+        else if !presses.contains(where: { [.upArrow, .downArrow].contains($0.type) }) { super.pressesEnded(presses, with: event) }
+    }
+
+    private lazy var moveGuides: [UIFocusGuide] = {
+        let up = UIFocusGuide(), down = UIFocusGuide()
+        for guide in [up, down] {
+            addLayoutGuide(guide)
+            guide.preferredFocusEnvironments = [self]
+            guide.isEnabled = false
+        }
+        NSLayoutConstraint.activate([
+            up.leadingAnchor.constraint(equalTo: leadingAnchor), up.trailingAnchor.constraint(equalTo: trailingAnchor),
+            up.bottomAnchor.constraint(equalTo: topAnchor, constant: -1), up.heightAnchor.constraint(equalToConstant: 40),
+            down.leadingAnchor.constraint(equalTo: leadingAnchor), down.trailingAnchor.constraint(equalTo: trailingAnchor),
+            down.topAnchor.constraint(equalTo: bottomAnchor, constant: 1), down.heightAnchor.constraint(equalToConstant: 40),
+        ])
+        return [up, down]
+    }()
+}
+
+/// A row only to read: name and value, the value in the body's level.
+final class UISettingsInfoRow: UIView, UISettingsRowView {
+    private let title = UISettings.label(UISettings.textSize, .medium)
+    private let value = UISettings.label(UISettings.textSize, .regular, FixedFocusText.body)
+
+    init(title: String, value: String) {
+        super.init(frame: .zero)
+        let spacer = UIView()
+        let row = UIStackView(arrangedSubviews: [self.title, spacer, self.value])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        self.title.setContentCompressionResistancePriority(.required, for: .horizontal)
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        self.value.setContentHuggingPriority(.required, for: .horizontal)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.rowInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UISettings.rowInset),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: UISettings.rowVertical),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UISettings.rowVertical),
+        ])
+        set(title: title, value: value)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func set(title: String, value: String) {
+        self.title.text = title
+        self.value.text = value
+    }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .info(let title, let value) = row else { return false }
+        set(title: title, value: value)
+        return true
+    }
+}
+
+/// A line of text in a card (an empty list, how to get a key).
+final class UISettingsNoteRow: UIView, UISettingsRowView {
+    private let label = UISettings.label(UISettings.textSize, .regular, FixedFocusText.body)
+
+    init(_ text: String) {
+        super.init(frame: .zero)
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.rowInset),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UISettings.rowInset),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+        set(text)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func set(_ text: String) {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 6
+        label.attributedText = NSAttributedString(string: text, attributes: [.paragraphStyle: style])
+    }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .note(let text) = row else { return false }
+        set(text)
+        return true
+    }
+}
+
+@MainActor
+func makeSettingsRow(_ row: UISettingsRow, compact: Bool = false) -> UISettingsRowView {
+    switch row {
+    case .link(let model): UISettingsLinkRow(model, compact: compact)
+    case .choice(let model): UISettingsChoiceRow(model)
+    case .actions(let model): UISettingsActionRow(model)
+    case .info(let title, let value): UISettingsInfoRow(title: title, value: value)
+    case .note(let text): UISettingsNoteRow(text)
+    case .hosted(let model): UISettingsHostedRow(model)
+    case .tiles(let model): UISettingsTileGridRow(model)
+    case .profile(let model): UISettingsProfileRow(model)
+    }
+}
+
+/// A picture for a UIKit row, from the app's cache, decoded at its size.
+enum UISettingsPicture {
+    @MainActor static func load(_ url: String?, size: CGFloat, into view: UIImageView) {
+        view.accessibilityIdentifier = url
+        guard let url else { view.image = nil; return }
+        let key = RemoteImage.memoryKey(url, maxDimension: size, maxPixels: nil)
+        if let hit = ImageCache.shared.image(for: key) { view.image = hit; return }
+        view.image = nil
+        Task { @MainActor [weak view] in
+            _ = await ImageCache.shared.preload(url, maxDimension: size)
+            guard let view, view.accessibilityIdentifier == url else { return }
+            UIView.transition(with: view, duration: 0.2, options: .transitionCrossDissolve) {
+                view.image = ImageCache.shared.image(for: key)
+            }
+        }
+    }
+}
+
+/// A SwiftUI piece in a card, as tall as it wants to be.
+final class UISettingsHostedRow: UIView, UISettingsRowView {
+    private let host: UIHostingController<AnyView>
+    private var key: String
+
+    /// Measured at the card's width (SwiftUI's own intrinsic size came
+    /// out zero for pieces that fill their width).
+    private var height: CGFloat = 0
+    private var measuredWidth: CGFloat = 0
+
+    init(_ model: UISettingsRow.Hosted) {
+        host = UIHostingController(rootView: model.view())
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        key = model.key
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        addSubview(host.view)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .hosted(let model) = row else { return false }
+        if model.key != key {
+            key = model.key
+            host.rootView = model.view()
+            measuredWidth = 0
+            setNeedsLayout()
+        }
+        return true
+    }
+
+    private func measure(_ width: CGFloat) -> CGFloat {
+        ceil(host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: height > 0 ? height : measure(1200))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.width > 0, bounds.width != measuredWidth {
+            measuredWidth = bounds.width
+            let measured = measure(bounds.width)
+            if abs(measured - height) > 0.5 {
+                height = measured
+                invalidateIntrinsicContentSize()
+            }
+        }
+        host.view.frame = bounds
+    }
+}
+
+/// One tile to pick: a colour with the initial on it, or an avatar over
+/// its name; focused the rows' lit glass, chosen the faint one, 4 pt in
+/// from its room either side, 16 pt corners.
+final class UISettingsTile: UIView {
+    private var model: UISettingsRow.Tile
+    var chosen: Bool { model.chosen }
+    private let picture = UIImageView()
+    private let initial = UILabel()
+    private let name = UISettings.label(23, .medium)
+    private var lit: UISettingsHosted?
+    private var faint: UISettingsHosted?
+
+    static let picture: CGFloat = 80
+    static func height(_ face: UISettingsRow.Tile.Face) -> CGFloat {
+        switch face {
+        case .colour: 12 + picture + 12
+        case .avatar: 12 + picture + 8 + ceil(UIFont.systemFont(ofSize: 23, weight: .medium).lineHeight) + 12
+        }
+    }
+
+    init(_ model: UISettingsRow.Tile) {
+        self.model = model
+        super.init(frame: .zero)
+        picture.clipsToBounds = true
+        picture.contentMode = .scaleAspectFill
+        picture.layer.cornerRadius = Self.picture / 2
+        picture.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        initial.font = .systemFont(ofSize: 36, weight: .heavy)
+        initial.textColor = .white
+        initial.textAlignment = .center
+        name.textAlignment = .center
+        name.adjustsFontSizeToFitWidth = true
+        name.minimumScaleFactor = 0.9
+        for view in [picture, initial, name] as [UIView] { addSubview(view) }
+        configure(loading: true)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(_ model: UISettingsRow.Tile) {
+        self.model = model
+        configure(loading: false)
+    }
+
+    private func configure(loading: Bool) {
+        switch model.face {
+        case .colour(let hex, let letter):
+            picture.backgroundColor = UIColor(Color(profileHex: hex))
+            initial.text = letter
+            initial.isHidden = false
+            name.isHidden = true
+        case .avatar(let url, let title):
+            if loading { UISettingsPicture.load(url, size: Self.picture, into: picture) }
+            initial.isHidden = true
+            name.isHidden = false
+            name.text = title
+        }
+        paint()
+        show(animated: !loading)
+    }
+
+    private func paint() {
+        name.textColor = isFocused ? .black : CueInk.ui(FixedFocusText.primary)
+    }
+
+    private func plate(_ focused: Bool) -> UISettingsHosted {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let view = UISettingsHosted(AnyView(GlassHighlight(focused: focused, shape: shape)))
+        view.alpha = 0
+        insertSubview(view, at: 0)
+        view.frame = bounds.insetBy(dx: 4, dy: 0)
+        return view
+    }
+
+    private func show(animated: Bool) {
+        if isFocused, lit == nil { lit = plate(true) }
+        if model.chosen, faint == nil { faint = plate(false) }
+        let change = {
+            self.lit?.alpha = self.isFocused ? 1 : 0
+            self.faint?.alpha = self.model.chosen && !self.isFocused ? 1 : 0
+            self.paint()
+        }
+        if animated {
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction],
+                           animations: change)
+        } else {
+            change()
+        }
+    }
+
+    override var canBecomeFocused: Bool { true }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let side = Self.picture
+        picture.frame = CGRect(x: (bounds.width - side) / 2, y: 12, width: side, height: side)
+        initial.frame = picture.frame
+        name.frame = CGRect(x: 6, y: picture.frame.maxY + 8, width: bounds.width - 12,
+                            height: ceil(name.font.lineHeight))
+        for plate in [lit, faint].compactMap({ $0 }) { plate.frame = bounds.insetBy(dx: 4, dy: 0) }
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard context.nextFocusedView === self || context.previouslyFocusedView === self else { return }
+        show(animated: true)
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
+        model.action()
+    }
+}
+
+/// Tiles to pick from: each kind under its name (24 pt semibold,
+/// tertiary), ten across, 6 apart, lines 12 apart.
+final class UISettingsTileGridRow: UIView, UISettingsRowView {
+    private var model: UISettingsRow.Tiles
+    private var tiles: [String: UISettingsTile] = [:]
+    private var labels: [UILabel] = []
+    private var shape: [String] = []
+    static let across = 10
+    static let gap: CGFloat = 6
+    static let lineGap: CGFloat = 12
+    private var height: CGFloat = 0
+
+    init(_ model: UISettingsRow.Tiles) {
+        self.model = model
+        super.init(frame: .zero)
+        build()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .tiles(let model) = row else { return false }
+        self.model = model
+        build()
+        return true
+    }
+
+    private func build() {
+        let ids = model.groups.flatMap { [$0.name] + $0.tiles.map(\.id) }
+        if ids != shape {
+            shape = ids
+            tiles.values.forEach { $0.removeFromSuperview() }
+            labels.forEach { $0.removeFromSuperview() }
+            tiles = [:]
+            labels = []
+            for group in model.groups {
+                let label = UISettings.label(UISettings.textSize, .semibold, FixedFocusText.tertiary)
+                label.text = group.name
+                labels.append(label)
+                addSubview(label)
+                for tile in group.tiles {
+                    let view = UISettingsTile(tile)
+                    tiles[tile.id] = view
+                    addSubview(view)
+                }
+            }
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        } else {
+            for group in model.groups { for tile in group.tiles { tiles[tile.id]?.update(tile) } }
+        }
+    }
+
+    private var labelHeight: CGFloat { 12 + ceil(UIFont.systemFont(ofSize: UISettings.textSize, weight: .semibold).lineHeight) + 4 }
+
+    private func measure(width: CGFloat, place: Bool) -> CGFloat {
+        let tileWidth = (width - CGFloat(Self.across - 1) * Self.gap) / CGFloat(Self.across)
+        var y: CGFloat = 0
+        for (index, group) in model.groups.enumerated() {
+            if place, labels.indices.contains(index) {
+                labels[index].frame = CGRect(x: UISettings.rowInset, y: y + 12, width: width - UISettings.rowInset,
+                                             height: labelHeight - 16)
+            }
+            y += labelHeight
+            guard let first = group.tiles.first else { continue }
+            let tileHeight = UISettingsTile.height(first.face)
+            for (i, tile) in group.tiles.enumerated() {
+                let line = i / Self.across, column = i % Self.across
+                if place {
+                    tiles[tile.id]?.frame = CGRect(x: CGFloat(column) * (tileWidth + Self.gap),
+                                                   y: y + CGFloat(line) * (tileHeight + Self.lineGap),
+                                                   width: tileWidth, height: tileHeight)
+                }
+            }
+            let lines = (group.tiles.count + Self.across - 1) / Self.across
+            y += CGFloat(lines) * tileHeight + CGFloat(max(0, lines - 1)) * Self.lineGap
+        }
+        return y + 12
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: bounds.width > 0 ? height : measure(width: 1200, place: false))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let measured = measure(width: bounds.width, place: true)
+        if abs(measured - height) > 0.5 {
+            height = measured
+            invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+// MARK: Cards, sections, the page
+
+/// A section's card: its rows on the cards' fill, 22 pt corners, the
+/// plates' inset round them; a hairline between two rows (under them: a
+/// lit plate covers the ones beside it); rows only to read together in a
+/// well.
+final class UISettingsCard: UIView {
+    private let stack = UIStackView()
+    private var views: [String: UISettingsRowView] = [:]
+    private var shape: [String] = []
+    private var wells: [UIView] = []
+    private let compact: Bool
+    private let hairlineRoom: CGFloat
+    private var insets: [NSLayoutConstraint] = []
+    /// No fill and no padding: the row is its own card.
+    var bare = false {
+        didSet {
+            guard bare != oldValue else { return }
+            backgroundColor = bare ? .clear : UISettings.cardFill
+            let pad = CardSettingsRow.cardPadding
+            let values = bare ? [0, 0, 0, 0] : [pad.leading, -pad.trailing, pad.top, -pad.bottom]
+            for (constraint, value) in zip(insets, values) { constraint.constant = value }
+        }
+    }
+
+    init(compact: Bool = false) {
+        self.compact = compact
+        hairlineRoom = compact ? 11 : UISettings.hairlineRoom
+        super.init(frame: .zero)
+        backgroundColor = UISettings.cardFill
+        layer.cornerRadius = Spotlight.cornerRadius
+        layer.cornerCurve = .continuous
+        stack.axis = .vertical
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        let pad = CardSettingsRow.cardPadding
+        insets = [
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad.leading),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad.trailing),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: pad.top),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad.bottom),
+        ]
+        NSLayoutConstraint.activate(insets)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The row views in order (the categories, a page's focus).
+    private(set) var rows: [UISettingsRowView] = []
+
+    func set(_ models: [UISettingsRow]) {
+        var next: [UISettingsRowView] = []
+        var seen: Set<String> = []
+        for model in models {
+            let id = model.id
+            guard seen.insert(id).inserted else { continue }
+            if let view = views[id], view.apply(model) {
+                next.append(view)
+            } else {
+                views[id]?.removeFromSuperview()
+                let view = makeSettingsRow(model, compact: compact)
+                views[id] = view
+                next.append(view)
+            }
+        }
+        for (id, view) in views where !seen.contains(id) {
+            view.removeFromSuperview()
+            views[id] = nil
+        }
+        let newShape = models.map { ($0.onlyToRead ? "r:" : "a:") + $0.id }
+        rows = next
+        guard newShape != shape else { return }
+        let reorder = Set(newShape) == Set(shape)
+        shape = newShape
+        arrange(models)
+        // A row moved (Up and Down while lifted): the rows slide.
+        if reorder, window != nil {
+            UIView.animate(springDuration: 0.2, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.layoutIfNeeded()
+            }
+        }
+    }
+
+    /// A lifted row passes its neighbour (one that can move too): the two
+    /// views swap in the stack and slide, nothing else is touched (the
+    /// rules between them are alike).
+    func shift(_ row: UISettingsActionRow, by step: Int) -> Bool {
+        guard let index = rows.firstIndex(where: { $0 === row }), rows.indices.contains(index + step),
+              let other = rows[index + step] as? UISettingsActionRow, other.canMove,
+              let a = stack.arrangedSubviews.firstIndex(of: row),
+              let b = stack.arrangedSubviews.firstIndex(of: other) else { return false }
+        let (low, high) = a < b ? (row, other) : (other, row)
+        let (lowAt, highAt) = (min(a, b), max(a, b))
+        stack.insertArrangedSubview(high, at: lowAt)
+        stack.insertArrangedSubview(low, at: highAt)
+        rows.swapAt(index, index + step)
+        // The order the store will have after the drop: no arrange then.
+        if shape.indices.contains(index + step) { shape.swapAt(index, index + step) }
+        for view in rows { stack.bringSubviewToFront(view) }
+        stack.bringSubviewToFront(row)
+        UIView.animate(springDuration: 0.2, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.stack.layoutIfNeeded()
+        }
+        return true
+    }
+
+    private func arrange(_ models: [UISettingsRow]) {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            if !(view is UISettingsRowView) { view.removeFromSuperview() }
+        }
+        wells.forEach { $0.removeFromSuperview() }
+        wells = []
+        var runStart: UIView?
+        var previous: UIView?
+        for (index, model) in models.enumerated() where index < rows.count {
+            let view = rows[index]
+            let sunk = model.onlyToRead
+            if index > 0 {
+                let previousSunk = models[index - 1].onlyToRead
+                if sunk != previousSunk {
+                    stack.addArrangedSubview(Self.space(UISettings.wellGap))
+                } else {
+                    stack.addArrangedSubview(Self.rule(room: hairlineRoom))
+                }
+                if previousSunk, !sunk, let start = runStart, let end = previous { addWell(start, end); runStart = nil }
+            }
+            if sunk, runStart == nil { runStart = view }
+            stack.addArrangedSubview(view)
+            previous = view
+        }
+        if let start = runStart, let end = previous { addWell(start, end) }
+        // The rows over the hairlines: a lit plate covers the ones beside it.
+        for view in rows { stack.bringSubviewToFront(view) }
+    }
+
+    private func addWell(_ first: UIView, _ last: UIView) {
+        // SwiftUI's own well (its inner shade): Core Animation's blur drew
+        // an edge round it.
+        let well = UISettingsHosted(AnyView(EmbeddedWell()))
+        well.translatesAutoresizingMaskIntoConstraints = false
+        insertSubview(well, belowSubview: stack)
+        NSLayoutConstraint.activate([
+            well.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            well.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            well.topAnchor.constraint(equalTo: first.topAnchor, constant: -UISettings.plateBleed),
+            well.bottomAnchor.constraint(equalTo: last.bottomAnchor, constant: UISettings.plateBleed),
+        ])
+        wells.append(well)
+    }
+
+    private static func space(_ height: CGFloat) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return view
+    }
+
+    private static func rule(room: CGFloat) -> UIView {
+        let line = space(room)
+        let rule = UIView()
+        rule.backgroundColor = UISettings.hairline
+        rule.translatesAutoresizingMaskIntoConstraints = false
+        line.addSubview(rule)
+        NSLayoutConstraint.activate([
+            rule.heightAnchor.constraint(equalToConstant: 1),
+            rule.centerYAnchor.constraint(equalTo: line.centerYAnchor),
+            rule.leadingAnchor.constraint(equalTo: line.leadingAnchor, constant: UISettings.rowInset),
+            rule.trailingAnchor.constraint(equalTo: line.trailingAnchor, constant: -UISettings.rowInset),
+        ])
+        return line
+    }
+}
+
+/// One section of a page (`UISettingsPageView`): its label, then its rows
+/// on one card.
+struct UISettingsSection {
+    var label: String? = nil
+    var rows: [UISettingsRow]
+    /// No card of its own (a profile's header: its own colour).
+    var bare = false
+}
+
+/// A section's view: its label (24 pt semibold, tertiary, at the words'
+/// edge, 30 pt tall and 12 above the card), then its card.
+final class UISettingsSectionView: UIView {
+    let label = UISettings.label(UISettings.textSize, .semibold, FixedFocusText.tertiary)
+    let card: UISettingsCard
+    private var labelHeight: NSLayoutConstraint!
+    private var cardTop: NSLayoutConstraint!
+
+    init(compact: Bool = false) {
+        card = UISettingsCard(compact: compact)
+        super.init(frame: .zero)
+        for view in [label, card] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        label.numberOfLines = 1
+        labelHeight = label.heightAnchor.constraint(equalToConstant: UISettings.labelRoom - 12)
+        cardTop = card.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.textInset),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            labelHeight, cardTop,
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(_ section: UISettingsSection) {
+        let labelled = !(section.label ?? "").isEmpty
+        label.text = section.label
+        label.isHidden = !labelled
+        labelHeight.constant = labelled ? UISettings.labelRoom - 12 : 0
+        cardTop.constant = labelled ? 12 : 0
+        card.bare = section.bare
+        card.set(section.rows)
+    }
+}
+
+/// A page in the right column: its sections 40 apart, scrolling under the
+/// fade into the gap above the column (`scrollTo`). A page whose first
+/// section has no label starts its
+/// card level with the categories' first card. Scrolled only by us, on
+/// Core Animation (the engine's own scroll runs on the main thread).
+class UISettingsPageView: UIView, UIScrollViewDelegate {
+    /// The gap above the column the page scrolls into, the fade over it.
+    static let above = SettingsTopFade.height
+    static let fade = SettingsTopFade.fade
+    /// Past the focused row, what shows of the next one (about a row).
+    static let peek: CGFloat = 70
+    /// Under the last card, to the screen's foot.
+    static let foot: CGFloat = 60
+    /// Beyond the column: shadows and grown pills, unclipped.
+    static let sideRoom: CGFloat = 80
+    static let footRoom: CGFloat = 200
+
+    let scroll = UIScrollView()
+    /// The scroll and its fade; a pinned view sits beside it, outside the fade.
+    private let holder = UIView()
+    /// Stays at the column's top while the rows scroll under it (the
+    /// avatar picker's preview); its height fixed.
+    private var pinned: UIView?
+    private var pinnedHeight: CGFloat = 0
+    /// With a pinned view: one card from it to the column's foot, the rows
+    /// scrolling inside it, fading out at its edges.
+    private let pinnedCard = UIView()
+    static let edgeFade: CGFloat = 16
+    private var column: CGRect?
+    private let content = UIStackView()
+    private var sectionViews: [UISettingsSectionView] = []
+    private var topRoom: NSLayoutConstraint!
+    private let fadeMask = CAGradientLayer()
+    private var offset: CGFloat = 0
+    /// The row focus was on last in this page (it lands there again).
+    private weak var lastFocused: UIView?
+
+    init() {
+        super.init(frame: .zero)
+        clipsToBounds = false
+        scroll.delegate = self
+        scroll.clipsToBounds = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.contentInsetAdjustmentBehavior = .never
+        holder.clipsToBounds = false
+        addSubview(holder)
+        holder.addSubview(scroll)
+        content.axis = .vertical
+        content.spacing = UISettings.sectionGap
+        content.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(content)
+        topRoom = content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: Self.above)
+        NSLayoutConstraint.activate([
+            topRoom,
+            content.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            content.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Self.foot),
+        ])
+        fadeMask.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
+        holder.layer.mask = fadeMask
+    }
+
+    /// A view kept at the column's top, `height` tall; the rows start a
+    /// section's gap under it and scroll there.
+    func pin(_ view: UIView, height: CGFloat) {
+        pinned?.removeFromSuperview()
+        pinned = view
+        pinnedHeight = height
+        pinnedCard.backgroundColor = UISettings.cardFill
+        pinnedCard.layer.cornerRadius = Spotlight.cornerRadius
+        pinnedCard.layer.cornerCurve = .continuous
+        pinnedCard.isUserInteractionEnabled = false
+        insertSubview(pinnedCard, at: 0)
+        addSubview(view)
+        for view in sectionViews where !view.card.bare { view.card.backgroundColor = .clear }
+        if let column { place(column: column) }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Laid out over the column: the scroll from the gap above it.
+    func place(column: CGRect) {
+        self.column = column
+        frame = CGRect(x: column.minX - Self.sideRoom, y: column.minY - Self.above,
+                       width: column.width + 2 * Self.sideRoom, height: column.height + Self.above + Self.footRoom)
+        holder.frame = bounds
+        // Pinned: the top of one card level with the categories' first, to
+        // the foot; the rows (an unlabelled first section) right under the
+        // pinned view, fading out at its edge and at the card's foot.
+        let cardTop = Self.above + UISettings.labelRoom
+        let cardBottom = Self.above + column.height - Self.foot
+        let room = pinned == nil ? 0 : pinnedHeight
+        pinned?.frame = CGRect(x: Self.sideRoom, y: cardTop, width: column.width, height: pinnedHeight)
+        pinnedCard.frame = CGRect(x: Self.sideRoom, y: cardTop, width: column.width, height: cardBottom - cardTop)
+        scroll.frame = CGRect(x: Self.sideRoom, y: room, width: column.width, height: column.height + Self.above - room)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeMask.frame = holder.bounds
+        let h = holder.bounds.height
+        func at(_ y: CGFloat) -> NSNumber { NSNumber(value: Double(y / h)) }
+        if pinned == nil {
+            fadeMask.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
+            fadeMask.locations = [0, at(Self.above - Self.fade), at(Self.above), 1]
+        } else {
+            let line = cardTop + pinnedHeight
+            fadeMask.colors = [UIColor.clear, .clear, .black, .black, .clear, .clear].map(\.cgColor)
+            fadeMask.locations = [0, at(line), at(line + Self.edgeFade),
+                                  at(cardBottom - Self.edgeFade), at(cardBottom), 1]
+        }
+        CATransaction.commit()
+    }
+
+    func set(_ sections: [UISettingsSection]) {
+        while sectionViews.count < sections.count {
+            let view = UISettingsSectionView()
+            sectionViews.append(view)
+            content.addArrangedSubview(view)
+        }
+        while sectionViews.count > sections.count {
+            sectionViews.removeLast().removeFromSuperview()
+        }
+        for (view, section) in zip(sectionViews, sections) {
+            view.set(section)
+            if pinned != nil, !section.bare { view.card.backgroundColor = .clear }
+        }
+        let labelled = !(sections.first?.label ?? "").isEmpty
+        topRoom.constant = Self.above + (labelled ? 0 : UISettings.labelRoom)
+        // Its rows came (a page that loads): focus onto them.
+        if isFocused, firstFocusable != nil {
+            setNeedsFocusUpdate()
+            updateFocusIfNeeded()
+            return
+        }
+        // A row moved (lifted, Up and Down) stays in view.
+        if let focused = UISettings.focusedView(in: self), focused.isDescendant(of: content) {
+            scrollTo(focused, animated: true)
+        }
+    }
+
+    /// The first row focus can take.
+    var firstFocusable: UIView? {
+        for section in sectionViews {
+            for row in section.card.rows {
+                if row.canBecomeFocused { return row }
+                if let control = row as? UISettingsControlRow, let entry = control.entry { return entry }
+                // A grid: the chosen tile (the avatar picker opens on yours), else the first.
+                if let grid = row as? UISettingsTileGridRow {
+                    let tiles = grid.subviews.compactMap { $0 as? UISettingsTile }
+                    if let tile = tiles.first(where: \.chosen) ?? tiles.first { return tile }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// A page with nothing to press holds focus itself, unseen (Back and
+    /// Left still work from it).
+    override var canBecomeFocused: Bool { firstFocusable == nil }
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] {
+        if let lastFocused, lastFocused.window != nil, lastFocused.canBecomeFocused { return [lastFocused] }
+        return firstFocusable.map { [$0] } ?? []
+    }
+
+    /// Back at the page's top, as it opens.
+    func reset() {
+        lastFocused = nil
+        offset = 0
+        scroll.contentOffset = .zero
+    }
+
+    // The engine's own scroll, stopped where the page is.
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                   targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        targetContentOffset.pointee = scrollView.contentOffset
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard let next = context.nextFocusedView, next.isDescendant(of: content) else { return }
+        lastFocused = next
+        scrollTo(next, animated: true)
+    }
+
+    /// Only when needed, and as little as needed (tvOS's own lists): a
+    /// page that fits never moves; a taller one moves as focus nears an
+    /// edge, just far enough that the next row shows below the focused
+    /// one, or going up, its section's label over a section's first row;
+    /// never past the last card. (Before, 2026-11-23: the focused row's
+    /// section snapped to the column's top line on every move — too much
+    /// movement on pages that fit.)
+    func scrollTo(_ view: UIView, animated: Bool) {
+        layoutIfNeeded()
+        guard let section = sectionViews.first(where: { view.isDescendant(of: $0) }) else { return }
+        // The row (a tile in the avatars' grid: the tile itself).
+        let rowView = view is UISettingsTile ? view
+            : section.card.rows.first(where: { view.isDescendant(of: $0) }) ?? view
+        let row = rowView.convert(rowView.bounds, to: content).offsetBy(dx: 0, dy: content.frame.minY)
+        // The section's first row (a tile: the grid's first line).
+        var first = section.card.rows.first.map { view.isDescendant(of: $0) } ?? false
+        if first, view is UISettingsTile, let grid = view.superview {
+            let top = grid.subviews.filter { $0 is UISettingsTile }.map(\.frame.minY).min() ?? 0
+            first = view.frame.minY <= top + 1
+        }
+        let height = scroll.bounds.height
+        let end = (sectionViews.last.map { $0.frame.maxY } ?? 0) + content.frame.minY + Self.foot
+        // What shows: a pinned view's page, inside its card's fades.
+        let bottom = pinned == nil ? height : height - Self.foot - Self.edgeFade
+        var target = offset
+        if row.maxY + Self.peek > target + bottom { target = row.maxY + Self.peek - bottom }
+        let wantedTop = first ? section.frame.minY + content.frame.minY : row.minY - Self.peek
+        // Where what scrolls goes out of sight (a pinned view's page: lower).
+        let line = Self.above + (pinned == nil ? 0 : UISettings.labelRoom + Self.edgeFade)
+        if wantedTop < target + line { target = wantedTop - line }
+        target = min(target, max(0, end - height))
+        target = max(0, target)
+        // Back in the page's first section: all the way to the top, level
+        // with the categories again (its missing label left it a few points short).
+        if section === sectionViews.first, first || row.minY - Self.peek < Self.above { target = 0 }
+        // The first row to press, below rows only to read (For You's taste):
+        // as near the top as it stays in view, so what's above it can be read.
+        if let firstRow = firstFocusable, firstRow === view || firstRow.isDescendant(of: rowView) {
+            target = max(0, min(target, row.maxY + Self.peek - bottom))
+        }
+        guard abs(target - offset) > 0.5 else {
+            if abs(scroll.contentOffset.y - target) > 0.5 { scroll.contentOffset.y = target }
+            return
+        }
+        offset = target
+        if animated {
+            FixedFocusMotion.run(duration: Motion.moveDuration, animations: {
+                self.scroll.contentOffset = CGPoint(x: 0, y: target)
+            }) { _ in }
+        } else {
+            scroll.contentOffset = CGPoint(x: 0, y: target)
+        }
+    }
+}
+
+// MARK: - The keyboard, from UIKit
+
+/// Opens the tvOS keyboard straight away (`KeyboardPresenter`'s way): a
+/// hidden field becomes first responder.
+final class UISettingsKeyboard: NSObject, UITextFieldDelegate {
+    private let field = KeyboardPresenter.HiddenField()
+    private var commit: ((String) -> Void)?
+
+    func attach(to view: UIView) {
+        field.alpha = 0.01
+        field.delegate = self
+        field.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        view.addSubview(field)
+    }
+
+    func ask(text: String, placeholder: String, commit: @escaping (String) -> Void) {
+        self.commit = commit
+        field.text = text
+        field.placeholder = placeholder
+        DispatchQueue.main.async { self.field.becomeFirstResponder() }
+    }
+
+    func textFieldDidEndEditing(_ field: UITextField) {
+        commit?(field.text ?? "")
+        commit = nil
+    }
+
+    func textFieldShouldReturn(_ field: UITextField) -> Bool {
+        field.resignFirstResponder()
+        return true
+    }
 }

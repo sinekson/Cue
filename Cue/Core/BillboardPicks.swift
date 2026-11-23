@@ -359,6 +359,10 @@ enum CueRows {
         var episodes: [String: EpisodeCard]? = nil
         /// The line under a `plain` card, by title id ("Finished 8 months ago").
         var subtitles: [String: String]? = nil
+        /// Why each title is in it, by title id, for the Why page ("With
+        /// Bryan Cranston", "Like Frieren"); none where the list's own order
+        /// is the point (trending, new): the row's reason says it.
+        var whys: [String: String]? = nil
     }
 
     /// A row's cards, by what the row is for: tall showcase cards for what's
@@ -384,7 +388,20 @@ enum CueRows {
     struct Why: Codable, Sendable {
         let tab: String
         let title: String
+        /// One plain sentence ("Anime is 64 % of what you watch.").
         let reason: String
+        /// What else went into it: how you've used the row lately.
+        var notes: [String]? = nil
+    }
+
+    /// A title left out of the rows, for the Why page: passed over (back
+    /// in at `until`) or dropped (`note`: how far you got).
+    struct LeftOut: Codable, Sendable {
+        let id: String
+        let type: String
+        let name: String
+        var note: String? = nil
+        var until: Date? = nil
     }
 
     struct TasteLine: Codable, Sendable {
@@ -416,6 +433,9 @@ enum CueRows {
         let passedOver: [String]
         /// Titles you dropped, by name (nil: saved before they were read).
         var dropped: [String]?
+        /// The same two with their ids and details (nil: saved before).
+        var passedTitles: [LeftOut]? = nil
+        var droppedTitles: [LeftOut]? = nil
         /// The rows' make (`CueRows.version`): another, and they're made again.
         var version: Int?
         /// Today's Pick's titles and when each was first up (a week apart).
@@ -428,7 +448,7 @@ enum CueRows {
     }
 
     /// Raised when a change to how rows are made should show at once.
-    static let version = 26
+    static let version = 27
     /// Today's Pick (the full-width card) doesn't show a title again for
     /// this long.
     static let spotlightRest: TimeInterval = 7 * 24 * 60 * 60
@@ -484,7 +504,16 @@ enum CueRows {
         }.value
     }
 
+    /// Why These Rows' Rebuild Rows (or a title let back in): new rows the
+    /// next time Home comes into view, whatever else says.
+    static let rebuildKey = "cue.rows.rebuild"
+    static var rebuildRequested: Bool {
+        get { UserDefaults.standard.bool(forKey: rebuildKey) }
+        set { UserDefaults.standard.set(newValue, forKey: rebuildKey) }
+    }
+
     static func save(_ saved: Saved) {
+        rebuildRequested = false
         let url = fileURL
         Task.detached(priority: .utility) {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
@@ -503,6 +532,7 @@ enum CueRows {
     static func due(_ saved: Saved?, seeds: [String], now: Date = Date()) -> Bool {
         guard let saved else { return true }
         return saved.degraded == true
+            || rebuildRequested
             || saved.version != version
             || saved.day != dayKey(now)
             || saved.seeds != seeds
@@ -1353,7 +1383,7 @@ enum CueRows {
                           keepOrder: Bool = false, minimum: Int = CueRows.minimumTitles,
                           own: Bool = false, ranked: Bool = false, reasons: Bool = false,
                           showcase: Showcase? = nil, shape: CardShape = .poster,
-                          subtitles: [String: String]? = nil, reason: String) -> Bool {
+                          subtitles: [String: String]? = nil, reason: String, notes: [String]? = nil) -> Bool {
             var unique = Set<String>()
             let candidates = titles.filter {
                 unique.insert($0.item.id).inserted && !out.contains($0.item.id)
@@ -1395,11 +1425,23 @@ enum CueRows {
                     badges[title.item.id] = CardBadge(kind: .top10, text: "Top 10")
                 }
             }
+            // Each title's own reason for the Why page: its badge where it
+            // says one, the line under it, else the same reason For You gives.
+            var whys: [String: String] = [:]
+            for title in shown {
+                let id = title.item.id
+                if let text = showcase?.badges[id]?.text ?? subtitles?[id] {
+                    whys[id] = text
+                } else if !keepOrder, let badge = badges[id] ?? CueRows.reason(title, model: model, known: known,
+                                                                                curated: curated) {
+                    whys[id] = badge.text
+                }
+            }
             rows.append(Row(id: "cue.\(tab).\(id)", title: title, tabs: [tab], items: shown.map(\.item),
                             badges: badges.isEmpty ? nil : badges,
                             art: showcase?.art, shape: ranked ? .ranked : showcase != nil ? .tall : shape,
-                            subtitles: subtitles))
-            why.append(Why(tab: tab, title: title, reason: reason))
+                            subtitles: subtitles, whys: whys.isEmpty ? nil : whys))
+            why.append(Why(tab: tab, title: title, reason: reason, notes: notes))
             return true
         }
     }
@@ -1693,6 +1735,7 @@ enum CueRows {
         let topRelevance = max(zip(recipes, relevance).filter { !$0.0.about.isEmpty }.map(\.1.value).max() ?? 0, 0.0001)
         var score: [String: Double] = [:]
         var reason: [String: String] = [:]
+        var notes: [String: [String]] = [:]
         for (recipe, rel) in zip(recipes, relevance) {
             let chance = jitter(day, recipe.id)
             let fit = recipe.about.isEmpty ? recipe.broad : rel.value / topRelevance
@@ -1705,21 +1748,22 @@ enum CueRows {
                 ? chance + 0.3 * recipe.broad
                 : 0.65 * fit + 0.35 * chance - (previous.contains(recipe.id) ? 0.12 : 0)) + habit + inSeason
             score[recipe.id] = value
-            let figure = String(format: "%.2f", value)
             func days(_ n: Int) -> String { n == 1 ? "1 day" : "\(n) days" }
-            let habitNote = passed > explored ? ", passed over \(days(passed))"
-                : explored > 0 ? ", explored \(days(explored))" : ""
+            var said: [String] = []
+            if passed > 0 { said.append("Passed over on \(days(passed)) lately, so it sinks.") }
+            if explored > 0 { said.append("Explored on \(days(explored)) lately, so it rises.") }
+            notes[recipe.id] = said
             if let season = recipe.season {
-                reason[recipe.id] = "For \(season)\(habitNote) (\(figure))"
+                reason[recipe.id] = "It's \(season): up while the season lasts."
             } else if taste.isEmpty {
-                reason[recipe.id] = "Today's rotation: no taste yet\(habitNote) (\(figure))"
+                reason[recipe.id] = "In today's rotation: Cue doesn't know your taste yet."
             } else if let feature = rel.because, (taste.shares[feature] ?? 0) > 0 {
                 let share = Int(((taste.shares[feature] ?? 0) * 100).rounded())
-                reason[recipe.id] = "\(label(feature, taste)): \(share) % of your watching\(habitNote) (\(figure))"
+                reason[recipe.id] = "\(label(feature, taste)) is \(share) % of what you watch."
             } else if recipe.about.isEmpty {
-                reason[recipe.id] = "For anyone, in today's rotation\(habitNote) (\(figure))"
+                reason[recipe.id] = "A row for anyone, in today's rotation."
             } else {
-                reason[recipe.id] = "Something different, in today's rotation\(habitNote) (\(figure))"
+                reason[recipe.id] = "Something different, in today's rotation."
             }
         }
         let ranked = recipes.sorted { (score[$0.id] ?? 0) > (score[$1.id] ?? 0) }
@@ -1833,21 +1877,20 @@ enum CueRows {
         func newAndNotable(_ layout: inout Layout, _ showcase: Showcase) {
             layout.add("newnotable", "New & Notable", showcase.titles, fresh: false, keepOrder: true,
                        minimum: showcaseMinimum, own: true, showcase: showcase,
-                       reason: "What's new: new seasons of your shows first, then the biggest and most yours")
+                       reason: "New seasons of your shows first, then the biggest premieres most like what you watch.")
         }
 
         let pool = fixed.all + fetched.values.flatMap { $0 } + seedRows.flatMap(\.titles)
-        let picksReason = "Your best matches among today's \(Set(pool.map(\.item.id)).count) titles"
-        let seedReason = "From your recent watching"
-        let newReason = "Always here, your shows first"
-        let serviceReason = "One of the biggest services in \(Locale.current.localizedString(forRegionCode: region) ?? region)"
+        let picksReason = "Your best matches among the \(Set(pool.map(\.item.id)).count) titles Cue looked at today."
+        let newReason = "Always on Home, your shows first."
+        let serviceReason = "One of the biggest services in \(Locale.current.localizedString(forRegionCode: region) ?? region)."
 
         /// A large row, as every Because You Watched.
         @discardableResult
         func becauseRow(_ layout: inout Layout, _ seed: Seed?) -> Bool {
             guard let seed else { return false }
             return layout.add("because.\(seed.known.watch.id)", "Because You Watched \(seed.name)", seed.titles,
-                              reason: seedReason)
+                              reason: "Titles like \(seed.name), one of the latest you watched.")
         }
         @discardableResult
         func serviceRow(_ layout: inout Layout, _ index: Int) -> Bool {
@@ -1877,7 +1920,7 @@ enum CueRows {
             for recipe in spaced(picks) where layout.themed.count < count {
                 insert(upTo: layout.themed.count)
                 guard let titles = fetched[recipe.id] else { continue }
-                if layout.add("r.\(recipe.id)", recipe.title, titles, reason: reason[recipe.id] ?? "") {
+                if layout.add("r.\(recipe.id)", recipe.title, titles, reason: reason[recipe.id] ?? "", notes: notes[recipe.id]) {
                     layout.themed.append(recipe.id)
                 }
             }
@@ -1888,7 +1931,7 @@ enum CueRows {
         @discardableResult
         func pickBackUp(_ layout: inout Layout) -> Bool {
             layout.add("pickbackup", "Pick Back Up", own.pickBackUp, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
-                       shape: .poster, reason: "Shows you started, untouched for over a month")
+                       shape: .poster, reason: "Shows you started and haven't touched for over a month.")
         }
         /// What you finished long ago, for the season where it fits, else
         /// from a year ago, else any: plain posters, when you finished each
@@ -1923,7 +1966,7 @@ enum CueRows {
                 let titles = ranked(own.rewatch.filter { !Set($0.traits.keywords).isDisjoint(with: keywords) })
                 if layout.add("rewatch.season", "\(season.prefix(1).uppercased() + season.dropFirst()) Favourites",
                               titles, fresh: false, keepOrder: true, minimum: minimumOwn, own: true,
-                              shape: .plain, subtitles: finished, reason: "For \(season): titles you finished before") { return true }
+                              shape: .plain, subtitles: finished, reason: "It's \(season): titles for it you finished before.") { return true }
             }
             let yearAgo = ranked(own.rewatch.filter { title in
                 let ago = now.timeIntervalSince(byID[title.item.id]?.last ?? now) / 86_400
@@ -1931,9 +1974,9 @@ enum CueRows {
             })
             if jitter(day, "rewatch.year") < 0.5,
                layout.add("rewatch.year", "A Year Ago This Month", yearAgo, fresh: false, keepOrder: true,
-                          minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "What you were watching a year ago") { return true }
+                          minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "What you were watching a year ago this month.") { return true }
             return layout.add("rewatch", "Watch Again", ranked(own.rewatch), fresh: false, keepOrder: true,
-                       minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "Finished at least \(rewatchAfterDays) days ago")
+                       minimum: minimumOwn, own: true, shape: .plain, subtitles: finished, reason: "Titles you finished at least \(rewatchAfterDays) days ago.")
         }
 
         let homeSeeds = seedRows.filter { seed in chosen.contains { $0.watch.id == seed.known.watch.id } }
@@ -1970,7 +2013,7 @@ enum CueRows {
         for recipe in homeRecipes {
             guard let titles = fetched[recipe.id] else { continue }
             large.append(Large(score: score[recipe.id] ?? 0, group: recipe.group) { layout in
-                guard layout.add("r.\(recipe.id)", recipe.title, titles, reason: reason[recipe.id] ?? "") else { return false }
+                guard layout.add("r.\(recipe.id)", recipe.title, titles, reason: reason[recipe.id] ?? "", notes: notes[recipe.id]) else { return false }
                 layout.themed.append(recipe.id)
                 return true
             })
@@ -2010,7 +2053,9 @@ enum CueRows {
             let grid = gridsMade[index]
             return layout.add("best.\(grid.id)", grid.title, grid.titles, fresh: false, keepOrder: true,
                             minimum: rankedLength, own: true, ranked: true,
-                            reason: "In your taste: the best by IMDb's rating (a person's, a studio's or network's, by score)")
+                            reason: grid.title.hasPrefix("Essentials")
+                                ? "Someone in your taste, a person, studio or network: their ten best known, by IMDb's votes."
+                                : "Someone in your taste, a person, studio or network: their ten best, by IMDb's rating.")
         }
         // The fixed rows, each followed by a large row: never two large rows
         // side by side. One that doesn't make it takes its large row with it
@@ -2019,26 +2064,26 @@ enum CueRows {
             { $0.add("picks", "Top Picks for You", picksList, keepOrder: true, reasons: true, shape: .tall,
                      reason: picksReason) },
             { $0.add("top10", "Top 10 Today", fixed.trendingAll, fresh: false, keepOrder: true, ranked: true,
-                     reason: "Always here: today's trending, ranked") },
+                     reason: "Always on Home: what's trending today, ranked.") },
             { $0.add("ontheair", "New Episodes This Week", own.newEpisodes + fixed.onTheAir, fresh: false,
                      keepOrder: true, shape: .episode, reason: newReason) },
             { $0.add("newnotable", "New & Notable", homeShowcase.titles, fresh: false, keepOrder: true,
                      minimum: showcaseMinimum, own: true, showcase: homeShowcase,
-                     reason: "What's new: new seasons of your shows first, then the biggest and most yours") },
+                     reason: "New seasons of your shows first, then the biggest premieres most like what you watch.") },
             { gridRow(&$0, 0) },
             { layout in
                 guard let spotlight else { return false }
                 let reason = CueRows.reason(spotlight, model: model, known: known, curated: curated)
                 layout.rows.append(Row(id: "cue.home.spotlight", title: "Today's Pick for You", tabs: ["home"],
                                        items: [spotlight.item], badges: reason.map { [spotlight.item.id: $0] },
-                                       shape: .spotlight))
+                                       shape: .spotlight, whys: reason.map { [spotlight.item.id: $0.text] }))
                 layout.why.append(Why(tab: "home", title: "Today's Pick for You",
-                                      reason: "Your best match today, not up in the last week"))
+                                      reason: "Your best match today, not shown in the last week."))
                 return true
             },
             { $0.add("comingsoon", "Coming Soon for You", homeComing.titles, fresh: false, keepOrder: true,
                      minimum: showcaseMinimum, own: true, showcase: homeComing,
-                     reason: "Out in the next \(Int(comingDays)) days, in your taste: your shows first") },
+                     reason: "Out in the next \(Int(comingDays)) days and in your taste, your shows first.") },
             { rewatch(&$0) },
             { gridRow(&$0, 1) },
         ]
@@ -2094,7 +2139,8 @@ enum CueRows {
             rows[index] = Row(id: row.id, title: row.title, tabs: row.tabs,
                               items: row.items.filter { episodes[$0.id] != nil }, badges: row.badges,
                               art: row.art, shape: row.shape,
-                              episodes: episodes.filter { id, _ in row.items.contains { $0.id == id } })
+                              episodes: episodes.filter { id, _ in row.items.contains { $0.id == id } },
+                              subtitles: row.subtitles, whys: row.whys)
         }
         return Saved(builtAt: now, seeds: seeds, rows: rows, day: day,
                      picked: Array(Set(home.themed)), previous: previous,
@@ -2105,7 +2151,28 @@ enum CueRows {
                      dropped: watches.filter { dropped.contains($0.id) }.compactMap { watch in
                          watch.name.isEmpty ? known.first { $0.watch.id == watch.id }?.traits.name : watch.name
                      },
+                     passedTitles: passes.out(day: day).compactMap { id -> LeftOut? in
+                         guard let item = pool.first(where: { $0.item.id == id })?.item else { return nil }
+                         let last = passes.titles[id]?.last.flatMap(Self.date(dayKey:))
+                         return LeftOut(id: id, type: item.type, name: item.name,
+                                        until: last?.addingTimeInterval(Double(Passes.keep) * 86_400))
+                     },
+                     droppedTitles: watches.filter { dropped.contains($0.id) }.compactMap { watch -> LeftOut? in
+                         let name = watch.name.isEmpty ? known.first { $0.watch.id == watch.id }?.traits.name : watch.name
+                         guard let name else { return nil }
+                         let note = watch.type == "movie"
+                             ? "Stopped at \(Int((watch.progress * 100).rounded())) %"
+                             : watch.watched == 1 ? "Left after 1 episode" : "Left after \(watch.watched) episodes"
+                         return LeftOut(id: watch.id, type: watch.type, name: name, note: note)
+                     },
                      version: version, spotlights: spotlights)
+    }
+
+    /// A `dayKey` back to its day.
+    static func date(dayKey: String) -> Date? {
+        let parts = dayKey.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
     /// How much a row is about you: its traits' pull (each condition its
@@ -2408,6 +2475,14 @@ extension CueRows {
             }
         }
 
+        /// Why These Rows' Show Again: its passes forgotten.
+        func letBackIn(_ ids: [String]) {
+            load()
+            var changed = false
+            for id in ids where passes.titles.removeValue(forKey: id) != nil { changed = true }
+            if changed { save() }
+        }
+
         func opened(_ id: String) {
             load()
             dwellTask?.cancel()
@@ -2543,6 +2618,18 @@ extension CueRows {
         } else {
             entries[item.id] = Entry(rating: rating, at: Date(), type: item.type, name: item.name)
         }
+        store()
+    }
+
+    /// Why These Rows' Remove: these ratings gone.
+    func clear(_ ids: [String]) {
+        load()
+        let before = entries.count
+        for id in ids { entries[id] = nil }
+        if entries.count != before { store() }
+    }
+
+    private func store() {
         version &+= 1
         guard let profile else { return }
         let url = Self.url(profile)

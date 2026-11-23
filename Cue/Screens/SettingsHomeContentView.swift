@@ -158,6 +158,394 @@ struct WhyTheseRowsPage: View {
     }
 }
 
+/// Settings 2's Why These Rows, from the last saved build, one screen:
+/// See Everything (Home's rows in order, each its reason and its titles
+/// with theirs, full screen: the About panel's `TextPanel`), Rebuild Rows
+/// (the build its second line); what's left out (ratings, passed over,
+/// dropped: lists with their actions). (Home's rows as a list here, each
+/// opening its page, were before: the page scrolled.) (Before, 2026-11-23: every reason and
+/// list in full on one page of cards, read a card at a time with dots, a
+/// custom scroll; then the taste on it too, a page per kind: read-only
+/// parts on a page that scrolls by focus.)
+struct WhyTheseRowsCardPage: View {
+    @EnvironmentObject private var nav: SettingsNav
+    @State private var saved: CueRows.Saved?
+    @State private var loaded = false
+    @State private var rebuild = CueRows.rebuildRequested
+
+    var body: some View {
+        SettingsPage(title: "Why These Rows") {
+            if let saved {
+                content(saved)
+            } else if loaded {
+                SettingsNote("Not built yet. Open Home and Cue builds its rows.")
+                SettingsFocusHolder()
+            }
+        }
+        .task {
+            saved = await CueRows.saved()
+            loaded = true
+        }
+    }
+
+    @ViewBuilder private func content(_ saved: CueRows.Saved) -> some View {
+        let whys = saved.why.filter { $0.tab == "home" }
+        SettingsSection {
+            if !whys.isEmpty {
+                Button {
+                    TextPanel.present(title: "Why These Rows",
+                                      subtitle: "Built " + DateFormatter.settingsWhen.string(from: saved.builtAt),
+                                      content: WhyAllRowsPanel(saved: saved, whys: whys))
+                } label: {
+                    SettingsRowLabel(title: "See Everything", value: "\(whys.count) rows", chevron: true,
+                                     description: "Each row on Home, why it's there, and why its titles are.")
+                }
+                .settingsRow(id: "why.all")
+            }
+            Button {
+                CueRows.rebuildRequested = true
+                rebuild = true
+            } label: {
+                SettingsRowLabel(title: "Rebuild Rows", value: rebuild ? "When Home opens" : nil,
+                                 description: "Built " + DateFormatter.settingsWhen.string(from: saved.builtAt)
+                                    + " from \(saved.titles) titles.")
+            }
+            .settingsRow(id: "why.rebuild")
+        }
+        leftOut(saved)
+    }
+
+    // MARK: Left out and rated
+
+    @ViewBuilder private func leftOut(_ saved: CueRows.Saved) -> some View {
+        let ratings = TitleRatings.shared.snapshot()
+        let passed = saved.passedTitles?.count ?? saved.passedOver.count
+        let dropped = saved.droppedTitles?.count ?? saved.dropped?.count ?? 0
+        if !ratings.isEmpty || passed > 0 || dropped > 0 {
+            SettingsSection(title: "Left Out and Rated") {
+                if !ratings.isEmpty {
+                    Button { nav.push(WhyRatingsPage()) } label: {
+                        SettingsRowLabel(title: "Your Ratings", value: "\(ratings.count)", chevron: true,
+                                         description: "Liked and loved count more; Not for Me is never shown.")
+                    }
+                    .settingsRow(id: "why.ratings")
+                }
+                if passed > 0 {
+                    Button { nav.push(WhyPassedPage(saved: saved)) } label: {
+                        SettingsRowLabel(title: "Passed Over", value: "\(passed)", chevron: true,
+                                         description: "Looked at and left on three days: out for 30 days.")
+                    }
+                    .settingsRow(id: "why.passed")
+                }
+                if dropped > 0 {
+                    Button { nav.push(WhyDroppedPage(saved: saved)) } label: {
+                        SettingsRowLabel(title: "Dropped", value: "\(dropped)", chevron: true,
+                                         description: "Stopped early and left: out, and counted against. Rate it to change that.")
+                    }
+                    .settingsRow(id: "why.dropped")
+                }
+            }
+        }
+    }
+}
+
+/// Settings 2's Your Taste: what Cue read from your watching, one screen.
+/// See Everything first (every trait, full screen: the About panel's
+/// `TextPanel`), then only to read (in the well): the kinds' top six in
+/// two columns, each trait its name, a bar of its share of your watching,
+/// the share; the small kinds a line each under them. (Before, 2026-11-23: a page per
+/// kind, every trait with "× usual" and Discover on Select: too much.)
+struct YourTasteCardPage: View {
+    @State private var saved: CueRows.Saved?
+    @State private var loaded = false
+
+    var body: some View {
+        SettingsPage(title: "Your Taste") {
+            if let saved, !saved.taste.isEmpty {
+                SettingsSection {
+                    Button {
+                        TextPanel.present(title: "Your Taste",
+                                          subtitle: "From \(saved.titles) titles you watched, started or saved",
+                                          content: WhyTastePanel(taste: saved.taste))
+                    } label: {
+                        SettingsRowLabel(title: "See Everything", value: "\(saved.taste.count) traits", chevron: true,
+                                         description: "Read from the last \(saved.titles) titles you watched, "
+                                            + "started or saved; newer ones count more.")
+                    }
+                    .settingsRow(id: "taste.all")
+                    WhyTasteGrid(saved: saved)
+                        .containerValue(\.settingsEmbedded, true)
+                }
+            } else if loaded {
+                SettingsNote("Nothing read yet. Watch something and Cue learns your taste.")
+                SettingsFocusHolder()
+            }
+        }
+        .task {
+            saved = await CueRows.saved()
+            loaded = true
+        }
+    }
+}
+
+/// The taste, laid out to fit the column without scrolling.
+struct WhyTasteGrid: View {
+    let saved: CueRows.Saved
+
+    private typealias Block = (name: String, lines: [CueRows.TasteLine])
+
+    /// The kinds with blocks (top five each), studios and networks as one;
+    /// and the ones read in a line (a language or two).
+    private static let blocks: [(name: String, keys: Set<String>)] = [
+        ("Genres", ["g"]), ("Themes", ["k"]), ("People", ["p"]), ("Studios & Networks", ["c", "n"]),
+    ]
+    private static let lines: [(name: String, key: String)] = [
+        ("Languages", "l"), ("Countries", "o"), ("Decades", "d"),
+    ]
+
+    var body: some View {
+        let byShare = saved.taste.filter { $0.kind != nil }.sorted { $0.share > $1.share }
+        let blocks: [Block] = Self.blocks.compactMap { block in
+            let lines = byShare.filter { block.keys.contains($0.kind ?? "") }.prefix(6)
+            return lines.isEmpty ? nil : (block.name, Array(lines))
+        }
+        let pairs = stride(from: 0, to: blocks.count, by: 2).map { Array(blocks[$0..<min($0 + 2, blocks.count)]) }
+        VStack(alignment: .leading, spacing: 28) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                HStack(alignment: .top, spacing: 56) {
+                    ForEach(pair, id: \.name) { block in
+                        blockView(block).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if pair.count == 1 { Color.clear.frame(maxWidth: .infinity, maxHeight: 1) }
+                }
+            }
+            let small = Self.lines.compactMap { kind -> (String, String)? in
+                let found = byShare.filter { $0.kind == kind.key }.prefix(3)
+                return found.isEmpty ? nil
+                    : (kind.name, found.map { "\($0.label) \(Self.percent($0.share))" }.joined(separator: "  ·  "))
+            }
+            if !small.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(small, id: \.0) { name, value in
+                        HStack(alignment: .firstTextBaseline, spacing: 16) {
+                            Text(name)
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(CueInk.tertiary)
+                                .frame(width: 160, alignment: .leading)
+                            Text(value)
+                                .font(.system(size: 24))
+                                .monospacedDigit()
+                                .foregroundStyle(CueInk.body)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func blockView(_ block: Block) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(block.name)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(CueInk.tertiary)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+                ForEach(block.lines, id: \.label) { line in
+                    GridRow(alignment: .center) {
+                        Text(line.label)
+                            .font(.system(size: 24))
+                            .foregroundStyle(CueInk.primary)
+                            .lineLimit(1)
+                            .frame(maxWidth: 240, alignment: .leading)
+                        Capsule()
+                            .fill(CueInk.color(0.10))
+                            .frame(height: 6)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { geo in
+                                    Capsule()
+                                        .fill(CueInk.body)
+                                        .frame(width: max(6, geo.size.width * min(max(line.share, 0), 1)))
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        Text(Self.percent(line.share))
+                            .font(.system(size: 24))
+                            .monospacedDigit()
+                            .foregroundStyle(CueInk.body)
+                            .gridColumnAlignment(.trailing)
+                    }
+                }
+            }
+        }
+    }
+
+    static func percent(_ share: Double) -> String { "\(Int((share * 100).rounded())) %" }
+}
+
+/// Your ratings by rating, newest first: Open (Details), Remove (undone in
+/// place, gone as the page goes; the rows follow on their next build).
+private struct WhyRatingsPage: View {
+    @Environment(\.settingsOpenTitle) private var openTitle
+    @State private var ratings = TitleRatings.shared.snapshot()
+    @State private var pending: Set<String> = []
+
+    var body: some View {
+        let groups = TitleRatings.Rating.allCases.reversed().compactMap { rating -> (TitleRatings.Rating, [(String, TitleRatings.Entry)])? in
+            let entries = ratings.filter { $0.value.rating == rating }.sorted { $0.value.at > $1.value.at }
+                .map { ($0.key, $0.value) }
+            return entries.isEmpty ? nil : (rating, entries)
+        }
+        SettingsPage(title: "Your Ratings") {
+            ForEach(groups, id: \.0) { rating, entries in
+                SettingsSection(title: rating.name) {
+                    ForEach(entries, id: \.0) { id, entry in
+                        let gone = pending.contains(id)
+                        ActionListRow(
+                            id: "why.rating.\(id)",
+                            title: entry.name,
+                            detail: gone ? "Removed" : "Rated " + DateFormatter.settingsWhen.string(from: entry.at),
+                            dimmed: gone,
+                            actions: [
+                                SettingsAction(title: "Open", icon: "info.circle", key: "open") {
+                                    openTitle?(MetaItem(id: id, type: entry.type, name: entry.name))
+                                },
+                                gone
+                                    ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") {
+                                        pending.remove(id)
+                                    }
+                                    : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") {
+                                        pending.insert(id)
+                                    },
+                            ])
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            if !pending.isEmpty { TitleRatings.shared.clear(Array(pending)) }
+            pending = []
+        }
+    }
+}
+
+/// Passed over: each with when it's back; Open, Show Again (its passes
+/// forgotten, undone in place; the rows made again when Home opens).
+private struct WhyPassedPage: View {
+    @Environment(\.settingsOpenTitle) private var openTitle
+    let saved: CueRows.Saved
+    @State private var pending: Set<String> = []
+
+    var body: some View {
+        SettingsPage(title: "Passed Over") {
+            if let titles = saved.passedTitles {
+                SettingsSection {
+                    ForEach(titles, id: \.id) { title in
+                        let gone = pending.contains(title.id)
+                        ActionListRow(
+                            id: "why.passed.\(title.id)",
+                            title: title.name,
+                            detail: gone ? "Back when Home opens" : Self.back(title.until),
+                            dimmed: gone,
+                            actions: [
+                                SettingsAction(title: "Open", icon: "info.circle", key: "open") {
+                                    openTitle?(MetaItem(id: title.id, type: title.type, name: title.name))
+                                },
+                                gone
+                                    ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "back") {
+                                        pending.remove(title.id)
+                                    }
+                                    : SettingsAction(title: "Show Again", icon: "eye", key: "back") {
+                                        pending.insert(title.id)
+                                    },
+                            ])
+                    }
+                }
+            } else {
+                SettingsNote("Rebuild Rows to see these titles here.")
+                SettingsFocusHolder()
+            }
+        }
+        .onDisappear {
+            guard !pending.isEmpty else { return }
+            CueRows.Memory.shared.letBackIn(Array(pending))
+            CueRows.rebuildRequested = true
+            pending = []
+        }
+    }
+
+    private static func back(_ until: Date?) -> String {
+        guard let until else { return "Out for now" }
+        let days = Int((until.timeIntervalSinceNow / 86_400).rounded(.up))
+        return days <= 1 ? "Back tomorrow" : "Back in \(days) days"
+    }
+}
+
+/// Dropped: each with how far you got; Open (rating it is what changes it).
+private struct WhyDroppedPage: View {
+    @Environment(\.settingsOpenTitle) private var openTitle
+    let saved: CueRows.Saved
+
+    var body: some View {
+        SettingsPage(title: "Dropped") {
+            if let titles = saved.droppedTitles {
+                SettingsSection {
+                    ForEach(titles, id: \.id) { title in
+                        ActionListRow(
+                            id: "why.dropped.\(title.id)",
+                            title: title.name,
+                            detail: title.note ?? "",
+                            actions: [SettingsAction(title: "Open", icon: "info.circle", key: "open") {
+                                openTitle?(MetaItem(id: title.id, type: title.type, name: title.name))
+                            }])
+                    }
+                }
+            } else {
+                SettingsNote("Rebuild Rows to see these titles here.")
+                SettingsFocusHolder()
+            }
+        }
+    }
+}
+
+/// Why These Rows' See Everything: Home's rows in order, each its name,
+/// its reason (and how you've used it lately), its first nine titles with
+/// why each is in it, three across (all of them laid out at once was too
+/// many pictures for one panel).
+struct WhyAllRowsPanel: View {
+    let saved: CueRows.Saved
+    let whys: [CueRows.Why]
+    static let shown = 9
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 80) {
+            ForEach(Array(whys.enumerated()), id: \.offset) { index, why in
+                let row = saved.rows.first { $0.title == why.title && ($0.tabs?.contains("home") ?? true) }
+                VStack(alignment: .leading, spacing: 24) {
+                    WhyHeader(icon: "rectangle.stack", title: "\(index + 1). \(why.title)",
+                              count: row.map { "\($0.items.count)" })
+                        .panelAnchor(.strong)
+                    WhyPanel.intro(([why.reason] + (why.notes ?? [])).joined(separator: " "))
+                    if let row, !row.items.isEmpty {
+                        WhyColumns(Array(row.items.prefix(Self.shown).enumerated()), columns: 3,
+                                   width: WhyPanel.column, spacing: WhyPanel.gap, rowSpacing: 22) { entry in
+                            WhyTitleLine(rank: row.shape == .ranked ? entry.offset + 1 : nil, item: entry.element,
+                                         badge: nil, note: row.whys?[entry.element.id])
+                        }
+                        if row.items.count > Self.shown {
+                            Text("and \(row.items.count - Self.shown) more")
+                                .font(.system(size: WhyPanel.textSize))
+                                .foregroundStyle(CueInk.tertiary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Why These Rows' panels
 
 /// The panels' parts. One grid in every panel: three columns of 460, 60
@@ -245,7 +633,7 @@ private struct WhyHeader: View {
 /// What You Watch: your traits by kind, each a bar of its share of your
 /// watching (against the largest), the share, and how many times more it
 /// is in yours than in what's popular. Two columns of kinds.
-private struct WhyTastePanel: View {
+struct WhyTastePanel: View {
     let taste: [CueRows.TasteLine]
 
     private static let kinds: [(key: String, name: String, icon: String)] = [
@@ -486,6 +874,8 @@ private struct WhyTitleLine: View {
     let rank: Int?
     let item: MetaItem
     let badge: CardBadge?
+    /// Why it's in the row, in words (Why These Rows' See Everything).
+    var note: String? = nil
 
     private var facts: String {
         let kind = item.isSeries ? "Series" : "Movie"
@@ -520,6 +910,11 @@ private struct WhyTitleLine: View {
                     .lineLimit(1)
                 if let badge {
                     BadgeLabel(badge: .init(symbol: FixedFocusBadges.symbol(badge.kind), mark: nil, text: badge.text))
+                        .lineLimit(1)
+                } else if let note {
+                    Text(note)
+                        .font(.system(size: WhyPanel.textSize))
+                        .foregroundStyle(CueInk.secondary)
                         .lineLimit(1)
                 }
             }
@@ -871,7 +1266,7 @@ private struct AddonPage: View {
 }
 
 /// An add-on's logo, small, on the left of its row.
-private struct AddonLogo: View {
+struct AddonLogo: View {
     let addon: InstalledAddon
 
     var body: some View {

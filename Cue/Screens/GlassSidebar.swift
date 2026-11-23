@@ -8,12 +8,15 @@ enum AppTab: Int, CaseIterable, Identifiable {
     case discover = 6, upcoming
     /// Settings 2: the card layout's prototype (2026-11-22).
     case settings2
+    /// Settings 3: Settings 2 as it was in SwiftUI, beside the UIKit one
+    /// to compare (2026-11-23).
+    case settings3
     var id: Int { rawValue }
 
     /// The top navigation: Search first, left of Home; Upcoming the
     /// calendar of your shows. The library is a row
     /// on Home — its old tab stays reachable only from within the app.
-    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings, .settings2]
+    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings, .settings2, .settings3]
 
 
     var label: String {
@@ -25,6 +28,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .discover: return "Discover"
         case .upcoming: return "Upcoming"
         case .settings2: return "Settings 2"
+        case .settings3: return "Settings 3"
         }
     }
 
@@ -37,6 +41,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .discover: return "safari.fill"
         case .upcoming: return "calendar"
         case .settings2: return "gearshape.2.fill"
+        case .settings3: return "gearshape.2"
         }
     }
 }

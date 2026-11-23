@@ -35,13 +35,17 @@ struct HomeRow: Identifiable {
 
     /// The episode rows' state lines, as Continue Watching's: "S2:E5" and
     /// its day ("Today", "Yesterday", the weekday within a week, else the
-    /// date).
-    static func episodeStates(_ rows: [HomeRow]) -> [String: FixedFocusCardState] {
+    /// date); with Hide Spoilers, an episode not watched yet blurred, as
+    /// Details'.
+    @MainActor static func episodeStates(_ rows: [HomeRow], hideSpoilers: Bool = false,
+                              watched: WatchedStore? = nil) -> [String: FixedFocusCardState] {
         var out: [String: FixedFocusCardState] = [:]
         for row in rows where row.shape == .episode {
             for (id, episode) in row.episodes where out[id] == nil {
+                let seen = watched?.isWatched(contentID: id, season: episode.season, episode: episode.episode) ?? false
                 out[id] = FixedFocusCardState(label: "S\(episode.season):E\(episode.episode)",
                                               right: episode.aired.map(day),
+                                              blurred: hideSpoilers && !seen,
                                               rightSymbol: FixedFocusBadges.symbol(.returns))
             }
         }
@@ -119,6 +123,7 @@ final class HomeViewModel: ObservableObject {
     var mightBeDue: Bool {
         guard let loadedAt else { return false }
         if let retryAt, Date() >= retryAt { return true }
+        if CueRows.rebuildRequested { return true }
         return CueRows.dayKey(loadedAt) != CueRows.dayKey(Date())
             || loadedSeeds != CueRows.seeds(cueHistory?())
     }
@@ -1220,6 +1225,7 @@ struct HomeUIKitView: View {
     /// The billboard paging by itself: the next title, as a press would.
     @State private var billboardCommand: FixedFocusRowsCommand?
     @AppStorage(BillboardAutoPage.key) private var autoPage = true
+    @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
     /// The billboard's trailer (Settings → Home & Details → Trailers).
     @StateObject private var trailer = StageTrailer()
     @EnvironmentObject private var homeSettings: HomeCatalogSettingsStore
@@ -1325,7 +1331,7 @@ struct HomeUIKitView: View {
                            // hold: the card's menu). (Its buttons, as
                            // Details', were before.)
                            externalBillboard: false,
-                           cardStates: HomeRow.episodeStates(rows),
+                           cardStates: HomeRow.episodeStates(rows, hideSpoilers: hideSpoilers, watched: watchedStore),
                            // The billboard paging (its buttons, and by itself
                            // — Settings → Appearance → Billboard pages by itself).
                            command: billboardCommand,

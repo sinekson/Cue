@@ -97,7 +97,7 @@ struct LogSessionsPage: View {
         DateFormatter.settingsWhen.string(from: session.started) + (session.isCurrent ? " (now)" : "")
     }
 
-    private static func value(_ session: CueLog.Session) -> String {
+    static func value(_ session: CueLog.Session) -> String {
         var parts: [String] = []
         if session.crashed { parts.append("Crashed") }
         if session.marks > 0 { parts.append(session.marks == 1 ? "1 mark" : "\(session.marks) marks") }
@@ -108,7 +108,7 @@ struct LogSessionsPage: View {
 }
 
 /// One session: what stood out in it, in order, its time on the right.
-private struct LogSessionPage: View {
+struct LogSessionPage: View {
     let session: CueLog.Session
 
     var body: some View {
@@ -129,7 +129,7 @@ private struct LogSessionPage: View {
         }
     }
 
-    private static func label(_ line: CueLog.Line) -> String {
+    static func label(_ line: CueLog.Line) -> String {
         let name = switch line.tag {
         case "MARK": "Mark"
         case "WARN": "Warning"

@@ -420,7 +420,7 @@ struct ServiceKeyActionRow: View {
 /// Scan-to-enter for a key: this Apple TV serves a one-field page on the
 /// local network and shows its address as a QR. Neither service has a
 /// device login, so the hand-off happens between the phone and the TV.
-private struct KeyHandoffPage: View {
+struct KeyHandoffPage: View {
     let service: ServiceKey
     let save: (String) -> Void
     let onDone: () -> Void

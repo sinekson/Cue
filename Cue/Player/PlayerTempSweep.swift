@@ -436,6 +436,9 @@ enum CueLog {
     }
 
     /// Everything but the session being written.
+    /// How many sessions there are (Settings' Sessions row), without reading them.
+    static func sessionCount() -> Int { queue.sync { files().count } }
+
     static func clear() {
         queue.sync {
             for url in files() where url != current { try? FileManager.default.removeItem(at: url) }

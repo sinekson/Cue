@@ -58,12 +58,12 @@ struct MDBListSettings: Codable, Equatable {
         place == .everywhere || (place == .details && onDetails)
     }
 
-    /// One step up (−1) or down (+1).
+    /// Up (−) or down (+) by `step` places (a lifted row, at its drop).
     mutating func move(_ provider: MDBListProvider, by step: Int) {
         var providers = orderedProviders
         guard let index = providers.firstIndex(of: provider),
-              providers.indices.contains(index + step) else { return }
-        providers.swapAt(index, index + step)
+              providers.indices.contains(index + step), step != 0 else { return }
+        providers.insert(providers.remove(at: index), at: index + step)
         order = providers.map(\.rawValue)
     }
 }

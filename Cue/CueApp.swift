@@ -298,6 +298,7 @@ struct RootView: View {
     @State private var discoverPath: [Route] = []
     @State private var upcomingPath: [Route] = []
     @State private var settings2Path: [Route] = []
+    @State private var settings3Path: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -944,6 +945,14 @@ struct RootView: View {
         // Your Rows' Open in Discover: the tab at its root with that
         // sentence, focus on its name in the bar; a person's, studio's or
         // network's row: its page pushed on the tab, focus on its titles.
+        // Your Rows' Add from Discover: the tab at its root, focus on it in the bar.
+        .onReceive(DiscoverPins.shared.showDiscover) {
+            let discover = AppTab.discover.rawValue
+            visitedTabs.insert(discover)
+            discoverPath = []
+            switchTab(to: discover)
+            focusSidebar(discover)
+        }
         .onReceive(DiscoverPins.shared.$opening.compactMap { $0 }) { pin in
             let discover = AppTab.discover.rawValue
             visitedTabs.insert(discover)
@@ -1027,11 +1036,21 @@ struct RootView: View {
         case .settings2:
             NavigationStack(path: $settings2Path) {
                 CardSettingsRoot { focusSidebar(tab.rawValue) }
+                    .ignoresSafeArea()
                     // A title's Details from a list (Watch Progress, Library).
                     .environment(\.settingsOpenTitle) { item in
                         openDetail(item) { settings2Path.append($0) }
                     }
                     .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settings2Path)) }
+            }
+            .environmentObject(searchViewModel)
+        case .settings3:
+            NavigationStack(path: $settings3Path) {
+                SwiftCardSettingsRoot { focusSidebar(tab.rawValue) }
+                    .environment(\.settingsOpenTitle) { item in
+                        openDetail(item) { settings3Path.append($0) }
+                    }
+                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settings3Path)) }
             }
             .environmentObject(searchViewModel)
         case .home:

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // MARK: - Discover
@@ -1445,6 +1446,8 @@ final class DiscoverPins: ObservableObject {
     @Published private(set) var pins: [Pin] = [] { didSet { madeRows = nil } }
     /// A pin to open in Discover's tab (Your Rows' Open in Discover).
     @Published var opening: Pin?
+    /// Your Rows' Add from Discover: the tab, at its sentence.
+    let showDiscover = PassthroughSubject<Void, Never>()
     /// Each pin's titles, by its id.
     @Published private(set) var titles: [String: [MetaItem]] = [:] { didSet { madeRows = nil } }
     /// `rows` as last made, and the day (a name can say "This Season"):
@@ -1489,11 +1492,11 @@ final class DiscoverPins: ObservableObject {
 
     var full: Bool { load(); return pins.count >= Self.limit }
 
-    /// One place up (`step` -1) or down (1).
+    /// Up (−) or down (+) by `step` places (a lifted row, at its drop).
     func move(_ id: String, by step: Int) {
         load()
-        guard let index = pins.firstIndex(where: { $0.id == id }), pins.indices.contains(index + step) else { return }
-        pins.swapAt(index, index + step)
+        guard let index = pins.firstIndex(where: { $0.id == id }), pins.indices.contains(index + step), step != 0 else { return }
+        pins.insert(pins.remove(at: index), at: index + step)
         save()
     }
 

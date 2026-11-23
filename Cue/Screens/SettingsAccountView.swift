@@ -202,7 +202,6 @@ struct ProfileEditPage: View {
                     SettingsRowLabel(title: "Name", value: profile.name)
                 }
                 .settingsRow(id: "pe.name")
-                colourRow(profile)
                 // The PIN: its actions as rows.
                 if profile.pinEnabled {
                     SettingsButtonRow(title: "Change PIN",
@@ -214,39 +213,7 @@ struct ProfileEditPage: View {
                 }
             }
 
-            SettingsSection(title: "Avatar") {
-                Button { profiles.setAvatar(id: profile.id, avatarID: nil) } label: {
-                    SettingsRowLabel(title: "Use Initials", checked: profile.avatarID == nil,
-                                     description: "On the colour above.",
-                                     leading: AnyView(Circle().fill(Color(profileHex: profile.avatarColorHex))
-                                        .overlay(Text(profile.initial).font(.system(size: 24, weight: .heavy))
-                                            .foregroundStyle(.white))
-                                        .frame(width: 56, height: 56)))
-                }
-                .settingsRow(id: "pe.initials")
-                // Every kind in the same card, each under its name.
-                ForEach(AvatarChoices.groups(profiles.avatarCatalog), id: \.name) { group in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(group.name)
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(CueInk.tertiary)
-                            .padding(.leading, CardSettingsRow.textInset - CardSettingsRow.plateInset)
-                            .padding(.top, 12)
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(group.items) { item in
-                                Button { profiles.setAvatar(id: profile.id, avatarID: item.id) } label: {
-                                    ProfileEditAvatarTile(item: item, chosen: profile.avatarID == item.id)
-                                }
-                                // Not in the column's focus binding: each move
-                                // through the grid rebuilt the whole page.
-                                .buttonStyle(SettingsPress(lift: 1))
-                            }
-                        }
-                    }
-                    .focusSection()
-                }
-            }
-
+            // Above the avatars: the grid is long.
             if (!active && !fromGate) || !primary || profiles.profiles.count > 1 {
             SettingsSection(title: "More") {
                 if !active, !fromGate {
@@ -255,10 +222,9 @@ struct ProfileEditPage: View {
                     }
                 }
                 if !primary {
-                    SettingsToggleRow(title: "Use Primary's Add-ons",
-                                      description: "Its add-ons instead of its own; changes to them show here too.",
-                                      isOn: Binding(get: { profile.usesPrimaryAddons },
-                                                    set: { profiles.setUsesPrimaryAddons(id: profile.id, $0) }))
+                    SettingsOnOffRow(id: "pe.primaryAddons", title: "Use Primary's Add-ons",
+                                     description: "Its add-ons instead of its own, kept in step.",
+                                     isOn: profile.usesPrimaryAddons) { profiles.setUsesPrimaryAddons(id: profile.id, $0) }
                 }
                 if profiles.profiles.count > 1 {
                     SettingsLinkRow(title: "Copy Settings") { ProfileCopyPage(targetID: profile.id) }
@@ -271,6 +237,37 @@ struct ProfileEditPage: View {
                 }
             }
             }
+            SettingsSection(title: "Avatar") {
+                // The initials on a colour, a group as the avatars' (picking
+                // one is the initials on it), then every kind of avatar.
+                group("Colours") {
+                    ForEach(ProfileStore.avatarColors, id: \.self) { hex in
+                        Button {
+                            profiles.setColor(id: profile.id, hex: hex)
+                            profiles.setAvatar(id: profile.id, avatarID: nil)
+                        } label: {
+                            ProfileEditColourTile(hex: hex, initial: profile.initial,
+                                                  chosen: profile.avatarID == nil
+                                                    && profile.avatarColorHex.uppercased() == hex.uppercased())
+                        }
+                        .buttonStyle(SettingsPress(lift: 1))
+                    }
+                }
+                // Every kind in the same card, each under its name.
+                ForEach(AvatarChoices.groups(profiles.avatarCatalog), id: \.name) { avatars in
+                    group(avatars.name) {
+                        ForEach(avatars.items) { item in
+                            Button { profiles.setAvatar(id: profile.id, avatarID: item.id) } label: {
+                                ProfileEditAvatarTile(item: item, chosen: profile.avatarID == item.id)
+                            }
+                            // Not in the column's focus binding: each move
+                            // through the grid rebuilt the whole page.
+                            .buttonStyle(SettingsPress(lift: 1))
+                        }
+                    }
+                }
+            }
+
         }
         .task { await profiles.loadAvatarCatalog() }
         .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
@@ -294,47 +291,33 @@ struct ProfileEditPage: View {
         }
     }
 
-    /// Colour: its name, the swatches at the row's end (Left / Right along
-    /// them, Select picks; the chosen one ringed).
-    private func colourRow(_ profile: UserProfile) -> some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Colour")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(CueInk.primary)
-                Text("Behind the initials, when there's no avatar.")
-                    .font(.system(size: 24))
-                    .foregroundStyle(CueInk.body)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 24)
-            HStack(spacing: 14) {
-                ForEach(ProfileStore.avatarColors, id: \.self) { hex in
-                    Button { profiles.setColor(id: profile.id, hex: hex) } label: {
-                        ProfileEditSwatch(hex: hex, chosen: profile.avatarColorHex.uppercased() == hex.uppercased())
-                    }
-                    .buttonStyle(SettingsPress(lift: 1.15))
-                    .modifier(SettingsRowEntry(id: "pe.c.\(hex)"))
-                }
-            }
+    /// A kind of avatar under its name, ten across.
+    private func group<Tiles: View>(_ name: String, @ViewBuilder tiles: () -> Tiles) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(CueInk.tertiary)
+                .padding(.leading, CardSettingsRow.textInset - CardSettingsRow.plateInset)
+                .padding(.top, 12)
+            LazyVGrid(columns: columns, spacing: 12) { tiles() }
         }
-        .padding(.horizontal, CardSettingsRow.textInset - CardSettingsRow.plateInset)
-        .padding(.vertical, 14)
         .focusSection()
     }
-
 }
 
 /// The profile page's header: a card in a deep shade of the profile's
 /// colour (dark always: words on it white), the avatar large, the name and
 /// what applies beside it. Not focusable: it shows what you pick.
-private struct ProfileEditHeader: View {
+struct ProfileEditHeader: View {
     let profile: UserProfile
     let notes: String
+    var avatarSize: CGFloat = 150
+    /// The top of a card (the avatar picker's): only the top corners round.
+    var topOnly = false
 
     var body: some View {
         HStack(spacing: 32) {
-            ProfileAvatarView(profile: profile, size: 150)
+            ProfileAvatarView(profile: profile, size: avatarSize)
             VStack(alignment: .leading, spacing: 6) {
                 Text(profile.name)
                     .font(.system(size: 40, weight: .semibold))
@@ -352,7 +335,10 @@ private struct ProfileEditHeader: View {
         .padding(.vertical, 28)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
+            UnevenRoundedRectangle(topLeadingRadius: Spotlight.cornerRadius,
+                                   bottomLeadingRadius: topOnly ? 0 : Spotlight.cornerRadius,
+                                   bottomTrailingRadius: topOnly ? 0 : Spotlight.cornerRadius,
+                                   topTrailingRadius: Spotlight.cornerRadius, style: .continuous)
                 .fill(Self.shade(profile.avatarColorHex))
         }
         .animation(.easeOut(duration: 0.25), value: profile.avatarColorHex)
@@ -366,31 +352,34 @@ private struct ProfileEditHeader: View {
     }
 }
 
-/// A colour to pick: its circle; chosen, a ring in the page's ink round it;
-/// focused, larger with a white ring.
-private struct ProfileEditSwatch: View {
+/// A colour to pick: the profile's initial on it, round, the avatars' size
+/// and plates (focused the rows' glass, chosen the selected tint).
+private struct ProfileEditColourTile: View {
     @Environment(\.isFocused) private var isFocused
     let hex: String
+    let initial: String
     let chosen: Bool
 
     var body: some View {
         Circle()
             .fill(Color(profileHex: hex))
-            .frame(width: 40, height: 40)
             .overlay {
-                if chosen {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                Text(initial)
+                    .font(.system(size: 36, weight: .heavy))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 80, height: 80)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+                Group {
+                    if isFocused { GlassHighlight(focused: true, shape: shape) }
+                    else if chosen { GlassHighlight(focused: false, shape: shape) }
                 }
+                .padding(.horizontal, 4)
             }
-            .padding(5)
-            .overlay {
-                Circle().strokeBorder(isFocused ? Color.white : chosen ? CueInk.primary : .clear,
-                                      lineWidth: isFocused ? 4 : 2)
-            }
-            .scaleEffect(isFocused ? 1.15 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.25 : 0), radius: 8, y: 4)
             .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 }
@@ -719,46 +708,61 @@ private struct ProfileCopyPage: View {
         if let target {
             let sources = profiles.profiles.filter { $0.id != targetID }
             let copy = copy ?? ProfileSetupCopy(source: sources.first?.id ?? 1, target: targetID)
-            SettingsPage(title: "Copy Settings",
-                         subtitle: "A one-time copy of another profile's synced settings onto \(target.name). Later changes stay separate.") {
-                SettingsOptionsRow(title: "Copy From",
-                                   options: sources.map { SettingsOption(id: "\($0.id)", label: $0.name) },
-                                   selection: "\(copy.source)") { id in
-                    self.copy = with(copy) { $0.source = Int(id) ?? $0.source }
+            let from = sources.first { $0.id == copy.source }?.name ?? ""
+            SettingsPage(title: "Copy Settings") {
+                SettingsSection(title: "From") {
+                    let options = sources.map { SettingsOption(id: "\($0.id)", label: $0.name) }
+                    let pick: (String) -> Void = { id in self.copy = with(copy) { $0.source = Int(id) ?? $0.source } }
+                    // Up to three: pills; more, their own page.
+                    if options.count <= 3 {
+                        SettingsChoiceRow(id: "cp.from", title: "Copy From",
+                                          description: "The profile whose settings \(target.name) takes.",
+                                          options: options, selection: "\(copy.source)", onPick: pick)
+                    } else {
+                        SettingsOptionsRow(title: "Copy From", options: options, selection: "\(copy.source)",
+                                           onPick: pick)
+                    }
                 }
-                SettingsSection(title: "What to copy") {
-                    toggle("TV Settings", "Appearance, layout, playback, subtitles and integrations — Cue's and NuvioTV's.",
-                           copy, \.tv)
-                    toggle("Mobile Settings", "Nuvio Mobile's appearance, cards, playback, metadata and notifications.",
+                SettingsSection(title: "What to Copy") {
+                    toggle("cp.tv", "TV Settings", "Cue's and NuvioTV's look, playback, subtitles and more.", copy, \.tv)
+                    toggle("cp.mobile", "Mobile Settings", "Nuvio Mobile's look, cards, playback and notifications.",
                            copy, \.mobile)
-                    toggle("Desktop Settings", "Nuvio Desktop's appearance, navigation, cards, playback, metadata and notifications.",
+                    toggle("cp.desktop", "Desktop Settings", "Nuvio Desktop's look, cards, playback and notifications.",
                            copy, \.desktop)
-                    toggle("API Keys", "Debrid, TMDB, MDBList, AnimeSkip and IntroDB. Trakt and other sign-ins aren't included.",
+                    toggle("cp.keys", "API Keys", "TMDB, MDBList, debrid, AnimeSkip and IntroDB; no sign-ins.",
                            copy, \.keys)
                     if copy.keys {
-                        toggle("Replace \(target.name)'s Keys", "Keys only \(target.name) has are always kept.",
+                        toggle("cp.replace", "Replace \(target.name)'s Keys", "Keys only \(target.name) has are always kept.",
                                copy, \.replaceKeys)
                     }
                 }
-                SettingsButtonRow(title: "Copy Settings", value: copying ? "Copying…" : nil) {
-                    guard !copying, !copy.isEmpty else { return }
-                    confirm = true
+                SettingsSection {
+                    ActionListRow(
+                        id: "cp.copy",
+                        title: copying ? "Copying…" : "Copy from \(from) to \(target.name)",
+                        detail: copy.isEmpty ? "Choose something to copy." : "Once: later changes stay separate.",
+                        actions: copy.isEmpty ? [] : [
+                            SettingsAction(title: "Copy Settings", icon: "doc.on.doc", key: "copy") {
+                                guard !copying else { return }
+                                confirm = true
+                            },
+                        ])
                 }
             }
             .alert("Replace \(target.name)'s settings?", isPresented: $confirm) {
                 Button("Copy") { run(copy) }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Home layout, watch history, library, collections, add-ons, PIN and the profile itself stay as they are.")
+                Text("Watch history, library, add-ons, PIN and the profile itself stay as they are.")
             }
         }
     }
 
-    private func toggle(_ title: String, _ description: String, _ copy: ProfileSetupCopy,
+    private func toggle(_ id: String, _ title: String, _ description: String, _ copy: ProfileSetupCopy,
                         _ part: WritableKeyPath<ProfileSetupCopy, Bool>) -> some View {
-        SettingsToggleRow(title: title, description: description,
-                          isOn: Binding(get: { copy[keyPath: part] },
-                                        set: { on in self.copy = with(copy) { $0[keyPath: part] = on } }))
+        SettingsOnOffRow(id: id, title: title, description: description, isOn: copy[keyPath: part]) { on in
+            self.copy = with(copy) { $0[keyPath: part] = on }
+        }
     }
 
     private func with(_ copy: ProfileSetupCopy, _ change: (inout ProfileSetupCopy) -> Void) -> ProfileSetupCopy {
