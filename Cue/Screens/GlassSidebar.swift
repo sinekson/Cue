@@ -6,17 +6,12 @@ enum AppTab: Int, CaseIterable, Identifiable {
     case home, search, library, settings
     // (4 and 5 were Movies and Series.)
     case discover = 6, upcoming
-    /// Settings 2: the card layout's prototype (2026-11-22).
-    case settings2
-    /// Settings 3: Settings 2 as it was in SwiftUI, beside the UIKit one
-    /// to compare (2026-11-23).
-    case settings3
     var id: Int { rawValue }
 
     /// The top navigation: Search first, left of Home; Upcoming the
     /// calendar of your shows. The library is a row
     /// on Home — its old tab stays reachable only from within the app.
-    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings, .settings2, .settings3]
+    static let topBarOrder: [AppTab] = [.search, .home, .discover, .upcoming, .settings]
 
 
     var label: String {
@@ -27,8 +22,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "Settings"
         case .discover: return "Discover"
         case .upcoming: return "Upcoming"
-        case .settings2: return "Settings 2"
-        case .settings3: return "Settings 3"
         }
     }
 
@@ -40,8 +33,6 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .settings: return "gearshape.fill"
         case .discover: return "safari.fill"
         case .upcoming: return "calendar"
-        case .settings2: return "gearshape.2.fill"
-        case .settings3: return "gearshape.2"
         }
     }
 }
@@ -134,10 +125,6 @@ final class TopBar: ObservableObject {
 
     /// The item with focus (a tab's raw value, the profile -1); nil: the page.
     private(set) var focused: Int?
-    /// Settings remembers where Up left its rows (`ATVSettingsView`): only
-    /// it observes this, and it changes only while Settings is the tab.
-    @Published private(set) var focusedOnSettings = false
-
     /// Pages with a way in of their own from the bar, by tab: the view Down
     /// goes to (Discover's sentence), nil for the engine's own move. Through
     /// the bar's guide, in the window: a guide in SwiftUI's page is ignored
@@ -155,8 +142,6 @@ final class TopBar: ObservableObject {
         guard item != focused else { return }
         AppProbe.focus("top bar: " + (item.map { $0 < 0 ? "profile" : RootView.tabName($0) } ?? "page"))
         focused = item
-        let onSettings = item != nil && selected == AppTab.settings.rawValue
-        if onSettings != focusedOnSettings { focusedOnSettings = onSettings }
     }
 
     /// Focus to an item (Back on a tab's page, the gate closed from the
@@ -649,13 +634,3 @@ struct ProfileItem: View {
     }
 }
 
-/// Settings' page with the bar's focus, observed here, not at the root
-/// (only while Settings is the tab does it change: `focusedOnSettings`).
-struct SettingsRoot: View {
-    @ObservedObject private var bar = TopBar.shared
-    let onExit: () -> Void
-
-    var body: some View {
-        ATVSettingsView(barFocused: bar.focusedOnSettings, onExit: onExit)
-    }
-}

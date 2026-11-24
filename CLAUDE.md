@@ -1231,10 +1231,58 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   beside it (Today's Pick and Home's billboard card, too wide for a side: over its right, 32 pt in
   from its top and right, where its picture is; centred on screen, or
   above or below it, were talked over) (24, and aligned to the next card, were tried).
-- **Settings** (`ATVSettingsView`, `SettingsKit`): Apple TV's Settings measured
-  and recreated, one level at a time; focus by name (`settingsRowFocus`).
+- **Settings** (`CardSettingsRoot`, `SettingsKit`; the Settings tab since
+  2026-11-24: the old Apple-TV-style one and the SwiftUI copy are gone).
   What's only to read takes no focus. Profile management lives under Nuvio.
-  Settings 2 (`CardSettingsRoot`, trying): two columns of flat cards under
+  **New profile** (reworked 2026-11-24, trying): a screen at a time,
+  centred (`UINewProfilePage` in the settings' controller, create mode;
+  left-aligned at the rows' edge was tried the same day: the right half
+  sat empty, the preview lost in its corner): "Step 2 of 5" over the
+  question (57 pt), its line at body under it (the dots were before);
+  the profile so far small beside the step ("[avatar] Ana · Step 3 of
+  5"; large under the question on the avatar's step looked bad); the
+  name's step: the keyboard at once, nothing of the screen under it as
+  it comes in (it flashed); the buttons bottom centre, one spot on every step
+  (`setButtons`; a focus guide strip above them: Down from the page, Up
+  back; the page itself never takes focus: on a step with nothing to
+  press it trapped focus). Content on no card, tile lines centred (a
+  focus guide each side of a short line, to its nearest tile: the engine
+  found nothing below an edge tile), the summary a 1000 pt card.
+  Name (the keyboard at once),
+  Avatar (the gate's round tiles, 120 pt, no labels, a group a line; the
+  step line's avatar follows focus, Select picks and goes on: no
+  Continue), What do you like (one row, exactly Home's moving-focus
+  rows: posters, focus edge, growth, the window's slivers; "Movie" or
+  "Series" under each name; a mix: the best-known titles of the last
+  12 years per genre, films and shows taking turns, 20 lanes, two
+  rounds (`UINewProfilePage.lanes`; TMDB's popular alone, and two rows
+  Films / Series with no peek for the second, were before);
+  liked: the taste badge's red heart top left;
+  each a Love via `TitleRatings.seedLoves`; Skip / Continue (n)), Start
+  from another profile (the profiles as the gate's avatars with names,
+  Start Fresh a plate as Add Profile; the primary by default; with an
+  account): Select on a profile picks it and goes down to a centred card
+  "From Seinan", Copy Settings' four parts On / Off (TV, Mobile, Desktop
+  Settings, API Keys; all on), Continue; Start Fresh goes on (all four
+  copied unseen was before), Lock this profile? (with an account: a
+  lock on a flat round plate, "No PIN" / "PIN set"; Not Now / Set a PIN,
+  once set Remove / Change / Continue), then a summary ("Ready, Ana?"):
+  one centred card as Edit Profile's: the profile on top (its avatar to
+  press: back to Avatar; "New profile, from Seinan"), Name (the keyboard
+  in place), Likes, Starts From ("Seinan · TV, Keys"), PIN, each with a
+  chevron back to its step and back (the PIN on the summary as a choice,
+  and a plain settings list, were before), then Create / Start Watching. (Before 2026-11-24: centred, a dot per step,
+  Continue between preview and tiles, posters in one faded line, the
+  copy step as a glass list.)
+  Back steps back, from the name out. The choices stay in a draft until
+  the last screen: nothing exists on the account before. Add-ons are not
+  asked: the primary's, until its own page says otherwise (they only
+  supply streams). (Tried 2026-11-24: all on one page, Edit Profile's
+  look: the guided steps were preferred.)
+  The gate's profile editor (hold an avatar) is the same controller with
+  only `UIProfileEditPage`, centred (`ProfileGateEditor`; no Switch row;
+  Back comes through the gate's exit handler, `gateEditorBack`).
+  Two columns of flat cards under
   breadcrumbs at the rows' text edge, over both columns ("Nuvio ›
   Add-ons": the category following focus, then the pages; Upcoming's
   month's size and line, 34 pt semibold (29 was before), the last at
@@ -1253,6 +1301,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   above the screen's foot (snapping each focused section to the top
   line, with room under every page for the last, was before: too much
   movement, a page that fit moved too).
+  Appearance → Background (2026-11-24): the one up and Change at Launch
+  one card, then "Saved" its own card: the count with Remove All on top,
+  then a row each (Use, Remove, held). (Tried and not liked: the one up
+  large in a card of its own; the saved ones as tiles four across, a page
+  each: a list is quicker to set and delete from.)
   Lists are one card: a row for them all on top (the count, Remove All
   spelled out in red: a trash symbol read as the rows' own Remove),
   then each (add-ons: Refresh and Add on it; a show's watched episodes a
@@ -1294,9 +1347,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the screens over everything (sign-in, PIN, add-on from phone). Coming into a choice or action row a focus guide
   over it sends focus to the chosen pill or the nearest button
   (SwiftUI's `focusSection`); the page scrolls only by us on Core
-  Animation (the engine's scroll stopped, Upcoming's way). The SwiftUI
-  one stays as the Settings 3 tab to compare (`SwiftCardSettingsRoot`),
-  until the UIKit one is settled.
+  Animation (the engine's scroll stopped, Upcoming's way).
 - **Storage** (Settings → Storage): Cache and Search History, each a row
   with a chevron to its page (what it holds, a clear on top, no
   confirmation), then free space. Cache (`CacheStorage` at the end of

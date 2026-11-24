@@ -858,56 +858,6 @@ struct SettingsButtonRow: View {
     }
 }
 
-/// A tall row (Apple's Languages' height) with a line under its name: a
-/// short preview of what Select opens (Why These Rows: each reason, opened
-/// in full in the About panel, `TextPanel`).
-struct SettingsTallRow: View {
-    let title: String
-    let preview: String
-    let id: String
-    let action: () -> Void
-
-    @FocusState private var focused: Bool
-    @Environment(\.settingsFocusHidden) private var focusHidden
-    @Environment(\.settingsCards) private var cards
-    private var lit: Bool { focused && !focusHidden }
-
-    var body: some View {
-        Button(action: action) { face }
-            .buttonStyle(SettingsPress(lift: SettingsMetrics.focusScale))
-            .focused($focused)
-            .modifier(SettingsRowEntry(id: id))
-    }
-
-    private var face: some View {
-        let look = SettingsLook(cards: cards)
-        return HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: cards ? 2 : 4) {
-                Text(title)
-                    .font(look.name)
-                    .foregroundStyle(SettingsInk.name(lit, cards: cards))
-                    .lineLimit(1)
-                if !preview.isEmpty {
-                    Text(preview)
-                        .font(look.detail)
-                        .foregroundStyle(SettingsInk.quiet(lit, cards: cards))
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 24)
-            Image(systemName: "chevron.right")
-                .font(look.chevron)
-                .foregroundStyle(SettingsInk.chevron(lit, cards: cards))
-                .padding(.leading, 14)
-                .padding(.trailing, look.chevronGap)
-        }
-        // Both sides as the add-ons' rows (`SettingsReorderRow`): the
-        // chevron as far in from the end.
-        .padding(.horizontal, look.inset)
-        .settingsTallChrome(lit: lit, cards: cards)
-    }
-}
-
 /// A row's sizes in either look: Apple TV's measures, or Settings 2's
 /// (`settingsCards`: 24 pt words, the words 24 pt from the card's edge).
 struct SettingsLook {
@@ -1308,21 +1258,6 @@ struct SettingsChoiceRow: View {
     }
 }
 
-/// On / Off as a choice row: two pills, Off first (the lowest left, as every row), the row's description under its name.
-struct SettingsOnOffRow: View {
-    let id: String
-    let title: String
-    var description: String? = nil
-    let isOn: Bool
-    let set: (Bool) -> Void
-
-    var body: some View {
-        SettingsChoiceRow(id: id, title: title, description: description,
-                          options: [SettingsOption(id: "off", label: "Off"), SettingsOption(id: "on", label: "On")],
-                          selection: isOn ? "on" : "off") { set($0 == "on") }
-    }
-}
-
 /// A row's button in its row's focus, or in the page's.
 private struct PillFocus: ViewModifier {
     var own: FocusState<String?>.Binding
@@ -1332,111 +1267,6 @@ private struct PillFocus: ViewModifier {
 
     func body(content: Content) -> some View {
         if let page { content.focused(page, equals: pageID) } else { content.focused(own, equals: id) }
-    }
-}
-
-/// A list of titles to open or remove (Settings 2's Watch Progress and
-/// Library): Remove All on top (confirmed), then a row per title, its
-/// poster, name and detail, at its end Open (its Details) and the bin. A
-/// removal stays in place, faded, its bin an undo arrow (focus on it): it
-/// reaches the account only as you leave the page — so an undo never has
-/// to be sent.
-struct RemovableListPage: View {
-    struct Item: Identifiable {
-        let id: String
-        let poster: String?
-        let name: String
-        let detail: String
-        let meta: MetaItem?
-        /// One more action, between Open and Remove (Watched: a show's
-        /// episodes).
-        var more: SettingsAction? = nil
-    }
-
-    let title: String
-    let items: [Item]
-    /// The list's records are in (else nothing yet, not "empty").
-    var ready = true
-    let empty: String
-    let removeAllTitle: String
-    let removeAllMessage: String
-    let remove: (String) -> Void
-    let removeAll: () -> Void
-
-    @Environment(\.settingsOpenTitle) private var openTitle
-    @FocusState private var focus: String?
-    @State private var confirmAll = false
-    /// Removed here, not yet sent (undone with a second press).
-    @State private var pending: Set<String> = []
-
-    var body: some View {
-        SettingsPage(title: title) {
-            if !ready {
-                EmptyView()
-            } else if items.isEmpty {
-                SettingsNote(empty)
-            } else {
-                SettingsSection {
-                    Button { confirmAll = true } label: {
-                        SettingsRowLabel(title: "Remove All", value: "\(items.count - pending.count)", danger: true)
-                    }
-                    .settingsRow(id: "remove-all")
-                }
-                SettingsSection {
-                    ForEach(items) { item in
-                        let gone = pending.contains(item.id)
-                        ActionListRow(
-                            id: item.id,
-                            leading: AnyView(Poster(url: item.poster)),
-                            leadingSize: CGSize(width: 44, height: 66),
-                            title: item.name,
-                            detail: gone ? "Removed" : item.detail,
-                            dimmed: gone,
-                            actions: actions(item, gone: gone),
-                            focus: $focus)
-                    }
-                }
-            }
-        }
-        .onDisappear { commit() }
-        .alert(removeAllTitle, isPresented: $confirmAll) {
-            Button("Remove All", role: .destructive) {
-                pending = []
-                removeAll()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(removeAllMessage)
-        }
-    }
-
-    private func actions(_ item: Item, gone: Bool) -> [SettingsAction] {
-        var list: [SettingsAction] = []
-        if let meta = item.meta, let openTitle, !gone {
-            list.append(SettingsAction(title: "Open", icon: "info.circle", key: "open") { openTitle(meta) })
-        }
-        if let more = item.more, !gone { list.append(more) }
-        // One key both ways: focus stays on it as it turns.
-        list.append(gone
-            ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") { pending.remove(item.id) }
-            : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") { pending.insert(item.id) })
-        return list
-    }
-
-    /// The removals made here, sent as the page goes.
-    private func commit() {
-        for id in pending { remove(id) }
-        pending = []
-    }
-
-    private struct Poster: View {
-        let url: String?
-        var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
-            RemoteImage(url: url, maxDimension: 66, fallback: AnyView(Color.white.opacity(0.08)))
-                .clipShape(shape)
-                .overlay { shape.strokeBorder(Color.white.opacity(0.15), lineWidth: 1) }
-        }
     }
 }
 
@@ -1569,14 +1399,6 @@ extension EnvironmentValues {
     }
 }
 
-/// An on / off of an entry, as a switch.
-struct SettingsEntrySwitch {
-    let isOn: Bool
-    /// Its name while focused ("Turn off", "Show").
-    let title: String
-    let toggle: () -> Void
-}
-
 /// A labelled button on the title's line (Apple's Edit, Cancel, Done): a
 /// capsule 71 pt tall, its text 36 pt in, flat at rest; focused white, dark
 /// text, lifted (~75 tall).
@@ -1610,130 +1432,6 @@ struct SettingsCapsuleButton: View {
                 .scaleEffect(focused ? SettingsCapsuleButton.focusScale : 1)
                 .animation(.smooth(duration: 0.18), value: focused)
         }
-    }
-}
-
-/// A row of a list that reorders (Apple's, as its Languages): the name,
-/// the whole row one focus. At rest the row lights when focused, Select
-/// does the list's thing (`onSelect`: Rating Providers start Edit, an
-/// add-on opens its page — then a chevron); in Edit its round buttons show
-/// at its end — an on / off when the list has one (`toggle`: an eye, struck
-/// through when off), then the ≡ handle — and focus is theirs (the row
-/// stays as it is, the focused one lights); Select on the handle lifts the
-/// row — it lights whole, the buttons their symbols alone: Up / Down move
-/// it as far as you like, Select or Back puts it down — nothing else takes
-/// focus meanwhile.
-struct SettingsReorderRow: View {
-    @Environment(\.settingsScroll) private var scroll
-    let title: String
-    let id: String
-    var leading: AnyView? = nil
-    /// A quiet value at its end ("Off").
-    var value: String? = nil
-    var chevron = false
-    var dimmed = false
-    var toggle: SettingsEntrySwitch? = nil
-    let editing: Bool
-    let isMoving: Bool
-    let anyMoving: Bool
-    let onSelect: () -> Void
-    let onLift: () -> Void
-    /// One step up (−1) or down (+1).
-    let onMoveStep: (Int) -> Void
-    let onDrop: () -> Void
-
-    private enum Part: Hashable { case row, toggle, handle }
-    @FocusState private var focused: Part?
-
-    /// At rest and lifted: the row lights. In Edit otherwise: only a button.
-    @Environment(\.settingsFocusHidden) private var focusHidden
-    @Environment(\.settingsCards) private var cards
-    private var lit: Bool { (!editing && focused == .row && !focusHidden) || isMoving }
-
-    var body: some View {
-        Group {
-            if editing {
-                face
-            } else {
-                Button(action: onSelect) { face }
-                    .buttonStyle(SettingsPress(lift: SettingsMetrics.focusScale))
-                    .focused($focused, equals: .row)
-                    .modifier(SettingsRowEntry(id: id))
-            }
-        }
-        // Lifted, how to move it; on the on / off, what it does — left of
-        // the rows.
-        .anchorPreference(key: SettingsDescribedKey.self, value: .bounds) { pill in
-            guard focused != nil || isMoving else { return nil }
-            return .init(text: isMoving ? "Up and Down move it; Select puts it down."
-                             : focused == .toggle ? toggle?.title : nil, pill: pill)
-        }
-        .focusSection()
-        .id(id)
-    }
-
-    private var face: some View {
-        let look = SettingsLook(cards: cards)
-        return HStack(spacing: 16) {
-            if let leading { leading.frame(width: cards ? 32 : 40, height: cards ? 32 : 40) }
-            Text(title)
-                .font(look.name)
-                .foregroundStyle(SettingsInk.name(lit, cards: cards, dimmed: dimmed))
-                .lineLimit(1)
-            Spacer(minLength: 24)
-            // In Edit the on / off says it.
-            if let value, !editing {
-                Text(value)
-                    .font(look.value)
-                    .foregroundStyle(SettingsInk.quiet(lit, cards: cards))
-                    .lineLimit(1)
-            }
-            if editing {
-                HStack(spacing: look.buttonGap) {
-                    if let toggle {
-                        Button(action: toggle.toggle) {
-                            SettingsRowButtonFace(icon: toggle.isOn ? "eye" : "eye.slash", focused: focused == .toggle, onLitRow: lit)
-                        }
-                        .buttonStyle(SettingsPress(lift: SettingsRowButtonFace.focusScale))
-                        .focused($focused, equals: .toggle)
-                        .disabled(anyMoving)
-                    }
-                    Button { isMoving ? onDrop() : onLift() } label: {
-                        SettingsRowButtonFace(icon: "line.3.horizontal", focused: focused == .handle && !isMoving, onLitRow: lit)
-                    }
-                    .buttonStyle(SettingsPress(lift: SettingsRowButtonFace.focusScale))
-                    .focused($focused, equals: .handle)
-                    .modifier(SettingsRowEntry(id: id))
-                    .disabled(anyMoving && !isMoving)
-                    .onMoveCommand { direction in
-                        guard isMoving else { return }
-                        switch direction {
-                        case .up: withAnimation(.smooth(duration: 0.2)) { onMoveStep(-1) }
-                        case .down: withAnimation(.smooth(duration: 0.2)) { onMoveStep(1) }
-                        default: return
-                        }
-                        // After the list has taken the new order: into view, if it left it.
-                        DispatchQueue.main.async {
-                            withAnimation(.smooth(duration: 0.2)) { scroll?.scrollTo(id) }
-                        }
-                    }
-                    // Only while moving — otherwise Back goes to the page.
-                    .onExitCommand(perform: isMoving ? onDrop : nil)
-                }
-                .transition(.opacity)
-            } else if chevron {
-                Image(systemName: "chevron.right")
-                    .font(look.chevron)
-                    .foregroundStyle(SettingsInk.chevron(lit, cards: cards))
-                    .padding(.leading, 14)
-                    .padding(.trailing, look.chevronGap - look.buttonInset + look.inset)
-            }
-        }
-        .padding(.leading, look.inset)
-        .padding(.trailing, look.buttonInset)
-        .settingsTallChrome(lit: lit, moving: isMoving, cards: cards)
-        .animation(.smooth(duration: 0.15), value: focused)
-        .animation(.smooth(duration: 0.2), value: editing)
     }
 }
 
@@ -2373,6 +2071,11 @@ enum UISettingsRow {
     case hosted(Hosted)
     /// Tiles to pick from, ten across under their kinds' names (avatars).
     case tiles(Tiles)
+    /// Capsule buttons side by side, centred, on no card (a wizard's
+    /// Continue and Skip).
+    case buttons(Buttons)
+    /// Posters to like in one line, each over its name (the wizard's taste).
+    case posters(Posters)
     /// A profile's top row: the avatar to press, its name,
     /// its actions as round buttons.
     case profile(Profile)
@@ -2399,19 +2102,52 @@ enum UISettingsRow {
         let view: () -> AnyView
     }
 
+    struct Buttons {
+        let id: String
+        let actions: [SettingsAction]
+    }
+
+    struct Posters {
+        let id: String
+        /// The row's name, as Home's.
+        var title: String? = nil
+        let items: [PosterItem]
+    }
+
+    struct PosterItem {
+        let id: String
+        let title: String
+        let detail: String
+        let poster: String?
+        /// Liked: its heart on the poster.
+        let on: Bool
+        let action: () -> Void
+    }
+
     struct Tiles {
         let id: String
         let groups: [(name: String, tiles: [Tile])]
+        /// The gate's round look at this size (a new profile's avatars and
+        /// profiles): the circle alone with the cards' rim, focused 5 %
+        /// larger with the bright edge and a soft shadow, a caption under
+        /// it; left-aligned slots, a group a line of its own, no labels.
+        var round: CGFloat? = nil
     }
 
     struct Tile {
         enum Face {
             case colour(hex: String, initial: String)
             case avatar(url: String, name: String)
+            /// A symbol on the flat plate (Start Fresh), as Add Profile.
+            case symbol(String)
         }
         let id: String
         let face: Face
         let chosen: Bool
+        /// Under a round tile.
+        var caption: String? = nil
+        /// Focus came to it (the wizard's preview follows it).
+        var onFocus: (() -> Void)? = nil
         let action: () -> Void
     }
 
@@ -2478,6 +2214,8 @@ enum UISettingsRow {
         case .note(let text): "note." + text
         case .hosted(let row): row.id
         case .tiles(let row): row.id
+        case .buttons(let row): row.id
+        case .posters(let row): row.id
         case .profile(let row): row.id
         }
     }
@@ -3063,6 +2801,8 @@ func makeSettingsRow(_ row: UISettingsRow, compact: Bool = false) -> UISettingsR
     case .note(let text): UISettingsNoteRow(text)
     case .hosted(let model): UISettingsHostedRow(model)
     case .tiles(let model): UISettingsTileGridRow(model)
+    case .buttons(let model): UISettingsButtonsRow(model)
+    case .posters(let model): UISettingsPosterGridRow(model)
     case .profile(let model): UISettingsProfileRow(model)
     }
 }
@@ -3143,7 +2883,17 @@ final class UISettingsHostedRow: UIView, UISettingsRowView {
 /// One tile to pick: a colour with the initial on it, or an avatar over
 /// its name; focused the rows' lit glass, chosen the faint one, 4 pt in
 /// from its room either side, 16 pt corners.
-final class UISettingsTile: UIView {
+/// A tile in a grid of tiles (the page scrolls by its lines).
+protocol UISettingsGridTile: UIView {
+    /// The one picked (a grid opens on it).
+    var chosen: Bool { get }
+}
+
+extension UISettingsGridTile {
+    var chosen: Bool { false }
+}
+
+final class UISettingsTile: UIView, UISettingsGridTile {
     private var model: UISettingsRow.Tile
     var chosen: Bool { model.chosen }
     private let picture = UIImageView()
@@ -3155,7 +2905,7 @@ final class UISettingsTile: UIView {
     static let picture: CGFloat = 80
     static func height(_ face: UISettingsRow.Tile.Face) -> CGFloat {
         switch face {
-        case .colour: 12 + picture + 12
+        case .colour, .symbol: 12 + picture + 12
         case .avatar: 12 + picture + 8 + ceil(UIFont.systemFont(ofSize: 23, weight: .medium).lineHeight) + 12
         }
     }
@@ -3196,6 +2946,9 @@ final class UISettingsTile: UIView {
             initial.isHidden = true
             name.isHidden = false
             name.text = title
+        case .symbol:
+            initial.isHidden = true
+            name.isHidden = true
         }
         paint()
         show(animated: !loading)
@@ -3258,11 +3011,160 @@ final class UISettingsTile: UIView {
     }
 }
 
+/// One tile in the gate's look (a new profile's avatars and profiles):
+/// the circle alone with the cards' rim, focused 5 % larger with the
+/// bright edge and a soft shadow on focus's spring; a caption under it at
+/// a caption's levels, stepping down by the growth.
+final class UISettingsRoundTile: UIView, UISettingsGridTile {
+    private var model: UISettingsRow.Tile
+    var chosen: Bool { model.chosen }
+    private let side: CGFloat
+    private let disc = UIView()
+    private let picture = UIImageView()
+    private let initial = UILabel()
+    private let symbol = UIImageView()
+    private let rim = UIView()
+    private let caption = UISettings.label(24, .medium)
+    private var loadedURL: String?
+
+    static let captionGap: CGFloat = 22
+    static func height(side: CGFloat, captioned: Bool) -> CGFloat {
+        side + (captioned ? captionGap + ceil(UIFont.systemFont(ofSize: 24, weight: .medium).lineHeight) : 0)
+    }
+
+    init(_ model: UISettingsRow.Tile, side: CGFloat) {
+        self.model = model
+        self.side = side
+        super.init(frame: .zero)
+        disc.layer.cornerRadius = side / 2
+        disc.layer.shadowColor = UIColor.black.cgColor
+        disc.layer.shadowOpacity = 0
+        disc.layer.shadowRadius = 18
+        disc.layer.shadowOffset = CGSize(width: 0, height: 10)
+        disc.layer.shadowPath = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: side, height: side)).cgPath
+        picture.clipsToBounds = true
+        picture.contentMode = .scaleAspectFill
+        picture.layer.cornerRadius = side / 2
+        initial.font = .systemFont(ofSize: side * 0.42, weight: .heavy)
+        initial.textColor = .white
+        initial.textAlignment = .center
+        symbol.contentMode = .center
+        rim.isUserInteractionEnabled = false
+        rim.layer.cornerRadius = side / 2
+        rim.layer.borderWidth = 2
+        caption.textAlignment = .center
+        caption.lineBreakMode = .byTruncatingTail
+        addSubview(disc)
+        for view in [picture, initial, symbol, rim] as [UIView] { disc.addSubview(view) }
+        addSubview(caption)
+        configure()
+        style(animated: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(_ model: UISettingsRow.Tile) {
+        self.model = model
+        configure()
+    }
+
+    private func configure() {
+        initial.isHidden = true
+        symbol.isHidden = true
+        picture.isHidden = true
+        switch model.face {
+        case .colour(let hex, let letter):
+            picture.backgroundColor = UIColor(Color(profileHex: hex))
+            picture.image = nil
+            picture.isHidden = false
+            loadedURL = nil
+            initial.text = letter
+            initial.isHidden = false
+        case .avatar(let url, _):
+            picture.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+            picture.isHidden = false
+            if loadedURL != url {
+                loadedURL = url
+                picture.image = nil
+                UISettingsPicture.load(url, size: side, into: picture)
+            }
+        case .symbol(let name):
+            loadedURL = nil
+            symbol.isHidden = false
+            symbol.image = UISettings.symbol(name, side * 0.3)
+        }
+        caption.text = model.caption
+        caption.isHidden = model.caption == nil
+        style(animated: false)
+    }
+
+    private func style(animated: Bool) {
+        let focused = isFocused
+        let outlines = FixedFocusRing.outlines
+        let plate: Bool = { if case .symbol = model.face { return true } else { return false } }()
+        let change = {
+            if plate {
+                self.disc.backgroundColor = focused ? UIColor(FlatControl.focus) : UIColor(FlatControl.rest)
+                self.symbol.tintColor = focused ? UIColor(FlatControl.contentOnFocus) : UIColor(FlatControl.content)
+                self.symbol.image = self.symbol.image?.withRenderingMode(.alwaysTemplate)
+            } else {
+                self.disc.backgroundColor = .clear
+            }
+            self.rim.layer.borderColor = UIColor.white.withAlphaComponent(focused && outlines == .high ? 0.75 : 0.30).cgColor
+            self.rim.alpha = outlines == .off || (plate && focused) ? 0 : 1
+            self.disc.layer.shadowOpacity = focused ? 0.45 : 0
+            self.caption.textColor = CueInk.ui(focused ? FixedFocusText.primary : FixedFocusText.secondary)
+        }
+        let grow = {
+            let scale = focused ? ProfileGate.focusScale : 1
+            self.disc.transform = CGAffineTransform(scaleX: scale, y: scale)
+            self.caption.transform = CGAffineTransform(translationX: 0, y: focused ? self.side * (scale - 1) / 2 : 0)
+        }
+        guard animated else { change(); grow(); return }
+        UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
+        FixedFocusMotion.run(duration: Motion.focusDuration, animations: grow) { _ in }
+    }
+
+    override var canBecomeFocused: Bool { true }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let saved = disc.transform
+        disc.transform = .identity
+        disc.frame = CGRect(x: (bounds.width - side) / 2, y: 0, width: side, height: side)
+        disc.transform = saved
+        for view in [picture, initial, symbol, rim] as [UIView] { view.frame = disc.bounds }
+        let savedCaption = caption.transform
+        caption.transform = .identity
+        caption.frame = CGRect(x: 0, y: side + Self.captionGap, width: bounds.width,
+                               height: ceil(caption.font.lineHeight))
+        caption.transform = savedCaption
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        if context.nextFocusedView === self { model.onFocus?() }
+        guard context.nextFocusedView === self || context.previouslyFocusedView === self else { return }
+        style(animated: true)
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
+        model.action()
+    }
+}
+
 /// Tiles to pick from: each kind under its name (24 pt semibold,
-/// tertiary), ten across, 6 apart, lines 12 apart.
+/// tertiary), ten across, 6 apart, lines 12 apart. Round (the wizard):
+/// slots of the circle's size, the cards' gap apart, each line centred,
+/// each group starting a line, no names.
 final class UISettingsTileGridRow: UIView, UISettingsRowView {
     private var model: UISettingsRow.Tiles
-    private var tiles: [String: UISettingsTile] = [:]
+    private var tiles: [String: UIView] = [:]
     private var labels: [UILabel] = []
     private var shape: [String] = []
     static let across = 10
@@ -3285,8 +3187,11 @@ final class UISettingsTileGridRow: UIView, UISettingsRowView {
         return true
     }
 
+    private var round: CGFloat? { model.round }
+    private var captioned: Bool { model.groups.contains { $0.tiles.contains { $0.caption != nil } } }
+
     private func build() {
-        let ids = model.groups.flatMap { [$0.name] + $0.tiles.map(\.id) }
+        let ids = ["\(round ?? 0)"] + model.groups.flatMap { [$0.name] + $0.tiles.map(\.id) }
         if ids != shape {
             shape = ids
             tiles.values.forEach { $0.removeFromSuperview() }
@@ -3294,12 +3199,14 @@ final class UISettingsTileGridRow: UIView, UISettingsRowView {
             tiles = [:]
             labels = []
             for group in model.groups {
-                let label = UISettings.label(UISettings.textSize, .semibold, FixedFocusText.tertiary)
-                label.text = group.name
-                labels.append(label)
-                addSubview(label)
+                if round == nil {
+                    let label = UISettings.label(UISettings.textSize, .semibold, FixedFocusText.tertiary)
+                    label.text = group.name
+                    labels.append(label)
+                    addSubview(label)
+                }
                 for tile in group.tiles {
-                    let view = UISettingsTile(tile)
+                    let view: UIView = round.map { UISettingsRoundTile(tile, side: $0) } ?? UISettingsTile(tile)
                     tiles[tile.id] = view
                     addSubview(view)
                 }
@@ -3307,13 +3214,88 @@ final class UISettingsTileGridRow: UIView, UISettingsRowView {
             invalidateIntrinsicContentSize()
             setNeedsLayout()
         } else {
-            for group in model.groups { for tile in group.tiles { tiles[tile.id]?.update(tile) } }
+            for group in model.groups {
+                for tile in group.tiles {
+                    (tiles[tile.id] as? UISettingsTile)?.update(tile)
+                    (tiles[tile.id] as? UISettingsRoundTile)?.update(tile)
+                }
+            }
         }
     }
 
     private var labelHeight: CGFloat { 12 + ceil(UIFont.systemFont(ofSize: UISettings.textSize, weight: .semibold).lineHeight) + 4 }
 
+    /// Round: room above and below for the grown circle and its shadow.
+    private static let roundRoom: CGFloat = 24
+
+    /// Round lines are centred, so a short one leaves room either side the
+    /// engine finds nothing in (Down from an edge tile went nowhere, or past
+    /// it to a wider line): a guide fills each side, to its nearest tile.
+    private var sideGuides: [UIFocusGuide] = []
+
+    private var guidedLines: [CGRect] = []
+
+    private func guideSides(_ lines: [(frame: CGRect, first: UIView, last: UIView)]) {
+        // Only when the lines moved (new constraints lay the view out again).
+        let frames = lines.map(\.frame) + [CGRect(x: 0, y: 0, width: bounds.width, height: 0)]
+        guard frames != guidedLines else { return }
+        guidedLines = frames
+        sideGuides.forEach { removeLayoutGuide($0) }
+        sideGuides = []
+        for line in lines {
+            for (x, width, target) in [(CGFloat(-400), line.frame.minX + 400, line.first),
+                                       (line.frame.maxX, bounds.width + 400 - line.frame.maxX, line.last)] where width > 1 {
+                let guide = UIFocusGuide()
+                addLayoutGuide(guide)
+                NSLayoutConstraint.activate([
+                    guide.leadingAnchor.constraint(equalTo: leadingAnchor, constant: x),
+                    guide.widthAnchor.constraint(equalToConstant: width),
+                    guide.topAnchor.constraint(equalTo: topAnchor, constant: line.frame.minY),
+                    guide.heightAnchor.constraint(equalToConstant: line.frame.height),
+                ])
+                guide.preferredFocusEnvironments = [target]
+                sideGuides.append(guide)
+            }
+        }
+    }
+
     private func measure(width: CGFloat, place: Bool) -> CGFloat {
+        if let side = round {
+            var lineFrames: [(frame: CGRect, first: UIView, last: UIView)] = []
+            // A caption's slot is wider than its circle (a longer name).
+            let slot = side + (captioned ? 60 : 0)
+            let gap = FixedFocusMetrics.gap - (captioned ? 60 : 0)
+            let across = max(1, Int((width + gap) / (slot + gap)))
+            let tileHeight = UISettingsRoundTile.height(side: side, captioned: captioned)
+            let lineGap: CGFloat = captioned ? 40 : 32
+            var y = Self.roundRoom
+            for (index, group) in model.groups.enumerated() where !group.tiles.isEmpty {
+                if index > 0 { y += lineGap }
+                for (i, tile) in group.tiles.enumerated() {
+                    let line = i / across, column = i % across
+                    // Each line centred (the wizard is centred).
+                    let inLine = CGFloat(min(across, group.tiles.count - line * across))
+                    let left = (width - (inLine * slot + (inLine - 1) * gap)) / 2
+                    if place {
+                        tiles[tile.id]?.frame = CGRect(x: left + CGFloat(column) * (slot + gap),
+                                                       y: y + CGFloat(line) * (tileHeight + lineGap),
+                                                       width: slot, height: tileHeight)
+                    }
+                }
+                let lines = (group.tiles.count + across - 1) / across
+                if place {
+                    for line in 0..<lines {
+                        let members = group.tiles[(line * across)..<min(group.tiles.count, (line + 1) * across)]
+                            .compactMap { tiles[$0.id] }
+                        guard let first = members.first, let last = members.last else { continue }
+                        lineFrames.append((first.frame.union(last.frame), first, last))
+                    }
+                }
+                y += CGFloat(lines) * tileHeight + CGFloat(max(0, lines - 1)) * lineGap
+            }
+            if place, lineFrames.count > 1 { guideSides(lineFrames) }
+            return y + Self.roundRoom
+        }
         let tileWidth = (width - CGFloat(Self.across - 1) * Self.gap) / CGFloat(Self.across)
         var y: CGFloat = 0
         for (index, group) in model.groups.enumerated() {
@@ -3352,6 +3334,348 @@ final class UISettingsTileGridRow: UIView, UISettingsRowView {
     }
 }
 
+/// Capsule buttons centred on a row of no card: the wizard's Continue,
+/// Skip, Create (the card rows' pills, spelled out).
+final class UISettingsButtonsRow: UIView, UISettingsRowView {
+    private var model: UISettingsRow.Buttons
+    private var buttons: [String: UISettingsRoundButton] = [:]
+    private let stack = UIStackView()
+
+    init(_ model: UISettingsRow.Buttons) {
+        self.model = model
+        super.init(frame: .zero)
+        stack.axis = .horizontal
+        stack.spacing = 24
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+        configure()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .buttons(let model) = row else { return false }
+        self.model = model
+        configure()
+        return true
+    }
+
+    private func configure() {
+        var kept: [UISettingsRoundButton] = []
+        for action in model.actions {
+            let button = buttons[action.id] ?? UISettingsRoundButton()
+            buttons[action.id] = button
+            button.set(icon: action.icon, danger: action.danger, nudge: 0)
+            button.set(words: action.title)
+            button.accessibilityLabel = action.title
+            button.onSelect = { action.action() }
+            kept.append(button)
+        }
+        for (key, button) in buttons where !kept.contains(where: { $0 === button }) {
+            button.removeFromSuperview()
+            buttons[key] = nil
+        }
+        for (index, button) in kept.enumerated() where stack.arrangedSubviews.firstIndex(of: button) != index {
+            stack.insertArrangedSubview(button, at: index)
+        }
+    }
+
+    var entry: UIView? { stack.arrangedSubviews.first }
+}
+
+/// A poster to like, as every poster card: the cards' corners and rim,
+/// focused grown by `focusLift` with the bright edge and the soft shadow;
+/// its name and line under it at a caption's levels, stepping down by the
+/// growth. Liked: the taste badge's heart (Cue's red on the badges'
+/// plate) top left.
+final class UISettingsPosterTile: UIView, UISettingsGridTile {
+    private var model: UISettingsRow.PosterItem
+    private let card = UIView()
+    private let picture = UIImageView()
+    private let rim = UIImageView()
+    private let ring = UIView()
+    private let shadow = UIImageView()
+    private let heart = UIView()
+    private let heartSymbol = UIImageView()
+    private let name = UISettings.label(FixedFocusMetrics.captionSize, .medium)
+    private let detail = UISettings.label(FixedFocusMetrics.captionSize, .regular)
+
+    static let size = FixedFocusMetrics.posterCard
+    static let captionGap: CGFloat = 16
+    static let font = UIFont.systemFont(ofSize: FixedFocusMetrics.captionSize, weight: .medium)
+    static var height: CGFloat { size.height + captionGap + 2 * ceil(font.lineHeight) + 2 }
+    private static var lift: CGFloat { FixedFocusMetrics.focusLift(size) }
+
+    init(_ model: UISettingsRow.PosterItem) {
+        self.model = model
+        super.init(frame: .zero)
+        shadow.image = FixedFocusCardEdge.shadowImage
+        shadow.alpha = 0
+        picture.contentMode = .scaleAspectFill
+        picture.clipsToBounds = true
+        picture.layer.cornerRadius = Spotlight.cornerRadius
+        picture.layer.cornerCurve = .continuous
+        picture.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        rim.image = FixedFocusCardEdge.rim
+        // Home's focus edge: the rim's width, bright (Card Outlines' high only).
+        ring.layer.cornerRadius = Spotlight.cornerRadius
+        ring.layer.cornerCurve = .continuous
+        ring.alpha = 0
+        heart.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+        heart.layer.cornerRadius = 10
+        heart.layer.cornerCurve = .continuous
+        heartSymbol.contentMode = .center
+        heartSymbol.image = UISettings.symbol("heart.fill", 21)?
+            .withTintColor(FixedFocusBadges.cue, renderingMode: .alwaysOriginal)
+        heart.addSubview(heartSymbol)
+        card.addSubview(shadow)
+        for view in [picture, rim, ring, heart] as [UIView] { card.addSubview(view) }
+        for view in [card, name, detail] as [UIView] { addSubview(view) }
+        configure(loading: true)
+        style(animated: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(_ model: UISettingsRow.PosterItem) {
+        self.model = model
+        configure(loading: false)
+    }
+
+    private func configure(loading: Bool) {
+        if loading { UISettingsPicture.load(model.poster, size: Self.size.width, into: picture) }
+        name.text = model.title
+        detail.text = model.detail
+        detail.isHidden = model.detail.isEmpty
+        heart.isHidden = !model.on
+    }
+
+    private func style(animated: Bool) {
+        let focused = isFocused
+        let lift = Self.lift
+        let fade = {
+            self.ring.alpha = focused ? 1 : 0
+            self.shadow.alpha = focused ? 1 : 0
+            self.name.textColor = CueInk.ui(focused ? FixedFocusText.primary : FixedFocusText.secondary)
+            self.detail.textColor = CueInk.ui(focused ? FixedFocusText.body : FixedFocusText.tertiary)
+        }
+        let grow = {
+            let scale = focused ? 1 + lift : 1
+            self.card.transform = CGAffineTransform(scaleX: scale, y: scale)
+            let step = CGAffineTransform(translationX: 0, y: focused ? Self.size.height * lift / 2 : 0)
+            self.name.transform = step
+            self.detail.transform = step
+        }
+        guard animated else { fade(); grow(); return }
+        UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: fade)
+        FixedFocusMotion.run(duration: Motion.focusDuration, animations: grow) { _ in }
+    }
+
+    override var canBecomeFocused: Bool { true }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = Self.size
+        let saved = card.transform
+        card.transform = .identity
+        card.frame = CGRect(origin: .zero, size: size)
+        card.transform = saved
+        for view in [picture, rim, ring] as [UIView] { view.frame = card.bounds }
+        ring.layer.borderWidth = FixedFocusRing.width
+        ring.layer.borderColor = FixedFocusRing.color.cgColor
+        let pad = FixedFocusCardEdge.shadowPad
+        shadow.frame = card.bounds.insetBy(dx: -pad, dy: -pad)
+        heart.frame = CGRect(x: 12, y: 12, width: 45, height: 40)
+        heartSymbol.frame = heart.bounds
+        let line = ceil(Self.font.lineHeight)
+        for (label, y) in [(name, size.height + Self.captionGap), (detail, size.height + Self.captionGap + line + 2)] {
+            let kept = label.transform
+            label.transform = .identity
+            label.frame = CGRect(x: FixedFocusMetrics.textIndent, y: y, width: size.width - FixedFocusMetrics.textIndent, height: line)
+            label.transform = kept
+        }
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        guard context.nextFocusedView === self || context.previouslyFocusedView === self else { return }
+        if context.nextFocusedView === self { superview?.bringSubviewToFront(self) }
+        style(animated: true)
+    }
+
+    /// The focused card's growth above its top (the row's name steps up by it).
+    static var growthAbove: CGFloat { size.height * lift / 2 }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard presses.contains(where: { $0.type == .select }) else { return super.pressesEnded(presses, with: event) }
+        model.action()
+    }
+}
+
+/// Posters in one line under the row's name, as Home's moving-focus rows:
+/// running the screen's width, scrolled only by us on the move's spring by
+/// Home's window (`windowOffset`: as many in full as fit, slivers either
+/// side once it has moved); the name steps up by the focused card's growth
+/// while that card is under it.
+final class UISettingsPosterGridRow: UIView, UISettingsRowView, UIScrollViewDelegate {
+    private var model: UISettingsRow.Posters
+    private var tiles: [String: UISettingsPosterTile] = [:]
+    private var shape: [String] = []
+    private let scroll = UIScrollView()
+    private let name = UILabel()
+    private var windowStart = 0
+    private var offset: CGFloat = 0
+    static let gap = FixedFocusMetrics.gap
+    static var tileWidth: CGFloat { UISettingsPosterTile.size.width }
+    /// Above and below the cards: their growth and shadow.
+    private static let room: CGFloat = 40
+    private static var titleHeight: CGFloat { FixedFocusMetrics.titleHeight }
+
+    init(_ model: UISettingsRow.Posters) {
+        self.model = model
+        super.init(frame: .zero)
+        scroll.clipsToBounds = false
+        scroll.delegate = self
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.contentInsetAdjustmentBehavior = .never
+        addSubview(scroll)
+        name.font = FixedFocusRowCell.titleFont
+        name.textColor = CueInk.ui(FixedFocusText.primary)
+        addSubview(name)
+        build()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func apply(_ row: UISettingsRow) -> Bool {
+        guard case .posters(let model) = row else { return false }
+        self.model = model
+        build()
+        return true
+    }
+
+    private func build() {
+        name.text = model.title
+        name.isHidden = model.title == nil
+        let ids = model.items.map(\.id)
+        if ids != shape {
+            shape = ids
+            let old = tiles
+            tiles = [:]
+            for item in model.items {
+                if let view = old[item.id] {
+                    view.update(item)
+                    tiles[item.id] = view
+                } else {
+                    let view = UISettingsPosterTile(item)
+                    tiles[item.id] = view
+                    scroll.addSubview(view)
+                }
+            }
+            for (id, view) in old where tiles[id] == nil { view.removeFromSuperview() }
+            setNeedsLayout()
+        } else {
+            for item in model.items { tiles[item.id]?.update(item) }
+        }
+    }
+
+    private var tileHeight: CGFloat { UISettingsPosterTile.height }
+    private var top: CGFloat { model.title == nil ? 0 : Self.titleHeight }
+
+    /// The first poster (a page's first row to press).
+    var firstTile: UIView? { model.items.first.flatMap { tiles[$0.id] } }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: top + tileHeight + 12) }
+
+    /// The screen's left edge in this row's space.
+    private var screenLeft: CGFloat { window.map { -convert(CGPoint.zero, to: $0).x } ?? -FixedFocusMetrics.inset }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let left = screenLeft
+        name.frame = CGRect(x: left + FixedFocusMetrics.titleInset, y: FixedFocusMetrics.titleDrop + nameStep,
+                            width: 1200, height: FixedFocusMetrics.titleLine)
+        // The scroll runs the screen's width; the cards from the rows' edge.
+        scroll.frame = CGRect(x: left, y: top - Self.room, width: 1920, height: tileHeight + 2 * Self.room)
+        var x = FixedFocusMetrics.inset
+        for item in model.items {
+            tiles[item.id]?.frame = CGRect(x: x, y: Self.room, width: Self.tileWidth, height: tileHeight)
+            x += Self.tileWidth + Self.gap
+        }
+        scroll.contentSize = CGSize(width: x - Self.gap + FixedFocusMetrics.inset, height: scroll.bounds.height)
+        if abs(scroll.contentOffset.x - offset) > 0.5 { scroll.contentOffset = CGPoint(x: offset, y: 0) }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        setNeedsLayout()
+    }
+
+    // MARK: Home's moves
+
+    private var nameStep: CGFloat = 0
+
+    /// Home's window: as many cards in full as the screen holds, slivers of
+    /// the ones before and after split evenly once the row has moved.
+    private func windowOffset(focusing index: Int) -> CGFloat {
+        let gap = Self.gap, card = Self.tileWidth, pitch = card + gap
+        let count = model.items.count
+        let room = 1920 - 2 * (gap + FixedFocusMetrics.destinationSliver)
+        let shown = max(1, Int((room + gap) / pitch))
+        if index < windowStart { windowStart = index }
+        if index > windowStart + shown - 1 { windowStart = index - shown + 1 }
+        guard windowStart > 0 else { return 0 }
+        let edge = (1920 - CGFloat(shown) * card - CGFloat(shown - 1) * gap) / 2
+        let content = 2 * FixedFocusMetrics.inset + CGFloat(count) * pitch - gap
+        let end = max(0, content - 1920)
+        return min(FixedFocusMetrics.inset + CGFloat(windowStart) * pitch - edge, end)
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        let next = context.nextFocusedView
+        let index = model.items.firstIndex { tiles[$0.id] === next }
+        if let index { offset = windowOffset(focusing: index) }
+        // The name out of the grown card's way, only while it's under it.
+        var step: CGFloat = 0
+        if let index, model.title != nil {
+            let cardLeft = FixedFocusMetrics.inset + CGFloat(index) * (Self.tileWidth + Self.gap) - offset
+            let lift = UISettingsPosterTile.growthAbove
+            let nameEnd = FixedFocusMetrics.titleInset + name.intrinsicContentSize.width
+            if cardLeft - lift < nameEnd, cardLeft + Self.tileWidth + lift > FixedFocusMetrics.titleInset { step = -lift }
+        }
+        let moved = abs(scroll.contentOffset.x - offset) > 0.5 || step != nameStep
+        nameStep = step
+        guard moved else { return }
+        let target = offset
+        FixedFocusMotion.run(duration: Motion.moveDuration, animations: {
+            self.scroll.contentOffset = CGPoint(x: target, y: 0)
+            self.name.frame.origin.y = FixedFocusMetrics.titleDrop + step
+        }) { _ in }
+    }
+
+    // The engine's own scroll, stopped: we move the row.
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                   targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        targetContentOffset.pointee = scrollView.contentOffset
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // The engine's focus scroll sets the offset directly: put it back.
+        if abs(scrollView.contentOffset.x - offset) > 0.5 { scrollView.contentOffset = CGPoint(x: offset, y: 0) }
+    }
+}
+
 // MARK: Cards, sections, the page
 
 /// A section's card: its rows on the cards' fill, 22 pt corners, the
@@ -3361,6 +3685,8 @@ final class UISettingsTileGridRow: UIView, UISettingsRowView {
 final class UISettingsCard: UIView {
     private let stack = UIStackView()
     private var views: [String: UISettingsRowView] = [:]
+    /// A row's view by its id.
+    func rowView(_ id: String) -> UISettingsRowView? { views[id] }
     private var shape: [String] = []
     private var wells: [UIView] = []
     private let compact: Bool
@@ -3535,6 +3861,8 @@ struct UISettingsSection {
     var rows: [UISettingsRow]
     /// No card of its own (a profile's header: its own colour).
     var bare = false
+    /// Narrower than the column, centred in it (the wizard's cards).
+    var width: CGFloat? = nil
 }
 
 /// A section's view: its label (24 pt semibold, tertiary, at the words'
@@ -3544,6 +3872,10 @@ final class UISettingsSectionView: UIView {
     let card: UISettingsCard
     private var labelHeight: NSLayoutConstraint!
     private var cardTop: NSLayoutConstraint!
+    private var leading: NSLayoutConstraint!
+    private var trailing: NSLayoutConstraint!
+    private var labelLeading: NSLayoutConstraint!
+    private var width: CGFloat?
 
     init(compact: Bool = false) {
         card = UISettingsCard(compact: compact)
@@ -3555,15 +3887,26 @@ final class UISettingsSectionView: UIView {
         label.numberOfLines = 1
         labelHeight = label.heightAnchor.constraint(equalToConstant: UISettings.labelRoom - 12)
         cardTop = card.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12)
+        leading = card.leadingAnchor.constraint(equalTo: leadingAnchor)
+        trailing = card.trailingAnchor.constraint(equalTo: trailingAnchor)
+        labelLeading = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.textInset)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: topAnchor),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UISettings.textInset),
+            labelLeading,
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
-            labelHeight, cardTop,
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            labelHeight, cardTop, leading, trailing,
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    override func layoutSubviews() {
+        let side = width.map { max(0, (bounds.width - $0) / 2) } ?? 0
+        if leading.constant != side {
+            leading.constant = side
+            trailing.constant = -side
+            labelLeading.constant = side + UISettings.textInset
+        }
+        super.layoutSubviews()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -3576,6 +3919,10 @@ final class UISettingsSectionView: UIView {
         cardTop.constant = labelled ? 12 : 0
         card.bare = section.bare
         card.set(section.rows)
+        if width != section.width {
+            width = section.width
+            setNeedsLayout()
+        }
     }
 }
 
@@ -3612,6 +3959,8 @@ class UISettingsPageView: UIView, UIScrollViewDelegate {
     private var sectionViews: [UISettingsSectionView] = []
     private var topRoom: NSLayoutConstraint!
     private let fadeMask = CAGradientLayer()
+    /// Fades out at the column's foot too (the wizard: its dots are there).
+    var fadesAtFoot = false
     private var offset: CGFloat = 0
     /// The row focus was on last in this page (it lands there again).
     private weak var lastFocused: UIView?
@@ -3680,7 +4029,11 @@ class UISettingsPageView: UIView, UIScrollViewDelegate {
         fadeMask.frame = holder.bounds
         let h = holder.bounds.height
         func at(_ y: CGFloat) -> NSNumber { NSNumber(value: Double(y / h)) }
-        if pinned == nil {
+        if pinned == nil, fadesAtFoot {
+            let foot = Self.above + column.height
+            fadeMask.colors = [UIColor.clear, .clear, .black, .black, .clear, .clear].map(\.cgColor)
+            fadeMask.locations = [0, at(Self.above - Self.fade), at(Self.above), at(foot - 60), at(foot), 1]
+        } else if pinned == nil {
             fadeMask.colors = [UIColor.clear.cgColor, UIColor.clear.cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
             fadeMask.locations = [0, at(Self.above - Self.fade), at(Self.above), 1]
         } else {
@@ -3725,14 +4078,31 @@ class UISettingsPageView: UIView, UIScrollViewDelegate {
             for row in section.card.rows {
                 if row.canBecomeFocused { return row }
                 if let control = row as? UISettingsControlRow, let entry = control.entry { return entry }
+                if let buttons = row as? UISettingsButtonsRow, let entry = buttons.entry { return entry }
                 // A grid: the chosen tile (the avatar picker opens on yours), else the first.
                 if let grid = row as? UISettingsTileGridRow {
-                    let tiles = grid.subviews.compactMap { $0 as? UISettingsTile }
+                    let tiles = grid.subviews.compactMap { $0 as? UISettingsGridTile }
                     if let tile = tiles.first(where: \.chosen) ?? tiles.first { return tile }
                 }
+                if let posters = row as? UISettingsPosterGridRow, let first = posters.firstTile { return first }
             }
         }
         return nil
+    }
+
+    /// Where focus goes next time the page takes it: the row `id` (its
+    /// first control). False: no such row.
+    @discardableResult
+    func prefer(row id: String) -> Bool {
+        layoutIfNeeded()
+        for section in sectionViews {
+            guard let row = section.card.rowView(id) else { continue }
+            let target: UIView? = row.canBecomeFocused ? row : (row as? UISettingsControlRow)?.entry
+            guard let target else { return false }
+            lastFocused = target
+            return true
+        }
+        return false
     }
 
     /// A page with nothing to press holds focus itself, unseen (Back and
@@ -3775,13 +4145,13 @@ class UISettingsPageView: UIView, UIScrollViewDelegate {
         layoutIfNeeded()
         guard let section = sectionViews.first(where: { view.isDescendant(of: $0) }) else { return }
         // The row (a tile in the avatars' grid: the tile itself).
-        let rowView = view is UISettingsTile ? view
+        let rowView = view is UISettingsGridTile ? view
             : section.card.rows.first(where: { view.isDescendant(of: $0) }) ?? view
         let row = rowView.convert(rowView.bounds, to: content).offsetBy(dx: 0, dy: content.frame.minY)
         // The section's first row (a tile: the grid's first line).
         var first = section.card.rows.first.map { view.isDescendant(of: $0) } ?? false
-        if first, view is UISettingsTile, let grid = view.superview {
-            let top = grid.subviews.filter { $0 is UISettingsTile }.map(\.frame.minY).min() ?? 0
+        if first, view is UISettingsGridTile, let grid = view.superview {
+            let top = grid.subviews.filter { $0 is UISettingsGridTile }.map(\.frame.minY).min() ?? 0
             first = view.frame.minY <= top + 1
         }
         let height = scroll.bounds.height
@@ -3838,7 +4208,14 @@ final class UISettingsKeyboard: NSObject, UITextFieldDelegate {
         self.commit = commit
         field.text = text
         field.placeholder = placeholder
-        DispatchQueue.main.async { self.field.becomeFirstResponder() }
+        open(tries: 30)
+    }
+
+    /// As soon as the field is on screen (a page just made isn't yet).
+    private func open(tries: Int) {
+        if field.window != nil, field.becomeFirstResponder() { return }
+        guard tries > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { self.open(tries: tries - 1) }
     }
 
     func textFieldDidEndEditing(_ field: UITextField) {

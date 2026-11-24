@@ -297,8 +297,7 @@ struct RootView: View {
     @State private var libraryPath: [Route] = []
     @State private var discoverPath: [Route] = []
     @State private var upcomingPath: [Route] = []
-    @State private var settings2Path: [Route] = []
-    @State private var settings3Path: [Route] = []
+    @State private var settingsPath: [Route] = []
     /// Details over Home, Movies or Series (by tab): a layer over the tab's
     /// stack, not a page in it — the page under it never leaves the window,
     /// so Back is one fade over it as it is (a pushed page's below is taken
@@ -530,9 +529,6 @@ struct RootView: View {
                     // Settings TAB (in-place, not the full-screen pane demo) —
                     // used to drive the ATV theme's settings in the sim.
                     if args.contains("-settingsTabDemo") { selectedTab = 3 }
-                    // Settings showing a category (ATVSettingsView reads which):
-                    // -accountDemo, or -settingsPage <category>.
-                    if args.contains("-accountDemo") || args.contains("-settingsPage") { selectedTab = 3 }
                     if args.contains("-searchDemo") { selectedTab = 1 }
                     if args.contains("-libraryDemo") { selectedTab = 2 }
                     // A browse page (genre, tag, studio, network, person),
@@ -1026,31 +1022,15 @@ struct RootView: View {
                     .navigationDestination(for: Route.self) { destination(for: $0, path: trail($libraryPath)) }
             }
         case .settings:
-            NavigationStack {
-                // Only while Settings is the tab: its environment change
-                // ran through the whole hidden page on every bar move.
-                SettingsRoot { focusSidebar(3) }
-                    .probeScreen("Settings")
-                    .environmentObject(searchViewModel)
-            }
-        case .settings2:
-            NavigationStack(path: $settings2Path) {
+            NavigationStack(path: $settingsPath) {
                 CardSettingsRoot { focusSidebar(tab.rawValue) }
                     .ignoresSafeArea()
+                    .probeScreen("Settings")
                     // A title's Details from a list (Watch Progress, Library).
                     .environment(\.settingsOpenTitle) { item in
-                        openDetail(item) { settings2Path.append($0) }
+                        openDetail(item) { settingsPath.append($0) }
                     }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settings2Path)) }
-            }
-            .environmentObject(searchViewModel)
-        case .settings3:
-            NavigationStack(path: $settings3Path) {
-                SwiftCardSettingsRoot { focusSidebar(tab.rawValue) }
-                    .environment(\.settingsOpenTitle) { item in
-                        openDetail(item) { settings3Path.append($0) }
-                    }
-                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settings3Path)) }
+                    .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settingsPath)) }
             }
             .environmentObject(searchViewModel)
         case .home:

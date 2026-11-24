@@ -2621,6 +2621,30 @@ extension CueRows {
         store()
     }
 
+    /// A new profile's Loves (the titles it picked at creation), written
+    /// under its own id: it needn't be the active one.
+    func seedLoves(_ items: [MetaItem], for target: Int) {
+        guard !items.isEmpty else { return }
+        load()
+        let now = Date()
+        func add(to all: inout [String: Entry]) {
+            for item in items where all[item.id] == nil {
+                all[item.id] = Entry(rating: .love, at: now, type: item.type, name: item.name)
+            }
+        }
+        if target == profile {
+            add(to: &entries)
+            store()
+            return
+        }
+        let url = Self.url(target)
+        var all = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([String: Entry].self, from: $0) } ?? [:]
+        add(to: &all)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: url, options: .atomic) }
+        version &+= 1
+    }
+
     /// Why These Rows' Remove: these ratings gone.
     func clear(_ ids: [String]) {
         load()

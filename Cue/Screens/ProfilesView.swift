@@ -85,7 +85,7 @@ struct ProfileAvatarView: View {
 
 /// "Who's watching?" — on the launch curtain (`LaunchCurtain`), after 4 hours
 /// away and from the top bar's avatar: for switching (a locked profile asks
-/// its PIN) and adding one — Add Profile last, below 5 (`ProfileSetup`, the
+/// its PIN) and adding one — Add Profile last, below 5 (`UINewProfilePage`, one
 /// guided steps, ending in the new profile picked). Editing: holding an
 /// avatar opens that profile's Settings page over the gate (a locked one
 /// asks its PIN first; nothing switches). The picked avatar flies to the top bar's as Home dissolves in;
@@ -145,22 +145,25 @@ struct ProfileGate: View {
     var body: some View {
         ZStack {
             if let id = editing {
-                ATVSettingsView(barFocused: false, root: AnyView(ProfileSettingsPage(profileID: id))) {
+                ProfileGateEditor(mode: .edit(id)) {
                     editing = nil
                     // Back on the held avatar (deleted: the active one).
                     let back = profiles.profiles.contains { $0.id == id } ? id : profiles.activeProfileID
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = back }
                 }
-                .environment(\.fromProfileGate, true)
+                .ignoresSafeArea()
+                .background(ATVBackground())
                 .transition(.opacity)
             } else if adding {
-                ProfileSetup(background: false, finishTitle: "Start Watching", onFinish: { created in
+                ProfileGateEditor(mode: .create { created in
                     adding = false
                     choose(created, from: CGPoint(x: screen.width / 2, y: screen.height / 2))
-                }, onCancel: {
+                }) {
                     adding = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = Self.addID }
-                })
+                }
+                .ignoresSafeArea()
+                .background(ATVBackground())
                 .transition(.opacity)
             } else if let locked = pinProfile {
                 PinEntryView(
@@ -215,7 +218,10 @@ struct ProfileGate: View {
         .animation(Motion.fade, value: phase == .waiting && statusUp)
         // At launch and coming back there's nothing to go back to (the
         // window drops it — `BackCatch`); from the top bar, Back closes it.
-        .onExitCommand { if phase == .choosing, !adding, editing == nil { launch.cancelGate() } }
+        .onExitCommand {
+            if editing != nil || adding { NotificationCenter.default.post(name: .gateEditorBack, object: nil) }
+            else if phase == .choosing, !adding { launch.cancelGate() }
+        }
         .onChange(of: launch.ready) { _, ready in if ready, phase == .waiting { fly() } }
         .onAppear {
             // Over a page that just lost its focus (the top bar's avatar):
@@ -504,15 +510,9 @@ private struct GateAddTile: View {
     }
 }
 
-/// A profile's Settings page opened over the gate: no Switch row (picking
-/// switches).
-private struct FromProfileGateKey: EnvironmentKey { static let defaultValue = false }
-
-extension EnvironmentValues {
-    var fromProfileGate: Bool {
-        get { self[FromProfileGateKey.self] }
-        set { self[FromProfileGateKey.self] = newValue }
-    }
+extension Notification.Name {
+    /// Back over the gate's profile editor (SwiftUI's exit handler gets it first).
+    static let gateEditorBack = Notification.Name("cue.gateEditorBack")
 }
 
 private struct GateTileStyle: ButtonStyle {
@@ -665,376 +665,3 @@ private struct Shake: GeometryEffect {
 }
 
 // MARK: - Add Profile, guided
-
-/// Adding a profile, a step at a time (a setup assistant): its name (the
-/// keyboard), an avatar, where its titles come from (Primary's add-ons or
-/// none), a PIN or not (signed in to Nuvio only), then the new profile with
-/// "You're all set". Created only at the last press; Back goes a step
-/// back, from the first out. On the gate it's the curtain's background
-/// (`background` false); from Settings, a cover of its own.
-struct ProfileSetup: View {
-    @EnvironmentObject private var profiles: ProfileStore
-    var background = true
-    /// The last step's button ("Start Watching" on the gate).
-    var finishTitle = "Done"
-    let onFinish: (UserProfile) -> Void
-    let onCancel: () -> Void
-
-    private enum Step: Int, CaseIterable { case name, avatar, addons, pin, done }
-
-    @State private var step = Step.name
-    @State private var name = ""
-    @State private var avatarID: String?
-    @State private var usesPrimary = true
-    @State private var pin: String?
-    @State private var pinEntry: PinEntry?
-    @State private var keyboard: KeyboardRequest?
-    @State private var creating = false
-    @FocusState private var focused: String?
-
-    private enum PinEntry: Identifiable {
-        case first, again(String)
-        var id: String { if case .again = self { return "again" }; return "first" }
-    }
-
-    /// Steps shown (no PIN while signed out: Nuvio keeps PINs).
-    private var steps: [Step] { Step.allCases.filter { $0 != .pin || profiles.accountAvailable } }
-
-    var body: some View {
-        ZStack {
-            if background { ATVBackground() }
-            if let entry = pinEntry {
-                pinPad(entry)
-                    .id(entry.id)
-                    .transition(.opacity)
-            } else if step == .avatar {
-                avatarPage
-                    .transition(.opacity)
-            } else {
-                page
-                    .id(step)
-                    .transition(.opacity)
-            }
-        }
-        .animation(Motion.fade, value: step)
-        .animation(Motion.fade, value: pinEntry?.id)
-        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
-        .onAppear { askName() }
-    }
-
-    @ViewBuilder
-    private var page: some View {
-        VStack(spacing: 56) {
-            switch step {
-            case .name:
-                // The keyboard is the step; this shows while it opens.
-                heading("What's your name?", nil)
-            case .avatar:
-                EmptyView()   // `avatarPage`
-            case .addons:
-                heading("Where should titles come from?", name)
-                VStack(spacing: 20) {
-                    SetupChoice(title: "Use Primary's Add-ons",
-                                detail: "The same catalogs and sources as \(profiles.profiles.first?.name ?? "Primary").") {
-                        usesPrimary = true; advance()
-                    }
-                    .focused($focused, equals: "primary")
-                    SetupChoice(title: "Start Empty", detail: "Add its own add-ons later in Settings.") {
-                        usesPrimary = false; advance()
-                    }
-                    .focused($focused, equals: "empty")
-                }
-                .defaultFocus($focused, usesPrimary ? "primary" : "empty")
-            case .pin:
-                heading("Lock this profile?", "A 4-digit PIN before \(name) opens.")
-                VStack(spacing: 20) {
-                    SetupChoice(title: "Not Now", detail: "You can set one later in Settings.") {
-                        pin = nil; advance()
-                    }
-                    .focused($focused, equals: "nopin")
-                    SetupChoice(title: "Set a PIN", detail: nil) { pinEntry = .first }
-                        .focused($focused, equals: "pin")
-                }
-                .defaultFocus($focused, "nopin")
-            case .done:
-                ProfileAvatarView(profile: preview, size: ProfileGate.avatarSize)
-                    .overlay { Circle().strokeBorder(Color.white.opacity(0.30), lineWidth: 2) }
-                heading("You're all set, \(name)", nil)
-                SetupChoice(title: finishTitle, detail: nil, width: 420) { finish() }
-                    .disabled(creating)
-            }
-            dots
-        }
-        .padding(.horizontal, 96)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onExitCommand { back() }
-    }
-
-    private func heading(_ title: String, _ subtitle: String?) -> some View {
-        VStack(spacing: 16) {
-            Text(title)
-                .font(.system(size: 57, weight: .semibold))
-                .foregroundStyle(CueInk.primary)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(CueInk.secondary)
-            }
-        }
-        .multilineTextAlignment(.center)
-    }
-
-    /// Where you are: a dot per step, the current one bright.
-    private var dots: some View {
-        HStack(spacing: 14) {
-            ForEach(steps, id: \.self) { s in
-                Circle()
-                    .fill(CueInk.color(s == step ? FixedFocusText.primary : 0.2))
-                    .frame(width: 12, height: 12)
-            }
-        }
-    }
-
-    /// The avatar: the wizard's heading, centred and fixed; under it the
-    /// initials, then the catalog by kind in round tiles across the width,
-    /// scrolling under the heading; the dots at the screen's foot.
-    private var avatarPage: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                heading("Pick an avatar", nil)
-                    .padding(.top, 110)
-                    .padding(.bottom, 40 - SetupAvatars.edge)
-                SetupAvatars(initials: initialsPreview, chosen: avatarID, focused: $focused) { id in
-                    avatarID = id
-                    advance()
-                }
-                .defaultFocus($focused, avatarID ?? "initials")
-                // Coming from the keyboard, the engine took the tile nearest it.
-                .onAppear { DispatchQueue.main.async { focused = avatarID ?? "initials" } }
-            }
-            // The tiles end above the dots, fading out on their way to them.
-            .padding(.bottom, 130)
-            .mask {
-                VStack(spacing: 0) {
-                    Rectangle()
-                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 50)
-                    Color.clear.frame(height: 80)
-                }
-            }
-            dots
-                .padding(.bottom, 48)
-        }
-        .ignoresSafeArea()
-        .onExitCommand { back() }
-    }
-
-    private func pinPad(_ entry: PinEntry) -> some View {
-        switch entry {
-        case .first:
-            return PinEntryView(title: "Choose a 4-digit PIN", subtitle: name, background: false,
-                                onSubmit: { value in pinEntry = .again(value); return nil },
-                                onCancel: { pinEntry = nil })
-        case .again(let first):
-            return PinEntryView(title: "Enter it again", subtitle: name, background: false,
-                                onSubmit: { value in
-                                    guard value == first else { return "The PINs didn't match." }
-                                    pin = value
-                                    pinEntry = nil
-                                    advance()
-                                    return nil
-                                },
-                                onCancel: { pinEntry = .first })
-        }
-    }
-
-    /// The colour `addProfile` will give it (the first free slot's).
-    private var nextColor: String {
-        let used = Set(profiles.profiles.map(\.id))
-        let id = (1...ProfileStore.maxProfiles).first { !used.contains($0) } ?? 1
-        return ProfileStore.avatarColors[(id - 1) % ProfileStore.avatarColors.count]
-    }
-
-    private var initialsPreview: UserProfile {
-        UserProfile(id: -1, name: name, avatarColorHex: nextColor)
-    }
-
-    private var preview: UserProfile {
-        UserProfile(id: -1, name: name, avatarColorHex: nextColor, avatarID: avatarID)
-    }
-
-    private func askName() {
-        keyboard = KeyboardRequest(text: name, placeholder: "Profile name") { text in
-            let text = text.trimmingCharacters(in: .whitespaces)
-            guard !text.isEmpty else { onCancel(); return }
-            name = text
-            step = .avatar
-        }
-    }
-
-    private func advance() {
-        guard let i = steps.firstIndex(of: step), i + 1 < steps.count else { return }
-        step = steps[i + 1]
-    }
-
-    private func back() {
-        guard let i = steps.firstIndex(of: step), i > 0 else { onCancel(); return }
-        step = steps[i - 1]
-        if step == .name { askName() }
-    }
-
-    private func finish() {
-        guard !creating else { return }
-        creating = true
-        guard let created = profiles.addProfile(name: name) else {
-            ToastCenter.shared.show("Can't add a profile just yet — try again in a moment",
-                                    icon: "person.crop.circle.badge.exclamationmark")
-            creating = false
-            return
-        }
-        if let avatarID { profiles.setAvatar(id: created.id, avatarID: avatarID) }
-        if usesPrimary { profiles.setUsesPrimaryAddons(id: created.id, true) }
-        let profile = profiles.profiles.first { $0.id == created.id } ?? created
-        guard let pin else { onFinish(profile); return }
-        Task {
-            if case .failure(let message) = await profiles.setPin(id: created.id, pin: pin, currentPin: nil) {
-                ToastCenter.shared.show("PIN not set — \(message)", icon: "lock.slash")
-            }
-            onFinish(profiles.profiles.first { $0.id == created.id } ?? profile)
-        }
-    }
-}
-
-/// The setup's avatar step: the initials alone first (the profile's own
-/// colour), then each kind of the catalog under its label, eight across —
-/// the gate's round tiles (its rim, 5 % larger focused, the name stepping
-/// down), the chosen one ticked.
-private struct SetupAvatars: View {
-    @EnvironmentObject private var profiles: ProfileStore
-    let initials: UserProfile
-    let chosen: String?
-    var focused: FocusState<String?>.Binding
-    let pick: (String?) -> Void
-
-    /// The fade under the heading, kept as room above the first tile.
-    static let edge: CGFloat = 24
-    private static let size: CGFloat = 132
-    private static let across = 8
-    private static let gap: CGFloat = 16
-    private static var slot: CGFloat { size + GateSlot.sideRoom }
-    private static var width: CGFloat { CGFloat(across) * slot + CGFloat(across - 1) * gap }
-
-    var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 44) {
-                tile(initials, id: nil, label: "Initials")
-                    .frame(maxWidth: .infinity)
-                ForEach(AvatarChoices.groups(profiles.avatarCatalog), id: \.name) { group in
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(group.name.uppercased())
-                            .font(.system(size: SettingsMetrics.sectionTextSize, weight: .semibold))
-                            .foregroundStyle(CueInk.tertiary)
-                            .padding(.leading, GateSlot.sideRoom / 2)
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.slot), spacing: Self.gap), count: Self.across),
-                                  alignment: .leading, spacing: 28) {
-                            ForEach(group.items) { item in
-                                tile(UserProfile(id: -1, name: item.displayName,
-                                                 avatarColorHex: initials.avatarColorHex, avatarID: item.id),
-                                     id: item.id, label: item.displayName)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(width: Self.width)
-            .padding(.top, Self.edge + 16)
-            .padding(.bottom, 60)
-            .frame(maxWidth: .infinity)
-        }
-        // Unclipped at the sides and bottom (focused tiles' shadows), cut
-        // at the top with a short fade.
-        .scrollClipDisabled()
-        .mask {
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: Self.edge)
-                Rectangle()
-            }
-            .padding(.bottom, -200)
-        }
-        .task { await profiles.loadAvatarCatalog() }
-    }
-
-    private func tile(_ profile: UserProfile, id: String?, label: String) -> some View {
-        Button { pick(id) } label: {
-            Tile(profile: profile, label: label, chosen: chosen == id, size: Self.size)
-        }
-        .buttonStyle(GateTileStyle())
-        .focused(focused, equals: id ?? "initials")
-    }
-
-    private struct Tile: View {
-        @Environment(\.isFocused) private var isFocused
-        let profile: UserProfile
-        let label: String
-        let chosen: Bool
-        let size: CGFloat
-
-        var body: some View {
-            VStack(spacing: 16) {
-                GateAvatarFace(profile: profile, size: size, lit: isFocused)
-                    .scaleEffect(isFocused ? ProfileGate.focusScale : 1)
-                    .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
-                HStack(spacing: 6) {
-                    Text(label).lineLimit(1)
-                    if chosen { Image(systemName: "checkmark").font(.system(size: 20, weight: .semibold)) }
-                }
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(CueInk.color(isFocused || chosen ? FixedFocusText.primary : FixedFocusText.secondary))
-                .offset(y: isFocused ? GateSlot.step(size) : 0)
-                .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
-            }
-            .frame(width: size + GateSlot.sideRoom)
-        }
-    }
-}
-
-/// A step's choice: a wide flat capsule (focused white, dark text), what it
-/// means under it.
-private struct SetupChoice: View {
-    let title: String
-    let detail: String?
-    var width: CGFloat = 760
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { Face(title: title, detail: detail, width: width) }
-            .buttonStyle(GateTileStyle())
-    }
-
-    private struct Face: View {
-        @Environment(\.isFocused) private var isFocused
-        let title: String
-        let detail: String?
-        let width: CGFloat
-
-        var body: some View {
-            VStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 32, weight: .semibold))
-                if let detail {
-                    Text(detail)
-                        .font(.system(size: 24))
-                        .opacity(0.8)
-                }
-            }
-            .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
-            .padding(.vertical, detail == nil ? 22 : 18)
-            .frame(width: width)
-            .background(Capsule().fill(isFocused ? FlatControl.focus : FlatControl.rest))
-            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 18, y: 10)
-            .scaleEffect(isFocused ? ProfileGate.focusScale : 1)
-            .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
-        }
-    }
-}

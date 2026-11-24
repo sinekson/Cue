@@ -54,24 +54,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     static let accounts: [SettingsCategory] = [.account, .tmdb, .mdblist]
 }
 
-struct SettingsCategoryPane: View {
-    let category: SettingsCategory
-
-    var body: some View {
-        switch category {
-        case .account:      AccountSettingsDetail()
-        case .tmdb:         TMDBServicePage()
-        case .mdblist:      MDBListServicePage()
-        case .appearance:   AppearanceSettingsDetail()
-        case .homeContent:  HomeContentSettingsDetail()
-        case .playback:     PlaybackSettingsDetail()
-        case .storage:      StorageSettingsDetail()
-        case .about:        AboutDetail()
-        case .developer:    DeveloperSettingsDetail()
-        }
-    }
-}
-
 // MARK: - Detail scaffolding
 
 /// A rounded, accent-tinted tile holding an SF Symbol. Gives every settings row
@@ -99,86 +81,6 @@ struct SettingsIconTile: View {
                     .foregroundStyle(CuePalette.secondary)
             )
             .frame(width: size, height: size)
-    }
-}
-
-struct SettingsDetailHeader: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: CueSpacing.md) {
-                // Accent spine — a bold vertical bar that anchors the title and
-                // sets the new, more editorial header rhythm.
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(CuePalette.secondary)
-                    .frame(width: 6, height: 44)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 40, weight: .heavy))
-                        .foregroundStyle(CuePalette.textPrimary)
-                    Text(subtitle)
-                        .font(.system(size: 21))
-                        .foregroundStyle(CuePalette.textSecondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// A grouped settings section rendered as a rounded card (title + optional
-/// subtitle + rows), matching the APK's `secondaryCardRadius` (18dp) groups.
-struct SettingsGroupCard<Content: View>: View {
-    @Environment(\.colorScheme) private var scheme
-    let title: String
-    var subtitle: String? = nil
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CueSpacing.sm) {
-            // Section label sits ABOVE the card (grouped-list style) — the
-            // accent-tinted, letter-spaced title reads as a real section break
-            // instead of another boxed header stacked inside the card.
-            if !title.isEmpty || (subtitle?.isEmpty == false) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if !title.isEmpty {
-                        Text(title.uppercased())
-                            .font(.system(size: 18, weight: .bold))
-                            .tracking(1.6)
-                            .foregroundStyle(CuePalette.secondary)
-                    }
-                    if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: 19))
-                            .foregroundStyle(CuePalette.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 2)
-            }
-            // The rows live in one shared surface; each row is flat until
-            // focused, so the card groups them like a single list.
-            VStack(spacing: 4) {
-                content
-            }
-            .padding(CueSpacing.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(CuePalette.backgroundCard.opacity(0.32))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    // Hairline reads mid-grey on dark; in ATV light mode that
-                    // same grey is a heavy outline — use a soft dark line.
-                    .strokeBorder(scheme == .light ? Color.black.opacity(0.10)
-                                  : CuePrimitives.neutral750.opacity(0.55), lineWidth: 1)
-            )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -247,81 +149,6 @@ struct SettingsRowBackground: View {
     }
 }
 
-struct DetailScaffold<Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: CueSpacing.xl) {
-                SettingsDetailHeader(title: title, subtitle: subtitle)
-                    .padding(.bottom, CueSpacing.xs)
-                content
-            }
-            .padding(.horizontal, CueSpacing.xl)
-            .padding(.top, CueSpacing.lg)
-            .padding(.bottom, CueSpacing.xxl)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        // Clips scrolled content to the pane so rows stay inside the workspace card.
-    }
-}
-
-struct CueSwitch: View {
-    let isOn: Bool
-
-    var body: some View {
-        ZStack(alignment: isOn ? .trailing : .leading) {
-            Capsule()
-                .fill(isOn ? CuePalette.secondary : Color.primary.opacity(0.18))
-                .frame(width: 64, height: 36)
-            Circle()
-                // The knob has to read against TWO different tracks: the dark
-                // off-track and the accent on-track. A hardcoded white knob
-                // vanished on the White theme, whose accent track is white too
-                // — the "toggles are invisible with the white colour" report.
-                // `onSecondary` is the accent's own ink (dark on White), so the
-                // knob contrasts when on; white is right for the dark off-track.
-                .fill(isOn ? CuePalette.onSecondary : .white)
-                .frame(width: 28, height: 28)
-                .padding(4)
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isOn)
-    }
-}
-
-/// Storage: what Cue keeps on this Apple TV — the cache and the search
-/// history, each a page with what it holds and its clear — and the space
-/// left. No confirmations.
-struct StorageSettingsDetail: View {
-    @EnvironmentObject private var search: SearchViewModel
-    @State private var total: Int64?
-    @State private var free: Int64?
-
-    var body: some View {
-        SettingsPage(title: SettingsCategory.storage.title,
-                     subtitle: "What Cue keeps on this Apple TV.") {
-            SettingsSection {
-                SettingsLinkRow(title: "Cache", value: total.map(CachePage.size)) {
-                    CachePage(measured: { total = $0 })
-                }
-                SettingsLinkRow(title: "Search History",
-                                value: search.hasHistory ? nil : "Empty") { SearchHistoryPage() }
-            }
-            SettingsSection {
-                SettingsInfoRows {
-                    SettingsInfoRow(title: "Free on This Apple TV", value: free.map(CachePage.size) ?? "—")
-                }
-            }
-        }
-        .task {
-            total = await CacheStorage.measure().reduce(0) { $0 + $1.bytes }
-            free = CacheStorage.available()
-        }
-    }
-}
-
 /// Every cache by kind with its size and allowance, and one clear for all
 /// of it (`CacheStorage`): everything here loads again as needed.
 struct CachePage: View {
@@ -380,115 +207,6 @@ struct CachePage: View {
         guard let limit = part.limit else { return size(part.bytes) }
         let limitText = ByteCountFormatter.string(fromByteCount: limit, countStyle: .memory)
         return part.bytes == 0 ? "Empty, up to \(limitText)" : "\(size(part.bytes)) of \(limitText)"
-    }
-}
-
-/// This profile's recent searches (under Search's keyboard) and the titles
-/// opened from Search (its row before you type), and one clear for both.
-struct SearchHistoryPage: View {
-    @EnvironmentObject private var search: SearchViewModel
-
-    var body: some View {
-        SettingsPage(title: "Search History",
-                     subtitle: "What this profile searched for, and the titles it opened from Search.") {
-            SettingsSection {
-                SettingsButtonRow(title: "Clear Search History",
-                                  description: "Removes the searches and titles below.",
-                                  value: search.hasHistory ? nil : "Empty") {
-                    search.clearHistory()
-                }
-            }
-            if !search.recentSearches.isEmpty {
-                SettingsSection(title: "Searches") {
-                    SettingsInfoRows {
-                        ForEach(search.recentSearches, id: \.self) { SettingsInfoRow(title: $0, value: "") }
-                    }
-                }
-            }
-            if !search.recentTitles.isEmpty {
-                SettingsSection(title: "Titles") {
-                    SettingsInfoRows {
-                        ForEach(search.recentTitles, id: \.id) { item in
-                            SettingsInfoRow(title: item.name,
-                                            value: item.type == "movie" ? "Movie" : "Series")
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// About: what's behind Cue, then what's only to read. Pressing leads to
-/// Privacy and Licenses & Credits, in the column.
-struct AboutDetail: View {
-    var body: some View {
-        SettingsPage(title: SettingsCategory.about.title) {
-            SettingsSection {
-                SettingsLinkRow(title: "Privacy") { AboutPrivacyPage() }
-                SettingsLinkRow(title: "Licenses & Credits") { AboutLicensesPage() }
-                SettingsInfoRows {
-                    SettingsInfoRow(title: "Version", value: DiagnosticsService.appVersion)
-                    SettingsInfoRow(title: "Device", value: DiagnosticsService.deviceName)
-                    SettingsInfoRow(title: "Software", value: DiagnosticsService.systemVersion)
-                    SettingsInfoRow(title: "Source Code", value: DiagnosticsService.sourceAddress)
-                }
-                .padding(.top, SettingsMetrics.infoGap)
-            }
-        }
-    }
-}
-
-/// Running text on a page of its own, lined up with the rows' text.
-private struct AboutText: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View { SettingsNote(text) }
-}
-
-/// Only to read: focus stays on the page, unseen.
-struct AboutPrivacyPage: View {
-    var body: some View {
-        SettingsPage(title: "Privacy") {
-            SettingsSection {
-                AboutText("Cue collects nothing about you and has no analytics or tracking.")
-                AboutText("It talks only to the services it needs: Nuvio to sync your account, "
-                    + "TMDB for search and details, MDBList for ratings if you add a key, the add-ons "
-                    + "you installed for titles and sources, and YouTube for trailers.")
-                AboutText("What those services receive is covered by their own privacy policies.")
-            }
-            .background(alignment: .top) { SettingsFocusHolder() }
-        }
-    }
-}
-
-struct AboutLicensesPage: View {
-    var body: some View {
-        SettingsPage(title: "Licenses & Credits") {
-            SettingsSection {
-                AboutText("Cue is free software under the GNU General Public License, version 3. "
-                    + "Its source code is at \(DiagnosticsService.sourceAddress).")
-            }
-            .background(alignment: .top) { SettingsFocusHolder() }
-            SettingsSection(title: "Built With") {
-                SettingsInfoRows {
-                    SettingsInfoRow(title: "AetherEngine", value: "LGPLv3")
-                    SettingsInfoRow(title: "FFmpeg", value: "LGPLv2.1")
-                    SettingsInfoRow(title: "libass", value: "ISC")
-                    SettingsInfoRow(title: "Inter", value: "SIL OFL 1.1")
-                    SettingsInfoRow(title: "FriBidi", value: "LGPLv2.1")
-                    SettingsInfoRow(title: "HarfBuzz", value: "MIT")
-                    SettingsInfoRow(title: "FreeType", value: "FTL")
-                    SettingsInfoRow(title: "Fontconfig", value: "MIT")
-                    SettingsInfoRow(title: "YouTubeKit", value: "MIT")
-                    SettingsInfoRow(title: "libdovi", value: "MIT")
-                }
-            }
-            SettingsSection {
-                AboutText("This product uses the TMDB API but is not endorsed or certified by TMDB.")
-            }
-        }
     }
 }
 
@@ -552,8 +270,51 @@ struct CardSettingsRoot: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> CardSettingsController {
         let controller = CardSettingsController(env: env, onBack: onBack)
-        TopBar.shared.entries[AppTab.settings2.rawValue] = { [weak controller] in controller?.barEntry }
+        TopBar.shared.entries[AppTab.settings.rawValue] = { [weak controller] in controller?.barEntry }
         return controller
+    }
+
+    func updateUIViewController(_ controller: CardSettingsController, context: Context) {
+        controller.env = env
+        controller.onBack = onBack
+    }
+}
+
+/// What the gate shows in the settings' controller: a held profile's page,
+/// or a new profile's.
+enum GateMode {
+    case edit(Int)
+    case create(done: (UserProfile) -> Void)
+}
+
+/// A page over the "Who's watching?" gate: the settings' controller with
+/// only a profile's page, centred (no categories, no Switch row: picking
+/// switches); Back, or the profile deleted: out.
+struct ProfileGateEditor: UIViewControllerRepresentable {
+    let mode: GateMode
+    let onBack: () -> Void
+    @EnvironmentObject private var account: NuvioAccountManager
+    @EnvironmentObject private var watched: WatchedStore
+    @EnvironmentObject private var progress: ProgressStore
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var addons: AddonManager
+    @EnvironmentObject private var profiles: ProfileStore
+    @EnvironmentObject private var collections: CollectionsStore
+    @EnvironmentObject private var home: HomeCatalogSettingsStore
+    @EnvironmentObject private var tmdb: TMDBSettingsStore
+    @EnvironmentObject private var mdblist: MDBListSettingsStore
+    @EnvironmentObject private var player: PlayerSettingsStore
+    /// Not in the gate's environment, and the profile page never reads it.
+    @StateObject private var search = SearchViewModel()
+
+    private var env: SettingsEnv {
+        SettingsEnv(account: account, watched: watched, progress: progress, library: library, addons: addons,
+                    profiles: profiles, collections: collections, home: home, tmdb: tmdb, mdblist: mdblist,
+                    player: player, search: search, openTitle: nil)
+    }
+
+    func makeUIViewController(context: Context) -> CardSettingsController {
+        CardSettingsController(env: env, onBack: onBack, gateMode: mode)
     }
 
     func updateUIViewController(_ controller: CardSettingsController, context: Context) {
@@ -565,6 +326,9 @@ struct CardSettingsRoot: UIViewControllerRepresentable {
 final class CardSettingsController: UIViewController {
     var env: SettingsEnv
     var onBack: () -> Void
+    /// The gate's page (a profile's, or a new one's) alone, centred.
+    let gateMode: GateMode?
+    private var editPage: UISettingsPage?
     let keyboard = UISettingsKeyboard()
 
     static let leftWidth: CGFloat = 480
@@ -595,9 +359,10 @@ final class CardSettingsController: UIViewController {
     /// The rows that opened each page in the column (Back lands on them).
     private var cameFrom: [UIView?] = []
 
-    init(env: SettingsEnv, onBack: @escaping () -> Void) {
+    init(env: SettingsEnv, onBack: @escaping () -> Void, gateMode: GateMode? = nil) {
         self.env = env
         self.onBack = onBack
+        self.gateMode = gateMode
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -608,8 +373,19 @@ final class CardSettingsController: UIViewController {
             + Self.crumbsGap
     }
 
+    private var creating: Bool { if case .create = gateMode { return true } else { return false } }
+
     private var rightColumn: CGRect {
-        CGRect(x: FixedFocusMetrics.inset + Self.leftWidth + Self.columnGap, y: columnsTop,
+        if creating {
+            // Under the wizard's heading, above its buttons, from the rows'
+            // edge (a summary's card: Settings' column width).
+            let top = Self.wizardTop
+            let width = wizardLayout == .summary ? Self.summaryWidth : 1920 - 2 * FixedFocusMetrics.inset
+            return CGRect(x: (1920 - width) / 2, y: top, width: width,
+                          height: Self.wizardButtonsTop - 24 - top)
+        }
+        return CGRect(x: gateMode == nil ? FixedFocusMetrics.inset + Self.leftWidth + Self.columnGap : (1920 - Self.rightWidth) / 2,
+               y: columnsTop,
                width: Self.rightWidth, height: 1080 - columnsTop)
     }
 
@@ -625,6 +401,26 @@ final class CardSettingsController: UIViewController {
                               y: StagePictureView.homeCard.minY + FixedFocusMetrics.titleDrop,
                               width: 1920 - 2 * FixedFocusMetrics.inset, height: FixedFocusMetrics.titleLine)
         view.addSubview(crumbs)
+
+        if let gateMode {
+            let page: UISettingsPage = switch gateMode {
+            case .edit(let id): UIProfileEditPage(host: self, profileID: id, fromGate: true)
+            case .create(let done): UINewProfilePage(host: self, fromGate: true, onCreated: done)
+            }
+            page.fadesAtFoot = creating
+            page.place(column: rightColumn)
+            view.insertSubview(page, belowSubview: crumbs)
+            page.visible = true
+            editPage = page
+            if creating { buildChrome() }
+            page.appeared()
+            NotificationCenter.default.addObserver(forName: .gateEditorBack, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.back() }
+            }
+            crumbs.frame.origin.x = rightColumn.minX + UISettings.textInset
+            if !creating { updateCrumbs() }
+            return
+        }
 
         // The categories: three groups, each its card under its label, 24
         // apart, the rows compact: all of it in view.
@@ -672,7 +468,7 @@ final class CardSettingsController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        (stack.last ?? pages[shown])?.leave()
+        (stack.last ?? base)?.leave()
         TopBarLock.shared.locked = false
     }
 
@@ -685,6 +481,9 @@ final class CardSettingsController: UIViewController {
         return menuRows[shown]
     }
     private weak var leftFrom: UIView?
+
+    /// The page under the opened ones: the category's, or the gate's profile.
+    private var base: UISettingsPage? { editPage ?? pages[shown] }
 
     // MARK: Pages
 
@@ -736,7 +535,7 @@ final class CardSettingsController: UIViewController {
     /// A page a row opened, over the one it's on (that one goes; its
     /// changes are sent as it does), fading in; focus on its first row.
     func open(_ page: UISettingsPage) {
-        let below = stack.last ?? pages[shown]
+        let below = stack.last ?? base
         cameFrom.append(UISettings.focusedView(in: view))
         below?.leave()
         below?.isHidden = true
@@ -758,7 +557,7 @@ final class CardSettingsController: UIViewController {
         page.leave()
         page.visible = false
         page.removeFromSuperview()
-        let below = stack.last ?? pages[shown]
+        let below = stack.last ?? base
         below?.isHidden = false
         below?.visible = true
         below?.appeared()
@@ -773,13 +572,190 @@ final class CardSettingsController: UIViewController {
         close()
     }
 
+    // MARK: The wizard's heading, preview and buttons
+
+    /// A new profile's screens, centred (one question a screen; left-aligned
+    /// was tried 2026-11-24: the right half sat empty, the preview lost in
+    /// its corner): the step over the question, the profile so far small
+    /// beside the step (large under the question looked bad), its line under
+    /// it; the buttons bottom centre, the same spot on every step.
+    enum WizardLayout { case plain, summary }
+    static let headingSize: CGFloat = 57
+    static var stepLineY: CGFloat { StagePictureView.homeCard.minY }
+    static let stepLineHeight: CGFloat = 44
+    static var wizardHeadingY: CGFloat { stepLineY + stepLineHeight + 12 }
+    static var wizardTop: CGFloat { wizardHeadingY + 70 + 8 + 34 + 36 }
+    static let summaryWidth: CGFloat = 1000
+    static let wizardButtonsFoot: CGFloat = 1080 - 120
+    static let wizardButtonHeight: CGFloat = 52
+    static var wizardButtonsTop: CGFloat { wizardButtonsFoot - wizardButtonHeight }
+
+    private let heading = UILabel()
+    private let subheading = UILabel()
+    private var wizardLayout = WizardLayout.plain
+    private var stepLine: UISettingsHosted?
+    private var stepKey = ""
+    private var stepText = ""
+    private var shownProfile: UserProfile?
+    private let buttonStack = UIStackView()
+    private var buttonViews: [String: UISettingsRoundButton] = [:]
+    /// A strip the screen's width above the buttons: Down from the page to
+    /// the buttons, Up from them back to the page.
+    private let toButtons = UIFocusGuide()
+
+    private func buildChrome() {
+        heading.font = .systemFont(ofSize: Self.headingSize, weight: .semibold)
+        heading.textColor = CueInk.ui(FixedFocusText.primary)
+        heading.textAlignment = .center
+        heading.frame = CGRect(x: 0, y: Self.wizardHeadingY, width: 1920, height: 70)
+        subheading.font = .systemFont(ofSize: 24, weight: .regular)
+        subheading.textColor = CueInk.ui(FixedFocusText.body)
+        subheading.textAlignment = .center
+        subheading.frame = CGRect(x: 0, y: heading.frame.maxY + 8, width: 1920, height: 34)
+        for view in [heading, subheading] as [UIView] { self.view.addSubview(view) }
+        crumbs.isHidden = true
+
+        buttonStack.axis = .horizontal
+        buttonStack.spacing = 24
+        buttonStack.alignment = .center
+        view.addSubview(buttonStack)
+        view.addLayoutGuide(toButtons)
+        NSLayoutConstraint.activate([
+            toButtons.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            toButtons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toButtons.bottomAnchor.constraint(equalTo: view.topAnchor, constant: Self.wizardButtonsTop - 10),
+            toButtons.heightAnchor.constraint(equalToConstant: 8),
+        ])
+    }
+
+    func setChrome(_ title: String, _ subtitle: String?, step: Int, count: Int) {
+        guard creating else { return }
+        if heading.text != title || subheading.text != subtitle {
+            UIView.transition(with: view, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
+                self.heading.text = title
+                self.subheading.text = subtitle
+            }
+        }
+        stepText = "Step \(step + 1) of \(count)"
+        drawStepLine()
+    }
+
+    /// The step, with the profile so far beside it once it has an avatar
+    /// (not on the avatar's own step: it's large there).
+    private func drawStepLine() {
+        let small = shownProfile
+        let key = stepText + "|" + (small.map { "\($0.avatarColorHex)|\($0.avatarID ?? "")|\($0.name)" } ?? "")
+        guard key != stepKey else { return }
+        stepKey = key
+        let text = stepText
+        let line = env.wrap(HStack(spacing: 14) {
+            if let small {
+                ProfileAvatarView(profile: small, size: Self.stepLineHeight)
+                    .overlay { Circle().strokeBorder(Color.white.opacity(0.30), lineWidth: 1.5) }
+                Text(small.name)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(CueInk.color(FixedFocusText.primary))
+                    .lineLimit(1)
+                Text("·").font(.system(size: 24, weight: .medium)).foregroundStyle(CueInk.color(FixedFocusText.tertiary))
+            }
+            Text(text)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(CueInk.color(FixedFocusText.secondary))
+        }.frame(width: 1920, height: Self.stepLineHeight))
+        if let stepLine { stepLine.set(line) } else {
+            let made = UISettingsHosted(line)
+            made.frame = CGRect(x: 0, y: Self.stepLineY, width: 1920, height: Self.stepLineHeight)
+            view.addSubview(made)
+            stepLine = made
+        }
+    }
+
+    /// The profile so far (nil: none yet, the name's step), small beside
+    /// the step; on the avatar's step it follows focus.
+    func setPreview(_ profile: UserProfile?) {
+        guard creating else { return }
+        shownProfile = profile
+        drawStepLine()
+    }
+
+    /// The name's step while the keyboard is up: nothing of it shows under
+    /// the keyboard coming in (it flashed before).
+    func setChromeHidden(_ hidden: Bool) {
+        guard creating else { return }
+        let alpha: CGFloat = hidden ? 0 : 1
+        let views = [heading, subheading, stepLine, buttonStack].compactMap { $0 as UIView? }
+        guard views.contains(where: { $0.alpha != alpha }) else { return }
+        if hidden {
+            views.forEach { $0.alpha = 0 }
+        } else {
+            UIView.animate(withDuration: Motion.fadeDuration) { views.forEach { $0.alpha = 1 } }
+        }
+    }
+
+    /// The step's buttons, bottom centre (none: Select on the page goes on).
+    func setButtons(_ actions: [SettingsAction]) {
+        guard creating else { return }
+        var kept: [UISettingsRoundButton] = []
+        for action in actions {
+            let button = buttonViews[action.id] ?? UISettingsRoundButton()
+            buttonViews[action.id] = button
+            button.set(icon: action.icon, danger: action.danger, nudge: 0)
+            button.set(words: action.title)
+            button.accessibilityLabel = action.title
+            button.onSelect = { action.action() }
+            kept.append(button)
+        }
+        for (key, button) in buttonViews where !kept.contains(where: { $0 === button }) {
+            button.removeFromSuperview()
+            buttonViews[key] = nil
+        }
+        for (index, button) in kept.enumerated() where buttonStack.arrangedSubviews.firstIndex(of: button) != index {
+            buttonStack.insertArrangedSubview(button, at: index)
+        }
+        let size = buttonStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        buttonStack.frame = CGRect(x: (1920 - size.width) / 2, y: Self.wizardButtonsTop,
+                                   width: size.width, height: Self.wizardButtonHeight)
+        aimButtonsGuide(focused: UISettings.focusedView(in: view))
+    }
+
+    /// From the page the strip leads to the buttons; from them, back.
+    private func aimButtonsGuide(focused: UIView?) {
+        let inButtons = focused?.isDescendant(of: buttonStack) ?? false
+        if inButtons {
+            toButtons.preferredFocusEnvironments = editPage.map { [$0] } ?? []
+            toButtons.isEnabled = editPage?.firstFocusable != nil
+        } else {
+            toButtons.preferredFocusEnvironments = buttonStack.arrangedSubviews.first.map { [$0] } ?? []
+            toButtons.isEnabled = !buttonStack.arrangedSubviews.isEmpty
+        }
+    }
+
+    /// Where the page sits: under the question, under the large preview
+    /// (the avatar's step), or a card of Settings' rows' width (the summary).
+    func setWizardLayout(_ layout: WizardLayout) {
+        guard creating, layout != wizardLayout, let editPage else { return }
+        wizardLayout = layout
+        editPage.place(column: rightColumn)
+    }
+
+    /// Focus to the page's first row (a step changed); a step with nothing
+    /// to press on the page, or `buttons`: to its first button.
+    func refocusPage(buttons: Bool = false) {
+        if creating, buttons || editPage?.firstFocusable == nil, let first = buttonStack.arrangedSubviews.first {
+            focus(first)
+        } else {
+            focus(editPage)
+        }
+    }
+
     // MARK: Breadcrumbs
 
     /// Where you are, over both columns at the rows' words: the category,
     /// the pages opened from it — the last at primary. (The group was
     /// dropped 2026-11-23: its label is beside the category already.)
     private func updateCrumbs() {
-        let names = [shown.title] + stack.compactMap(\.title)
+        guard !creating else { return }
+        let names = [editPage?.title ?? shown.title] + stack.compactMap(\.title)
         let text = NSMutableAttributedString()
         for (index, name) in names.enumerated() {
             let last = index == names.count - 1
@@ -800,6 +776,8 @@ final class CardSettingsController: UIViewController {
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
         if let wanted, wanted.window != nil { return [wanted] }
+        if creating, editPage?.firstFocusable == nil, let first = buttonStack.arrangedSubviews.first { return [first] }
+        if let editPage { return [stack.last ?? editPage] }
         return menuRows[shown].map { [$0] } ?? []
     }
 
@@ -811,10 +789,12 @@ final class CardSettingsController: UIViewController {
             leftFrom = from.isDescendant(of: menu) ? nil : from
         }
         wanted = nil
+        if creating { aimButtonsGuide(focused: context.nextFocusedView) }
         refreshFocusState(focused: context.nextFocusedView)
     }
 
     private func refreshFocusState(focused next: UIView?) {
+        if editPage != nil { return }
         if let next, let category = menuRows.first(where: { $0.value === next })?.key {
             inSettings = false
             if category != shown { show(category) }
@@ -832,7 +812,16 @@ final class CardSettingsController: UIViewController {
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         guard presses.contains(where: { $0.type == .menu }) else { return super.pressesBegan(presses, with: event) }
+        back()
+    }
+
+    private func back() {
         if !stack.isEmpty { close() }
+        else if let editPage {
+            if editPage.handleBack() { return }
+            editPage.leave()
+            onBack()
+        }
         else if inSettings { focus(menuRows[shown]) }
         else { onBack() }
     }
@@ -873,6 +862,9 @@ class UISettingsPage: UISettingsPageView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Back on the page itself: true when it took a step back instead.
+    func handleBack() -> Bool { false }
 
     /// What the page watches.
     func setUp() {}
@@ -1094,11 +1086,12 @@ private final class NuvioSettingsPage: UISettingsPage {
     }
 
     private func addProfile() {
-        host.present(ProfileSetup(onFinish: { [weak self] created in
+        host.present(ProfileGateEditor(mode: .create { [weak self] _ in self?.host.dismissPresented() }) { [weak self] in
             self?.host.dismissPresented()
-            guard let host = self?.host else { return }
-            host.open(UIProfileEditPage(host: host, profileID: created.id))
-        }, onCancel: { [weak self] in self?.host.dismissPresented() }))
+        }
+        .ignoresSafeArea()
+        .background(ATVBackground())
+        .onExitCommand { NotificationCenter.default.post(name: .gateEditorBack, object: nil) })
     }
 
     private func switchTo(_ profile: UserProfile) {
@@ -1224,13 +1217,14 @@ private final class AppearanceSettingsPage: UISettingsPage {
     }
 
     private static let defaults = UserDefaults.standard
+    /// A saved one's page: its bands large.
 
     override func sections() -> [UISettingsSection] {
         let background = BackgroundStore.shared
         let outline = FixedFocusRing.outlines
         let atLaunch = Self.defaults.string(forKey: BackgroundPicks.AtLaunch.key) ?? BackgroundPicks.AtLaunch.home.rawValue
         // Card Outlines alone first (the one not about the background),
-        // then the background: the one up, Change at Launch, the saved ones.
+        // then the background: the one up large, Change at Launch, the saved ones.
         return [
             UISettingsSection(rows: [
                 .choice(.init(
@@ -1259,25 +1253,25 @@ private final class AppearanceSettingsPage: UISettingsPage {
                         Self.defaults.set($0, forKey: BackgroundPicks.AtLaunch.key)
                         self?.changed()
                     }),
-            ] + savedRows(background)),
-        ]
+            ]),
+        ] + savedSection(background)
     }
 
-    /// The saved ones in Background's card: a row naming them (how many,
-    /// Remove All) starting their part, then each.
-    private func savedRows(_ background: BackgroundStore) -> [UISettingsRow] {
+    /// The saved ones in a card of their own: a row on top (the count,
+    /// Remove All), then each.
+    private func savedSection(_ background: BackgroundStore) -> [UISettingsSection] {
         let saved = background.saved
         guard !saved.isEmpty else { return [] }
         let left = saved.count - pending.count
         let header: UISettingsRow = .actions(.init(
-            id: "a.saved", title: left == 1 ? "1 Saved" : "\(left) Saved",
+            id: "a.savedHeader", title: left == 1 ? "1 Saved" : "\(left) Saved",
             detail: "Up to \(BackgroundPicks.savedLimit). Change at Launch can pick from them.",
             actions: [left == 0
                 ? Self.undoAction("all", spelled: true, title: "Undo All") { [weak self] in self?.pending = [] }
                 : SettingsAction(title: "Remove All", icon: "trash", danger: true, key: "all", spelled: true) { [weak self] in
                     self?.pending = Set(saved.map(\.id))
                 }]))
-        return [header] + saved.map { self.saved($0, background) }
+        return [UISettingsSection(label: "Saved", rows: [header] + saved.map { self.saved($0, background) })]
     }
 
     /// The one up: its colours, how it came; Shuffle and Save on the row.
@@ -2303,11 +2297,14 @@ private struct ProfilePinFlow: View {
 /// Settings in place (from whom, which parts, Copy).
 private final class UIProfileEditPage: UISettingsPage {
     private let profileID: Int
+    /// Over the gate: no Switch row (picking switches).
+    private let fromGate: Bool
     private var copy: ProfileSetupCopy?
     private var copying = false
 
-    init(host: CardSettingsController, profileID: Int) {
+    init(host: CardSettingsController, profileID: Int, fromGate: Bool = false) {
         self.profileID = profileID
+        self.fromGate = fromGate
         super.init(host: host)
     }
 
@@ -2329,7 +2326,7 @@ private final class UIProfileEditPage: UISettingsPage {
         let notes = profiles.notes(for: profile)
         let env = env
         var actions: [SettingsAction] = []
-        if !active {
+        if !active, !fromGate {
             actions.append(SettingsAction(title: "Switch to This Profile", icon: "arrow.right.circle", key: "switch") { [weak self] in
                 self?.switchTo(profile)
             })
@@ -2473,6 +2470,509 @@ private final class UIProfileEditPage: UISettingsPage {
             self?.host.dismissPresented()
             profiles.setActive(profile.id)
         } onCancel: { [weak self] in self?.host.dismissPresented() })
+    }
+}
+
+/// What a new profile is made of, kept until Create (nothing exists on the
+/// account before: backing out leaves nothing behind).
+@MainActor
+final class NewProfileDraft {
+    var name = ""
+    var avatarID: String?
+    /// nil: the free slot's colour.
+    var colorHex: String?
+    var pin: String?
+    /// The titles it starts with, each a Love.
+    var loves: [MetaItem] = []
+    /// A profile whose settings it starts from (nil: fresh).
+    var copyFrom: Int?
+    /// What comes across from it (Copy Settings' parts): all of it by
+    /// default, keys too (a profile with no TMDB key has no Home).
+    var parts: ProfileSetupCopy = {
+        var parts = ProfileSetupCopy(source: 0, target: 0)
+        parts.keys = true
+        return parts
+    }()
+
+    /// The parts copied, in words ("TV, Keys"; "Everything"; "Nothing").
+    var partsSummary: String {
+        let names = [(parts.tv, "TV"), (parts.mobile, "Mobile"), (parts.desktop, "Desktop"), (parts.keys, "Keys")]
+            .filter(\.0).map(\.1)
+        return names.count == 4 ? "Everything" : names.isEmpty ? "Nothing" : names.joined(separator: ", ")
+    }
+    var askedName = false
+
+    /// The colour `addProfile` will give it (the first free slot's).
+    func slotColour(_ profiles: ProfileStore) -> String {
+        let used = Set(profiles.profiles.map(\.id))
+        let id = (1...ProfileStore.maxProfiles).first { !used.contains($0) } ?? 1
+        return ProfileStore.avatarColors[(id - 1) % ProfileStore.avatarColors.count]
+    }
+
+    func preview(_ profiles: ProfileStore) -> UserProfile {
+        UserProfile(id: -1, name: name.isEmpty ? "New Profile" : name,
+                    avatarColorHex: colorHex ?? slotColour(profiles), avatarID: avatarID)
+    }
+}
+
+/// A new profile, a screen at a time, laid out as every page (the
+/// controller draws where you are, the question, the profile so far and the
+/// buttons): name, avatar, what it likes, whose settings to start from,
+/// then a summary to check (each row back to its step) with the PIN, and
+/// Create. The choices stay in the draft until then, so backing out leaves
+/// nothing behind.
+private final class UINewProfilePage: UISettingsPage {
+    private enum Step { case name, avatar, taste, copy, pin, summary }
+    /// The wizard's cards (the summary, what comes across): centred.
+    static let cardWidth = CardSettingsController.summaryWidth
+
+    private let draft = NewProfileDraft()
+    private let fromGate: Bool
+    private let onCreated: (UserProfile) -> Void
+    private var step = Step.name
+    private var creating = false
+    private var titles: [MetaItem] = []
+    private var tasteLoaded = false
+    /// Opened from the summary: picking goes back there.
+    private var reviewing = false
+
+    init(host: CardSettingsController, fromGate: Bool, onCreated: @escaping (UserProfile) -> Void) {
+        self.fromGate = fromGate
+        self.onCreated = onCreated
+        super.init(host: host)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var title: String? { "New Profile" }
+    override func setUp() { watch(env.profiles) }
+
+    /// A step with nothing to press on the page (the name, the PIN) leaves
+    /// focus to its buttons: the page holding it, unseen, as Settings'
+    /// pages do, trapped it (it reaches past the buttons).
+    override var canBecomeFocused: Bool { false }
+
+    /// The screens it has: Start From needs another profile and an account.
+    private var steps: [Step] {
+        let profiles = env.profiles
+        var steps: [Step] = [.name, .avatar, .taste]
+        if profiles.accountAvailable, !profiles.profiles.isEmpty { steps.append(.copy) }
+        if profiles.accountAvailable { steps.append(.pin) }
+        return steps + [.summary]
+    }
+
+    override func appeared() {
+        let profiles = env.profiles
+        Task { await profiles.loadAvatarCatalog() }
+        loadTaste()
+        changed()
+        guard !draft.askedName else { return }
+        draft.askedName = true
+        // Keys and language come along by default: a profile with no TMDB
+        // key has no Home. "Start Fresh" starts it bare.
+        if profiles.accountAvailable, profiles.profiles.contains(where: { $0.id == 1 }) { draft.copyFrom = 1 }
+        askName()
+    }
+
+    // MARK: Moving
+
+    private func go(to next: Step) {
+        step = next
+        if next == .summary { reviewing = false }
+        UIView.performWithoutAnimation { alpha = 0 }
+        reset()
+        host.setWizardLayout(next == .summary ? .summary : .plain)
+        changed()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            UIView.animate(withDuration: Motion.fadeDuration) { self.alpha = 1 }
+            self.host.refocusPage(buttons: next == .summary)
+        }
+        if next == .name { askName() } else { host.setChromeHidden(false) }
+    }
+
+    /// On to the next step, or back to the summary it was opened from.
+    private func next() {
+        if reviewing { go(to: .summary); return }
+        let all = steps
+        guard let i = all.firstIndex(of: step), i + 1 < all.count else { return }
+        go(to: all[i + 1])
+    }
+
+    /// From the summary to a step, coming back once it's done.
+    private func review(_ target: Step) {
+        go(to: target)
+        reviewing = true
+    }
+
+    override func handleBack() -> Bool {
+        guard !creating else { return true }
+        if reviewing { go(to: .summary); return true }
+        let all = steps
+        guard let i = all.firstIndex(of: step), i > 0 else { return false }
+        go(to: all[i - 1])
+        return true
+    }
+
+    // MARK: The name
+
+    /// The keyboard at once, nothing of the name's screen under it as it
+    /// comes in; the screen shows only if the keyboard goes with a name
+    /// kept (Change Name, Continue).
+    private func askName() {
+        host.setChromeHidden(true)
+        host.keyboard.ask(text: draft.name, placeholder: "Profile name") { [weak self] text in
+            guard let self, self.step == .name else { return }
+            let name = text.trimmingCharacters(in: .whitespaces)
+            if name.isEmpty {
+                // Nothing typed, nothing before: no profile after all.
+                if self.draft.name.isEmpty {
+                    NotificationCenter.default.post(name: .gateEditorBack, object: nil)
+                } else {
+                    self.host.setChromeHidden(false)
+                }
+                return
+            }
+            self.draft.name = name
+            self.next()
+        }
+    }
+
+    // MARK: The titles
+
+    /// A mix to like from: the best-known titles of the last twelve years
+    /// in each kind of film and show (TMDB's discover by votes), a few
+    /// each, films and shows taking turns, the kinds spread along the row
+    /// (popular alone was this week's few, mostly one kind).
+    private static let lanes: [(movie: Bool, query: [String: String])] = [
+        (true, ["with_genres": "28"]),                                   // action
+        (false, ["with_genres": "18"]),                                  // drama
+        (true, ["with_genres": "35"]),                                   // comedy
+        (false, ["with_genres": "80"]),                                  // crime
+        (true, ["with_genres": "878"]),                                  // sci-fi
+        (false, ["with_genres": "16", "with_original_language": "ja"]),  // anime
+        (true, ["with_genres": "27"]),                                   // horror
+        (false, ["with_genres": "35"]),                                  // comedy
+        (true, ["with_genres": "16"]),                                   // animation
+        (false, ["with_genres": "10765"]),                               // sci-fi & fantasy
+        (true, ["with_genres": "10749"]),                                // romance
+        (false, ["with_genres": "9648"]),                                // mystery
+        (true, ["with_genres": "53"]),                                   // thriller
+        (false, ["with_genres": "10759"]),                               // action & adventure
+        (true, ["with_genres": "18"]),                                   // drama
+        (false, ["with_genres": "99"]),                                  // documentary
+        (true, ["with_genres": "14"]),                                   // fantasy
+        (false, ["with_genres": "10751"]),                               // family
+        (true, ["with_genres": "99"]),                                   // documentary
+        (true, ["with_genres": "10751"]),                                // family
+    ]
+
+    private func loadTaste() {
+        guard !tasteLoaded else { return }
+        let since = "\(Calendar.current.component(.year, from: Date()) - 12)-01-01"
+        Task { [weak self] in
+            let lists = await withTaskGroup(of: (Int, [MetaItem]).self) { group in
+                for (index, lane) in Self.lanes.enumerated() {
+                    group.addTask {
+                        var query = lane.query
+                        query["sort_by"] = "vote_count.desc"
+                        query[lane.movie ? "primary_release_date.gte" : "first_air_date.gte"] = since
+                        let list = await TMDBService.cueList(lane.movie ? "/discover/movie" : "/discover/tv",
+                                                             query: query, isMovie: lane.movie, limit: 8)
+                        return (index, list.titles.map(\.item))
+                    }
+                }
+                var lists = Array(repeating: [MetaItem](), count: Self.lanes.count)
+                for await (index, items) in group { lists[index] = items }
+                return lists
+            }
+            // Two rounds along the lanes: each lane's best not taken yet.
+            var seen = Set<String>(), mixed: [MetaItem] = []
+            for _ in 0..<2 {
+                for list in lists {
+                    guard let item = list.first(where: { !seen.contains($0.id) }) else { continue }
+                    seen.insert(item.id)
+                    mixed.append(item)
+                }
+            }
+            self?.titles = mixed
+            self?.tasteLoaded = true
+            self?.changed()
+        }
+    }
+
+    // MARK: The screens
+
+    private func spelled(_ title: String, _ key: String, _ action: @escaping () -> Void) -> SettingsAction {
+        SettingsAction(title: title, icon: "", key: key, spelled: true, action: action)
+    }
+
+    /// A profile (or the draft) as a round tile's face.
+    private func face(_ profile: UserProfile) -> UISettingsRow.Tile.Face {
+        if let url = env.profiles.avatarURL(for: profile) { return .avatar(url: url, name: profile.name) }
+        return .colour(hex: profile.avatarColorHex, initial: profile.initial)
+    }
+
+    private func posters(_ id: String, _ label: String?, _ items: [MetaItem], picked: Set<String>) -> UISettingsSection {
+        UISettingsSection(rows: [.posters(.init(id: id, title: label, items: items.map { item in
+            .init(id: item.id, title: item.name,
+                  detail: item.type == "movie" ? "Movie" : "Series",
+                  poster: item.poster, on: picked.contains(item.id)) { [weak self] in
+                guard let self else { return }
+                if self.draft.loves.contains(where: { $0.id == item.id }) {
+                    self.draft.loves.removeAll { $0.id == item.id }
+                } else {
+                    self.draft.loves.append(item)
+                }
+                self.changed()
+            }
+        }))], bare: true)
+    }
+
+    override func sections() -> [UISettingsSection] {
+        let profiles = env.profiles
+        let all = steps
+        let index = all.firstIndex(of: step) ?? 0
+        let name = draft.name
+        let who = name.isEmpty ? "it" : name
+        func chrome(_ heading: String, _ line: String?, _ buttons: [SettingsAction] = []) {
+            host.setChrome(heading, line, step: index, count: all.count)
+            host.setButtons(buttons)
+            host.setPreview(step == .name ? nil : draft.preview(profiles))
+        }
+        switch step {
+        case .name:
+            chrome("What's your name?", "It's how this profile shows on Who's Watching.", name.isEmpty
+                ? [spelled("Enter a Name", "name") { [weak self] in self?.askName() }]
+                : [spelled("Change Name", "name") { [weak self] in self?.askName() },
+                   spelled("Continue", "go") { [weak self] in self?.next() }])
+            return []
+
+        case .avatar:
+            chrome("Pick an avatar", "Select one to go on.")
+            let preview = draft.preview(profiles)
+            // The preview follows focus; Select keeps it and goes on.
+            func show(hex: String?, avatar: String?) {
+                var shown = preview
+                if let hex { shown.avatarColorHex = hex }
+                shown.avatarID = avatar
+                host.setPreview(shown)
+            }
+            let colours = ProfileStore.avatarColors.map { hex in
+                UISettingsRow.Tile(id: "c." + hex, face: .colour(hex: hex, initial: preview.initial),
+                                   chosen: draft.avatarID == nil && preview.avatarColorHex.uppercased() == hex.uppercased(),
+                                   onFocus: { show(hex: hex, avatar: nil) }) { [weak self] in
+                    self?.draft.colorHex = hex
+                    self?.draft.avatarID = nil
+                    self?.next()
+                }
+            }
+            let kinds = AvatarChoices.groups(profiles.avatarCatalog).map { group in
+                (name: group.name, tiles: group.items.map { item in
+                    UISettingsRow.Tile(id: "a." + item.id, face: .avatar(url: item.imageURL, name: item.displayName),
+                                       chosen: draft.avatarID == item.id,
+                                       onFocus: { show(hex: nil, avatar: item.id) }) { [weak self] in
+                        self?.draft.avatarID = item.id
+                        self?.next()
+                    }
+                })
+            }
+            return [UISettingsSection(rows: [
+                .tiles(.init(id: "np.avatars", groups: [(name: "Colours", tiles: colours)] + kinds, round: 120)),
+            ], bare: true)]
+
+        case .taste:
+            let picked = Set(draft.loves.map(\.id))
+            chrome("What do you like?", "Pick a few you love. Home starts from them.", [
+                spelled(picked.isEmpty ? "Skip" : "Continue (\(picked.count))", "go") { [weak self] in self?.next() },
+            ])
+            guard !titles.isEmpty else {
+                return [UISettingsSection(rows: [.note(tasteLoaded ? "Nothing to show: this profile has no TMDB key yet." : "Loading…")])]
+            }
+            return [posters("np.titles", nil, titles, picked: picked)]
+
+        case .copy:
+            // Select on a profile picks it and goes down to what comes
+            // across; Start Fresh goes on. Continue once one is picked.
+            chrome("Start from another profile?", "Choose what comes across, once. Never what it watched.",
+                   draft.copyFrom == nil ? [] : [spelled("Continue", "go") { [weak self] in self?.next() }])
+            var tiles: [UISettingsRow.Tile] = profiles.profiles.map { other in
+                UISettingsRow.Tile(id: "cp.\(other.id)", face: face(other), chosen: draft.copyFrom == other.id,
+                                   caption: other.name) { [weak self] in
+                    guard let self else { return }
+                    self.draft.copyFrom = other.id
+                    self.changed()
+                    if self.prefer(row: "cp.tv") { self.host.refocusPage() }
+                }
+            }
+            tiles.append(UISettingsRow.Tile(id: "cp.none", face: .symbol("sparkles"), chosen: draft.copyFrom == nil,
+                                            caption: "Start Fresh") { [weak self] in
+                self?.draft.copyFrom = nil
+                self?.next()
+            })
+            var sections = [UISettingsSection(rows: [.tiles(.init(id: "np.copy", groups: [(name: "", tiles: tiles)], round: 150))],
+                                              bare: true)]
+            if let source = draft.copyFrom.flatMap({ id in profiles.profiles.first { $0.id == id } }) {
+                func part(_ id: String, _ title: String, _ description: String,
+                          _ key: WritableKeyPath<ProfileSetupCopy, Bool>) -> UISettingsRow {
+                    .onOff(id: id, title: title, description: description, isOn: draft.parts[keyPath: key]) { [weak self] on in
+                        self?.draft.parts[keyPath: key] = on
+                        self?.changed()
+                    }
+                }
+                sections.append(UISettingsSection(label: "From \(source.name)", rows: [
+                    part("cp.tv", "TV Settings", "Cue's and NuvioTV's look, playback, subtitles and more.", \.tv),
+                    part("cp.mobile", "Mobile Settings", "Nuvio Mobile's look, cards, playback and notifications.", \.mobile),
+                    part("cp.desktop", "Desktop Settings", "Nuvio Desktop's look, cards, playback and notifications.", \.desktop),
+                    part("cp.keys", "API Keys", "TMDB, MDBList, debrid, AnimeSkip and IntroDB; no sign-ins. Without a TMDB key there's no Home.", \.keys),
+                ], width: Self.cardWidth))
+            }
+            return sections
+
+        case .pin:
+            let locked = draft.pin != nil
+            let setPin: () -> Void = { [weak self] in
+                guard let self else { return }
+                self.host.present(NewProfilePinFlow(name: who, onDone: { [weak self] pin in
+                    self?.draft.pin = pin
+                    self?.host.dismissPresented()
+                    self?.next()
+                }, onCancel: { [weak self] in self?.host.dismissPresented() }))
+            }
+            chrome("Lock this profile?", "A 4-digit PIN before \(who) opens. You can change it later in Edit Profile.", locked
+                ? [spelled("Remove PIN", "off") { [weak self] in self?.draft.pin = nil; self?.changed() },
+                   spelled("Change PIN", "set", setPin),
+                   spelled("Continue", "go") { [weak self] in self?.next() }]
+                : [spelled("Not Now", "go") { [weak self] in self?.draft.pin = nil; self?.next() },
+                   spelled("Set a PIN", "set", setPin)])
+            return [UISettingsSection(rows: [.hosted(.init(id: "np.lock", key: locked ? "on" : "off") {
+                AnyView(VStack(spacing: 22) {
+                    Circle()
+                        .fill(FlatControl.rest)
+                        .overlay {
+                            Image(systemName: locked ? "lock.fill" : "lock.open")
+                                .font(.system(size: 64, weight: .semibold))
+                                .foregroundStyle(FlatControl.content)
+                        }
+                        .overlay { Circle().strokeBorder(Color.white.opacity(0.30), lineWidth: 2) }
+                        .frame(width: 180, height: 180)
+                    Text(locked ? "PIN set" : "No PIN")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(CueInk.color(FixedFocusText.secondary))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24))
+            })], bare: true)]
+
+        case .summary:
+            chrome("Ready, \(who)?", "Check it over, then create it.", [
+                spelled(creating ? "Creating…" : fromGate ? "Start Watching" : "Create Profile", "create") { [weak self] in
+                    self?.create()
+                },
+            ])
+            // Edit Profile's card: the profile on top (its avatar to press),
+            // then what to change, each back to its step.
+            let preview = draft.preview(profiles)
+            let env = env
+            let loves = draft.loves.count
+            let sourceName = draft.copyFrom.flatMap { id in profiles.profiles.first { $0.id == id }?.name }
+            var rows: [UISettingsRow] = [
+                .profile(.init(id: "sm.header", key: "\(preview.avatarColorHex)|\(preview.avatarID ?? "")|\(preview.name)",
+                               title: preview.name,
+                               detail: sourceName.map { "New profile, from \($0)" } ?? "New profile",
+                               avatar: { env.wrap(ProfileAvatarView(profile: preview, size: UISettingsAvatarButton.size)) },
+                               onAvatar: { [weak self] in self?.review(.avatar) },
+                               actions: [])),
+                .link(.init(id: "sm.name", title: "Name", value: name, chevron: false) { [weak self] in
+                    guard let self else { return }
+                    self.host.keyboard.ask(text: self.draft.name, placeholder: "Profile name") { [weak self] text in
+                        let text = text.trimmingCharacters(in: .whitespaces)
+                        guard let self, !text.isEmpty else { return }
+                        self.draft.name = text
+                        self.changed()
+                    }
+                }),
+                .link(.init(id: "sm.likes", title: "Likes", value: loves == 0 ? "None" : loves == 1 ? "1 title" : "\(loves) titles") { [weak self] in
+                    self?.review(.taste)
+                }),
+            ]
+            if all.contains(.copy) {
+                rows.append(.link(.init(id: "sm.copy", title: "Starts From",
+                                        value: sourceName.map { "\($0) · \(draft.partsSummary)" } ?? "Fresh") { [weak self] in
+                    self?.review(.copy)
+                }))
+            }
+            if all.contains(.pin) {
+                rows.append(.link(.init(id: "sm.pin", title: "PIN", value: draft.pin == nil ? "Off" : "On") { [weak self] in
+                    self?.review(.pin)
+                }))
+            }
+            return [UISettingsSection(rows: rows)]
+        }
+    }
+
+    // MARK: Create
+
+    private func create() {
+        guard !creating else { return }
+        let name = draft.name
+        guard !name.isEmpty else { review(.name); return }
+        let profiles = env.profiles
+        guard let created = profiles.addProfile(name: name) else {
+            ToastCenter.shared.show("Can't add a profile just yet — try again in a moment",
+                                    icon: "person.crop.circle.badge.exclamationmark")
+            return
+        }
+        creating = true
+        changed()
+        if let avatar = draft.avatarID { profiles.setAvatar(id: created.id, avatarID: avatar) }
+        else if let hex = draft.colorHex { profiles.setColor(id: created.id, hex: hex) }
+        // Add-ons only supply streams: the primary's, until it picks its own.
+        profiles.setUsesPrimaryAddons(id: created.id, true)
+        TitleRatings.shared.seedLoves(draft.loves, for: created.id)
+        let draft = draft
+        Task { [weak self] in
+            if let pin = draft.pin,
+               case .failure(let message) = await profiles.setPin(id: created.id, pin: pin, currentPin: nil) {
+                ToastCenter.shared.show("PIN not set — \(message)", icon: "lock.slash")
+            }
+            if let source = draft.copyFrom, !draft.parts.isEmpty {
+                var copy = draft.parts
+                copy.source = source
+                copy.target = created.id
+                if let failure = await profiles.copySetup(copy) {
+                    ToastCenter.shared.show(failure, icon: "exclamationmark.triangle")
+                }
+            }
+            let profile = profiles.profiles.first { $0.id == created.id } ?? created
+            self?.onCreated(profile)
+        }
+    }
+}
+
+/// A new profile's PIN: twice, then it's kept until Create.
+private struct NewProfilePinFlow: View {
+    let name: String
+    let onDone: (String) -> Void
+    let onCancel: () -> Void
+    @State private var first: String?
+
+    var body: some View {
+        if let first {
+            PinEntryView(title: "Enter it again", subtitle: name,
+                         onSubmit: { value in
+                             guard value == first else { return "The PINs didn't match." }
+                             onDone(value)
+                             return nil
+                         },
+                         onCancel: { self.first = nil })
+                .id("again")
+        } else {
+            PinEntryView(title: "Choose a 4-digit PIN", subtitle: name,
+                         onSubmit: { value in first = value; return nil },
+                         onCancel: onCancel)
+                .id("first")
+        }
     }
 }
 
@@ -2844,166 +3344,7 @@ struct CardFirstLabelKey: PreferenceKey {
     }
 }
 
-// MARK: - Settings 3: Settings 2 in SwiftUI, kept to compare (2026-11-23)
-
-/// SETTINGS 2 (prototype): Upcoming's language instead of Apple TV's
-/// Settings, in two columns — the categories on the left (names only),
-/// the focused one's settings on the right, headed by its name and what's
-/// behind it; each section one flat card, its rows the name over a
-/// description inside the row, a hairline between them, focus Upcoming's
-/// white plate. Right goes in, Left and Back come out. Only Appearance has
-/// settings so far.
-struct SwiftCardSettingsRoot: View {
-    let onBack: () -> Void
-    @State private var shown = SettingsCategory.account
-    @FocusState private var focused: String?
-    /// The pages a link opened, in the right column.
-    @StateObject private var nav = SettingsNav()
-    /// Each open page's name, for the path over it.
-    @State private var titles: [UUID: String] = [:]
-    @State private var pageRows: [String] = []
-    /// The last row focused in the settings, and the link each open page
-    /// came from (Back lands on it).
-    @State private var lastRow: String?
-    @State private var cameFrom: [String?] = []
-    /// The right column's first section has a label: it goes on the left's
-    /// first label's line, else its card starts level with the left's.
-    @State private var firstLabelled = false
-
-    static let leftWidth: CGFloat = 480
-    static let columnGap: CGFloat = 40
-    static var rightWidth: CGFloat { 1920 - 2 * FixedFocusMetrics.inset - leftWidth - columnGap }
-    private static let watching: [SettingsCategory] = [.homeContent, .playback, .appearance]
-    private static let device: [SettingsCategory] = [.storage, .developer, .about]
-
-    /// Focus is in the settings (not on a category).
-    private var inSettings: Bool {
-        if !nav.stack.isEmpty { return true }
-        guard let focused else { return false }
-        return SettingsCategory(rawValue: focused) == nil
-    }
-
-    /// The breadcrumbs' line over both columns, and its room to them.
-    static let crumbsSize: CGFloat = 29
-    static let crumbsGap: CGFloat = 40
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Self.crumbsGap) {
-            crumbs
-            columns
-        }
-        .padding(.leading, FixedFocusMetrics.inset)
-        .padding(.top, StagePictureView.homeCard.minY)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .ignoresSafeArea()
-        // Moving along the categories shows each one's settings.
-        .onChange(of: focused) { _, now in
-            guard let now else { return }
-            if let category = SettingsCategory(rawValue: now) { shown = category } else { lastRow = now }
-        }
-        // A page opened: focus on its first row; Back: on the link again.
-        .onChange(of: nav.stack.count) { old, new in
-            if new > old {
-                cameFrom.append(lastRow)
-                pageRows = []
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(50))
-                    if let first = pageRows.first { focused = first }
-                }
-            } else if new < old {
-                let back = cameFrom.popLast() ?? nil
-                Task { @MainActor in focused = back }
-            }
-        }
-        .onChange(of: shown) { _, _ in
-            while nav.pop() {}
-            cameFrom = []
-        }
-        .onExitCommand {
-            if !nav.stack.isEmpty { nav.pop() }
-            else if inSettings { focused = shown.rawValue }
-            else { onBack() }
-        }
-    }
-
-    /// Where you are, over both columns at the rows' text edge: the
-    /// category's group, the category (following focus along them), the
-    /// pages opened from it — "Accounts › Nuvio › Add-ons"; the last at
-    /// primary, the rest at tertiary. (Before, 2026-11-23: a path on
-    /// subpages only, in the label style, scrolling with the page.)
-    private var crumbs: some View {
-        let names = [Self.group(of: shown), shown.title]
-            + nav.stack.map { titles[$0.id] ?? "" }.filter { !$0.isEmpty }
-        let before = names.dropLast().map { $0 + "  ›  " }.joined()
-        return (Text(before).foregroundStyle(CueInk.tertiary)
-                + Text(names.last ?? "").foregroundStyle(CueInk.primary))
-            .font(.system(size: Self.crumbsSize, weight: .semibold))
-            .lineLimit(1)
-            .padding(.leading, CardSettingsRow.textInset)
-    }
-
-    private static func group(of category: SettingsCategory) -> String {
-        if SettingsCategory.accounts.contains(category) { return "Accounts" }
-        if watching.contains(category) { return "Watching" }
-        return "This Apple TV"
-    }
-
-    private var columns: some View {
-        HStack(alignment: .top, spacing: Self.columnGap) {
-            // No column titles: the top bar says Settings, the breadcrumbs
-            // where you are; both columns start with their first label.
-            VStack(alignment: .leading, spacing: 0) {
-                CardSettingsMenu(groups: [("Accounts", SettingsCategory.accounts.map(categoryRow)),
-                                          ("Watching", Self.watching.map(categoryRow)),
-                                          ("This Apple TV", Self.device.map(categoryRow))],
-                                 focused: $focused)
-            }
-            .frame(width: Self.leftWidth, alignment: .leading)
-            .focusSection()
-            VStack(alignment: .leading, spacing: 0) {
-                if let page = nav.stack.last {
-                    // A page opened from a row, its first label on the
-                    // left's first label's line.
-                    page.view
-                        .environment(\.settingsFirstRoom, firstLabelled ? 0 : CardSettingsSection.labelRoom)
-                        .id(page.id)
-                        .onPreferenceChange(SettingsPageHeaderKey.self) { header in
-                            if let title = header?.title, !title.isEmpty { titles[page.id] = title }
-                        }
-                        .onPreferenceChange(SettingsRowsKey.self) { pageRows = $0 }
-                        .onPreferenceChange(CardFirstLabelKey.self) { firstLabelled = $0 ?? false }
-                } else {
-                    // Its own scroll: a page taller than the screen (Home &
-                    // Details) moved the whole layout as focus came to it.
-                    ScrollView(.vertical) {
-                        CardSettingsPages(category: shown, focused: $focused)
-                            .padding(.top, firstLabelled ? 0 : CardSettingsSection.labelRoom)
-                            .padding(.bottom, SettingsTopFade.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .coordinateSpace(.named(SettingsTopFade.space))
-                    }
-                    .settingsTopFade()
-                    .onPreferenceChange(CardFirstLabelKey.self) { firstLabelled = $0 ?? false }
-                }
-            }
-            .frame(width: Self.rightWidth, alignment: .leading)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .focusSection()
-            .environmentObject(nav)
-            .environment(\.settingsCards, true)
-            .environment(\.settingsRowFocus, $focused)
-        }
-    }
-
-    /// A category: its name; the one shown on the selected grey while
-    /// focus is in its settings, and the only one focus can come back to.
-    private func categoryRow(_ category: SettingsCategory) -> CardSettingsRow {
-        CardSettingsRow(id: category.rawValue, title: category.title,
-                        selected: inSettings && shown == category,
-                        reachable: !inSettings || shown == category, compact: true) {}
-    }
-
-}
+// MARK: - Pieces the SwiftUI pages still draw
 
 /// One section of Settings 2: its label, then its rows on one card, a
 /// hairline between two rows unless one of them has focus or is selected.
@@ -3051,711 +3392,6 @@ struct CardSettingsSection: View {
     }
 }
 
-/// Settings 2's categories: three groups of three, each its own card
-/// under its label as the settings' sections (Sync), the rows compact:
-/// all of it in view, no scrolling.
-struct CardSettingsMenu: View {
-    let groups: [(label: String, rows: [CardSettingsRow])]
-    var focused: FocusState<String?>.Binding
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                CardSettingsSection(label: group.label, gap: 24, rows: group.rows, focused: focused)
-            }
-        }
-    }
-}
-
-/// Settings 2's rows' helpers: the next of a list of choices (Select on a
-/// choice steps through them), On / Off.
-enum CardSettings {
-    static func next<T: Equatable>(_ all: [T], after current: T) -> T {
-        all[((all.firstIndex(of: current) ?? -1) + 1) % all.count]
-    }
-    static func onOff(_ on: Bool) -> String { on ? "On" : "Off" }
-}
-
-/// Each category's settings in Settings 2; a link opens its page (the
-/// old Settings' own, drawn in this look) in the same column.
-struct CardSettingsPages: View {
-    let category: SettingsCategory
-    var focused: FocusState<String?>.Binding
-
-    var body: some View {
-        switch category {
-        case .account: CardNuvioPage(focused: focused)
-        case .tmdb: CardTMDBPage(focused: focused)
-        case .mdblist: CardMDBListPage(focused: focused)
-        case .appearance: CardAppearancePage(focused: focused)
-        case .homeContent: CardHomePage(focused: focused)
-        case .playback: CardPlaybackPage(focused: focused)
-        case .storage: CardStoragePage(focused: focused)
-        case .about: CardAboutPage(focused: focused)
-        case .developer: CardDeveloperPage(focused: focused)
-        }
-    }
-}
-
-private struct CardNuvioPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-    /// The sign-in screen open: by code, or straight to email.
-    @State private var signingIn: SignInWay?
-    @State private var confirmSignOut = false
-    /// Profiles: adding one (the guided steps), unlocking one to switch.
-    @State private var addingProfile = false
-    @State private var unlocking: UserProfile?
-
-    private enum SignInWay: String, Identifiable {
-        case phone, email
-        var id: String { rawValue }
-    }
-    @EnvironmentObject private var account: NuvioAccountManager
-    @EnvironmentObject private var watched: WatchedStore
-    @EnvironmentObject private var progress: ProgressStore
-    @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var addons: AddonManager
-    @EnvironmentObject private var profiles: ProfileStore
-
-    var body: some View {
-        if case .signedIn(_, let email) = account.authState {
-            VStack(alignment: .leading, spacing: 40) {
-                SettingsSection {
-                    // The account: its email, Sign Out on the row (confirmed).
-                    ActionListRow(
-                        id: "n.account",
-                        title: "Account",
-                        detail: (email.isEmpty ? "Nuvio account" : email) + " · " + syncState,
-                        actions: [
-                            SettingsAction(title: "Sync Now", icon: "arrow.triangle.2.circlepath") {
-                                Task { await NuvioSyncManager.shared?.syncNow() }
-                            },
-                            SettingsAction(title: "Sign Out", icon: "rectangle.portrait.and.arrow.right",
-                                           danger: true, nudge: 2) { confirmSignOut = true },
-                        ],
-                        columnFocus: true)
-                }
-                // The same card and gap as every section (the menu's own
-                // card, with its label room, sat further from Profiles).
-                SettingsSection(title: "Sync") {
-                    syncRow("n.addons", "Add-ons", addons.addons.count) { nav.push(AddonsCardPage()) }
-                    syncRow("n.progress", "Watch Progress", progress.items.count) { nav.push(WatchProgressCardPage()) }
-                    syncRow("n.library", "Library", library.items.count) { nav.push(LibraryCardPage()) }
-                    syncRow("n.watched", "Watched", watched.items.count) { nav.push(WatchedCardPage()) }
-                }
-                // Every profile on the page: Switch (not the active one) and
-                // Edit (its one page) on its row; Add Profile after them.
-                SettingsSection(title: "Profiles · \(profiles.profiles.count) of \(ProfileStore.maxProfiles)") {
-                    ForEach(profiles.profiles) { profile in
-                        let active = profile.id == profiles.activeProfileID
-                        ActionListRow(
-                            id: "n.profile.\(profile.id)",
-                            leading: AnyView(ProfileAvatarView(profile: profile, size: 56)),
-                            title: profile.name,
-                            detail: Self.profileDetail(profiles.notes(for: profile), pin: profile.pinEnabled),
-                            actions: (active ? [] : [
-                                SettingsAction(title: "Switch to \(profile.name)", icon: "arrow.right.circle",
-                                               key: "switch") {
-                                    if profile.pinEnabled { unlocking = profile } else { profiles.setActive(profile.id) }
-                                },
-                            ]) + [
-                                SettingsAction(title: "Edit", icon: "pencil", key: "edit") {
-                                    nav.push(ProfileEditPage(profileID: profile.id))
-                                },
-                            ],
-                            columnFocus: true)
-                    }
-                    if profiles.canAddProfile {
-                        SettingsButtonRow(title: "Add Profile") { addingProfile = true }
-                    }
-                }
-                .fullScreenCover(isPresented: $addingProfile) {
-                    ProfileSetup(onFinish: { created in
-                        addingProfile = false
-                        nav.push(ProfileEditPage(profileID: created.id))
-                    }, onCancel: { addingProfile = false })
-                    .environmentObject(profiles)
-                }
-                .fullScreenCover(item: $unlocking) { profile in
-                    ProfilePinCheck(profile: profile) {
-                        unlocking = nil
-                        profiles.setActive(profile.id)
-                    } onCancel: { unlocking = nil }
-                }
-                .alert("Sign out?", isPresented: $confirmSignOut) {
-                    Button("Sign out", role: .destructive) { account.signOut() }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Your watch progress, library and add-ons stay on this TV, but they'll stop syncing until you sign in again.")
-                }
-            }
-        } else {
-            SettingsSection {
-                // Signed out: the two ways in, on the row.
-                ActionListRow(
-                    id: "n.signin",
-                    title: "Account",
-                    detail: "Not signed in",
-                    actions: [
-                        SettingsAction(title: "Sign In with Phone", icon: "qrcode") { signingIn = .phone },
-                        SettingsAction(title: "Sign In with Email", icon: "envelope") { signingIn = .email },
-                    ],
-                    columnFocus: true)
-            }
-            .fullScreenCover(item: $signingIn) { way in
-                NuvioSignInView(account: account, onSignedIn: { signingIn = nil },
-                                emailOnly: way == .email, onClose: { signingIn = nil })
-                    .onExitCommand { signingIn = nil }
-            }
-        }
-    }
-
-    /// "Primary, Active · PIN"; neither: "Profile".
-    private func syncRow(_ id: String, _ title: String, _ count: Int, open: @escaping () -> Void) -> some View {
-        Button(action: open) {
-            SettingsRowLabel(title: title, value: count.formatted(), chevron: true)
-        }
-        .settingsRow(id: id)
-    }
-
-    static func profileDetail(_ notes: String, pin: Bool) -> String {
-        let parts = [notes.isEmpty ? nil : notes, pin ? "PIN" : nil].compactMap { $0 }
-        return parts.isEmpty ? "Profile" : parts.joined(separator: " · ")
-    }
-
-    private var syncState: String {
-        guard let sync = NuvioSyncManager.shared else { return "—" }
-        if sync.isSyncing { return "Syncing…" }
-        if sync.lastSyncError != nil { return "Sync failed" }
-        guard let last = sync.lastSyncedAt else { return "Not synced yet" }
-        return "Synced " + DateFormatter.settingsWhen.string(from: last)
-    }
-}
-
-private struct CardTMDBPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var tmdb: TMDBSettingsStore
-
-    var body: some View {
-        let key = tmdb.settings.trimmedAPIKey
-        VStack(alignment: .leading, spacing: 40) {
-            SettingsSection {
-                ServiceKeyActionRow(service: .tmdb, key: key) { tmdb.setAPIKey($0) }
-                if key.isEmpty { SettingsNote(ServiceKey.tmdb.howTo) }
-            }
-            SettingsSection(title: "Language") {
-                SettingsOptionsRow(
-                    title: "Language",
-                    description: "Titles, taglines and descriptions in this language where TMDB has it.",
-                    options: TMDBLanguages.options.map { SettingsOption(id: $0, label: TMDBLanguages.displayName($0)) },
-                    selection: tmdb.settings.language
-                ) { tmdb.settings.language = $0 }
-            }
-        }
-    }
-}
-
-private struct CardMDBListPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var mdblist: MDBListSettingsStore
-    @ObservedObject private var usage = MDBListUsage.shared
-    @State private var moving: MDBListProvider?
-
-    var body: some View {
-        let key = mdblist.settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let providers = mdblist.settings.orderedProviders
-        VStack(alignment: .leading, spacing: 40) {
-            // The key on its row; what MDBList last said of the account
-            // under it, only to read (its Usage page is gone).
-            SettingsSection {
-                ServiceKeyActionRow(service: .mdblist, key: key) { new in
-                    mdblist.settings.apiKey = new
-                    // Kept true for older Cue versions, which still read it.
-                    mdblist.settings.enabled = !new.isEmpty
-                }
-                if key.isEmpty {
-                    SettingsNote(ServiceKey.mdblist.howTo)
-                } else {
-                    if let account = usage.account, !account.plan.isEmpty {
-                        SettingsInfoRow(title: "Plan", value: account.username.isEmpty
-                                        ? account.plan : "\(account.username) · \(account.plan)")
-                    }
-                    if let snapshot = usage.snapshot {
-                        SettingsInfoRow(title: "Requests Today", value: snapshot.requestsToday)
-                    }
-                }
-            }
-            SettingsSection(title: "Ratings") {
-                SettingsChoiceRow(
-                    id: "m.place", title: "Show Ratings",
-                    description: "Everywhere, on Details only, or nowhere.",
-                    options: RatingsPlace.allCases.reversed().map { SettingsOption(id: $0.rawValue, label: $0.label) },
-                    selection: mdblist.settings.place.rawValue
-                ) { mdblist.settings.place = RatingsPlace(rawValue: $0) ?? .everywhere }
-            }
-            // The sources in order, each its row: the first three show on
-            // titles, the rest stand in; Move on each.
-            SettingsSection(title: "Rating Providers") {
-                ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
-                    ActionListRow(
-                        id: "m.p.\(provider.id)",
-                        leading: AnyView(RatingMark(provider: provider).frame(height: 24)),
-                        title: provider.fullName,
-                        detail: index < FixedFocusBillboardText.ratingsShown ? "Shown on titles"
-                            : "Stands in when one is missing",
-                        actions: [SettingsAction(title: "Move", icon: "arrow.up.arrow.down", move: true) {
-                            moving = provider
-                        }],
-                        columnFocus: true,
-                        moving: moving == provider,
-                        anyMoving: moving != nil,
-                        onMoveStep: { mdblist.settings.move(provider, by: $0) },
-                        onDrop: { moving = nil })
-                }
-            }
-        }
-        .onChange(of: moving) { _, now in TopBarLock.shared.locked = now != nil }
-    }
-}
-
-private struct CardAppearancePage: View {
-    var focused: FocusState<String?>.Binding
-    @AppStorage(FixedFocusRing.outlinesKey) private var outlines = FixedFocusRing.outlines.rawValue
-    @AppStorage(SourceCardStyle.key) private var sourceCards = SourceCardStyle.current.rawValue
-    @AppStorage(BackgroundPicks.AtLaunch.key) private var atLaunch = BackgroundPicks.AtLaunch.home.rawValue
-    @ObservedObject private var background = BackgroundStore.shared
-    /// Saved ones removed here, not yet sent (undone with a second press).
-    @State private var pending: Set<String> = []
-
-    var body: some View {
-        let outline = FixedFocusRing.Outlines(rawValue: outlines) ?? .high
-        let source = SourceCardStyle(rawValue: sourceCards) ?? .current
-        VStack(alignment: .leading, spacing: 40) {
-            SettingsSection(title: "Background") {
-                current
-                SettingsChoiceRow(
-                    id: "a.launch", title: "Change at Launch",
-                    description: "What each launch brings.",
-                    options: BackgroundPicks.AtLaunch.allCases.reversed()
-                        .filter { $0 != .saved || !background.saved.isEmpty }
-                        .map { SettingsOption(id: $0.rawValue, label: $0.label, detail: Self.launchDetail($0)) },
-                    selection: atLaunch
-                ) { atLaunch = $0 }
-            }
-            SettingsSection(title: "Look") {
-                SettingsChoiceRow(
-                    id: "a.outlines", title: "Card Outlines",
-                    description: "How cards are framed, at rest and in focus.",
-                    options: [
-                        SettingsOption(id: FixedFocusRing.Outlines.off.rawValue, label: "Off",
-                                       detail: "No edges: the pictures alone."),
-                        SettingsOption(id: FixedFocusRing.Outlines.low.rawValue, label: "Edges Only",
-                                       detail: "A thin edge on every card, none brighter."),
-                        SettingsOption(id: FixedFocusRing.Outlines.high.rawValue, label: "Edges and Focus",
-                                       detail: "A thin edge on every card, a bright one in focus."),
-                    ],
-                    selection: outline.rawValue
-                ) { id in
-                    let next = FixedFocusRing.Outlines(rawValue: id) ?? .high
-                    FixedFocusRing.outlines = next
-                    outlines = next.rawValue
-                }
-                SettingsChoiceRow(
-                    id: "a.sources", title: "Source Cards",
-                    description: "How links read when you pick a source.",
-                    options: [
-                        SettingsOption(id: SourceCardStyle.raw.rawValue, label: "Raw",
-                                       detail: "The add-on's own text, as it sends it."),
-                        SettingsOption(id: SourceCardStyle.styled.rawValue, label: "Styled",
-                                       detail: "Quality, size and audio, read from the file name."),
-                    ],
-                    selection: source.rawValue
-                ) { sourceCards = $0 }
-            }
-            if !background.saved.isEmpty {
-                SettingsSection(title: "Saved · \(background.saved.count - pending.count) of \(BackgroundPicks.savedLimit)") {
-                    ForEach(background.saved, id: \.id) { entry in
-                        saved(entry)
-                    }
-                }
-            }
-        }
-        .onDisappear { commit() }
-    }
-
-    /// The one up: its colours, how it came; Shuffle and Save on the row.
-    @ViewBuilder private var current: some View {
-        let shown = background.shown
-        let isSaved = shown.map { background.isSaved($0.id) && !pending.contains($0.id) } ?? false
-        ActionListRow(
-            id: "a.background",
-            leading: AnyView(BackgroundColours(entry: shown)),
-            leadingSize: BackgroundColours.size,
-            title: shown?.name ?? "Grey",
-            detail: reason,
-            actions: [
-                SettingsAction(title: "Shuffle", icon: "shuffle", key: "shuffle") { background.another() },
-            ] + (shown == nil ? [] : [
-                SettingsAction(title: isSaved ? "Saved" : "Save", icon: isSaved ? "bookmark.fill" : "bookmark",
-                               key: "save") {
-                    if let id = shown?.id, pending.contains(id) { pending.remove(id) } else { background.toggleSaved() }
-                },
-            ]),
-            columnFocus: true)
-    }
-
-    /// A saved one: Use (unless it's up), Remove (undo in place).
-    private func saved(_ entry: BackgroundPicks.Entry) -> some View {
-        let gone = pending.contains(entry.id)
-        let up = background.shown?.id == entry.id
-        return ActionListRow(
-            id: "a.saved.\(entry.id)",
-            leading: AnyView(BackgroundColours(entry: entry)),
-            leadingSize: BackgroundColours.size,
-            title: entry.name,
-            // The one up is told by its checkmark: no line under the names.
-            detail: "",
-            dimmed: gone,
-            // Use stays on the one up, a checkmark (one key both ways: focus
-            // stays on it as it turns).
-            actions: (gone ? [] : [
-                SettingsAction(title: up ? "In Use" : "Use", icon: up ? "checkmark" : "paintbrush", key: "use") {
-                    if !up { background.set(entry) }
-                },
-            ]) + [
-                gone
-                    ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") { pending.remove(entry.id) }
-                    : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") { pending.insert(entry.id) },
-            ])
-    }
-
-    private func commit() {
-        for id in pending { background.unsave(id) }
-        pending = []
-    }
-
-    private var reason: String {
-        guard background.shown != nil else { return "Until a title is picked" }
-        switch background.source {
-        case .home: return "From Home"
-        case .saved: return "From Saved"
-        case .chosen: return "Chosen by you"
-        }
-    }
-
-    private static func launchDetail(_ choice: BackgroundPicks.AtLaunch) -> String {
-        switch choice {
-        case .home: "A title on Home, a new one each launch."
-        case .saved: "One of your saved ones, never twice running."
-        case .never: "The one up now stays."
-        }
-    }
-}
-
-private struct CardHomePage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-    @EnvironmentObject private var settings: HomeCatalogSettingsStore
-    @ObservedObject private var pins = DiscoverPins.shared
-    @AppStorage(BillboardAutoPage.key) private var billboardAutoPage = true
-    @AppStorage(HomeHideWatched.key) private var hideWatched = false
-    @AppStorage(DetailHideSpoilers.key) private var hideSpoilers = false
-    /// Your rows: the one lifted, the ones removed here (undo in place).
-    @State private var moving: String?
-    @State private var pending: Set<String> = []
-    @State private var keyboard: KeyboardRequest?
-
-    var body: some View {
-        let trailers = !settings.heroTrailersEnabled ? "off" : settings.heroTrailerSound ? "sound" : "silent"
-        VStack(alignment: .leading, spacing: 40) {
-            SettingsSection(title: "Rows") {
-                Button { nav.push(YourTasteCardPage()) } label: {
-                    SettingsRowLabel(title: "Your Taste", chevron: true,
-                                     description: "What Cue reads from your watching.")
-                }
-                .settingsRow(id: "h.taste")
-                Button { nav.push(WhyTheseRowsCardPage()) } label: {
-                    SettingsRowLabel(title: "Why These Rows", chevron: true,
-                                     description: "Why each row is on Home today, and what's left out.")
-                }
-                .settingsRow(id: "h.why")
-                SettingsChoiceRow(
-                    id: "h.order", title: "Continue Watching Order",
-                    options: [
-                        SettingsOption(id: ContinueWatchingSortMode.recentlyWatched.rawValue, label: "Last Watched",
-                                       detail: "What you watched last comes first."),
-                        SettingsOption(id: ContinueWatchingSortMode.streamingStyle.rawValue, label: "In Progress First",
-                                       detail: "Started titles first, next episodes after."),
-                    ],
-                    selection: settings.continueWatchingSortMode.rawValue
-                ) { settings.continueWatchingSortMode = ContinueWatchingSortMode(rawValue: $0) ?? .recentlyWatched }
-                SettingsOnOffRow(id: "h.hide", title: "Hide Watched Titles",
-                                 description: "Watched films and finished shows stay out of the rows.",
-                                 isOn: hideWatched) { hideWatched = $0 }
-            }
-            SettingsSection(title: "Billboard & Details") {
-                SettingsOnOffRow(id: "h.advance", title: "Auto-Advance Billboard",
-                                 description: "The next title every \(Int(BillboardAutoPage.interval)) seconds.",
-                                 isOn: billboardAutoPage) { billboardAutoPage = $0 }
-                SettingsChoiceRow(
-                    id: "h.trailers", title: "Trailers",
-                    options: [
-                        SettingsOption(id: "off", label: "Off", detail: "The pictures stay still."),
-                        SettingsOption(id: "silent", label: "Silent",
-                                       detail: "Trailers play when you rest, muted."),
-                        SettingsOption(id: "sound", label: "With Sound",
-                                       detail: "Trailers play when you rest, with sound."),
-                    ],
-                    selection: trailers
-                ) { pick in
-                    settings.heroTrailersEnabled = pick != "off"
-                    if pick != "off" { settings.heroTrailerSound = pick == "sound" }
-                }
-                SettingsOnOffRow(id: "h.spoilers", title: "Hide Spoilers",
-                                 description: "Blurs the pictures of episodes you haven't watched.",
-                                 isOn: hideSpoilers) { hideSpoilers = $0 }
-            }
-            yourRows
-        }
-        .onDisappear { commit() }
-        .onChange(of: moving) { _, now in TopBarLock.shared.locked = now != nil }
-        .background(KeyboardPresenter(request: $keyboard).frame(width: 1, height: 1))
-    }
-
-    /// Sentences from Discover on Home, in their order: Open in Discover,
-    /// Move, Rename, Remove (undo in place). Last on the page: it grows.
-    @ViewBuilder private var yourRows: some View {
-        let rows = pins.all
-        let label = "Your Rows · \(rows.count - pending.count) of \(DiscoverPins.limit)"
-        if rows.isEmpty {
-            SettingsSection(title: label) {
-                SettingsNote("None yet. In Discover, Add to Home puts a sentence on Home.")
-            }
-        } else {
-            SettingsSection(title: label) {
-                ForEach(rows, id: \.id) { pin in
-                    let gone = pending.contains(pin.id)
-                    let name = pin.rowName
-                    ActionListRow(
-                        id: "h.pin.\(pin.id)",
-                        title: name,
-                        detail: DiscoverPins.titleCase(pin.name) == name ? "" : pin.name,
-                        dimmed: gone,
-                        actions: actions(pin, name: name, gone: gone, count: rows.count),
-                        moving: moving == pin.id,
-                        anyMoving: moving != nil,
-                        onMoveStep: { pins.move(pin.id, by: $0) },
-                        onDrop: { moving = nil })
-                }
-            }
-        }
-    }
-
-    private func actions(_ pin: DiscoverPins.Pin, name: String, gone: Bool, count: Int) -> [SettingsAction] {
-        var list: [SettingsAction] = []
-        if !gone {
-            list.append(SettingsAction(title: "Open in Discover", icon: "safari", key: "open") { pins.opening = pin })
-            if count > 1 {
-                list.append(SettingsAction(title: "Move", icon: "arrow.up.arrow.down", move: true, key: "move") {
-                    moving = pin.id
-                })
-            }
-            list.append(SettingsAction(title: "Rename", icon: "pencil", key: "rename") {
-                keyboard = KeyboardRequest(text: name, placeholder: DiscoverPins.titleCase(pin.name)) {
-                    pins.rename(pin.id, to: $0)
-                }
-            })
-        }
-        list.append(gone
-            ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") { pending.remove(pin.id) }
-            : SettingsAction(title: "Remove from Home", icon: "trash", danger: true, key: "remove") {
-                pending.insert(pin.id)
-            })
-        return list
-    }
-
-    private func commit() {
-        for id in pending { pins.remove(id) }
-        pending = []
-        TopBarLock.shared.locked = false
-    }
-}
-
-private struct CardPlaybackPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-    @EnvironmentObject private var store: PlayerSettingsStore
-
-    var body: some View {
-        let settings = store.settings
-        let language = settings.language.isEmpty ? "Device Language"
-            : PlayerSettings.languages(including: settings.language).first { $0.code == settings.language }?.name
-                ?? settings.language
-        // Everything else is chosen in the player.
-        SettingsSection {
-            // Many languages: their own page.
-            Button {
-                nav.push(SettingsOptionsPage(
-                    title: "Language", subtitle: "For audio and subtitles. A track you pick in the player is kept.",
-                    options: [SettingsOption(id: "", label: "Device Language")]
-                        + PlayerSettings.languages(including: settings.language)
-                            .map { SettingsOption(id: $0.code, label: $0.name) },
-                    selection: settings.language) { store.settings.language = $0 })
-            } label: {
-                SettingsRowLabel(title: "Language", value: language, chevron: true,
-                                 description: "For audio and subtitles. A track you pick in the player is kept.")
-            }
-            .settingsRow(id: "p.language")
-            SettingsChoiceRow(
-                id: "p.original", title: "Original Audio",
-                options: [
-                    SettingsOption(id: PlayerSettings.OriginalAudio.off.rawValue, label: "Off",
-                                   detail: "Audio in your language where there is some."),
-                    SettingsOption(id: PlayerSettings.OriginalAudio.anime.rawValue, label: "Anime",
-                                   detail: "Anime in Japanese, the rest in your language."),
-                    SettingsOption(id: PlayerSettings.OriginalAudio.all.rawValue, label: "All Titles",
-                                   detail: "Every title in the language it was made in."),
-                ],
-                selection: settings.originalAudio.rawValue
-            ) { store.settings.originalAudio = PlayerSettings.OriginalAudio(rawValue: $0) ?? .off }
-            SettingsChoiceRow(
-                id: "p.subtitles", title: "Subtitles",
-                options: [
-                    SettingsOption(id: PlayerSettings.Subtitles.off.rawValue, label: "Off",
-                                   detail: "None until you turn them on in the player."),
-                    SettingsOption(id: PlayerSettings.Subtitles.auto.rawValue, label: "Auto",
-                                   detail: "When the audio isn't your language; else only forced ones."),
-                    SettingsOption(id: PlayerSettings.Subtitles.always.rawValue, label: "Always",
-                                   detail: "In your language, whatever the audio."),
-                ],
-                selection: settings.subtitles.rawValue
-            ) { store.settings.subtitles = PlayerSettings.Subtitles(rawValue: $0) ?? .auto }
-        }
-    }
-}
-
-/// Storage (every bin red, as everywhere): a row each for the cache and the search history, its summary
-/// and Clear on it, its page one press away (list.bullet, as Watched's
-/// Episodes); then what's free.
-private struct CardStoragePage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-    @EnvironmentObject private var search: SearchViewModel
-    @ObservedObject private var cache = CacheMeter.shared
-
-    var body: some View {
-        SettingsSection {
-            ActionListRow(
-                id: "s.cache",
-                title: "Cache",
-                detail: cache.summary(" · Loads again as needed"),
-                actions: [
-                    SettingsAction(title: "Show Cache", icon: "list.bullet", key: "more") {
-                        nav.push(CacheCardPage())
-                    },
-                    SettingsAction(title: "Clear Cache", icon: "trash", danger: true, key: "clear") { cache.clear() },
-                ],
-                columnFocus: true)
-            ActionListRow(
-                id: "s.search",
-                title: "Search History",
-                detail: Self.historyDetail(search),
-                actions: search.hasHistory ? [
-                    SettingsAction(title: "Show Search History", icon: "list.bullet", key: "more") {
-                        nav.push(SearchHistoryCardPage())
-                    },
-                    SettingsAction(title: "Clear Search History", icon: "trash", danger: true, key: "clear") {
-                        search.clearHistory()
-                    },
-                ] : [],
-                columnFocus: true)
-            SettingsInfoRow(title: "Free on This Apple TV", value: cache.free.map(CachePage.size) ?? "—")
-        }
-        .task { await cache.measure() }
-    }
-
-    static func historyDetail(_ search: SearchViewModel) -> String {
-        let searches = search.recentSearches.count, titles = search.recentTitles.count
-        guard searches + titles > 0 else { return "Empty" }
-        return [searches > 0 ? (searches == 1 ? "1 search" : "\(searches) searches") : nil,
-                titles > 0 ? (titles == 1 ? "1 title" : "\(titles) titles") : nil]
-            .compactMap { $0 }.joined(separator: " · ")
-    }
-}
-
-/// The cache's kinds and what's free, measured for Storage and its Cache
-/// page alike (the page replaces Storage in the column).
-private struct CardAboutPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 40) {
-            SettingsSection(title: "Cue") {
-                SettingsInfoRow(title: "Version", value: DiagnosticsService.appVersion)
-                SettingsInfoRow(title: "Source Code", value: DiagnosticsService.sourceAddress)
-            }
-            SettingsSection(title: "This Apple TV") {
-                SettingsInfoRow(title: "Device", value: DiagnosticsService.deviceName)
-                SettingsInfoRow(title: "Software", value: DiagnosticsService.systemVersion)
-            }
-            // The only rows to press: last, as the lists.
-            SettingsSection(title: "Legal") {
-                Button { nav.push(AboutPrivacyPage()) } label: {
-                    SettingsRowLabel(title: "Privacy", chevron: true,
-                                     description: "Cue collects nothing about you.")
-                }
-                .settingsRow(id: "b.privacy")
-                Button { nav.push(AboutLicensesPage()) } label: {
-                    SettingsRowLabel(title: "Licenses & Credits", chevron: true,
-                                     description: "Free software under the GPLv3, and what it's built with.")
-                }
-                .settingsRow(id: "b.licenses")
-            }
-        }
-    }
-}
-
-private struct CardDeveloperPage: View {
-    var focused: FocusState<String?>.Binding
-    @EnvironmentObject private var nav: SettingsNav
-    @State private var sessions: [CueLog.Session]?
-    @ObservedObject private var store = PerformanceSettingsStore.shared
-    @State private var logOn = ProbeGate.isEnabled
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 40) {
-            SettingsSection(title: "Overlays") {
-                SettingsChoiceRow(
-                    id: "d.fps", title: "Frame Rate",
-                    options: [
-                        SettingsOption(id: "off", label: "Off", detail: "No counter."),
-                        SettingsOption(id: "compact", label: "Compact", detail: "Frames per second, top right."),
-                        SettingsOption(id: "full", label: "Full", detail: "Adds frame times, CPU and memory."),
-                    ],
-                    selection: store.settings.frameRate.rawValue
-                ) { store.settings.frameRate = PerformanceSettingsStore.FrameRate(rawValue: $0) ?? .off }
-                SettingsOnOffRow(id: "d.hud", title: "Playback HUD",
-                                 description: "Live numbers over the video: decoding, drops, bitrate.",
-                                 isOn: store.settings.showPlaybackHUD) { store.settings.showPlaybackHUD = $0 }
-            }
-            SettingsSection(title: "Log") {
-                SettingsOnOffRow(id: "d.log", title: "Log",
-                                 description: "What the app does, to a file here, a week at most.",
-                                 isOn: logOn) { logOn = $0; ProbeGate.store($0) }
-                Button { nav.push(LogSessionsPage(sessions: $sessions)) } label: {
-                    SettingsRowLabel(title: "Sessions", chevron: true)
-                }
-                .settingsRow(id: "d.sessions")
-                if logOn, let address = LogServer.address {
-                    SettingsInfoRow(title: "Address", value: address)
-                }
-            }
-        }
-        .task { sessions = await CueLog.sessions() }
-    }
-}
 /// white plate, dark words.
 struct CardSettingsRow: View {
     let id: String
@@ -3835,6 +3471,7 @@ private struct CardSettingsRowFace: View {
     }
 }
 
+
 @MainActor
 final class CacheMeter: ObservableObject {
     static let shared = CacheMeter()
@@ -3861,104 +3498,6 @@ final class CacheMeter: ObservableObject {
         if clearing { return "Clearing…" }
         guard let parts else { return "Measuring…" }
         return CachePage.size(parts.reduce(0) { $0 + $1.bytes }) + tail
-    }
-}
-
-/// Every cache by kind, its size and allowance, to read; Clear on top.
-struct CacheCardPage: View {
-    @ObservedObject private var cache = CacheMeter.shared
-
-    var body: some View {
-        SettingsPage(title: "Cache") {
-            SettingsSection {
-                ActionListRow(
-                    id: "c.all",
-                    title: "Cache",
-                    detail: cache.summary(" · Your account and settings stay"),
-                    actions: [SettingsAction(title: "Clear Cache", icon: "trash", danger: true, key: "clear") { cache.clear() }])
-                ForEach(cache.parts ?? []) { part in
-                    SettingsInfoRow(title: part.name, value: Self.value(part))
-                }
-            }
-        }
-    }
-
-    private static func value(_ part: CacheStorage.Part) -> String {
-        guard let limit = part.limit else { return CachePage.size(part.bytes) }
-        let limitText = ByteCountFormatter.string(fromByteCount: limit, countStyle: .memory)
-        return part.bytes == 0 ? "Empty, up to \(limitText)" : "\(CachePage.size(part.bytes)) of \(limitText)"
-    }
-}
-
-/// This profile's recent searches and the titles opened from Search: a
-/// row each, Remove (undo in place), the titles Open too.
-struct SearchHistoryCardPage: View {
-    @EnvironmentObject private var search: SearchViewModel
-    @Environment(\.settingsOpenTitle) private var openTitle
-    @FocusState private var focus: String?
-    /// Removed here, not yet sent.
-    @State private var pending: Set<String> = []
-
-    var body: some View {
-        SettingsPage(title: "Search History") {
-            if !search.hasHistory {
-                SettingsNote("Nothing yet.")
-            }
-            if !search.recentSearches.isEmpty {
-                SettingsSection(title: "Recent Searches") {
-                    ForEach(search.recentSearches, id: \.self) { query in
-                        let key = "q." + query
-                        let gone = pending.contains(key)
-                        ActionListRow(id: key, title: query, detail: "", dimmed: gone,
-                                      actions: [remove(key, gone: gone)], focus: $focus)
-                    }
-                }
-            }
-            if !search.recentTitles.isEmpty {
-                SettingsSection(title: "Opened from Search") {
-                    ForEach(search.recentTitles, id: \.id) { item in
-                        let key = "t." + item.id
-                        let gone = pending.contains(key)
-                        ActionListRow(
-                            id: key,
-                            leading: AnyView(Poster(url: item.poster)),
-                            leadingSize: CGSize(width: 44, height: 66),
-                            title: item.name,
-                            detail: gone ? "Removed" : item.type == "movie" ? "Movie" : "Series",
-                            dimmed: gone,
-                            actions: (gone || openTitle == nil ? [] : [
-                                SettingsAction(title: "Open", icon: "info.circle", key: "open") { openTitle?(item) },
-                            ]) + [remove(key, gone: gone)],
-                            focus: $focus)
-                    }
-                }
-            }
-        }
-        .onDisappear { commit() }
-    }
-
-    private func remove(_ key: String, gone: Bool) -> SettingsAction {
-        gone
-            ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "remove") { pending.remove(key) }
-            : SettingsAction(title: "Remove", icon: "trash", danger: true, key: "remove") { pending.insert(key) }
-    }
-
-    private func commit() {
-        for key in pending {
-            if key.hasPrefix("q.") { search.forgetSearch(String(key.dropFirst(2))) }
-            else { search.forgetTitle(String(key.dropFirst(2))) }
-        }
-        pending = []
-    }
-
-    private struct Poster: View {
-        let url: String?
-        var body: some View {
-            let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
-            RemoteImage(url: url, maxDimension: 66, fallback: AnyView(Color.white.opacity(0.08)))
-                .clipShape(shape)
-                .overlay { shape.strokeBorder(Color.white.opacity(0.15), lineWidth: 1) }
-        }
     }
 }
 
