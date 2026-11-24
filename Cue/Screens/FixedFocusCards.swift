@@ -21,10 +21,10 @@ final class FixedFocusBannerCell: UICollectionViewCell, FixedFocusDestinationIte
     private let logo = LeftAlignedImageView()
     /// The title in big type, where there's no logo.
     private let name = UILabel()
-    private let facts = UILabel()
+    private let facts = EndFadeLabel()
     /// The tagline (TMDB) — no tagline: the name, so the block keeps its
     /// height.
-    private let tagline = UILabel()
+    private let tagline = EndFadeLabel()
     /// The chips line (status, the first three ratings) — the billboard's
     /// own SwiftUI chips, hosted.
     private let chips = UIHostingController(rootView: AnyView(EmptyView()))
@@ -249,12 +249,12 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
     private let badges = FixedFocusBadges()
     private let logo = FixedFocusLogo()
     private let name = UILabel()
-    private let facts = UILabel()
+    private let facts = EndFadeLabel()
     /// Today's Pick's description under the facts (the billboard's order),
     /// as many lines as the billboard's at most, the body level on the shade.
     /// Today's Pick: the tagline under the facts, as the billboard's (the
     /// name where there's none; the description was before).
-    private let tagline = UILabel()
+    private let tagline = EndFadeLabel()
     /// The billboard's gap between its lines, frame to frame.
     private static let taglineGap: CGFloat = 5
     private let loadingCard = FixedFocusPlaceholder()
@@ -331,13 +331,11 @@ final class FixedFocusShowcaseCell: UICollectionViewCell, FixedFocusDestinationI
         name.numberOfLines = 2
         facts.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
         facts.textColor = CueInk.ui(FixedFocusText.body)
-        facts.lineBreakMode = .byTruncatingTail
         place.font = .systemFont(ofSize: 44, weight: .bold)
         place.textColor = CueInk.ui(FixedFocusText.primary)
         corner.contentMode = .topLeft
         tagline.font = UIFont.italicSystemFont(ofSize: FixedFocusMetrics.captionSize)
         tagline.textColor = CueInk.ui(FixedFocusText.secondary)
-        tagline.lineBreakMode = .byTruncatingTail
         for view: UIView in [corner, place, badges, title, facts, tagline] { words.addSubview(view) }
         title.addSubview(logo)
         title.addSubview(name)
@@ -1019,8 +1017,8 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
     private let outlineLight = UIImageView()
     /// The lift's scale the outline is sized to (see `setFocused`).
     private var outlineScale: CGFloat = 1
-    private let name = UILabel()
-    private let detail = UILabel()
+    private let name = EndFadeLabel()
+    private let detail = EndFadeLabel()
     /// A grid's portraits: the name and role on the card, at its foot over
     /// the cards' bottom fade, as a tall card's words (under it, two lines
     /// of portraits left the rows above and below no peek).
@@ -1179,7 +1177,6 @@ final class FixedFocusDestinationCell: UICollectionViewCell, FixedFocusDestinati
         // Like the fixed box's text (see its `InfoPage`), a little smaller
         // (`FixedFocusText.titleFont`, `infoFont`).
         name.font = FixedFocusText.titleFont(FixedFocusMetrics.captionSize)
-        name.lineBreakMode = .byTruncatingTail
         detail.font = FixedFocusText.infoFont(FixedFocusMetrics.captionSize)
         detail.textColor = CueInk.ui(FixedFocusText.infoLevel(focused: false))
         for label in [name, detail] {
@@ -2336,7 +2333,7 @@ final class FixedFocusBadges: UIView {
     private final class Plate: UIView {
         static let symbolGap: CGFloat = 9
         private let symbol = UIImageView()
-        private let label = UILabel()
+        private let label = EndFadeLabel()
         /// More ratings (`Badge.more`): each its own mark and score, laid
         /// out as the first (attached to the words, the line grew and the
         /// scores sank).
@@ -2353,7 +2350,6 @@ final class FixedFocusBadges: UIView {
             layer.cornerRadius = 10
             layer.cornerCurve = .continuous
             symbol.contentMode = .center
-            label.lineBreakMode = .byTruncatingTail
             addSubview(symbol)
             addSubview(label)
         }
@@ -2453,5 +2449,56 @@ final class FixedFocusBadges: UIView {
                 x += w
             }
         }
+    }
+}
+
+/// One line of text that, cut short, fades out over its end instead of
+/// "…" (Cue never shows "…": Cast & Crew's captions fade the same way).
+/// Centred text that's cut starts at the left, so its start is whole.
+class EndFadeLabel: UILabel {
+    /// The fade's run, over the last of the room.
+    static let run: CGFloat = 40
+    private let fade = CAGradientLayer()
+    private var cut = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        lineBreakMode = .byClipping
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var text: String? { didSet { setNeedsLayout() } }
+    override var attributedText: NSAttributedString? { didSet { setNeedsLayout() } }
+    override var font: UIFont! { didSet { setNeedsLayout() } }
+
+    /// Its whole line's width.
+    private var natural: CGFloat {
+        sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height)).width
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        let isCut = numberOfLines == 1 && width > 0 && natural > width + 0.5
+        if isCut != cut { cut = isCut; setNeedsDisplay() }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if cut {
+            fade.frame = bounds
+            fade.locations = [0, NSNumber(value: Double(max(width - Self.run, 0) / width)), 1]
+            layer.mask = fade
+        } else if layer.mask === fade {
+            layer.mask = nil
+        }
+        CATransaction.commit()
+    }
+
+    override func drawText(in rect: CGRect) {
+        guard cut else { return super.drawText(in: rect) }
+        super.drawText(in: CGRect(x: rect.minX, y: rect.minY, width: max(natural, rect.width), height: rect.height))
     }
 }

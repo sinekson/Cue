@@ -1712,6 +1712,7 @@ struct BillboardCorners: View {
                     .foregroundStyle(colours[0], colours.count > 1 ? colours[1] : colours[0])
             }
             words()
+                .endFade()
         }
         .font(Font(FixedFocusBadges.font))
         .lineLimit(1)

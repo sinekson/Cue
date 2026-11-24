@@ -121,8 +121,12 @@ enum BillboardPicks {
                                         poster: entry.poster, background: entry.background,
                                         logo: entry.logo)))
             }
+            // A watched episode's title can be the episode's ("Shaula /
+            // Hero" for Re:Zero), not the show's: no name from it (looked
+            // up by id where one's needed, `displayName`).
+            func showName(_ item: WatchedItem) -> String { item.episode == nil ? item.title : "" }
             for item in watched.items.values {
-                events.append((item.contentID, item.contentType, item.title, item.watchedAt, nil))
+                events.append((item.contentID, item.contentType, showName(item), item.watchedAt, nil))
             }
             events.sort { $0.date > $1.date }
 
@@ -156,7 +160,7 @@ enum BillboardPicks {
             for entry in started {
                 note(entry.metaID, entry.type, entry.name, entry.updatedAt) { $0.started = true; $0.progress = entry.fraction }
             }
-            for item in watched.items.values { note(item.contentID, item.contentType, item.title, item.watchedAt) { $0.watched += 1 } }
+            for item in watched.items.values { note(item.contentID, item.contentType, showName(item), item.watchedAt) { $0.watched += 1 } }
             for saved in library.sorted { note(saved.id, saved.type, saved.name, saved.addedAt) { $0.saved = true } }
             self.watches = watches.values.sorted { $0.last > $1.last }
         }
@@ -272,7 +276,8 @@ enum BillboardPicks {
         let looksLikeID = item.name.isEmpty || item.name == item.id
             || item.name.range(of: #"^tt\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil
         guard looksLikeID else { return item.name }
-        return await TMDBService.metaItem(imdbID: item.id, type: item.type)?.name
+        // (TMDB's traits: on disk 30 days.)
+        return await TMDBService.cueTraits(imdbID: item.id, type: item.type)?.traits.name
     }
 
     /// New episodes / seasons of the shows you follow, newest first — from

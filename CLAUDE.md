@@ -140,6 +140,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   regular at body; captions out of focus each two levels down (secondary,
   tertiary) (`FixedFocusText.titleFont`/`infoFont`/`titleLevel`/`infoLevel`;
   both regular, the line a level dimmer, read as one; semibold was tried).
+  Text cut short never ends in "…": it fades out over its last 40 pt
+  (`EndFadeLabel` in UIKit, `.endFade()` in SwiftUI; Cast & Crew's
+  captions their own way; decided 2026-11-24): the cards' captions,
+  facts and taglines, the badges' plates, the billboard's. A new
+  one-line label that can be cut uses them (a plain UILabel or Text
+  truncates with "…").
 - **Motion** (`Motion`): focus 0.3 s, move 0.35 s, present 0.45 s (no-bounce
   springs), fade 0.25 s. One press, one movement. A press on a focused button,
   row or menu entry takes it back to its resting size, level with its

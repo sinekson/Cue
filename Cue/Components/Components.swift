@@ -2168,3 +2168,46 @@ private final class CostLedger: NSObject, NSCacheDelegate, @unchecked Sendable {
         remove(obj as AnyObject)
     }
 }
+
+/// One line of text that, cut short, fades out over its end instead of
+/// "…" (`EndFadeLabel`'s SwiftUI side). Its ideal size stays the whole
+/// line, so `ViewThatFits` still sees what it needs.
+extension View {
+    func endFade() -> some View { modifier(EndFade()) }
+}
+
+private struct EndFade: ViewModifier {
+    @State private var natural: CGFloat = 0
+    @State private var shown: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        let cut = natural > shown + 0.5 && shown > 0
+        EndFadeLayout {
+            content
+                .fixedSize(horizontal: true, vertical: false)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { natural = $0 }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { shown = $0 }
+        .clipped()
+        .mask {
+            LinearGradient(stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: cut ? max(0, 1 - EndFadeLabel.run / max(shown, 1)) : 1),
+                .init(color: cut ? .clear : .black, location: 1),
+            ], startPoint: .leading, endPoint: .trailing)
+        }
+    }
+}
+
+/// Its one view at its whole width, shown in as much of it as there's room for.
+private struct EndFadeLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let view = subviews.first else { return .zero }
+        let whole = view.sizeThatFits(.unspecified)
+        return CGSize(width: min(whole.width, proposal.width ?? whole.width), height: whole.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: .unspecified)
+    }
+}
