@@ -63,9 +63,8 @@ enum TitleBlock {
     /// runtime) • ★ Rating. Missing pieces are skipped.
     /// `seriesSize`: when the caller knows the show's size better (Home
     /// fetches it from TMDB for catalog entries without an episode list).
-    /// `includesRating`: off in the title block (its ratings row has them).
     static func metaSegments(for item: MetaItem, seriesSize: String? = nil,
-                             includesRating: Bool = true, startYearOnly: Bool = false) -> [String] {
+                             startYearOnly: Bool = false) -> [String] {
         var segments: [String] = []
         segments.append(item.isSeries ? "Series"
                         : item.type == "movie" ? "Movie" : item.type.capitalized)
@@ -81,14 +80,9 @@ enum TitleBlock {
         } else if let runtime = item.runtime, !runtime.isEmpty {
             segments.append(runtime)
         }
-        if includesRating, let rating = item.imdbRating, !rating.isEmpty {
-            segments.append("\(ratingPrefix)\(rating)")
-        }
         return segments
     }
 
-    /// Prefix of the rating in the meta line.
-    static let ratingPrefix = "★ "
     /// How a still-running series shows its years ("{start}" = first year).
     static let ongoingYearFormat = "{start}–Present"
     /// Genres too generic to be THE genre (anime are all "Animation") —

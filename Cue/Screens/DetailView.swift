@@ -181,8 +181,6 @@ final class DetailViewModel: ObservableObject {
     private var metaIsFull = false
     private var detailApplied = false
     func seed(_ prepared: DetailPreparer.Prepared) {
-        let tmdb = prepared.tmdb
-        useEpisodeExtras = tmdb.useEpisodes
         shownPicture = prepared.picture
         shownLogo = prepared.logo
         if prepared.pictureLate, !prepared.pictureChosen, let choice = prepared.pictureChoice {
@@ -204,7 +202,7 @@ final class DetailViewModel: ObservableObject {
         if !prepared.extras.isEmpty { episodeExtras = prepared.extras }
         if mdbRatings == nil, let ratings = prepared.ratings { mdbRatings = ratings }
         if let detail = prepared.detail {
-            applyNow(detail: detail, tmdb: tmdb)
+            applyNow(detail: detail)
             if let parts = prepared.collectionParts { collectionParts = parts }
             detailApplied = true
         }
@@ -241,7 +239,7 @@ final class DetailViewModel: ObservableObject {
     /// Several seasons' extras at once (in parallel), published in ONE
     /// change — one season at a time, each re-rendered the whole page.
     func loadSeasons(_ seasons: [Int]) async {
-        guard useEpisodeExtras, meta.isSeries else { return }
+        guard meta.isSeries else { return }
         let wanted = seasons.filter { episodeExtras[$0] == nil }
         guard !wanted.isEmpty else { return }
         let id = meta.id, type = meta.type
@@ -281,7 +279,7 @@ final class DetailViewModel: ObservableObject {
 
     /// `settleUntil`: opened through the swap — fetch at once, but change
     /// nothing on the page before then (a redraw mid-animation drops frames).
-    func load(addonManager: AddonManager, mdbSettings: MDBListSettings = .default, tmdb: TMDBSettings = .default,
+    func load(addonManager: AddonManager, mdbSettings: MDBListSettings = .default,
               settleUntil: Date? = nil) async {
         // A previous load is mid-flight or mid-unwind: wait it out briefly.
         // Either it completes (we then just handle the enrichment retry) or
@@ -292,7 +290,7 @@ final class DetailViewModel: ObservableObject {
             waited += 1
         }
         guard !hasLoaded else {
-            if enrichmentPending { await enrich(tmdb: tmdb) }
+            if enrichmentPending { await enrich() }
             return
         }
         hasLoaded = true
@@ -300,7 +298,6 @@ final class DetailViewModel: ObservableObject {
         // the first frame), and a cancelled load leaves the stub meta — with
         // no episodes. Un-latch so the next appearance loads for real.
         defer { if Task.isCancelled { hasLoaded = false } }
-        useEpisodeExtras = tmdb.useEpisodes
         // Canonicalize the identity FIRST: TMDB-sourced items arrive as
         // `tmdb:<n>`, but progress / watched / library are keyed by id — the
         // same movie found via different addons would otherwise never match
@@ -371,8 +368,8 @@ final class DetailViewModel: ObservableObject {
             guard let self else { return }
             // (Seeded: the page has it — the request refreshed the cache.)
             if !self.detailApplied {
-                await self.apply(detail: await enrichTask?.value ?? nil, tmdb: tmdb)
-            } else if let collection = self.collection, self.collectionParts.isEmpty, tmdb.useCollections {
+                await self.apply(detail: await enrichTask?.value ?? nil)
+            } else if let collection = self.collection, self.collectionParts.isEmpty {
                 let parts = await TMDBService.collectionItems(id: collection.id).deduplicatedByID()
                 if !parts.isEmpty { self.collectionParts = parts }
             }
@@ -386,12 +383,12 @@ final class DetailViewModel: ObservableObject {
     /// Fetch (or re-fetch) the TMDB enrichment and fold it in. Sets
     /// `enrichmentPending` while it has not succeeded, so a reappearance of
     /// the page tries again instead of leaving the sections empty for good.
-    private func enrich(tmdb: TMDBSettings) async {
+    private func enrich() async {
         guard TMDBService.hasAPIKey else { enrichmentPending = false; return }
-        await apply(detail: await TMDBService.detail(imdbID: meta.id, type: meta.type), tmdb: tmdb)
+        await apply(detail: await TMDBService.detail(imdbID: meta.id, type: meta.type))
     }
 
-    private func apply(detail: TMDBService.Detail?, tmdb: TMDBSettings) async {
+    private func apply(detail: TMDBService.Detail?) async {
         guard let detail else {
             // Nothing came back (network flake, TMDB hiccup). Remember to
             // retry — but only when a key exists and enrichment was expected.
@@ -399,8 +396,8 @@ final class DetailViewModel: ObservableObject {
             return
         }
         enrichmentPending = false
-        applyNow(detail: detail, tmdb: tmdb)
-        if tmdb.useCollections, let collection {
+        applyNow(detail: detail)
+        if let collection {
             // (The film itself in it, marked: where it sits in its series.)
             collectionParts = await TMDBService.collectionItems(id: collection.id)
                 .deduplicatedByID()
@@ -409,28 +406,20 @@ final class DetailViewModel: ObservableObject {
 
     /// The TMDB details' sections, at once (the collection's titles are a
     /// request of their own).
-    private func applyNow(detail: TMDBService.Detail, tmdb: TMDBSettings) {
-        // Granular TMDB toggles gate which enriched sections appear.
-        if tmdb.useCredits {
-            cast = detail.cast
-            crew = detail.crew
-            director = detail.director
-        }
-        if tmdb.useDetails {
-            country = detail.country
-            language = detail.language
-        }
+    private func applyNow(detail: TMDBService.Detail) {
+        // (The account's TMDB `use…` switches aren't Cue's: every section.)
+        cast = detail.cast
+        crew = detail.crew
+        director = detail.director
+        country = detail.country
+        language = detail.language
         contentRating = detail.contentRating
-        // The toggles gate the facts the same way as the sections.
-        var facts = detail.facts
-        if !tmdb.useCredits { facts.creatorLine = nil }
-        if !tmdb.useDetails { facts.country = nil; facts.language = nil }
-        self.facts = facts
-        if tmdb.useReleaseDates { releaseDate = detail.releaseDate }
-        if tmdb.useMoreLikeThis { moreLikeThis = detail.moreLikeThis.deduplicatedByID() }
-        if tmdb.useProductions { companies = detail.companies }
-        if tmdb.useDetails { about = detail.about }
-        if tmdb.useCollections { collection = detail.collection }
+        facts = detail.facts
+        releaseDate = detail.releaseDate
+        moreLikeThis = detail.moreLikeThis.deduplicatedByID()
+        companies = detail.companies
+        about = detail.about
+        collection = detail.collection
     }
 
     /// Fetch MDBList source ratings, resolving a tmdb id to imdb first if needed.
@@ -438,13 +427,9 @@ final class DetailViewModel: ObservableObject {
         await MDBListService.ratings(for: meta, settings: settings)
     }
 
-    /// Whether to fetch per-episode TMDB extras (ratings / air dates). Set from
-    /// the TMDB "Episodes" toggle when the detail loads.
-    var useEpisodeExtras = true
-
     /// Load per-episode ratings + air dates for a season (once, cached).
     func loadSeason(_ season: Int) async {
-        guard useEpisodeExtras, episodeExtras[season] == nil, meta.isSeries else { return }
+        guard episodeExtras[season] == nil, meta.isSeries else { return }
         let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season)
         if !extras.isEmpty { episodeExtras[season] = extras }
     }
@@ -681,7 +666,7 @@ struct DetailView: View {
             // re-renders the whole page as its data lands, and doing that
             // mid-animation dropped frames.
             // (Fetching starts at once; the page only changes once it's over.)
-            await viewModel.load(addonManager: addonManager, mdbSettings: mdblist.settings, tmdb: tmdbSettings.settings,
+            await viewModel.load(addonManager: addonManager, mdbSettings: mdblist.settings,
                                  settleUntil: fromBillboard && !prepared
                                     ? Date().addingTimeInterval(ModeSwap.swapSettle + 0.15) : nil)
         }
@@ -1996,7 +1981,6 @@ final class DetailPreparer {
 
     final class Prepared {
         let id: String
-        let tmdb: TMDBSettings
         var meta: MetaItem?
         var extras: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
         var ratings: MDBListRatings?
@@ -2026,7 +2010,7 @@ final class DetailPreparer {
         var pictureLate = false
         /// The logo Home showed (else the record's).
         var logo: String?
-        init(id: String, tmdb: TMDBSettings) { self.id = id; self.tmdb = tmdb }
+        init(id: String) { self.id = id }
     }
 
     private var current: Prepared?
@@ -2034,7 +2018,7 @@ final class DetailPreparer {
 
     func start(_ item: MetaItem, keepsPicture: Bool = false) {
         guard let context = TitlePreloader.shared.context, !item.id.hasPrefix("tmdb:") else { return }
-        let prepared = Prepared(id: item.id, tmdb: context.tmdb)
+        let prepared = Prepared(id: item.id)
         if keepsPicture || !TMDBService.hasAPIKey {
             prepared.picture = Self.homePicture(item)
             prepared.pictureChosen = true
@@ -2050,7 +2034,6 @@ final class DetailPreparer {
         prepared.logo = item.logo
         current = prepared
         startedAt = CACurrentMediaTime()
-        let tmdb = context.tmdb
         Task { @MainActor in
             await TitleRecords.shared.refresh(item, [.show, .facts])
             prepared.showInfo = TitleRecords.shared.size(item)
@@ -2064,7 +2047,7 @@ final class DetailPreparer {
             let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: context.addonManager)
             // (Before the record is marked ready: the window draws with them.)
             prepared.ratings = await ratings
-            if meta.isSeries, tmdb.useEpisodes, TMDBService.hasAPIKey {
+            if meta.isSeries, TMDBService.hasAPIKey {
                 let id = meta.id, type = meta.type
                 prepared.extras = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
                     for season in meta.seasons {
@@ -2091,14 +2074,14 @@ final class DetailPreparer {
             prepared.meta = meta
             prepared.detail = await detail
             if !meta.isSeries {
-                if tmdb.useMoreLikeThis, prepared.detail?.moreLikeThis.isEmpty == false {
+                if prepared.detail?.moreLikeThis.isEmpty == false {
                     prepared.firstRowName = "More Like This"
-                } else if tmdb.useCollections, let collection = prepared.detail?.collection {
+                } else if let collection = prepared.detail?.collection {
                     prepared.firstRowName = collection.name
                 }
                 prepared.rowNameReady = true
             }
-            if tmdb.useCollections, let collection = prepared.detail?.collection {
+            if let collection = prepared.detail?.collection {
                 prepared.collectionParts = await TMDBService.collectionItems(id: collection.id)
                     .deduplicatedByID()
             }

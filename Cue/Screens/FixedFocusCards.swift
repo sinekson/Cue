@@ -2171,10 +2171,8 @@ final class FixedFocusBadges: UIView {
     static func rating(_ item: MetaItem, sources: Int = 1) -> Badge? {
         let settings = MDBListSettingsStore.current
         guard settings.showsRatings(onDetails: false) else { return nil }
-        let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
-        let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
         let known = TitleRecords.shared.ratings(item) ?? nil
-        let entries = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: false)
+        let entries = MDBListRatingsRow.entries(known, settings: settings, onDetails: false)
             .prefix(sources).map { Badge(mark: mark($0.provider), text: $0.text) }
         guard var first = entries.first else { return nil }
         first.more = Array(entries.dropFirst())

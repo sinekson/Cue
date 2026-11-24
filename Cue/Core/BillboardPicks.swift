@@ -448,7 +448,7 @@ enum CueRows {
     }
 
     /// Raised when a change to how rows are made should show at once.
-    static let version = 32
+    static let version = 33
     /// Today's Pick (the full-width card) doesn't show a title again for
     /// this long.
     static let spotlightRest: TimeInterval = 7 * 24 * 60 * 60

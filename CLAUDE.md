@@ -239,9 +239,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   score made a run-of-the-mill isekai a gem: niche fans vote alone there.)
   A rating top right on the same plate, alone on the first line, the badges wrapping under it
   (`FixedFocusBadges.rating`): the first source in Rating Providers' order
-  that has one (MDBList's from the title's record, else IMDb's: the
-  catalog's, else the daily file), its mark (`RatingMark`, 22 pt tall as the symbols; 18 looked small) and the score, plate and font the badges';
+  that has one (MDBList's from the title's record), its mark (`RatingMark`, 22 pt tall as the symbols; 18 looked small) and the score, plate and font the badges';
   tall cards and the open large card only, not Top 10's; none with ratings off or Details Only.
+  Every rating shown, IMDb's too, is MDBList's, the same on every
+  screen (decided 2026-11-24: the catalog's score, for Cue's rows TMDB's
+  under IMDb's mark, made Home and Details disagree); no MDBList, no
+  ratings. TMDB's score never goes into `imdbRating`.
   Ratings for ranking and badges are IMDb's own daily file
   (`IMDbRatings`, end of `MDBListService.swift`: `title.ratings.tsv.gz`,
   titles with 100+ votes, ~4 MB on disk, fetched again once a day, the
@@ -339,7 +342,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Details' episodes), gently dimmed: 80 % (`peekAlpha`; 45 % too dark,
   full brightness too loud).
   Continue Watching's art is the episode's TMDB still as Details', else the
-  add-on's, looked up under the launch curtain (`ContinueStills`).
+  add-on's, looked up under the launch curtain (`ContinueStills`). The
+  account's TMDB `use…` switches (`TMDBSettings`, NuvioTV's) are kept
+  only for the sync's round-trip: Cue ignores them (an account with
+  Episodes off left Continue Watching on the show's picture).
 - **Home's rows** are loaded at every launch (under the curtain: the saved
   ones at once; whether new ones are due waits for the account's pull,
   `LaunchPreloader.historySettled`: decided before it, a due build ran on a
@@ -914,8 +920,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   in two minutes). Launch refreshes what's reachable first
   under the curtain (then the first screen's badges are redrawn,
   `TitleRecords.badgesSettled`), then every Home row's titles in the queue's
-  deep band (ratings only for the first 15 each: the badges need the rest
-  there before a press, as they're never drawn late), again on coming back if an hour has passed. Not pictures, not the
+  deep band (every title's ratings first asked of MDBList in batches,
+  200 a request, so the records find them: before, only each row's
+  first 15 had them), again on coming back if an hour has passed. Not pictures, not the
   facts line or logo (in time already).
 - **Progress**: under 30 s played in a session, nothing is saved (a Start Over
   keeps its old position). After that the real position, seeks included: to

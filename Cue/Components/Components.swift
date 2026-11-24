@@ -1681,17 +1681,15 @@ struct MDBListRatingsRow: View {
     /// Chips onto further lines when they don't fit (About), not cut.
     var wraps = false
 
-    /// The row's entries: MDBList's, or — when it has none (no key,
-    /// nothing yet) — the catalog's own IMDb score, so a rating still shows.
-    /// None where Settings turned ratings off (`onDetails`: on Details).
+    /// The row's entries: every rating from MDBList, IMDb's too, the same
+    /// on every screen (decided 2026-11-24: a catalog's or TMDB's score
+    /// under IMDb's mark made Home and Details disagree); none without
+    /// MDBList, or where Settings turned ratings off (`onDetails`: on
+    /// Details).
     static func entries(_ ratings: MDBListRatings?, settings: MDBListSettings,
-                        imdbFallback: String?, onDetails: Bool) -> [MDBListRatingEntry] {
+                        onDetails: Bool) -> [MDBListRatingEntry] {
         guard settings.showsRatings(onDetails: onDetails) else { return [] }
-        let entries = ratings?.entries(settings: settings) ?? []
-        if entries.isEmpty, let imdb = imdbFallback, !imdb.isEmpty {
-            return [MDBListRatingEntry(provider: .imdb, text: imdb)]
-        }
-        return entries
+        return ratings?.entries(settings: settings) ?? []
     }
 
     private func chip(_ entry: MDBListRatingEntry) -> some View {

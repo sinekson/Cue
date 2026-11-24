@@ -115,8 +115,7 @@ struct DetailAbout: View {
         let all = factLines.flatMap { $0 }
         let rows = stride(from: 0, to: all.count, by: across).map { Array(all[$0 ..< min($0 + across, all.count)]) }
         let columnWidth = ((width - CGFloat(across - 1) * Self.columnGap) / CGFloat(across)).rounded(.down)
-        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: meta.imdbRating,
-                                                 onDetails: true)
+        let entries = MDBListRatingsRow.entries(ratings, settings: settings, onDetails: true)
         return VStack(alignment: .leading, spacing: 18) {
             ForEach(rows.indices, id: \.self) { r in
                 HStack(alignment: .top, spacing: Self.columnGap) {

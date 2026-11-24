@@ -574,7 +574,7 @@ struct HomeView: View {
             }
             // The background queue (TitlePreloader): Home's stores.
             TitlePreloader.shared.context = .init(
-                addonManager: addonManager, mdb: mdblist.settings, tmdb: tmdbSettings.settings,
+                addonManager: addonManager, mdb: mdblist.settings,
                 progress: progressStore, watched: watched)
         }
         .onDisappear {
@@ -604,7 +604,7 @@ struct HomeView: View {
         .onChange(of: viewModel.reloadRequest) { _, _ in scheduleReload() }
         .task(id: nextUpRefreshKey) { await refreshNextUpContinueItems() }
         .task(id: continueStillsKey) {
-            await stills.load(mergedContinueItems(), useEpisodes: tmdbSettings.settings.useEpisodes)
+            await stills.load(mergedContinueItems())
         }
         // Hourly clock nudge so the day bucket in `nextUpRefreshKey` notices a
         // midnight rollover while Home is left open. The key only changes once
@@ -1053,7 +1053,6 @@ struct HomeView: View {
     /// The episodes on Continue Watching, to look their stills up again
     /// when they change.
     private var continueStillsKey: String {
-        guard tmdbSettings.settings.useEpisodes else { return "" }
         return mergedContinueItems().compactMap(ContinueStills.key).joined(separator: ",")
     }
 
@@ -1095,8 +1094,8 @@ final class ContinueStills: ObservableObject {
     /// Looks up the episodes not yet known, a season at a time; returns
     /// the stills of `rows` (known or found).
     @discardableResult
-    func load(_ rows: [WatchProgress], useEpisodes: Bool) async -> [String] {
-        guard useEpisodes, TMDBService.hasAPIKey else { return [] }
+    func load(_ rows: [WatchProgress]) async -> [String] {
+        guard TMDBService.hasAPIKey else { return [] }
         var seasons: [String: (metaID: String, type: String, season: Int, episodes: [Int: String])] = [:]
         for row in rows {
             guard let key = Self.key(row), stills[key] == nil,
@@ -1484,8 +1483,7 @@ struct FixedFocusBillboardText: View {
     @MainActor
     static func ratingsChips(_ ratings: MDBListRatings?, settings: MDBListSettings, item: MetaItem,
                              onDetails: Bool = false) -> AnyView? {
-        let entries = MDBListRatingsRow.entries(ratings, settings: settings, imdbFallback: item.imdbRating,
-                                                onDetails: onDetails)
+        let entries = MDBListRatingsRow.entries(ratings, settings: settings, onDetails: onDetails)
         return entries.isEmpty ? nil : AnyView(MDBListRatingsRow(
             entries: Array(entries.prefix(ratingsShown))))
     }
@@ -1681,10 +1679,8 @@ struct BillboardCorners: View {
     private var ratings: [MDBListRatingEntry] {
         let settings = MDBListSettingsStore.current
         guard settings.showsRatings(onDetails: details) else { return [] }
-        let catalog = item.imdbRating.flatMap { $0.isEmpty ? nil : $0 }
-        let imdb = catalog ?? IMDbRatings.rating(item.id).map { MDBListProvider.imdb.format($0.value) }
         let known = TitleRecords.shared.ratings(item) ?? nil
-        let all = MDBListRatingsRow.entries(known, settings: settings, imdbFallback: imdb, onDetails: details)
+        let all = MDBListRatingsRow.entries(known, settings: settings, onDetails: details)
         return details ? all : Array(all.prefix(FixedFocusBillboardText.ratingsShown))
     }
 
@@ -1766,8 +1762,7 @@ enum FixedFocusShowInfo {
         let size = item.regularSeasons.isEmpty && info != nil
             ? TitleBlock.seriesSizeText(item, seasons: info?.seasons, episodes: info?.episodes)
             : TitleBlock.seriesSizeText(item)
-        return TitleBlock.metaSegments(for: item, seriesSize: size, includesRating: false,
-                                       startYearOnly: true)
+        return TitleBlock.metaSegments(for: item, seriesSize: size, startYearOnly: true)
             .joined(separator: "  •  ")
     }
 }

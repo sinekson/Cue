@@ -2101,12 +2101,11 @@ final class LaunchPreloader: ObservableObject {
             picture(first.background ?? first.poster, PictureSize.landscape)
             picture(first.logo, PictureSize.cardLogo)
         }
-        if let progress, let homeSettings, let tmdb {
+        if let progress, let homeSettings {
             let watching = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
-            let useEpisodes = tmdb.settings.useEpisodes
             jobs.append(.init(key: "stills", kind: "stills", lane: .data, band: .launch,
                               order: jobs.count, source: "launch") {
-                let stills = await ContinueStills.shared.load(watching, useEpisodes: useEpisodes)
+                let stills = await ContinueStills.shared.load(watching)
                 await withTaskGroup(of: Void.self) { group in
                     for url in stills {
                         group.addTask { @MainActor in
@@ -2122,8 +2121,9 @@ final class LaunchPreloader: ObservableObject {
     /// The rest of Home behind the minimum, nearest first (`LoadQueue`'s
     /// deep band): Details for the billboard's first title and the rows'
     /// (`TitlePreloader`, as if focus rested on the billboard), every title's
-    /// record (the billboard's and every row's: the badges are drawn from
-    /// them at once, never late; ratings only for each row's first 15), and
+    /// record (the billboard's and every row's: the badges and ratings are
+    /// drawn from them at once, never late; the ratings asked of MDBList in
+    /// batches first, 200 a request, so every title has them), and
     /// their pictures (each row's first 15) on
     /// disk at the size they show at — not decoded into memory (that would
     /// evict the first screen's). At launch, and coming back once an hour
@@ -2138,6 +2138,12 @@ final class LaunchPreloader: ObservableObject {
         let featured = HomeRow(id: Spotlight.featuredRowID, title: "Featured", items: picks)
         TitlePreloader.shared.focused(rows: [featured] + rows, row: 0, index: 0)
         var jobs: [LoadQueue.Job] = []
+        // Every title's ratings in a few batched requests: the records below
+        // then find them in MDBList's cache.
+        let rated = picks + rows.flatMap(\.items)
+        jobs.append(.init(key: "ratings", kind: "ratings", lane: .data, band: .deep, order: -1, source: "deep") {
+            await MDBListService.prefetch(rated, settings: MDBListSettingsStore.current)
+        })
         for (i, item) in picks.enumerated() {
             jobs.append(.record(item, band: .deep, order: i, source: "deep"))
             if let url = TMDBService.originalSize(item.background) ?? item.poster {
@@ -2147,8 +2153,7 @@ final class LaunchPreloader: ObservableObject {
         }
         for (r, row) in rows.enumerated() {
             for (i, item) in row.items.enumerated().dropFirst(15) {
-                jobs.append(.record(item, band: .deep, order: 10_000 + r * 100 + i, source: "deep",
-                                    parts: [.show, .facts]))
+                jobs.append(.record(item, band: .deep, order: 10_000 + r * 100 + i, source: "deep"))
             }
             for (i, item) in row.items.prefix(15).enumerated() {
                 let order = (r + 1) * 100 + i
@@ -2200,13 +2205,10 @@ final class LoadQueue {
         }
 
         /// A title's record (`TitleRecords`): its size, facts, ratings.
-        /// (`parts`: without ratings past a row's first 15 — MDBList
-        /// counts requests; the badges need only the show and its facts.)
         static func record(_ item: MetaItem, band: Band, order: Int, source: String,
-                           parts: Set<TitleRecords.Part> = [.show, .facts, .ratings],
                            then: (@MainActor () -> Void)? = nil) -> Job {
             Job(key: "record:\(item.id)", kind: "record", lane: .data, band: band, order: order, source: source) {
-                await TitleRecords.shared.refresh(item, parts)
+                await TitleRecords.shared.refresh(item, [.show, .facts, .ratings])
                 then?()
             }
         }
@@ -2528,8 +2530,6 @@ final class TitlePreloader {
     struct Context {
         let addonManager: AddonManager
         let mdb: MDBListSettings
-        let tmdb: TMDBSettings
-        var useEpisodeExtras: Bool { tmdb.useEpisodes }
         let progress: ProgressStore
         let watched: WatchedStore
     }
@@ -2674,7 +2674,7 @@ final class TitlePreloader {
         // A show: the season extras (Details asks for every season — the
         // first 10 here) and the stills around Play's episode.
         guard meta.isSeries else { return net }
-        if context.useEpisodeExtras, TMDBService.hasAPIKey {
+        if TMDBService.hasAPIKey {
             let id = meta.id, type = meta.type
             await withTaskGroup(of: Void.self) { group in
                 for season in meta.seasons.prefix(10) {
@@ -2686,8 +2686,7 @@ final class TitlePreloader {
         if let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress, watched: context.watched),
            let at = order.firstIndex(where: { $0.id == target.id }) {
             let season = target.season ?? 0
-            let extras = context.useEpisodeExtras
-                ? await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season) : [:]
+            let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season)
             for episode in order[max(0, at - 1)..<min(order.count, at + 5)] {
                 let still = episode.episode.flatMap { extras[$0]?.still }
                 if let url = TMDBService.originalSize(still) ?? episode.thumbnail {

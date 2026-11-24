@@ -566,7 +566,6 @@ enum TMDBService {
                 logo: nil,
                 description: show.overview,
                 releaseInfo: show.first_air_date.map { String($0.prefix(4)) },
-                imdbRating: show.vote_average.map { String(format: "%.1f", $0) },
                 genres: nil
             )
         }
@@ -580,7 +579,6 @@ enum TMDBService {
                 logo: nil,
                 description: movie.overview,
                 releaseInfo: movie.release_date.map { String($0.prefix(4)) },
-                imdbRating: movie.vote_average.map { String(format: "%.1f", $0) },
                 genres: nil
             )
         }
@@ -594,7 +592,6 @@ enum TMDBService {
                 logo: nil,
                 description: show.overview,
                 releaseInfo: show.first_air_date.map { String($0.prefix(4)) },
-                imdbRating: show.vote_average.map { String(format: "%.1f", $0) },
                 genres: nil
             )
         }
@@ -805,7 +802,6 @@ enum TMDBService {
                 logo: id.hasPrefix("tt") ? "https://images.metahub.space/logo/medium/\(id)/img" : nil,
                 description: item.description,
                 releaseInfo: item.releaseInfo,
-                imdbRating: item.rating.map { String(format: "%.1f", $0) },
                 genres: item.genres
             ))
         }
@@ -2335,8 +2331,7 @@ extension TMDBService {
                             poster: poster, background: background,
                             logo: "https://images.metahub.space/logo/medium/\(id)/img",
                             description: result.overview,
-                            releaseInfo: (result.release_date ?? result.first_air_date).map { String($0.prefix(4)) },
-                            imdbRating: result.vote_average.flatMap { $0 > 0 ? String(format: "%.1f", $0) : nil })
+                            releaseInfo: (result.release_date ?? result.first_air_date).map { String($0.prefix(4)) })
         }
     }
 
@@ -2623,7 +2618,6 @@ extension TMDBService {
                 poster: item.poster, background: item.background,
                 logo: facts.logo ?? "https://images.metahub.space/logo/medium/\(imdb)/img",
                 description: item.description, releaseInfo: item.releaseInfo,
-                imdbRating: item.rating.flatMap { $0 > 0 ? String(format: "%.1f", $0) : nil },
                 genres: withRomance(item.genres, facts, isMovie: item.isMovie))
             titles.append(CueTitle(item: meta, tmdbID: item.tmdbID, isMovie: item.isMovie, traits: facts))
         }
@@ -2701,7 +2695,6 @@ extension TMDBService {
             poster: poster, background: backdrop,
             logo: facts.logo ?? "https://images.metahub.space/logo/medium/\(imdbID)/img",
             description: facts.overview, releaseInfo: facts.year.map(String.init),
-            imdbRating: facts.rating > 0 ? String(format: "%.1f", facts.rating) : nil,
             genres: facts.genres.compactMap { CueRows.genreNames[$0] })
         return CueTitle(item: meta, tmdbID: tmdbID, isMovie: isMovie, traits: facts)
     }
