@@ -134,21 +134,23 @@ struct ProfileGate: View {
     @State private var pinToEdit = false
     /// A held profile's Settings page over the gate (by id).
     @State private var editing: Int?
-    /// The avatar rested on long enough for its "Hold to edit" hint.
-    @State private var hinted: Int?
-    /// How long focus rests on an avatar before its hint shows.
-    static let hintDelay: Duration = .seconds(0.5)
+    /// Opened from its pencil: Back lands there again (else on the avatar).
+    @State private var editFromPencil = false
     @FocusState private var focused: Int?
-    /// Add Profile's focus id (profiles count up from 1).
+    /// Add Profile's focus id (profiles count up from 1; their pencils
+    /// below 0, `pencilID`).
     private static let addID = 0
+    private static func pencilID(_ id: Int) -> Int { -id }
 
     var body: some View {
         ZStack {
             if let id = editing {
                 ProfileGateEditor(mode: .edit(id)) {
                     editing = nil
-                    // Back on the held avatar (deleted: the active one).
-                    let back = profiles.profiles.contains { $0.id == id } ? id : profiles.activeProfileID
+                    // Back where it was opened: its pencil, else the avatar
+                    // (deleted: the active one).
+                    let kept = profiles.profiles.contains { $0.id == id }
+                    let back = !kept ? profiles.activeProfileID : editFromPencil ? Self.pencilID(id) : id
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = back }
                 }
                 .ignoresSafeArea()
@@ -189,8 +191,9 @@ struct ProfileGate: View {
                     },
                     onCancel: {
                         pinProfile = nil
+                        let back = pinToEdit && editFromPencil ? Self.pencilID(locked.id) : locked.id
                         pinToEdit = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = locked.id }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = back }
                     }
                 )
                 .transition(.opacity)
@@ -271,18 +274,30 @@ struct ProfileGate: View {
                 .foregroundStyle(CueInk.primary)
             HStack(alignment: .top, spacing: 40) {
                 ForEach(profiles.profiles) { profile in
-                    Button { select(profile) } label: {
-                        GateTile(profile: profile, size: Self.avatarSize,
-                                 away: picked?.id == profile.id,
-                                 hint: hinted == profile.id && phase == .choosing) { centre in
-                            centres[profile.id] = centre
+                    let pencil = Self.pencilID(profile.id)
+                    VStack(spacing: GatePencil.gap) {
+                        Button { select(profile) } label: {
+                            GateTile(profile: profile, size: Self.avatarSize,
+                                     away: picked?.id == profile.id) { centre in
+                                centres[profile.id] = centre
+                            }
                         }
-                    }
-                    .buttonStyle(GateTileStyle())
-                    .focused($focused, equals: profile.id)
-                    // Held: its Settings page.
-                    .holdMenu(focused: focused == profile.id, direct: true) {
-                        [MenuEntry(title: "Edit Profile", icon: "gearshape") { edit(profile) }]
+                        .buttonStyle(GateTileStyle())
+                        .focused($focused, equals: profile.id)
+                        // Held: its Settings page (a shortcut for the pencil).
+                        .holdMenu(focused: focused == profile.id, direct: true) {
+                            [MenuEntry(title: "Edit Profile", icon: "gearshape") { edit(profile) }]
+                        }
+                        // Its pencil, under the focused avatar only (Netflix's):
+                        // Down reaches it, Left/Right along the pencils; from
+                        // anywhere else none can take focus.
+                        Button { edit(profile, fromPencil: true) } label: {
+                            GatePencil(shown: phase == .choosing && (focused == profile.id || focused == pencil))
+                        }
+                        .buttonStyle(GateTileStyle())
+                        .focused($focused, equals: pencil)
+                        .disabled(!(focused == profile.id || (focused ?? 0) < 0))
+                        .accessibilityLabel("Edit \(profile.name)")
                     }
                 }
                 if profiles.canAddProfile {
@@ -302,12 +317,6 @@ struct ProfileGate: View {
                 .animation(Motion.fade, value: continuing == nil)
                 .padding(.top, -24)
         }
-        .task(id: focused) {
-            hinted = nil
-            guard let id = focused, id > 0 else { return }
-            try? await Task.sleep(for: Self.hintDelay)
-            if !Task.isCancelled { hinted = id }
-        }
         // The title and the other profiles go as the picked one leaves.
         .opacity(phase == .choosing ? 1 : 0)
         .animation(Motion.fade, value: phase == .choosing)
@@ -325,7 +334,8 @@ struct ProfileGate: View {
     }
 
     /// A profile's page over the gate — a locked one's PIN first.
-    private func edit(_ profile: UserProfile) {
+    private func edit(_ profile: UserProfile, fromPencil: Bool = false) {
+        editFromPencil = fromPencil
         if profile.pinEnabled {
             pinToEdit = true
             pinProfile = profile
@@ -428,8 +438,6 @@ private struct GateTile: View {
     let size: CGFloat
     /// Picked: the avatar is the flyer now (`ProfileGate.flyer`).
     var away = false
-    /// Rested on: "Hold to edit" under the name (its room always kept).
-    var hint = false
     let onCentre: (CGPoint) -> Void
 
     var body: some View {
@@ -451,26 +459,43 @@ private struct GateTile: View {
             .opacity(away ? 0 : 1)
             .scaleEffect(isFocused ? ProfileGate.focusScale : 1)
             .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
-            VStack(spacing: 14) {
-                Text(profile.name)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(CueInk.color(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
-                    .lineLimit(1)
-                // The section hints' look (`SectionHint`).
-                Text("HOLD TO EDIT")
-                    .font(.system(size: SectionHint.size, weight: SectionHint.weight))
-                    .tracking(SectionHint.tracking)
-                    .foregroundStyle(CueInk.color(SectionHint.opacity))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .opacity(hint ? 1 : 0)
-                    .animation(Motion.fade, value: hint)
-            }
+            Text(profile.name)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(CueInk.color(isFocused ? FixedFocusText.primary : FixedFocusText.secondary))
+                .lineLimit(1)
             // Out of the grown avatar's way: by its growth below it.
             .offset(y: isFocused ? GateSlot.step(size) : 0)
             .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
         }
         .frame(width: size + GateSlot.sideRoom)
+    }
+}
+
+/// A profile's pencil under its name: a flat round plate (Add Profile's
+/// look, smaller), focused white with a dark pencil, grown as the avatars.
+/// Its room always kept; only its face hides (a hidden view can't take
+/// focus, and Left/Right go along the pencils).
+private struct GatePencil: View {
+    @Environment(\.isFocused) private var isFocused
+    let shown: Bool
+    static let size: CGFloat = 60
+    /// Under the name.
+    static let gap: CGFloat = 20
+
+    var body: some View {
+        Circle()
+            .fill(isFocused ? FlatControl.focus : FlatControl.rest)
+            .overlay {
+                Image(systemName: "pencil")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(isFocused ? FlatControl.contentOnFocus : FlatControl.content)
+            }
+            .frame(width: Self.size, height: Self.size)
+            .shadow(color: .black.opacity(isFocused ? 0.35 : 0), radius: 12, y: 6)
+            .scaleEffect(isFocused ? 1.1 : 1)
+            .animation(isFocused ? DetailActionButton.open : DetailActionButton.leave, value: isFocused)
+            .opacity(shown || isFocused ? 1 : 0)
+            .animation(Motion.fade, value: shown)
     }
 }
 

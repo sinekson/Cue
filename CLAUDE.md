@@ -1320,7 +1320,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   asked: the primary's, until its own page says otherwise (they only
   supply streams). (Tried 2026-11-24: all on one page, Edit Profile's
   look: the guided steps were preferred.)
-  The gate's profile editor (hold an avatar) is the same controller with
+  The gate's profile editor (the pencil under the focused avatar, or hold it) is the same controller with
   only `UIProfileEditPage`, centred (`ProfileGateEditor`; no Switch row;
   Back comes through the gate's exit handler, `gateEditorBack`).
   Two columns of flat cards under

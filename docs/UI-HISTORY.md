@@ -1029,11 +1029,16 @@ matching section before changing that part of the UI. Where this differs from
   gate edits through these pages: holding an avatar opens its page
   over the gate (`.holdMenu(direct:)`); a locked one asks its PIN first,
   and there's no Switch row (picking switches — `fromProfileGate`); Back
-  walks up, then the gate, focus on that avatar. Resting 0.5 s on an
-  avatar shows "HOLD TO EDIT" under its name (`SectionHint`'s look, its
-  room kept; `hintDelay`; tried: 1.5 s — late). (Tried: a hold menu with
-  the edit steps on the gate; a gear under the avatars opening the
-  Profiles overview — one step more than needed.)
+  walks up, then the gate, focus on that avatar. A pencil under the
+  focused avatar's name (2026-11-24, Netflix's: `GatePencil`, a flat
+  round plate 60 pt, focused white, 10 % larger): Down reaches it,
+  Left/Right go along the pencils, Select edits that profile, Back
+  returns to the pencil; holding the avatar still edits (a shortcut).
+  (Before: resting 0.5 s on an avatar showed "HOLD TO EDIT" under its
+  name, `SectionHint`'s look — hard to find; 1.5 s was late. Tried: a
+  hold menu with the edit steps on the gate; a gear under the avatars
+  opening the Profiles overview — one step more than needed; an edit
+  mode for the whole gate was talked over.)
   (Tried: switching from the Profiles page itself; the full-screen
   editor and Add / Edit tiles on the gate.)
   Then Sync: Sync Now, its value the last sync ("Today at
