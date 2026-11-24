@@ -32,6 +32,9 @@ struct HomeRow: Identifiable {
     var shape: CueRows.CardShape = .poster
     /// An episode row's episode per show (`CueRows.EpisodeCard`).
     var episodes: [String: CueRows.EpisodeCard] = [:]
+    /// The titles next in line (`CueRows.Row.spare`): Hide Watched refills
+    /// from them.
+    var spare: [MetaItem] = []
 
     /// The episode rows' state lines, as Continue Watching's: "S2:E5" and
     /// its day ("Today", "Yesterday", the weekday within a week, else the
@@ -229,7 +232,7 @@ final class HomeViewModel: ObservableObject {
             }
             return HomeRow(id: row.id, title: row.title, items: row.items, subtitles: subtitles,
                            tabs: row.tabs, badges: row.badges ?? [:], art: art,
-                           shape: row.shape ?? .poster, episodes: episodes)
+                           shape: row.shape ?? .poster, episodes: episodes, spare: row.spare ?? [])
         }
     }
 
@@ -482,7 +485,8 @@ struct HomeView: View {
     }
 
     /// Hide watched titles: the catalog rows without watched films and
-    /// finished shows; a row left empty goes.
+    /// finished shows, refilled from the titles next in line (`spare`) so
+    /// a row keeps its slot; one left empty goes.
     private func withoutWatched(_ rows: [HomeRow]) -> [HomeRow] {
         guard hideWatched else { return rows }
         return rows.compactMap { row in
@@ -490,8 +494,12 @@ struct HomeView: View {
             if row.id == Spotlight.featuredRowID || row.id == Spotlight.continueRowID
                 || row.id == Self.libraryRowID
                 || row.shape == .ranked { return row }
-            let items = row.items.filter { item in
+            let unwatched = { (item: MetaItem) -> Bool in
                 item.isSeries ? !finishedShows.contains(item.id) : !watched.isWatched(contentID: item.id)
+            }
+            var items = row.items.filter(unwatched)
+            if items.count < row.items.count {
+                items += row.spare.filter(unwatched).prefix(row.items.count - items.count)
             }
             guard !items.isEmpty else { return nil }
             return items.count == row.items.count ? row : row.with(items)

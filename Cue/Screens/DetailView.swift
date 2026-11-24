@@ -466,7 +466,6 @@ struct DetailView: View {
 
     /// Play: the stage, the first source found on it (`PlayLauncher`), the player.
     @ObservedObject private var launcher = PlayLauncher.shared
-    @ObservedObject private var ratings = TitleRatings.shared
 
     private func play(_ video: MetaVideo?, fromStart: Bool = false) {
         launcher.play(viewModel.meta, video, fromStart: fromStart, art: stageArt(video),
@@ -510,7 +509,7 @@ struct DetailView: View {
     @State private var billboardTagline: String?
     /// The action row's controls, for the enter-lands-on-Play redirect.
     private enum ActionControl: Hashable {
-        case play, library, info, love
+        case play, library, info
     }
     /// Entering the action row from ANY direction lands on the Play button:
     /// when focus arrives on any other control while the row didn't previously
@@ -1355,17 +1354,6 @@ struct DetailView: View {
                         }
                     )
                     .focused(focus, equals: .info)
-                    // Love: a heart, Select toggles it (Not for Me is the
-                    // cards' hold menus' only).
-                    let rating = ratings.rating(viewModel.meta.id)
-                    let meta = viewModel.meta
-                    DetailActionButton(
-                        icon: rating == .love ? "heart.fill" : "heart",
-                        title: rating == .love ? "Liked" : "Like",
-                        isPrimary: false, lit: litAction == .love, bare: true, untintedGlass: true,
-                        action: { TitleRatings.shared.rate(meta, .love) }
-                    )
-                    .focused(focus, equals: .love)
                 }
                 .focusSection()
             }

@@ -356,7 +356,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   left as they are, unused by Cue. Onboarding asks for a TMDB key, no way
   past it (`WelcomeKeyStep`: a phone QR or typed; one arriving with the
   account goes on by itself). Settings → Home & Details: Why These Rows,
-  Your Rows (below). Hide Watched Titles; ranked grids keep their ten.
+  Your Rows (below). Hide Watched Titles (a row refilled from the next
+  10 of its list, `Row.spare`, so it keeps its slot); ranked grids keep their ten.
   Home's rows made by Cue from TMDB (`CueRows` at the end of `BillboardPicks.swift`): titles
   only with a poster, a backdrop and an IMDb id (they play by it), TMDB's
   posters and logos (`TMDBService.traits`, 30 days on disk). A taste from
@@ -370,9 +371,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   counts only the watching it keeps (Japanese dramas for an anime watcher:
   little). New & Notable (`CueRows.showcase`, one mid-page row: new seasons of
   your shows and premieres of the last 30 days, scored by yours, taste and
-  popularity; 8–12. Coming Soon for You (`CueRows.comingSoon`, Home): what
+  popularity; 8–12; short of 8, 60 days, then 90 (`newsWider`). Coming Soon for You (`CueRows.comingSoon`, Home): what
   comes in the next 60 days in your taste (your shows' new seasons
-  always), the date as its badge, the same cards; 8–12.
+  always), the date as its badge, the same cards; 8–12; short of 8, 90
+  days, then past your taste (`comingWider`).
   Showcase cards (`FixedFocusShowcaseCell`), moving focus: the picture
   chosen as Top 10's (`TMDBService.cardScene`, below), cut around its
   faces (Vision); at the foot over
@@ -413,14 +415,29 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   word written downwards, a numeral over or behind the poster, a strip
   joined to the poster). **Home's order**: Continue Watching, Saved for
   Later (second: the quickest way back to it), then large and fixed
-  rows taking turns, 10 large (`homeLarge`), 21 rows in all: large,
+  rows taking turns, 10 large (`homeLarge`), 19 rows always (decided
+  2026-11-24: every slot fixed, only its content varies): large,
   Top Picks, large, Top 10, large, New Episodes, large, New & Notable,
   large, a best-ten grid, large, Today's Pick for You, large, Coming
-  Soon for You, large, rewatch, large, the second grid, large (grids
-  at rows 12 and 20). Never two large rows side by side (with every
-  large row open, three in a row read as one pattern): a fixed row
-  that doesn't make it takes its large row with it, that day has
-  fewer rows. More fixed rows, more large ones. The large rows
+  Soon for You, large, rewatch, large, the second grid, large: the
+  shapes keep those places (`fixedPattern`: tall, ranked, single, tall,
+  ranked, single, tall, single, ranked), which row of a shape goes where
+  is the day's weighted draw (`fixedWeights`, `weightedOrder`, decided
+  2026-11-24): tall Top Picks 3, New & Notable 1.5, Coming Soon 1;
+  ranked Top 10 2, person 1, studio 1; single New Episodes 2, Today's
+  Pick 1.5, rewatch 1 (first place about 55 / 50 / 44 % for the
+  heaviest). Never two large rows side by side (with every
+  large row open, three in a row read as one pattern). Every fixed row
+  fills, widening rather than dropping out (each says how); one failing
+  anyway (no network) still takes its large row with it.
+  **The weighted draw** (`CueRows.fromTaste`, `tasteShare`): a pick comes
+  from your taste 70 % of the time, else from outside it, seeded by the
+  day (the same all day); the other side when its own finds nothing.
+  Fresher, it finds something new, and a slot always fills. On each
+  large slot after the first, each grid's subject, Watch Again's
+  stand-in. Not inside the rows named for you (Top Picks, Today's Pick,
+  Coming Soon for You: all taste, their names promise it). Why These Rows
+  says "Outside your taste today". The large rows' taste side
   by score, the catalogue's and your own together (Because You Watched,
   the latest title first and always the first large row, two more of
   the last five by the day; Pick Back Up; the country's three biggest
@@ -429,7 +446,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   day's chance), never two of a group side by side (talked over
   2026-11-15: the specials dense at the top, spaced lower; 12 large rows,
   about 22 in all, runs of them at the end, was until 2026-11-17; 15 catalogue rows and every fixed row pinned to a
-  slot was before). Today's Pick for You (`spotlight`, the full-width
+  slot was before); the open side the catalogue by the day's chance
+  alone (`openRecipes`), a kind at most twice across both. With no taste
+  yet Top Picks (and so Today's Pick) are the better and more popular.
+  Today's Pick for You (`spotlight`, the full-width
   card): one showcase card the content's width, as tall as the tall
   cards (600 pt looked short), on the
   backdrop, grown as every card (not grown at all was hard to see), the tagline
@@ -440,12 +460,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   within a week (`spotlightRest`, `Saved.spotlights`), on Home nowhere
   else that day (not Top Picks, no row, not the billboard); films and
   shows. The best-ten grids (`gridsMade`): Top 10's grid,
-  two lines, ranked, two on Home: one person's, one studio's or
+  two lines, ranked, two on Home: always one person's, one studio's or
   network's (two people read as the same row twice), which first by the
-  day; a family with none qualifying gives its place to the other's
-  next. Each from its family's three with the most pull in your taste,
-  the day picking (fit within the family, the day's chance), the first
-  with ten. "The Best of …": IMDb's weighted rating (the Top 250's:
+  day. Each draws: your taste (the family's three with the most pull,
+  the day picking, then the rest) or outside it (`fromWorld`: who and
+  what is busiest behind today's popular and top rated titles, the day
+  picking), the other after, then both at half the vote floor; the
+  first with ten. "The Best of …": IMDb's weighted rating (the Top 250's:
   25,000 votes' worth of 7.0; plain rating with a vote floor let a
   12-minute short in); some days (35 %) "Essentials: …" by votes.
   Films under 40 minutes and TV films out; watched ones kept. A
@@ -468,16 +489,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   further back and in Pick Back Up. Dropped (a film stopped
   before 20 % and left 14 days; a show left 30 days after one or two
   episodes, three or more is Pick Back Up) is out of those rows, not a
-  Because You Watched seed, and counts against its traits at half Not for
-  Me's; a rating overrides it (Why These Rows lists them).
+  Because You Watched seed, and not counted in the taste (decided
+  2026-11-24: against at half Not for Me's was too harsh: people drop
+  for time, mood or a stream, not the genre); watching on ends it (Why
+  These Rows lists them).
   Opening Details, trailers and Search opens as signals, and runtime as a
   trait, were talked over: noise or said already. A rewatch row,
-  always (some days, 45 %, was before), of what you finished 180 days
-  ago or more: the season's ("Christmas Favourites", by its keywords),
+  always (some days, 45 %, was before), of what you finished 90 days
+  ago or more (180 was before): the season's ("Christmas Favourites", by its keywords),
   else A Year Ago This Month, else Watch Again (Comfort Shows needs
   rewatch data we don't have); plain posters with moving focus, when
   you finished it under each (`plain`, Saved for Later's look: nothing
-  to inspect in what you've seen). Your
+  to inspect in what you've seen); with nothing to rewatch (a new
+  profile) its slot shows Acclaimed You Haven't Seen (IMDb 8+, 50,000
+  votes, the draw: most like you or the day's chance; "IMDb 8.7" under
+  each). Your
   own rows show at 5 and ignore the two-rows cap.
   Rebuilt on a new day or when the recent titles change (after watching;
   every 6 h too was before), never while Home sits open. A build waits for every list, no
@@ -497,14 +523,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   plain sentence, `Why.reason`, `notes`, no scores, and its first nine
   titles with why each is in it, `Row.whys`), Rebuild Rows
   (`CueRows.rebuildRequested`: new rows when Home next opens; the build
-  its second line); Your Ratings (Remove), Passed Over (Show Again),
-  Dropped (Open). (Tried: one page of cards read one at a time with dots;
+  its second line); Your Ratings (Remove), Dropped (Open). (Tried: one page of cards read one at a time with dots;
   a page per kind of trait with "× usual" and Discover on Select; Home's
   rows as a list, a page each.)
   Each row says which tabs show it (`HomeRow.tabs`).
-  Passed over (`CueRows.Memory`, `Passes`): focus resting 1.5 s on a title
-  of Cue's rows without opening it counts once a day; three days and it's
-  out of the rows (a pass ages out after 30 days), fewer push it back; a
+  Passed over (`CueRows.Memory`, `Passes`), rotation only (decided
+  2026-11-24): focus resting 1.5 s on a title of Cue's rows without
+  opening it counts once a day; each pass of the last 14 days moves it
+  0.08 back in its rows, three at most (`rotation`); never out, never the
+  taste, no page; titles you have history with (watched, started, saved,
+  rated) never count (`forgetting`) (three days out for 30 was before:
+  it hid Demon Slayer, known and liked, its new season unwatched); a
   catalogue row gone through without moving 2 along it sinks, one explored
   or opened from rises (last 14 days). Seasonal rows only in their dates
   (Halloween, Christmas, New Year, Thanksgiving, Valentine's, winter, Pride,
@@ -512,9 +541,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   2026-11-19: Discover's This Season pinned does it). Talk and news shows never in a row.
   Ratings (`TitleRatings`, end of `BillboardPicks.swift`; Caches/Kept, not a cache:
   `KeptFiles`; tvOS writes nowhere else), decided 2026-11-18: watching already teaches
-  the taste, so only the two ends are asked. Love: Details' fourth button
-  (after About), a heart, Select toggles it, named "Like" / "Liked" (the rating stays Love).
-  Not for Me: a hold menu entry, the cards' only (a crossed heart; ✕ was
+  the taste, so only Not for Me is asked (Details' Like, a heart, went
+  2026-11-24: the steering it added was small, watching and finishing
+  say most of it, a title seen elsewhere is marked watched; older Likes
+  and Loves still count, fading as every watch). Not for Me: a hold menu entry, the cards' only (a crossed heart; ✕ was
   disliked; on Details, under a held Love, was not wanted: Details is for
   what you're curious about), checked while it holds, Select again
   clears it. I Like This is no
@@ -522,9 +552,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   ✕ ✓ ♥ tiles; Rate in the hold menus; a star opening into ✕ ✓ ♥ in
   place, the other buttons beside it or faded: too many buttons.) Next:
   ✕ ✓ ♥ on the player's end card, when there's an opinion. Unwatched
-  titles too. Like
+  titles too. An older Like
   counts 1.5×, Love 2× in the taste and seeds Because You Watched more;
-  both first in Watch Again; Not for Me is out of every row Cue makes
+  both first in Watch Again. A new profile's picks (What do you like)
+  are a starter taste (`.starter`, `seedStarter`): as a Love, fading as
+  real watching comes in, gone at 20 titles watched or started or 90
+  days (`starterFade`); never shown as ratings, never synced (a fake
+  watch would have gone into the Nuvio history). Not for Me is out of every row Cue makes
   (the world's and Pick Back Up too) and the billboard, its traits taken
   off the taste a little; Search, More Like This, collections and cast
   pages still show it. A change makes new rows on the next load. On the device only, per profile; never the Nuvio sync.
@@ -1258,7 +1292,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   rounds (`UINewProfilePage.lanes`; TMDB's popular alone, and two rows
   Films / Series with no peek for the second, were before);
   liked: the taste badge's red heart top left;
-  each a Love via `TitleRatings.seedLoves`; Skip / Continue (n)), Start
+  each a starter pick via `TitleRatings.seedStarter`; Skip / Continue (n)), Start
   from another profile (the profiles as the gate's avatars with names,
   Start Fresh a plate as Add Profile; the primary by default; with an
   account): Select on a profile picks it and goes down to a centred card
@@ -1319,8 +1353,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   fading at its edges (`UISettingsPageView.pin`): on one page the grid
   scrolled the header away.
   For You: From Your Watching (Your Taste, its columns on a page that
-  fits; Your Ratings, Passed Over, Dropped: pages, each a top row: Remove
-  All, Show All Again), Home's Rows
+  fits; Your Ratings, Dropped: pages, each a top row: Remove
+  All), Home's Rows
   (Rebuild on top, each row's reason, its titles' whys on its page);
   no full-screen panels (See Everything was).
   Home & Details is one card by how often each is changed: Trailers,

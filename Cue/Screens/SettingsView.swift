@@ -1397,7 +1397,7 @@ private final class HomeSettingsPage: UISettingsPage {
                 host.open(YourRowsSettingsPage(host: host))
             }),
             .link(.init(id: "h.forYou", title: "For You",
-                        description: "What Cue reads from your watching, and why Home's rows are there.") { [weak self] in
+                        description: "What Cue learns from your watching, and why each row on Home is there.") { [weak self] in
                 guard let host = self?.host else { return }
                 host.open(ForYouSettingsPage(host: host))
             }),
@@ -2929,7 +2929,7 @@ private final class UINewProfilePage: UISettingsPage {
         else if let hex = draft.colorHex { profiles.setColor(id: created.id, hex: hex) }
         // Add-ons only supply streams: the primary's, until it picks its own.
         profiles.setUsesPrimaryAddons(id: created.id, true)
-        TitleRatings.shared.seedLoves(draft.loves, for: created.id)
+        TitleRatings.shared.seedStarter(draft.loves, for: created.id)
         let draft = draft
         Task { [weak self] in
             if let pin = draft.pin,
@@ -3051,7 +3051,7 @@ private final class ForYouSettingsPage: UISettingsPage {
         }
     }
 
-    /// From Your Watching (Your Taste, Your Ratings, Passed Over, Dropped:
+    /// From Your Watching (Your Taste, Your Ratings, Dropped:
     /// their pages), Home's Rows (Rebuild on top, each row: why, its page).
     /// Nothing full screen.
     override func sections() -> [UISettingsSection] {
@@ -3062,34 +3062,25 @@ private final class ForYouSettingsPage: UISettingsPage {
         // Your Taste its own page (with the rest below it, its columns
         // never fit with what's to press: a page only read can't scroll).
         var left: [UISettingsRow] = [
-            .link(.init(id: "taste", title: "Your Taste", description: "What Cue reads from what you watch.",
+            .link(.init(id: "taste", title: "Your Taste", description: "What Cue has learned from what you watch and save.",
                         value: saved.taste.isEmpty ? nil : saved.titles == 1 ? "1 title" : "\(saved.titles) titles") { [weak self] in
                 guard let self else { return }
                 self.host.open(UIYourTastePage(host: self.host, saved: saved))
             }),
         ]
-        let ratings = TitleRatings.shared.snapshot()
-        let passed = saved.passedTitles?.count ?? saved.passedOver.count
+        let ratings = TitleRatings.shared.shown()
         let dropped = saved.droppedTitles?.count ?? saved.dropped?.count ?? 0
         if !ratings.isEmpty {
             left.append(.link(.init(id: "why.ratings", title: "Your Ratings",
-                                    description: "Liked and loved count more; Not for Me is never shown.",
+                                    description: "Not for Me is never in Cue's rows; earlier Likes still count.",
                                     value: "\(ratings.count)") { [weak self] in
                 guard let self else { return }
                 self.host.open(UIWhyRatingsPage(host: self.host))
             }))
         }
-        if passed > 0 {
-            left.append(.link(.init(id: "why.passed", title: "Passed Over",
-                                    description: "Looked at and left on three days: out for 30 days.",
-                                    value: "\(passed)") { [weak self] in
-                guard let self else { return }
-                self.host.open(UIWhyPassedPage(host: self.host, saved: saved))
-            }))
-        }
         if dropped > 0 {
             left.append(.link(.init(id: "why.dropped", title: "Dropped",
-                                    description: "Stopped early and left: out, and counted against. Rate it to change that.",
+                                    description: "Stopped early and left: out of Cue's rows, not counted in your taste.",
                                     value: "\(dropped)") { [weak self] in
                 guard let self else { return }
                 self.host.open(UIWhyDroppedPage(host: self.host, saved: saved))
@@ -3101,7 +3092,7 @@ private final class ForYouSettingsPage: UISettingsPage {
         let built = DateFormatter.settingsWhen.string(from: saved.builtAt)
         let header: UISettingsRow = .actions(.init(
             id: "why.rebuild", title: whys.count == 1 ? "1 Row" : "\(whys.count) Rows",
-            detail: rebuild ? "New rows when Home opens" : "Built \(built) from \(saved.titles) titles.",
+            detail: rebuild ? "New rows when Home opens" : "Built \(built) from \(saved.titles == 1 ? "1 title" : "\(saved.titles) titles") of yours.",
             actions: [rebuild
                 ? Self.undoAction("rebuild", spelled: true) { [weak self] in
                     CueRows.rebuildRequested = false
@@ -3113,7 +3104,9 @@ private final class ForYouSettingsPage: UISettingsPage {
                     self?.rebuild = true
                     self?.changed()
                 }]))
-        sections.append(UISettingsSection(label: "Home's Rows", rows: [header] + whys.enumerated().map { index, why in
+        let how: UISettingsRow = .note("Each spot on Home keeps its kind of row; what's in it changes every day. "
+            + "About two in three picks follow your taste, the rest come from outside it, so there's always something new.")
+        sections.append(UISettingsSection(label: "Home's Rows", rows: [header, how] + whys.enumerated().map { index, why in
             .link(.init(id: "why.row.\(index)", title: why.title, description: why.reason) { [weak self] in
                 guard let self else { return }
                 let row = saved.rows.first { $0.title == why.title && ($0.tabs?.contains("home") ?? true) }
@@ -3198,10 +3191,11 @@ private final class UIWhyRatingsPage: UISettingsPage {
         case .love: "Count twice in your taste, and seed Because You Watched."
         case .like: "Count one and a half times in your taste."
         case .notForMe: "Never in Cue's rows or the billboard."
+        case .starter: ""
         }
     }
 
-    private let ratings = TitleRatings.shared.snapshot()
+    private let ratings = TitleRatings.shared.shown()
     private var pending: Set<String> = [] { didSet { changed() } }
 
     override var title: String? { "Your Ratings" }
@@ -3245,67 +3239,7 @@ private final class UIWhyRatingsPage: UISettingsPage {
     }
 }
 
-/// Passed over: each with when it's back; Open, Show Again (undone in
-/// place; the rows made again when Home opens).
-private final class UIWhyPassedPage: UISettingsPage {
-    private let saved: CueRows.Saved
-    private var pending: Set<String> = [] { didSet { changed() } }
-
-    init(host: CardSettingsController, saved: CueRows.Saved) {
-        self.saved = saved
-        super.init(host: host)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var title: String? { "Passed Over" }
-
-    override func disappeared() {
-        guard !pending.isEmpty else { return }
-        CueRows.Memory.shared.letBackIn(Array(pending))
-        CueRows.rebuildRequested = true
-        pending = []
-    }
-
-    override func sections() -> [UISettingsSection] {
-        guard let titles = saved.passedTitles else {
-            return [UISettingsSection(rows: [.note("Rebuild Rows to see these titles here.")])]
-        }
-        let open = env.openTitle
-        let ids = titles.map(\.id)
-        let leftCount = ids.filter { !pending.contains($0) }.count
-        let header: UISettingsRow = .actions(.init(
-            id: "why.passed.all", title: "\(leftCount) Passed Over",
-            detail: "Out of the rows for 30 days, or until you let them back.",
-            actions: titles.isEmpty ? [] : [leftCount == 0
-                ? Self.undoAction("all", spelled: true, title: "Undo All") { [weak self] in self?.pending = [] }
-                : SettingsAction(title: "Show All Again", icon: "eye", key: "all", spelled: true) { [weak self] in
-                    self?.pending = Set(ids)
-                }]))
-        return [UISettingsSection(rows: [header] + titles.map { title in
-            let gone = pending.contains(title.id)
-            return .actions(.init(
-                id: "why.passed.\(title.id)", title: title.name,
-                detail: gone ? "Back when Home opens" : Self.back(title.until), dimmed: gone,
-                actions: [
-                    SettingsAction(title: "Open", icon: "info.circle", key: "open") {
-                        open?(MetaItem(id: title.id, type: title.type, name: title.name))
-                    },
-                    gone
-                        ? SettingsAction(title: "Undo", icon: "arrow.uturn.backward", key: "back") { [weak self] in self?.pending.remove(title.id) }
-                        : SettingsAction(title: "Show Again", icon: "eye", key: "back") { [weak self] in self?.pending.insert(title.id) },
-                ]))
-        })]
-    }
-
-    private static func back(_ until: Date?) -> String {
-        guard let until else { return "Out for now" }
-        let days = Int((until.timeIntervalSinceNow / 86_400).rounded(.up))
-        return days <= 1 ? "Back tomorrow" : "Back in \(days) days"
-    }
-}
-
-/// Dropped: each with how far you got; Open (rating it is what changes it).
+/// Dropped: each with how far you got; Open (watching on is what changes it).
 private final class UIWhyDroppedPage: UISettingsPage {
     private let saved: CueRows.Saved
 
@@ -3325,7 +3259,7 @@ private final class UIWhyDroppedPage: UISettingsPage {
         let open = env.openTitle
         let header: UISettingsRow = .actions(.init(
             id: "why.dropped.all", title: "\(titles.count) Dropped",
-            detail: "Stopped early and left. Rate one to change that.", actions: []))
+            detail: "Stopped early and left: out of Cue's rows until you watch on.", actions: []))
         return [UISettingsSection(rows: [header] + titles.map { title in
             .actions(.init(id: "why.dropped.\(title.id)", title: title.name, detail: title.note ?? "",
                            actions: [SettingsAction(title: "Open", icon: "info.circle", key: "open") {
