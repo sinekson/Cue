@@ -1624,7 +1624,7 @@ final class UpcomingModel: ObservableObject {
     static let daysBack = 7
     static let daysAhead = 14
     /// A day's lines at most: yours always, the rest by popularity.
-    static let perDay = 10
+    static let perDay = 15
     static let shows = 60
     /// A show not yours on more days than this in the window is a daily.
     static let dailyLimit = 6
@@ -1799,20 +1799,36 @@ final class UpcomingModel: ObservableObject {
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
-    /// TMDB's most popular shows with an episode in the window, their
-    /// current season's dates. News, reality, soap and talk left out, and
-    /// any show on most days (a daily one filled every day).
+    /// TMDB's most popular shows airing each day of the window (a page a
+    /// day: one list for the whole window left quiet days near empty),
+    /// their current season's dates. News, reality, soap and talk left
+    /// out, and any show on most days (a daily one filled every day).
     private static func popularShows(start: Date, end: Date, skip: Set<String>) async -> [Dated] {
-        var titles: [TMDBService.CueTitle] = []
-        for page in 1...2 {
-            let list = await TMDBService.cueList("/discover/tv", query: [
-                "air_date.gte": ymd(start), "air_date.lte": ymd(end), "sort_by": "popularity.desc",
-                "without_genres": "10763,10764,10766,10767", "vote_count.gte": "20", "include_adult": "false",
-                "page": String(page)], isMovie: false)
-            titles += list.titles
+        let calendar = Calendar.current
+        var days: [Date] = []
+        var day = start
+        while day < end {
+            days.append(day)
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? end
         }
-        var seen = skip
-        titles = titles.filter { seen.insert($0.item.id).inserted }
+        let lists = await boundedConcurrentMap(days, limit: 8) { day in
+            await TMDBService.cueList("/discover/tv", query: [
+                "air_date.gte": ymd(day), "air_date.lte": ymd(day), "sort_by": "popularity.desc",
+                "without_genres": "10763,10764,10766,10767", "vote_count.gte": "20", "include_adult": "false"],
+                isMovie: false).titles
+        }
+        // Each show's place in each day's list, and its best anywhere.
+        var titles: [TMDBService.CueTitle] = []
+        var rank: [String: [Date: Int]] = [:]
+        var best: [String: Int] = [:]
+        for (index, day) in days.enumerated() {
+            for (place, title) in lists[index].enumerated() where !skip.contains(title.item.id) {
+                let id = title.item.id
+                if rank[id] == nil { titles.append(title) }
+                rank[id, default: [:]][day] = place
+                best[id] = min(best[id] ?? place, place)
+            }
+        }
         let dates = await boundedConcurrentMap(titles, limit: 8) { await TMDBService.airDates(tmdbID: $0.tmdbID) }
         var out: [Dated] = []
         for (index, title) in titles.enumerated() {
@@ -1822,12 +1838,14 @@ final class UpcomingModel: ObservableObject {
                 byDay[day, default: []].append((found.season, found.episode))
             }
             guard byDay.count <= Self.dailyLimit else { continue }
+            let id = title.item.id
             for (day, episodes) in byDay {
                 let season = episodes.map(\.season).max() ?? 0
                 if let entry = episodeEntry(item: title.item, day: day, season: season,
                                             numbers: episodes.filter { $0.season == season }.map(\.episode),
                                             mine: false) {
-                    out.append((1000 + 3 * index, entry))
+                    let place = rank[id]?[day] ?? best[id] ?? 0
+                    out.append((1000 + 3 * place, entry))
                 }
             }
         }

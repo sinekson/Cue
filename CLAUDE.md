@@ -1286,7 +1286,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   building only those near view helped only a little). Down from the bar
   lands on the day the strip holds (`TopBar.entries`, its first title).
   Yours first (followed: watched, started, saved), then TMDB's popular
-  shows airing (no news, reality, soap, talk, nor dailies), films
+  shows airing, a page asked per day (one list for the three weeks
+  left quiet days near empty) (no news, reality, soap, talk, nor
+  dailies), up to 15 lines a day with all of yours, films
   opening in your country, the season's popular anime (AniList, no key;
   titles by IMDb id through Fribb's anime-lists, `AnimeIDs`, else TMDB's
   search by matching name; found nowhere: left out); a week back to two
