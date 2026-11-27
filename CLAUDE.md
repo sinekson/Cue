@@ -795,7 +795,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`captionRoom`: rows with no second line reserve one, not two); About's band white over the page in light. The
   page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
-  bands from its picture, stronger — each colour's saturation 1.5× the picture's (1.8 was before; k-means and the blur greyed them: barely noticeable), dimmed 30 % (40 % before), ceiling 0.34; light a
+  bands from its picture, stronger — each colour's saturation 1.5× the picture's (1.8 was before; k-means and the blur greyed them: barely noticeable); dark, the background's grey and warm lean with more of the title's colour (`detailsColour` 0.30, `detailsTint` 0.09; dimmed 30 % with a 0.34 ceiling was before: a dark picture near black, a bright one loud, apart from the background); light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
   the press finds them; without it Details read as Home; each picture's
   colours (`palette`, a few numbers) kept for 300 titles, worked out as
@@ -980,7 +980,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   way into the player goes through Details' card, where Details has it
   (`StagePictureView.detailsCard`, its picture moved for faces, its
   bottom fade), on the title's bands as Details' page, following the
-  setting, a step more vivid (saturation 1.8, 2.2 before: Home 1.2, Details 1.5;
+  setting, a step more vivid (saturation 1.8, 2.2 before: Home 1.2, Details 1.5; dark, `stageColour` 0.38, `stageTint` 0.115;
   the same layout deepening as the stage comes in, closer to the film;
   `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
   setting were first: a second change, and lights down goes dark
@@ -1418,7 +1418,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   colourful; 0.8× and 1.0× tried; Details' 1.5×), the darkest the base, the rest soft pools in a random layout
   of their own (tvOS's way; seeded by the picture, so it draws the same
   again), eight across the width, every third the base's colour for dark
-  bands; dark, light's mirror: sunk to 0.05–0.22 (`sunk`; 0.07–0.30 too light), a dark grey
+  bands; dark, light's mirror: sunk to 0.12–0.17 (`sunk`, Apple TV's Search measured 33–41 of 255, median 36, from Xcode's screenshot of the box read as raw sRGB (`colorAt` reads them ~15 levels light: don't measure with it); the dark bands only a little darker; 0.05–0.22 sank near black, the cards' edges lost on it; 0.16–0.22, median 47 on the TV, too bright; 0.07–0.30 too light); every colour capped near grey, the same for every picture dark's lightness squeezed but its colour on a scale of its own (`darkColour` 0.16: squeezed with it, a title's colours barely showed), the grey leaning a little warm whatever the title (`warm`, half Apple's red ~8 over blue: the whole too warm) (`darkTint` 0.055, `lightTint` 0.035 (0.035 and 0.03 lost the colour; 0.045 at 0.18–0.24 a bit bright and grey), `capped`: Apple's warm grey with faint tints; scaled alone, a vivid picture, Barbie's pink and cyan, lost the grey and the cards with it), a dark grey
   with the colours a tint over it (read too colourful dimmed alone
   beside light's silver); light: lifted to 0.62–0.90, base
   `Color(white: 0.68)`; grained, app-wide,
@@ -1460,7 +1460,7 @@ timing, so its own timing needs Core Animation; a bare sublayer resizes on Core
 Animation's own 0.25 s, so make it a view (`FixedFocusShade`); two identical
 layers crossfading dip (flicker); a SwiftUI hosting view's own opacity darkens
 the screen mid-fade, so fade a plain view holding it; never draw text twice;
-`CATransaction.flush()` or CA starts a runloop late; a view going out is frozen,
+`CATransaction.flush()` or CA starts a runloop late; Core Image adds an image premultiplied, so noise with alpha 0 adds nothing (the backgrounds' grain was lost, their bands' steps plain): a colour kernel adds it (`BandsPicture.grained`); a view going out is frozen,
 environment changes only reach it through its transition; SwiftUI's
 opacity on a stack fades each layer apart (a grey wash where they overlap):
 `.compositingGroup()` first; a wholly covered page

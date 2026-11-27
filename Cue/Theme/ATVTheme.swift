@@ -49,29 +49,21 @@ enum BandsPicture {
     static let grain: CGFloat = 6.0 / 255
     static let size = CGSize(width: 1920, height: 1080)
 
-    /// `image` read back at 16 bits, then grained going down to 8: each
-    /// channel the same random offset (grey grain), from two dice
-    /// (triangular — dithers dark gradients without banding on a TV).
     /// The grain added on the GPU before the picture goes to 8 bits (it
     /// keeps the dark gradients from banding): two noises summed, a
-    /// triangular ±`grain`/2, the same in each channel. (A per-pixel loop
-    /// on the CPU took seconds in a Debug build on the TV: Details' colours
-    /// came late.)
+    /// triangular ±`grain`/2, the same in each channel, added to the colour
+    /// alone by a kernel (added as an image, the noise's alpha of 0 wiped it
+    /// out: no grain at all, the bands' steps plain; opaque, alphas summed
+    /// to 2 and some pixels came out bright). (A per-pixel loop on the CPU
+    /// took seconds in a Debug build on the TV: Details' colours came late.)
     static func grained(_ image: CIImage, in rect: CGRect, context: CIContext) -> CGImage? {
-        let a = grain / 2
         let noise = CIFilter(name: "CIRandomGenerator")!.outputImage!.cropped(to: rect)
-            .applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: a, y: a, z: 0, w: 0),
-                "inputGVector": CIVector(x: a, y: a, z: 0, w: 0),
-                "inputBVector": CIVector(x: a, y: a, z: 0, w: 0),
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputBiasVector": CIVector(x: -a, y: -a, z: -a, w: 0),
-            ])
-        let out = image.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: noise])
-            .cropped(to: rect)
+        guard let out = grainKernel?.apply(extent: rect, arguments: [image, noise, grain / 2]) else { return nil }
         return context.createCGImage(out, from: rect, format: .RGBA8,
                                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
     }
+    private static let grainKernel = CIColorKernel(source:
+        "kernel vec4 grain(__sample s, __sample n, float a) { return vec4(s.rgb + (n.r + n.g - 1.0) * a, s.a); }")
 
     /// One for every drawing (making one each time cost tens of ms).
     static let shared = context()
@@ -101,12 +93,45 @@ enum BandsPicture {
     static func lifted(_ v: Double, darker: Double = 1) -> CGFloat {
         CGFloat((0.62 + 0.28 * v) * (1 - (1 - darker) * 0.4))
     }
-    /// A colour's channel for dark mode: toward tvOS's dark grey (its
-    /// Settings', about 11 %), the picture's colour a soft tint over it —
-    /// 0 lands at 5 %, 1 at 22 % (light's `lifted`, mirrored; 7–30 % was
-    /// too light).
+    /// A colour's channel for dark mode: toward tvOS's dark grey, the
+    /// picture's colour a soft tint over it — 0 lands at 12 %, 1 at 17 %,
+    /// Apple TV's Search (33–41 of 255, median 36, from Xcode's lossless
+    /// screenshot of the box, read as raw sRGB; NSBitmapImageRep's
+    /// `colorAt` reads such files about 15 levels light and misled
+    /// earlier tuning): a narrow spread, the bands a tint more than a
+    /// darkness; the darker bands only a little darker (5–22 % sank to
+    /// near black and the cards' edges went with it; 16–22 %, median 47 on
+    /// the TV, too bright; 7–30 % was too light).
     static func sunk(_ v: Double, darker: Double = 1) -> CGFloat {
-        CGFloat((0.05 + 0.17 * v) * (1 - (1 - darker) * 0.4))
+        CGFloat((0.12 + 0.05 * v) * (1 - (1 - darker) * 0.25))
+    }
+    /// How far the app's background may stray from grey, per channel, the
+    /// same for every picture (Apple TV's warm grey with faint tints): a
+    /// vivid picture's colours were the picture itself, the grey lost and
+    /// the cards with it (Barbie's pink and cyan).
+    static let darkTint: CGFloat = 0.055
+    static let lightTint: CGFloat = 0.035
+    /// Dark's grey leans warm whatever the title, the tint over it
+    /// (half Apple TV's red about 8 levels over blue: the whole read too warm); its lightness about
+    /// kept.
+    static let warm: (r: CGFloat, g: CGFloat, b: CGFloat) = (0.007, 0.0005, -0.0085)
+    /// Dark's colour, times the picture's own distance from its grey
+    /// (`darkTint` caps it).
+    static let darkColour = 0.16
+    /// Details' and the play stage's, dark: the same grey, more of the
+    /// title (the stage closer to the film).
+    static let detailsColour = 0.30
+    static let detailsTint: CGFloat = 0.09
+    static let stageColour = 0.38
+    static let stageTint: CGFloat = 0.115
+    /// A colour pulled toward its own grey until no channel strays more
+    /// than `cap`; its lightness kept.
+    static func capped(_ c: (CGFloat, CGFloat, CGFloat), _ cap: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+        let y = 0.2126 * c.0 + 0.7152 * c.1 + 0.0722 * c.2
+        let most = max(abs(c.0 - y), abs(c.1 - y), abs(c.2 - y))
+        guard most > cap else { return c }
+        let k = cap / most
+        return (y + (c.0 - y) * k, y + (c.1 - y) * k, y + (c.2 - y) * k)
     }
     /// Details' (`TitleBands`): the picture's colour stronger over the grey
     /// — 0 lands at 50 %, 1 at 92 %.
@@ -190,10 +215,11 @@ enum BandsPicture {
     /// A picture's colours as pools in a layout of their own (tvOS's way):
     /// the darkest the base, the rest spread across the screen at random
     /// (`seed`: the same picture, the same layout), each colour by its share.
-    /// Dark: dimmed by `dim` and never brighter than `brightest`. Light:
-    /// lifted to tvOS's light grey, the colours a tint (`lifted`).
-    static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)], dim: Double,
-                      brightest: Double, light: Bool = false, strong: Bool = false,
+    /// Dark: the app's grey with the colours a tint (`sunk`, Details' and
+    /// the stage's tint stronger). Light: lifted to tvOS's light grey, the
+    /// colours a tint (`lifted`).
+    static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)],
+                      light: Bool = false, strong: Bool = false,
                       saturation chosen: Double? = nil, seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard let darkest = palette.first else { return nil }
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
@@ -205,19 +231,24 @@ enum BandsPicture {
             func out(_ v: Double) -> Double { min(1, max(0, y + (v - y) * saturation)) }
             (c.r, c.g, c.b) = (out(c.r), out(c.g), out(c.b))
             if light {
-                let lift = strong ? liftedStrong : lifted
-                return (lift(c.r, extra), lift(c.g, extra), lift(c.b, extra))
+                if strong { return (liftedStrong(c.r, darker: extra), liftedStrong(c.g, darker: extra), liftedStrong(c.b, darker: extra)) }
+                let lit = (lifted(c.r, darker: extra), lifted(c.g, darker: extra), lifted(c.b, darker: extra))
+                return chosen == nil ? capped(lit, lightTint) : lit
             }
-            // The app's, dark: light's mirror, a dark grey with the
-            // picture's colours a tint over it (dimmed alone, they read
-            // too colourful beside light's silver). Details' keeps its own.
-            if !strong, chosen == nil {
-                return (sunk(c.r, darker: extra), sunk(c.g, darker: extra), sunk(c.b, darker: extra))
-            }
-            var (r, g, b) = (c.r * (1 - dim) * extra, c.g * (1 - dim) * extra, c.b * (1 - dim) * extra)
-            let light = 0.2126 * r + 0.7152 * g + 0.0722 * b
-            if light > brightest { let k = brightest / light; (r, g, b) = (r * k, g * k, b * k) }
-            return (CGFloat(r), CGFloat(g), CGFloat(b))
+            // Dark: light's mirror, a dark grey with the picture's colours
+            // a tint over it (dimmed alone, they read too colourful beside
+            // light's silver), Details and the stage the same grey with
+            // more of the title's colour (dimmed, their own, a dark
+            // picture went near black and a bright one loud). Lightness
+            // squeezed into `sunk`'s narrow range, the colour on a scale of
+            // its own (squeezed with it, every channel in 5 %, a title's
+            // colours barely showed), then capped.
+            let (scale, cap) = chosen != nil ? (Self.stageColour, Self.stageTint)
+                : strong ? (Self.detailsColour, Self.detailsTint) : (Self.darkColour, Self.darkTint)
+            let grey = sunk(y, darker: extra)
+            func tinted(_ v: Double) -> CGFloat { grey + CGFloat((v - y) * scale) }
+            let tint = capped((tinted(c.r), tinted(c.g), tinted(c.b)), cap)
+            return (tint.0 + warm.r, tint.1 + warm.g, tint.2 + warm.b)
         }
         var random = SeededRandom(seed: seed)
         let colours = palette.count > 1 ? Array(palette.dropFirst()) : palette
@@ -545,7 +576,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands9-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands15-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
     }
 
     private func drawn(_ entry: Entry?, _ mode: Mode) -> (entry: Entry, file: URL)? {
@@ -670,8 +701,7 @@ final class BackgroundPicks {
         let seed = Self.seed(url)
         return await Task.detached(priority: .utility) { () -> Bool in
             // Dark sinks the colours, light lifts them: neither dims.
-            guard let bands = BandsPicture.pools(from: palette, dim: 0, brightest: 1,
-                                                 light: mode == .light, seed: seed),
+            guard let bands = BandsPicture.pools(from: palette, light: mode == .light, seed: seed),
                   let picture = BandsPicture.render(base: bands.base, pools: bands.pools),
                   let png = UIImage(cgImage: picture).pngData() else { return false }
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
@@ -721,8 +751,8 @@ final class BackgroundPicks {
 }
 
 /// DETAILS' BACKGROUND: its picture's colours as bands, as the app's
-/// background (`BandsPicture.pools`) but stronger — dimmed less, a
-/// brighter ceiling; light, a deeper tint (`liftedStrong`) — the title's
+/// background (`BandsPicture.pools`) but stronger — dark, the same grey
+/// with more of the title's colour; light, a deeper tint (`liftedStrong`) — the title's
 /// flavour on its page (Details is the billboard's card opened: without it
 /// it read as Home). Drawn when focus rests on a title (`TitlePictures`),
 /// kept in memory for the last few; the opening and Details draw the same
@@ -730,8 +760,6 @@ final class BackgroundPicks {
 @MainActor
 final class TitleBands {
     static let shared = TitleBands()
-    static let dim = 0.3
-    static let brightest = 0.34
     private static let kept = 6
 
     private var images: [String: UIImage] = [:]
@@ -804,8 +832,7 @@ final class TitleBands {
         let task = Task<UIImage?, Never> {
             guard let palette = await self.palette(for: url) else { return nil }
             return await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                guard let bands = BandsPicture.pools(from: palette, dim: Self.dim,
-                                                     brightest: Self.brightest, light: light, strong: true,
+                guard let bands = BandsPicture.pools(from: palette, light: light, strong: true,
                                                      saturation: saturation,
                                                      seed: seed),
                       let picture = BandsPicture.render(base: bands.base, pools: bands.pools)
