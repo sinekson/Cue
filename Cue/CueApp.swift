@@ -679,6 +679,8 @@ struct RootView: View {
                 if phase == .background { launch.wentAway() }
                 if old == .background, phase != .background {
                     launch.cameBack(needed: playback == nil && !showWelcome)
+                    // Back in the app: another shape for the background.
+                    BackgroundStore.shared.reshape()
                 }
                 if phase == .active {
                     // Opening the app syncs the whole account (at most

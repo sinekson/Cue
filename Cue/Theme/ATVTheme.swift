@@ -89,41 +89,352 @@ enum BandsPicture {
 
     /// A colour's channel for light mode: toward tvOS's light grey (its
     /// Settings', about 70 %), the picture's colour a soft tint over it —
-    /// 0 lands at 62 %, 1 at 90 %.
-    static func lifted(_ v: Double, darker: Double = 1) -> CGFloat {
-        CGFloat((0.62 + 0.28 * v) * (1 - (1 - darker) * 0.4))
+    /// 0 lands at `liftLow`, 1 at `liftHigh`.
+    static func lifted(_ v: Double, darker: Double = 1, _ t: Tuning = Tuning()) -> CGFloat {
+        CGFloat((t.liftLow + (t.liftHigh - t.liftLow) * v) * (1 - (1 - darker) * 0.4))
     }
-    /// A colour's channel for dark mode: toward tvOS's dark grey, the
-    /// picture's colour a soft tint over it — 0 lands at 12 %, 1 at 17 %,
-    /// Apple TV's Search (33–41 of 255, median 36, from Xcode's lossless
-    /// screenshot of the box, read as raw sRGB; NSBitmapImageRep's
-    /// `colorAt` reads such files about 15 levels light and misled
-    /// earlier tuning): a narrow spread, the bands a tint more than a
-    /// darkness; the darker bands only a little darker (5–22 % sank to
-    /// near black and the cards' edges went with it; 16–22 %, median 47 on
-    /// the TV, too bright; 7–30 % was too light).
-    static func sunk(_ v: Double, darker: Double = 1) -> CGFloat {
-        CGFloat((0.12 + 0.05 * v) * (1 - (1 - darker) * 0.25))
+
+    /// The drawing's values, in one place so the background preview
+    /// (`BackgroundPreview`, a card's hold menu) can change them on the fly;
+    /// the app draws with the defaults.
+    struct Tuning: Equatable {
+        // Light: the darkest the base, the rest pools of the picture's
+        // colours, `saturation` times its own, lifted to tvOS's light grey
+        // (0 at `liftLow`, 1 at `liftHigh`), capped at `lightTint` a channel.
+        var saturation = 1.2
+        var lightTint: CGFloat = 0.035
+        var liftLow = 0.62
+        var liftHigh = 0.90
+        /// The base (the picture's darkest colour, and the darker pools of
+        /// its colour): how much of its colour it keeps, 1 all of it, 0 a
+        /// neutral grey; its lightness fixed (nil: the picture's, lifted).
+        var baseColour = 1.0
+        var baseLight: CGFloat? = nil
+        /// Every title to the same amount of colour: the pools' colour,
+        /// averaged by share (a channel's most from its grey, after the
+        /// lift: `colourAmount`), brought to this by a gain on the
+        /// saturation within `gainLimits`; nil: the saturation alone.
+        var colourTarget: Double? = nil
+        var gainLimits: ClosedRange<Double> = 0.6...3.0
+
+        // Dark (2026-11-27, after tvOS's own dark backdrop, measured on the
+        // TV: a neutral grey from ~30 to ~64 of 255 in large soft areas, the
+        // colour in a few of them). The title gives the hues, never the
+        // amount: the picture's saturation times a factor was everywhere on
+        // Barbie (its darkest colour, a maroon, was the base) and nothing on
+        // a dull picture, all within 8 levels of lightness.
+        /// The base, every title's: a warm dark grey.
+        var darkBase: CGFloat = 0.125
+        /// Neutral areas over it, lighter and darker: the structure.
+        var darkLighter: ClosedRange<CGFloat> = 0.21...0.26
+        var darkDarker: ClosedRange<CGFloat> = 0.095...0.105
+        /// The spots' lightness (lifted, as tvOS's colour sits in its
+        /// lighter areas) and colour: each channel's most from its grey,
+        /// the same for every picture.
+        var spotLight: CGFloat = 0.21
+        var spotColour: CGFloat = 0.07
+        /// How many, and the first's radii (fractions of the screen's width
+        /// and height; the others 0.06 and 0.10 smaller).
+        var spots = 2
+        var spotWidth: ClosedRange<CGFloat> = 0.24...0.32
+        var spotHeight: ClosedRange<CGFloat> = 0.55...0.75
+
+        /// Both: the blur over the pools (1080p points).
+        var blur: CGFloat = 60
+        /// Added to the picture's seed: another layout of the same colours.
+        var layout: UInt64 = 0
+
+        // Picture (trying in the preview, 2026-11-27, tvOS's way, measured
+        // off Photos' light backdrop: 188–244 of 255, colour up to ~52 in
+        // its sky, neutral where the photo was): the backdrop itself,
+        // blurred to its big masses, its lightness pressed into a band
+        // whatever the picture (its 2nd percentile at the low end, 98th at
+        // the high), its colour kept but eased in under a ceiling.
+        enum Method: Equatable { case backdrop, pools, picture, tinted }
+        var method = Method.backdrop
+        /// The blur's radius, a fraction of the screen's width.
+        var pictureBlur: CGFloat = 0.10
+        var darkRange: ClosedRange<CGFloat> = 0.12...0.25
+        var lightRange: ClosedRange<CGFloat> = 0.74...0.96
+        /// The picture's colour, times its own, then eased under the
+        /// ceiling (a channel's most from its grey).
+        var pictureColour: CGFloat = 1.0
+        var darkCeiling: CGFloat = 0.06
+        var lightCeiling: CGFloat = 0.14
+        /// Mirrored, so the screen doesn't echo the poster's composition.
+        var mirror = false
+
+        // Tinted (trying in the preview, 2026-11-27): one neutral backdrop
+        // of lighter and darker areas, the same for every title (its shape
+        // from `layout` alone, to change now and then for variety), tinted
+        // by the title: its first hue in the lighter areas, its second in
+        // the darker, at a set strength (`darkTintAmount`, a channel's most
+        // from its grey), the darker areas taking `tintSpread` of it. Dark
+        // uses `darkBase`, `darkLighter`, `darkDarker` for its backdrop.
+        var lightBase: CGFloat = 0.84
+        var lightLighter: ClosedRange<CGFloat> = 0.92...0.96
+        var lightDarker: ClosedRange<CGFloat> = 0.74...0.78
+        var darkTintAmount: CGFloat = 0.06
+        var lightTintAmount: CGFloat = 0.10
+        var tintSpread: CGFloat = 0.4
+
+        // Backdrop (2026-11-27, the app's): tvOS's own backdrop, measured
+        // off its Photos screens (dark and light share one shape): a
+        // coloured band across the top, a neutral middle (warm in dark),
+        // a darker coloured mass at one side, the lightest corner below
+        // the middle's other side, the darkest beside the mass. The
+        // title's first hue in the band, its second in the mass, at a
+        // set strength (`…BandColour`, `…MassColour`: a channel's most
+        // from its grey, tvOS's ~0.12 and ~0.10 in light, ~0.055 and
+        // ~0.04 in dark); its lightness levels tvOS's (of 255: light band
+        // 225, middle 215, mass 193, lightest 240; dark band 50, middle
+        // 48, mass 34, lightest 54, darkest 32: the cards' edges stay
+        // clear of it). The shape mirrored and moved a little by the seed.
+        var lightLevels = Levels(band: 0.90, middle: 0.85, mass: 0.73, lightest: 0.97, darkest: 0.77)
+        var darkLevels = Levels(band: 0.205, middle: 0.195, mass: 0.12, lightest: 0.225, darkest: 0.11)
+        var lightBandColour: CGFloat = 0.12
+        var lightMassColour: CGFloat = 0.12
+        var darkBandColour: CGFloat = 0.055
+        var darkMassColour: CGFloat = 0.045
+        var backdropBlur: CGFloat = 90
     }
-    /// How far the app's background may stray from grey, per channel, the
-    /// same for every picture (Apple TV's warm grey with faint tints): a
-    /// vivid picture's colours were the picture itself, the grey lost and
-    /// the cards with it (Barbie's pink and cyan).
-    static let darkTint: CGFloat = 0.055
-    static let lightTint: CGFloat = 0.035
-    /// Dark's grey leans warm whatever the title, the tint over it
-    /// (half Apple TV's red about 8 levels over blue: the whole read too warm); its lightness about
-    /// kept.
+    struct Levels: Equatable {
+        var band: CGFloat, middle: CGFloat, mass: CGFloat, lightest: CGFloat, darkest: CGFloat
+    }
+
+    /// Where a part of the Backdrop sits: its centre and radii, fractions
+    /// of the screen.
+    struct Place { let x: CGFloat, y: CGFloat, rx: CGFloat, ry: CGFloat }
+    struct Composition { let band, mass, middle, lightest, darkest: Place }
+    /// The Backdrop's compositions, all of the same parts (tvOS's, the
+    /// first): the band along an edge or sweeping from a corner, the mass at
+    /// a side, a corner or as a second band, the lightest and darkest at
+    /// the edges, apart; the neutral middle always as large as the colour.
+    /// Mirrored at random, and moved a little, each draw.
+    static let compositions: [Composition] = [
+        // tvOS's: the band on top, the mass at a side.
+        Composition(band: Place(x: 0.50, y: -0.02, rx: 1.25, ry: 0.48), mass: Place(x: 0.90, y: 0.62, rx: 0.30, ry: 0.62),
+                    middle: Place(x: 0.42, y: 0.62, rx: 0.30, ry: 0.45), lightest: Place(x: 0.12, y: 1.00, rx: 0.30, ry: 0.40),
+                    darkest: Place(x: 0.72, y: 1.00, rx: 0.22, ry: 0.40)),
+        // Upside down: the band along the foot.
+        Composition(band: Place(x: 0.50, y: 1.02, rx: 1.25, ry: 0.48), mass: Place(x: 0.90, y: 0.38, rx: 0.30, ry: 0.62),
+                    middle: Place(x: 0.42, y: 0.38, rx: 0.30, ry: 0.45), lightest: Place(x: 0.12, y: 0.00, rx: 0.30, ry: 0.40),
+                    darkest: Place(x: 0.72, y: 0.00, rx: 0.22, ry: 0.40)),
+        // A sweep from a top corner, the mass in the opposite one.
+        Composition(band: Place(x: 0.05, y: 0.00, rx: 0.75, ry: 0.75), mass: Place(x: 0.95, y: 1.00, rx: 0.40, ry: 0.55),
+                    middle: Place(x: 0.55, y: 0.50, rx: 0.35, ry: 0.50), lightest: Place(x: 0.92, y: 0.05, rx: 0.25, ry: 0.35),
+                    darkest: Place(x: 0.10, y: 1.00, rx: 0.25, ry: 0.35)),
+        // Two bands, top and foot, a light middle between.
+        Composition(band: Place(x: 0.50, y: -0.05, rx: 1.25, ry: 0.40), mass: Place(x: 0.50, y: 1.05, rx: 1.10, ry: 0.40),
+                    middle: Place(x: 0.50, y: 0.50, rx: 0.35, ry: 0.35), lightest: Place(x: 0.15, y: 0.55, rx: 0.25, ry: 0.35),
+                    darkest: Place(x: 0.92, y: 0.55, rx: 0.18, ry: 0.35)),
+        // The band down a side, the mass low on the other.
+        Composition(band: Place(x: -0.02, y: 0.50, rx: 0.40, ry: 1.20), mass: Place(x: 0.80, y: 1.00, rx: 0.35, ry: 0.45),
+                    middle: Place(x: 0.55, y: 0.45, rx: 0.35, ry: 0.50), lightest: Place(x: 0.88, y: 0.00, rx: 0.30, ry: 0.40),
+                    darkest: Place(x: 0.98, y: 0.60, rx: 0.18, ry: 0.35)),
+        // The band over a top corner, the mass low on the other side, the
+        // lightest under the middle.
+        Composition(band: Place(x: 0.70, y: 0.00, rx: 0.75, ry: 0.50), mass: Place(x: 0.08, y: 0.75, rx: 0.30, ry: 0.60),
+                    middle: Place(x: 0.50, y: 0.55, rx: 0.35, ry: 0.50), lightest: Place(x: 0.55, y: 1.00, rx: 0.35, ry: 0.35),
+                    darkest: Place(x: 0.05, y: 0.00, rx: 0.25, ry: 0.35)),
+    ]
+
+    /// tvOS's own blue, for a title with no hue of its own (half strength).
+    static let tvBlue = SIMD3<Double>(-1, 0.2, 0.86)
+
+    /// The Backdrop method (`Tuning.method`, the app's).
+    static func backdrop(from palette: [Colour], light: Bool, seed: UInt64, tuning t: Tuning) -> CGImage? {
+        var random = SeededRandom(seed: seed &+ t.layout)
+        let flip = Bool.random(using: &random)
+        func x(_ v: CGFloat) -> CGFloat { let v = v + .random(in: -0.05...0.05, using: &random); return flip ? 1 - v : v }
+        func y(_ v: CGFloat) -> CGFloat { v + .random(in: -0.05...0.05, using: &random) }
+        func size(_ v: CGFloat) -> CGFloat { v * .random(in: 0.88...1.12, using: &random) }
+        let found = hues(palette, count: 2)
+        let (a, b, k) = found.isEmpty ? (tvBlue, tvBlue, 0.5) : (found[0], found[1], 1.0)
+        let l = light ? t.lightLevels : t.darkLevels
+        let (bandColour, massColour) = light ? (t.lightBandColour, t.lightMassColour) : (t.darkBandColour, t.darkMassColour)
+        func neutral(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+            light ? (v, v, v) : (v + warm.r, v + warm.g, v + warm.b)
+        }
+        func tinted(_ v: CGFloat, _ hue: SIMD3<Double>, _ amount: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+            let d = hue * Double(amount) * k
+            return (max(0, v + CGFloat(d.x)), max(0, v + CGFloat(d.y)), max(0, v + CGFloat(d.z)))
+        }
+        // One of the compositions, its parts where it puts them (x, y,
+        // radii; before the mirror and the shifts).
+        let shape = compositions[Int.random(in: 0..<compositions.count, using: &random)]
+        func pool(_ c: (CGFloat, CGFloat, CGFloat), _ p: Place) -> Pool {
+            Pool(r: c.0, g: c.1, b: c.2, x: x(p.x), y: y(p.y), rx: size(p.rx), ry: size(p.ry))
+        }
+        // Back to front: the darkest, the mass, the middle, the lightest,
+        // the band over all.
+        let pools = [
+            pool(neutral(l.darkest), shape.darkest),
+            pool(tinted(l.mass, b, massColour), shape.mass),
+            pool(neutral(l.middle), shape.middle),
+            pool(neutral(l.lightest), shape.lightest),
+            pool(tinted(l.band, a, bandColour), shape.band),
+        ]
+        return render(base: neutral(l.middle), pools: pools, blur: t.backdropBlur)
+    }
+
+    /// The picture's hues for its spots and tints, most colourful by share
+    /// first, each another hue (40° apart) or the first again; each a
+    /// direction from grey, its largest channel 1. None for a grey picture.
+    static func hues(_ palette: [Colour], count: Int) -> [SIMD3<Double>] {
+        typealias Hue = (d: SIMD3<Double>, chroma: Double, angle: Double, share: Double)
+        let hues: [Hue] = palette.compactMap { c in
+            let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+            let d = SIMD3(c.r - y, c.g - y, c.b - y)
+            let chroma = max(abs(d.x), abs(d.y), abs(d.z))
+            guard chroma >= hueFloor else { return nil }
+            return (d / chroma, chroma, atan2(sqrt(3) * (c.g - c.b), 2 * c.r - c.g - c.b), c.share)
+        }.sorted { $0.chroma * $0.share.squareRoot() > $1.chroma * $1.share.squareRoot() }
+        var chosen: [Hue] = []
+        for hue in hues where chosen.count < count {
+            let apart = chosen.allSatisfy { other in
+                let gap = abs(hue.angle - other.angle).truncatingRemainder(dividingBy: 2 * .pi)
+                return min(gap, 2 * .pi - gap) > 40 * .pi / 180
+            }
+            if apart { chosen.append(hue) }
+        }
+        var out = chosen.map(\.d)
+        if let first = out.first { while out.count < count { out.append(first) } }
+        return out
+    }
+
+    /// The Tinted method (`Tuning.method`).
+    static func tinted(from palette: [Colour], light: Bool, tuning t: Tuning) -> CGImage? {
+        let (base, lighter, darker) = light ? (t.lightBase, t.lightLighter, t.lightDarker)
+                                            : (t.darkBase, t.darkLighter, t.darkDarker)
+        func grey(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+            light ? (v, v, v) : (v + warm.r, v + warm.g, v + warm.b)
+        }
+        // The backdrop: the title plays no part in its shape.
+        var random = SeededRandom(seed: 0x5EED &+ t.layout)
+        let cells = (0..<6).map { (col: $0 % 3, row: $0 / 3) }.shuffled(using: &random)
+        let pools = cells.enumerated().map { i, cell -> Pool in
+            let c = grey(i % 2 == 0 ? CGFloat.random(in: lighter, using: &random)
+                                    : .random(in: darker, using: &random))
+            return Pool(r: c.0, g: c.1, b: c.2,
+                        x: (CGFloat(cell.col) + .random(in: 0.2...0.8, using: &random)) / 3,
+                        y: (CGFloat(cell.row) + .random(in: 0.15...0.85, using: &random)) / 2,
+                        rx: .random(in: 0.22...0.32, using: &random), ry: .random(in: 0.50...0.80, using: &random))
+        }
+        let rect = CGRect(origin: .zero, size: size)
+        let backdrop = poolsImage(base: grey(base), pools: pools, blur: t.blur)
+        let pair = hues(palette, count: 2)
+        let amount = pair.isEmpty ? 0 : (light ? t.lightTintAmount : t.darkTintAmount)
+        let a = pair.first ?? .zero, b = pair.last ?? .zero
+        guard let tinted = tintKernel?.apply(extent: rect, arguments: [
+            backdrop, darker.lowerBound, lighter.upperBound,
+            CIVector(x: a.x, y: a.y, z: a.z), CIVector(x: b.x, y: b.y, z: b.z), amount, t.tintSpread,
+        ]) else { return nil }
+        return grained(tinted, in: rect, context: shared)
+    }
+    /// By the backdrop's lightness: the first hue in its lighter areas, the
+    /// second in the darker (mixed between, through grey where they're
+    /// opposite), at full strength in the lightest, `spread` of it in the
+    /// darkest.
+    private static let tintKernel = CIColorKernel(source: """
+        kernel vec4 tint(__sample s, float lo, float hi, vec3 a, vec3 b, float amount, float spread) {
+            float y = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float t = clamp((y - lo) / max(hi - lo, 0.001), 0.0, 1.0);
+            vec3 d = mix(b, a, t);
+            return vec4(s.rgb + d * amount * (spread + (1.0 - spread) * t), s.a);
+        }
+        """)
+
+    /// The preview's setup tried in the app (its In the App row), for this
+    /// run only: the app's background drawn with it; nil, the app's own.
+    /// `trialTag` names its drawings apart from the app's own and each
+    /// other's.
+    nonisolated(unsafe) static var trial: Tuning?
+    nonisolated(unsafe) static var trialTag = 0
+    /// The app's Backdrop's shape, mixed into the title's seed: a new one
+    /// at each launch, on coming back to the app, and as Home comes into
+    /// view an hour after the last (`BackgroundStore.reshape`); the title
+    /// and its colours stay.
+    nonisolated(unsafe) static var shape = UInt64.random(in: 0...UInt64.max)
+
+    /// A title's background by any method (`source`: the picture, small,
+    /// for Picture only).
+    static func drawing(palette: [Colour], backdrop source: CGImage?, light: Bool, seed: UInt64,
+                        tuning t: Tuning) -> CGImage? {
+        switch t.method {
+        case .backdrop: return backdrop(from: palette, light: light, seed: seed, tuning: t)
+        case .picture: return source.flatMap { picture($0, light: light, tuning: t) }
+        case .tinted: return tinted(from: palette, light: light, tuning: t)
+        case .pools:
+            guard let bands = pools(from: palette, light: light, seed: seed, tuning: t) else { return nil }
+            return render(base: bands.base, pools: bands.pools, blur: t.blur)
+        }
+    }
+
+    /// The Picture method (`Tuning.method`): drawn small (160 × 90), so the
+    /// blur and the per-pixel mapping are cheap, then scaled to the screen
+    /// and softened.
+    static func picture(_ source: CGImage, light: Bool, tuning t: Tuning) -> CGImage? {
+        let (w, h) = (160, 90)
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+        // Filled into 16:9, mirrored if asked.
+        let scale = max(CGFloat(w) / CGFloat(source.width), CGFloat(h) / CGFloat(source.height))
+        let sw = CGFloat(source.width) * scale, sh = CGFloat(source.height) * scale
+        var small = CIImage(cgImage: source)
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: (CGFloat(w) - sw) / 2, y: (CGFloat(h) - sh) / 2))
+        if t.mirror {
+            small = small.transformed(by: CGAffineTransform(scaleX: -1, y: 1).translatedBy(x: -CGFloat(w), y: 0))
+        }
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        let blurred = small.clampedToExtent()
+            .applyingGaussianBlur(sigma: Double(t.pictureBlur * CGFloat(w)))
+            .cropped(to: rect)
+        var bytes = [Float](repeating: 0, count: w * h * 4)
+        shared.render(blurred, toBitmap: &bytes, rowBytes: w * 16, bounds: rect, format: .RGBAf, colorSpace: srgb)
+
+        // Lightness into the band.
+        func luma(_ i: Int) -> Float { 0.2126 * bytes[i] + 0.7152 * bytes[i + 1] + 0.0722 * bytes[i + 2] }
+        let lumas = stride(from: 0, to: bytes.count, by: 4).map(luma).sorted()
+        let lo = lumas[lumas.count * 2 / 100], hi = max(lumas[lumas.count * 98 / 100], lo + 0.02)
+        let band = light ? t.lightRange : t.darkRange
+        let ceiling = Float(light ? t.lightCeiling : t.darkCeiling)
+        for i in stride(from: 0, to: bytes.count, by: 4) {
+            let y = luma(i)
+            let k = min(1, max(0, (y - lo) / (hi - lo)))
+            let newY = Float(band.lowerBound) + k * Float(band.upperBound - band.lowerBound)
+            var d = (bytes[i] - y, bytes[i + 1] - y, bytes[i + 2] - y)
+            let m = max(abs(d.0), abs(d.1), abs(d.2))
+            if m > 0.0001, ceiling > 0 {
+                // Eased in under the ceiling: a soft knee, not a cut.
+                let eased = ceiling * tanh(Float(t.pictureColour) * m / ceiling)
+                d = (d.0 / m * eased, d.1 / m * eased, d.2 / m * eased)
+            } else { d = (0, 0, 0) }
+            bytes[i] = min(1, max(0, newY + d.0))
+            bytes[i + 1] = min(1, max(0, newY + d.1))
+            bytes[i + 2] = min(1, max(0, newY + d.2))
+            bytes[i + 3] = 1
+        }
+
+        let mapped = CIImage(bitmapData: Data(bytes: bytes, count: bytes.count * 4), bytesPerRow: w * 16,
+                             size: CGSize(width: w, height: h), format: .RGBAf, colorSpace: srgb)
+        let screen = CGRect(origin: .zero, size: size)
+        let up = mapped.clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: size.width / CGFloat(w), y: size.height / CGFloat(h)))
+            .applyingGaussianBlur(sigma: 24)
+            .cropped(to: screen)
+        return grained(up, in: screen, context: shared)
+    }
+    /// Details' and the stage's spots, dark: stronger (closer to the film).
+    static let detailsSpot: CGFloat = 0.09
+    static let stageSpot: CGFloat = 0.115
+    /// A palette colour this far from its grey (a channel) has a hue;
+    /// greyer ones give no spot (a grey picture: grey areas only).
+    static let hueFloor = 0.035
+    /// Dark's grey leans warm whatever the title (half Apple TV's red
+    /// about 8 levels over blue: the whole read too warm); its lightness
+    /// about kept.
     static let warm: (r: CGFloat, g: CGFloat, b: CGFloat) = (0.007, 0.0005, -0.0085)
-    /// Dark's colour, times the picture's own distance from its grey
-    /// (`darkTint` caps it).
-    static let darkColour = 0.16
-    /// Details' and the play stage's, dark: the same grey, more of the
-    /// title (the stage closer to the film).
-    static let detailsColour = 0.30
-    static let detailsTint: CGFloat = 0.09
-    static let stageColour = 0.38
-    static let stageTint: CGFloat = 0.115
     /// A colour pulled toward its own grey until no channel strays more
     /// than `cap`; its lightness kept.
     static func capped(_ c: (CGFloat, CGFloat, CGFloat), _ cap: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
@@ -141,9 +452,13 @@ enum BandsPicture {
 
     /// Draws pools of colour on a base (Core Image on the GPU, the grain on
     /// the CPU).
-    static func render(base: (CGFloat, CGFloat, CGFloat), pools: [Pool]) -> CGImage? {
+    static func render(base: (CGFloat, CGFloat, CGFloat), pools: [Pool], blur: CGFloat = Tuning().blur) -> CGImage? {
+        grained(poolsImage(base: base, pools: pools, blur: blur), in: CGRect(origin: .zero, size: size), context: shared)
+    }
+
+    /// The pools on the base, blurred, before the grain.
+    static func poolsImage(base: (CGFloat, CGFloat, CGFloat), pools: [Pool], blur: CGFloat) -> CIImage {
         let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
-        let context = Self.shared
         let w = Self.size.width, h = Self.size.height
         let rect = CGRect(origin: .zero, size: Self.size)
         func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ alpha: CGFloat = 1) -> CIColor {
@@ -169,9 +484,7 @@ enum BandsPicture {
         }
 
         // Softens the gradients' cone-shaped centres into round light.
-        image = image.clampedToExtent().applyingGaussianBlur(sigma: 60).cropped(to: rect)
-
-        return grained(image, in: rect, context: context)
+        return image.clampedToExtent().applyingGaussianBlur(sigma: blur).cropped(to: rect)
     }
 
     /// A picture's main colours (a few, k-means on a small copy), darkest
@@ -212,43 +525,47 @@ enum BandsPicture {
         .sorted { luma(SIMD3($0.0, $0.1, $0.2)) < luma(SIMD3($1.0, $1.1, $1.2)) }
     }
 
-    /// A picture's colours as pools in a layout of their own (tvOS's way):
-    /// the darkest the base, the rest spread across the screen at random
-    /// (`seed`: the same picture, the same layout), each colour by its share.
-    /// Dark: the app's grey with the colours a tint (`sunk`, Details' and
-    /// the stage's tint stronger). Light: lifted to tvOS's light grey, the
+    /// A picture's colours as pools in a layout of their own (tvOS's way;
+    /// `seed`: the same picture, the same layout). Dark: `darkPools`.
+    /// Light: the darkest the base, the rest spread across the screen at
+    /// random, each colour by its share, lifted to tvOS's light grey, the
     /// colours a tint (`lifted`).
     static func pools(from palette: [(r: Double, g: Double, b: Double, share: Double)],
                       light: Bool = false, strong: Bool = false,
-                      saturation chosen: Double? = nil, seed: UInt64) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
+                      saturation chosen: Double? = nil, seed: UInt64,
+                      tuning t: Tuning = Tuning()) -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
+        let seed = seed &+ t.layout
+        guard light else {
+            var t = t
+            if chosen != nil { t.spotColour = stageSpot } else if strong { t.spotColour = detailsSpot }
+            return darkPools(from: palette, seed: seed, tuning: t)
+        }
         guard let darkest = palette.first else { return nil }
+        // The app's own (not Details' or the stage's): its base and its
+        // colour amount by the tuning.
+        let app = !strong && chosen == nil
+        let gain = app ? colourGain(palette, t) : 1
         func shaded(_ c: (r: Double, g: Double, b: Double, share: Double), _ extra: Double = 1) -> (CGFloat, CGFloat, CGFloat) {
             // The picture's hues pushed out from its grey (k-means averages
             // and the blur pull them toward grey); Details' further.
             var c = c
-            let saturation = chosen ?? (strong ? Self.strongSaturation : Self.saturation)
+            let saturation = chosen ?? (strong ? Self.strongSaturation : t.saturation * gain)
             let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
             func out(_ v: Double) -> Double { min(1, max(0, y + (v - y) * saturation)) }
             (c.r, c.g, c.b) = (out(c.r), out(c.g), out(c.b))
-            if light {
-                if strong { return (liftedStrong(c.r, darker: extra), liftedStrong(c.g, darker: extra), liftedStrong(c.b, darker: extra)) }
-                let lit = (lifted(c.r, darker: extra), lifted(c.g, darker: extra), lifted(c.b, darker: extra))
-                return chosen == nil ? capped(lit, lightTint) : lit
-            }
-            // Dark: light's mirror, a dark grey with the picture's colours
-            // a tint over it (dimmed alone, they read too colourful beside
-            // light's silver), Details and the stage the same grey with
-            // more of the title's colour (dimmed, their own, a dark
-            // picture went near black and a bright one loud). Lightness
-            // squeezed into `sunk`'s narrow range, the colour on a scale of
-            // its own (squeezed with it, every channel in 5 %, a title's
-            // colours barely showed), then capped.
-            let (scale, cap) = chosen != nil ? (Self.stageColour, Self.stageTint)
-                : strong ? (Self.detailsColour, Self.detailsTint) : (Self.darkColour, Self.darkTint)
-            let grey = sunk(y, darker: extra)
-            func tinted(_ v: Double) -> CGFloat { grey + CGFloat((v - y) * scale) }
-            let tint = capped((tinted(c.r), tinted(c.g), tinted(c.b)), cap)
-            return (tint.0 + warm.r, tint.1 + warm.g, tint.2 + warm.b)
+            if strong { return (liftedStrong(c.r, darker: extra), liftedStrong(c.g, darker: extra), liftedStrong(c.b, darker: extra)) }
+            let lit = (lifted(c.r, darker: extra, t), lifted(c.g, darker: extra, t), lifted(c.b, darker: extra, t))
+            return chosen == nil ? capped(lit, t.lightTint) : lit
+        }
+        /// The base's colour: its share of its colour kept, its lightness
+        /// fixed if asked (the darker pools a step down, as `lifted`'s).
+        func based(_ extra: Double) -> (CGFloat, CGFloat, CGFloat) {
+            let c = shaded(darkest, extra)
+            guard app else { return c }
+            let y = 0.2126 * c.0 + 0.7152 * c.1 + 0.0722 * c.2
+            let k = CGFloat(t.baseColour)
+            let to = t.baseLight.map { $0 * CGFloat(1 - (1 - extra) * 0.4) } ?? y
+            return (to + (c.0 - y) * k, to + (c.1 - y) * k, to + (c.2 - y) * k)
         }
         var random = SeededRandom(seed: seed)
         let colours = palette.count > 1 ? Array(palette.dropFirst()) : palette
@@ -263,22 +580,88 @@ enum BandsPicture {
         // colour between them for dark bands.
         let count = poolCount
         let pools = (0..<count).map { i -> Pool in
-            let colour = i % 3 == 2 ? shaded(darkest, 0.8) : shaded(pick())
+            let colour = i % 3 == 2 ? based(0.8) : shaded(pick())
             return Pool(r: colour.0, g: colour.1, b: colour.2,
                         x: (CGFloat(i) + .random(in: 0.1...0.9, using: &random)) / CGFloat(count),
                         y: .random(in: 0...1, using: &random),
                         rx: .random(in: 0.14...0.30, using: &random),
                         ry: .random(in: 0.35...0.80, using: &random))
         }.shuffled(using: &random)
-        return (shaded(darkest, 0.85), pools)
+        return (based(0.85), pools)
+    }
+
+    /// Light's pools' colour at the tuning's saturation (no gain): each
+    /// colour's channel furthest from its grey after the lift, averaged by
+    /// share (the base left out); the cap not counted.
+    static func colourAmount(_ palette: [Colour], _ t: Tuning) -> Double {
+        let colours = palette.count > 1 ? Array(palette.dropFirst()) : palette
+        let total = colours.reduce(0) { $0 + $1.share }
+        guard total > 0 else { return 0 }
+        return colours.reduce(0) { sum, c in
+            let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+            let chroma = max(abs(c.r - y), abs(c.g - y), abs(c.b - y))
+            return sum + c.share / total * min(1, chroma * t.saturation) * (t.liftHigh - t.liftLow)
+        }
+    }
+
+    /// The gain bringing a title to `colourTarget` (1 without one).
+    static func colourGain(_ palette: [Colour], _ t: Tuning) -> Double {
+        guard let target = t.colourTarget else { return 1 }
+        let amount = colourAmount(palette, t)
+        guard amount > 0.0005 else { return 1 }
+        return min(t.gainLimits.upperBound, max(t.gainLimits.lowerBound, target / amount))
+    }
+
+    /// Dark: a neutral warm grey (`darkBase`), lighter and darker areas over
+    /// it, and the picture's hues in spots (two), each at the same strength
+    /// (`spotColour`) whatever the picture's own: a third of the screen or
+    /// so in colour, the rest grey. The screen as six cells, three across
+    /// and two down, each area in a cell of its own so they don't pile up.
+    static func darkPools(from palette: [Colour], seed: UInt64, tuning t: Tuning)
+        -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
+        guard !palette.isEmpty else { return nil }
+        func grey(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) { (v + warm.r, v + warm.g, v + warm.b) }
+        let chosen = hues(palette, count: t.spots)
+
+        var random = SeededRandom(seed: seed)
+        var cells = (0..<6).map { (col: $0 % 3, row: $0 / 3) }.shuffled(using: &random)
+        // The spots in different columns (three at most).
+        for i in stride(from: 1, to: min(chosen.count, 3), by: 1) {
+            let taken = Set(cells.prefix(i).map(\.col))
+            if let other = cells[i...].firstIndex(where: { !taken.contains($0.col) }) { cells.swapAt(i, other) }
+        }
+        func place(_ cell: (col: Int, row: Int), rx: ClosedRange<CGFloat>, ry: ClosedRange<CGFloat>,
+                   _ c: (CGFloat, CGFloat, CGFloat)) -> Pool {
+            Pool(r: c.0, g: c.1, b: c.2,
+                 x: (CGFloat(cell.col) + .random(in: 0.2...0.8, using: &random)) / 3,
+                 y: (CGFloat(cell.row) + .random(in: 0.15...0.85, using: &random)) / 2,
+                 rx: .random(in: rx, using: &random), ry: .random(in: ry, using: &random))
+        }
+        // The grey areas first, the spots over them (under them, a lighter
+        // grey washed their colour out).
+        var pools: [Pool] = []
+        for (i, cell) in cells.dropFirst(chosen.count).enumerated() {
+            let v = i % 2 == 0 ? CGFloat.random(in: t.darkLighter, using: &random)
+                               : .random(in: t.darkDarker, using: &random)
+            pools.append(place(cell, rx: 0.18...0.28, ry: 0.40...0.70, grey(v)))
+        }
+        for (i, hue) in chosen.enumerated() {
+            let d = hue * Double(t.spotColour)
+            let c = grey(t.spotLight)
+            let (dw, dh): (CGFloat, CGFloat) = i == 0 ? (0, 0) : (0.06, 0.10)
+            pools.append(place(cells[i % cells.count],
+                               rx: max(0.02, t.spotWidth.lowerBound - dw)...max(0.02, t.spotWidth.upperBound - dw),
+                               ry: max(0.02, t.spotHeight.lowerBound - dh)...max(0.02, t.spotHeight.upperBound - dh),
+                               (max(0, c.0 + d.x), max(0, c.1 + d.y), max(0, c.2 + d.z))))
+        }
+        return (grey(t.darkBase), pools)
     }
 
     private static let poolCount = 8
-    /// The colours' saturation, times the picture's: the app's
-    /// background (1.4 read too colourful on an OLED with tvOS in Dolby
-    /// Vision, which lifts colour far more than light: tuned there; 0.8
-    /// and 1.0 were tried), Details' (`strong`).
-    static let saturation = 1.2
+    /// Details' colours' saturation, light, times the picture's (the app's:
+    /// `Tuning.saturation`, 1.4 read too colourful on an OLED with tvOS in
+    /// Dolby Vision, which lifts colour far more than light; 0.8 and 1.0
+    /// were tried).
     static let strongSaturation = 1.5
     /// The play stage's: a step past Details', the same bands deepening as
     /// it comes in (closer to the film).
@@ -347,6 +730,27 @@ final class BackgroundStore: ObservableObject {
     /// page's text turns with it), faded in.
     func modeChanged() {
         guard image != nil, !loading, drawnMode != BackgroundPicks.Mode.now else { return }
+        Task {
+            let pick = await BackgroundPicks.shared.current()
+            await show(pick, fade: true)
+        }
+    }
+
+    /// Another shape for the title up (`BandsPicture.shape`), faded in:
+    /// on coming back to the app, and as Home comes into view (`hourly`:
+    /// only an hour after the last). Not while something plays.
+    func reshape(hourly: Bool = false) {
+        guard image != nil, shown != nil, !loading, !NuvioSyncManager.playbackActive,
+              !hourly || Date().timeIntervalSince(shapedAt) >= 3600 else { return }
+        shapedAt = Date()
+        BandsPicture.shape = UInt64.random(in: 0...UInt64.max)
+        redraw()
+    }
+    private var shapedAt = Date()
+
+    /// The preview's setup tried in the app, or the app's own back: the
+    /// title up drawn again with it, faded.
+    func redraw() {
         Task {
             let pick = await BackgroundPicks.shared.current()
             await show(pick, fade: true)
@@ -576,7 +980,9 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands15-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "") + ".png")
+        folder.appendingPathComponent("bands17-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "")
+                                      + "-" + String(BandsPicture.shape % 46656, radix: 36)
+                                      + (BandsPicture.trial == nil ? "" : "-trial\(BandsPicture.trialTag)") + ".png")
     }
 
     private func drawn(_ entry: Entry?, _ mode: Mode) -> (entry: Entry, file: URL)? {
@@ -698,16 +1104,25 @@ final class BackgroundPicks {
         var palette = kept
         if palette == nil { palette = await TitleBands.shared.palette(for: url) }
         guard let palette else { return false }
-        let seed = Self.seed(url)
+        let seed = Self.seed(url) &+ BandsPicture.shape % 46656
+        let tuning = BandsPicture.trial ?? BandsPicture.Tuning()
+        let backdrop = tuning.method == .picture ? await Self.backdrop(url) : nil
         return await Task.detached(priority: .utility) { () -> Bool in
             // Dark sinks the colours, light lifts them: neither dims.
-            guard let bands = BandsPicture.pools(from: palette, light: mode == .light, seed: seed),
-                  let picture = BandsPicture.render(base: bands.base, pools: bands.pools),
+            guard let picture = BandsPicture.drawing(palette: palette, backdrop: backdrop, light: mode == .light,
+                                                     seed: seed, tuning: tuning),
                   let png = UIImage(cgImage: picture).pngData() else { return false }
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
                                                      withIntermediateDirectories: true)
             return (try? png.write(to: file, options: .atomic)) != nil
         }.value
+    }
+
+    /// The backdrop, small (TMDB's 780 px copy): the Picture method's.
+    static func backdrop(_ url: String) async -> CGImage? {
+        let small = url.replacingOccurrences(of: "/t/p/original/", with: "/t/p/w780/")
+        guard let remote = URL(string: small), let data = try? await ImageCache.shared.download(remote) else { return nil }
+        return UIImage(data: data)?.cgImage
     }
 
     /// The deep band: Home's titles, then the next drawn ahead.
@@ -919,4 +1334,447 @@ struct ATVBackground: View {
         .onAppear { picture.load() }
         .onChange(of: scheme) { _, _ in picture.modeChanged() }
     }
+}
+
+// MARK: - Background preview (a developer tool)
+
+/// A title's background alone, full screen, its values changed on the fly
+/// (a card's hold menu, Background Preview): to see what makes a good one.
+/// Three methods: Pools (the app's), Picture (the blurred backdrop, tvOS's
+/// way) and Tinted (one neutral backdrop for every title, tinted by it). A dark plate of rows (Up/Down a row, Left/Right its value), Select
+/// hides and shows it (hidden, Left/Right another layout, or the picture
+/// mirrored), Back closes. The values
+/// carry to the next title opened this run (Reset puts the app's back); the
+/// app itself always draws with `BandsPicture.Tuning()`.
+@MainActor
+final class BackgroundPreview: UIViewController {
+    static func open(_ item: MetaItem) {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        guard let top, !(top is BackgroundPreview) else { return }
+        top.present(BackgroundPreview(item: item), animated: false)
+    }
+
+    /// Kept for the run: the next title opens on the same values.
+    private static var tuning = BandsPicture.Tuning()
+    private static var light = BackgroundPicks.Mode.now == .light
+    private static let methods: [BandsPicture.Tuning.Method] = [.backdrop, .pools, .picture, .tinted]
+    private static var tintedDefaults: BandsPicture.Tuning {
+        var t = BandsPicture.Tuning()
+        t.method = .tinted
+        return t
+    }
+
+    private let item: MetaItem
+    private var palette: [BandsPicture.Colour]?
+    private var url: String?
+    /// The backdrop, small (the Picture method draws from it).
+    private var backdrop: CGImage?
+    private let picture = UIImageView()
+    private let plate = UIView()
+    private let header = UILabel()
+    private let swatches = UIStackView()
+    private let source = UIImageView()
+    private let list = UIStackView()
+    private var selected = 0
+    private var generation = 0
+
+    init(item: MetaItem) {
+        self.item = item
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    // MARK: Rows
+
+    private struct Row {
+        let name: String
+        let value: (BandsPicture.Tuning, Bool) -> String
+        /// One step either way (-1, +1).
+        let step: (inout BandsPicture.Tuning, inout Bool, Int) -> Void
+    }
+
+    private static func levels(_ v: CGFloat) -> String { String(format: "%.3f  (%d)", v, Int((v * 255).rounded())) }
+    private static func range(_ r: ClosedRange<CGFloat>) -> String {
+        String(format: "%.3f–%.3f  (%d–%d)", r.lowerBound, r.upperBound,
+               Int((r.lowerBound * 255).rounded()), Int((r.upperBound * 255).rounded()))
+    }
+    private static func shifted(_ r: ClosedRange<CGFloat>, _ d: CGFloat) -> ClosedRange<CGFloat> {
+        let lo = max(0, r.lowerBound + d)
+        return lo...max(lo, r.upperBound + d)
+    }
+
+    /// Every method's rows, then In the App: Right puts this title up as
+    /// the background with these values (for this run, `BandsPicture.trial`),
+    /// Left gives the app its own back.
+    private var rows: [Row] {
+        methodRows + [Row(name: "In the App", value: { t, _ in
+            guard let trial = BandsPicture.trial else { return "The app's own" }
+            return trial == t ? "These values" : "Earlier values"
+        }, step: { [item] t, _, d in
+            if d > 0 {
+                BandsPicture.trial = t
+                BandsPicture.trialTag += 1
+                BackgroundStore.shared.use(item)
+            } else if BandsPicture.trial != nil {
+                BandsPicture.trial = nil
+                BackgroundStore.shared.redraw()
+            }
+        })]
+    }
+
+    private var methodRows: [Row] {
+        var rows = [
+            Row(name: "Method", value: { t, _ in ["Backdrop", "Pools", "Picture", "Tinted"][Self.methods.firstIndex(of: t.method)!] },
+                step: { t, _, d in
+                    let i = Self.methods.firstIndex(of: t.method)!
+                    t.method = Self.methods[(i + d + Self.methods.count) % Self.methods.count] }),
+            Row(name: "Appearance", value: { $1 ? "Light" : "Dark" }, step: { _, light, _ in light.toggle() }),
+        ]
+        if Self.tuning.method == .backdrop {
+            func level(_ name: String, _ path: WritableKeyPath<BandsPicture.Levels, CGFloat>) -> Row {
+                Row(name: name, value: { t, l in Self.levels((l ? t.lightLevels : t.darkLevels)[keyPath: path]) },
+                    step: { t, l, d in
+                        let v = (l ? 0.01 : 0.005) * CGFloat(d)
+                        if l { t.lightLevels[keyPath: path] = min(1, max(0, t.lightLevels[keyPath: path] + v)) }
+                        else { t.darkLevels[keyPath: path] = min(1, max(0, t.darkLevels[keyPath: path] + v)) } })
+            }
+            rows += [
+                Row(name: "Band Colour", value: { t, l in Self.levels(l ? t.lightBandColour : t.darkBandColour) },
+                    step: { t, l, d in
+                        if l { t.lightBandColour = max(0, t.lightBandColour + 0.01 * CGFloat(d)) }
+                        else { t.darkBandColour = max(0, t.darkBandColour + 0.005 * CGFloat(d)) } }),
+                Row(name: "Mass Colour", value: { t, l in Self.levels(l ? t.lightMassColour : t.darkMassColour) },
+                    step: { t, l, d in
+                        if l { t.lightMassColour = max(0, t.lightMassColour + 0.01 * CGFloat(d)) }
+                        else { t.darkMassColour = max(0, t.darkMassColour + 0.005 * CGFloat(d)) } }),
+                level("Band Light", \.band),
+                level("Middle", \.middle),
+                level("Mass Light", \.mass),
+                level("Lightest", \.lightest),
+                level("Darkest", \.darkest),
+                Row(name: "Blur", value: { t, _ in String(format: "%.0f", t.backdropBlur) },
+                    step: { t, _, d in t.backdropBlur = max(0, t.backdropBlur + 10 * CGFloat(d)) }),
+                Row(name: "Layout", value: { t, _ in t.layout == 0 ? "The title's" : "+\(t.layout)" },
+                    step: { t, _, d in t.layout = d < 0 && t.layout == 0 ? 0 : t.layout &+ UInt64(bitPattern: Int64(d)) }),
+                Row(name: "Reset", value: { t, _ in t == BandsPicture.Tuning() ? "The app's values" : "Changed" },
+                    step: { t, _, _ in t = BandsPicture.Tuning() }),
+            ]
+            return rows
+        }
+        if Self.tuning.method == .tinted {
+            func shown(_ r: ClosedRange<CGFloat>) -> String { Self.range(r) }
+            rows += [
+                Row(name: "Base", value: { t, l in Self.levels(l ? t.lightBase : t.darkBase) },
+                    step: { t, l, d in
+                        if l { t.lightBase = max(0, t.lightBase + 0.01 * CGFloat(d)) }
+                        else { t.darkBase = max(0, t.darkBase + 0.005 * CGFloat(d)) } }),
+                Row(name: "Lighter", value: { t, l in shown(l ? t.lightLighter : t.darkLighter) },
+                    step: { t, l, d in
+                        if l { t.lightLighter = Self.shifted(t.lightLighter, 0.01 * CGFloat(d)) }
+                        else { t.darkLighter = Self.shifted(t.darkLighter, 0.01 * CGFloat(d)) } }),
+                Row(name: "Darker", value: { t, l in shown(l ? t.lightDarker : t.darkDarker) },
+                    step: { t, l, d in
+                        if l { t.lightDarker = Self.shifted(t.lightDarker, 0.01 * CGFloat(d)) }
+                        else { t.darkDarker = Self.shifted(t.darkDarker, 0.005 * CGFloat(d)) } }),
+                Row(name: "Tint", value: { t, l in Self.levels(l ? t.lightTintAmount : t.darkTintAmount) },
+                    step: { t, l, d in
+                        if l { t.lightTintAmount = max(0, t.lightTintAmount + 0.01 * CGFloat(d)) }
+                        else { t.darkTintAmount = max(0, t.darkTintAmount + 0.005 * CGFloat(d)) } }),
+                Row(name: "In the Darker", value: { t, _ in String(format: "%.0f %%", t.tintSpread * 100) },
+                    step: { t, _, d in t.tintSpread = min(1, max(0, t.tintSpread + 0.1 * CGFloat(d))) }),
+                Row(name: "Blur", value: { t, _ in String(format: "%.0f", t.blur) },
+                    step: { t, _, d in t.blur = max(0, t.blur + 10 * CGFloat(d)) }),
+                Row(name: "Shape", value: { t, _ in "\(t.layout + 1)" },
+                    step: { t, _, d in t.layout = d < 0 && t.layout == 0 ? 0 : t.layout &+ UInt64(bitPattern: Int64(d)) }),
+                Row(name: "Reset", value: { t, _ in t == Self.tintedDefaults ? "The defaults" : "Changed" },
+                    step: { t, _, _ in t = Self.tintedDefaults }),
+            ]
+            return rows
+        }
+        if Self.tuning.method == .picture {
+            func bound(_ t: BandsPicture.Tuning, _ light: Bool, high: Bool) -> String {
+                let r = light ? t.lightRange : t.darkRange
+                return Self.levels(high ? r.upperBound : r.lowerBound)
+            }
+            func move(_ t: inout BandsPicture.Tuning, _ light: Bool, high: Bool, _ d: Int) {
+                var r = light ? t.lightRange : t.darkRange
+                let v = 0.01 * CGFloat(d)
+                r = high ? r.lowerBound...min(1, max(r.lowerBound, r.upperBound + v))
+                         : max(0, min(r.upperBound, r.lowerBound + v))...r.upperBound
+                if light { t.lightRange = r } else { t.darkRange = r }
+            }
+            rows += [
+                Row(name: "Blur", value: { t, _ in String(format: "%.0f %% of the width", t.pictureBlur * 100) },
+                    step: { t, _, d in t.pictureBlur = max(0, t.pictureBlur + 0.01 * CGFloat(d)) }),
+                Row(name: "Darkest", value: { t, l in bound(t, l, high: false) },
+                    step: { t, l, d in move(&t, l, high: false, d) }),
+                Row(name: "Lightest", value: { t, l in bound(t, l, high: true) },
+                    step: { t, l, d in move(&t, l, high: true, d) }),
+                Row(name: "Colour", value: { t, _ in String(format: "%.1f×", t.pictureColour) },
+                    step: { t, _, d in t.pictureColour = max(0, t.pictureColour + 0.1 * CGFloat(d)) }),
+                Row(name: "Ceiling", value: { t, l in Self.levels(l ? t.lightCeiling : t.darkCeiling) },
+                    step: { t, l, d in
+                        if l { t.lightCeiling = max(0, t.lightCeiling + 0.01 * CGFloat(d)) }
+                        else { t.darkCeiling = max(0, t.darkCeiling + 0.005 * CGFloat(d)) } }),
+                Row(name: "Mirror", value: { t, _ in t.mirror ? "On" : "Off" }, step: { t, _, _ in t.mirror.toggle() }),
+                Row(name: "Reset", value: { _, _ in "The defaults" },
+                    step: { t, _, _ in t = BandsPicture.Tuning(); t.method = .picture }),
+            ]
+            return rows
+        }
+        if Self.light {
+            rows += [
+                Row(name: "Saturation", value: { t, _ in String(format: "%.2f×", t.saturation) },
+                    step: { t, _, d in t.saturation = max(0, t.saturation + 0.1 * Double(d)) }),
+                Row(name: "Tint", value: { t, _ in Self.levels(t.lightTint) },
+                    step: { t, _, d in t.lightTint = max(0, t.lightTint + 0.005 * CGFloat(d)) }),
+                Row(name: "Lift Low", value: { t, _ in String(format: "%.2f", t.liftLow) },
+                    step: { t, _, d in t.liftLow = min(t.liftHigh, max(0, t.liftLow + 0.02 * Double(d))) }),
+                Row(name: "Lift High", value: { t, _ in String(format: "%.2f", t.liftHigh) },
+                    step: { t, _, d in t.liftHigh = min(1, max(t.liftLow, t.liftHigh + 0.02 * Double(d))) }),
+                Row(name: "Base Colour", value: { t, _ in String(format: "%.0f %%", t.baseColour * 100) },
+                    step: { t, _, d in t.baseColour = min(1, max(0, t.baseColour + 0.1 * Double(d))) }),
+                Row(name: "Base Light", value: { t, _ in t.baseLight.map { Self.levels($0) } ?? "The picture's" },
+                    step: { t, _, d in
+                        guard let v = t.baseLight else { t.baseLight = 0.78; return }
+                        let next = v + 0.01 * CGFloat(d)
+                        t.baseLight = next < 0.5 ? nil : min(1, next) }),
+                Row(name: "Colour Target", value: { [palette] t, _ in
+                        let amount = palette.map { BandsPicture.colourAmount($0, t) } ?? 0
+                        guard let target = t.colourTarget else { return String(format: "Off (here %.3f)", amount) }
+                        let gain = palette.map { BandsPicture.colourGain($0, t) } ?? 1
+                        return String(format: "%.3f · %.1f× (here %.3f)", target, gain, amount) },
+                    step: { [palette] t, _, d in
+                        guard let target = t.colourTarget else {
+                            t.colourTarget = palette.map { BandsPicture.colourAmount($0, t) } ?? 0.02
+                            return
+                        }
+                        let next = target + 0.002 * Double(d)
+                        t.colourTarget = next <= 0 ? nil : next }),
+                Row(name: "Least Gain", value: { t, _ in String(format: "%.1f×", t.gainLimits.lowerBound) },
+                    step: { t, _, d in
+                        let lo = min(t.gainLimits.upperBound, max(0.1, t.gainLimits.lowerBound + 0.1 * Double(d)))
+                        t.gainLimits = lo...t.gainLimits.upperBound }),
+                Row(name: "Most Gain", value: { t, _ in String(format: "%.1f×", t.gainLimits.upperBound) },
+                    step: { t, _, d in
+                        let hi = max(t.gainLimits.lowerBound, t.gainLimits.upperBound + 0.5 * Double(d))
+                        t.gainLimits = t.gainLimits.lowerBound...hi }),
+            ]
+        } else {
+            rows += [
+                Row(name: "Base", value: { t, _ in Self.levels(t.darkBase) },
+                    step: { t, _, d in t.darkBase = max(0, t.darkBase + 0.005 * CGFloat(d)) }),
+                Row(name: "Lighter", value: { t, _ in Self.range(t.darkLighter) },
+                    step: { t, _, d in t.darkLighter = Self.shifted(t.darkLighter, 0.01 * CGFloat(d)) }),
+                Row(name: "Darker", value: { t, _ in Self.range(t.darkDarker) },
+                    step: { t, _, d in t.darkDarker = Self.shifted(t.darkDarker, 0.005 * CGFloat(d)) }),
+                Row(name: "Spot Light", value: { t, _ in Self.levels(t.spotLight) },
+                    step: { t, _, d in t.spotLight = max(0, t.spotLight + 0.01 * CGFloat(d)) }),
+                Row(name: "Colour", value: { t, _ in Self.levels(t.spotColour) },
+                    step: { t, _, d in t.spotColour = max(0, t.spotColour + 0.005 * CGFloat(d)) }),
+                Row(name: "Spots", value: { t, _ in "\(t.spots)" },
+                    step: { t, _, d in t.spots = min(4, max(0, t.spots + d)) }),
+                Row(name: "Spot Width", value: { t, _ in String(format: "%.2f–%.2f", t.spotWidth.lowerBound, t.spotWidth.upperBound) },
+                    step: { t, _, d in t.spotWidth = Self.shifted(t.spotWidth, 0.02 * CGFloat(d)) }),
+                Row(name: "Spot Height", value: { t, _ in String(format: "%.2f–%.2f", t.spotHeight.lowerBound, t.spotHeight.upperBound) },
+                    step: { t, _, d in t.spotHeight = Self.shifted(t.spotHeight, 0.04 * CGFloat(d)) }),
+            ]
+        }
+        rows += [
+            Row(name: "Blur", value: { t, _ in String(format: "%.0f", t.blur) },
+                step: { t, _, d in t.blur = max(0, t.blur + 10 * CGFloat(d)) }),
+            Row(name: "Layout", value: { t, _ in t.layout == 0 ? "The title's" : "+\(t.layout)" },
+                step: { t, _, d in t.layout = d < 0 && t.layout == 0 ? 0 : t.layout &+ UInt64(bitPattern: Int64(d)) }),
+            Row(name: "Reset", value: { _, _ in "The defaults" },
+                step: { t, _, _ in t = BandsPicture.Tuning(); t.method = .pools }),
+        ]
+        return rows
+    }
+
+    // MARK: Screen
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = .black
+        picture.frame = view.bounds
+        picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        picture.contentMode = .scaleToFill
+        view.addSubview(picture)
+
+        plate.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+        plate.layer.cornerRadius = 32
+        plate.layer.cornerCurve = .continuous
+        view.addSubview(plate)
+
+        header.font = .systemFont(ofSize: 29, weight: .semibold)
+        header.textColor = UIColor.white.withAlphaComponent(FixedFocusText.primary)
+        header.text = item.name
+        swatches.axis = .horizontal
+        swatches.spacing = 8
+        swatches.distribution = .fillEqually
+        source.contentMode = .scaleAspectFill
+        source.clipsToBounds = true
+        source.layer.cornerRadius = 12
+        source.layer.cornerCurve = .continuous
+        list.axis = .vertical
+        list.spacing = 2
+        let stack = UIStackView(arrangedSubviews: [header, source, swatches, list])
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.setCustomSpacing(10, after: source)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        plate.addSubview(stack)
+        plate.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            plate.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -60),
+            plate.topAnchor.constraint(equalTo: view.topAnchor, constant: 60),
+            plate.widthAnchor.constraint(equalToConstant: 620),
+            stack.leadingAnchor.constraint(equalTo: plate.leadingAnchor, constant: 28),
+            stack.trailingAnchor.constraint(equalTo: plate.trailingAnchor, constant: -28),
+            stack.topAnchor.constraint(equalTo: plate.topAnchor, constant: 28),
+            stack.bottomAnchor.constraint(equalTo: plate.bottomAnchor, constant: -28),
+            source.heightAnchor.constraint(equalToConstant: 150),
+            swatches.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        drawRows()
+        Task { await load() }
+    }
+
+    private func load() async {
+        guard let url = await TMDBService.backdrop(id: item.id, type: item.type) else {
+            header.text = "\(item.name): no backdrop"
+            return
+        }
+        self.url = url
+        palette = await TitleBands.shared.palette(for: url)
+        drawSwatches()
+        render()
+        let small = url.replacingOccurrences(of: "/t/p/original/", with: "/t/p/w780/")
+        if let remote = URL(string: small), let data = try? await ImageCache.shared.download(remote) {
+            source.image = UIImage(data: data)
+            backdrop = source.image?.cgImage
+            if Self.tuning.method == .picture { render() }
+        }
+    }
+
+    /// The palette as the drawing reads it: darkest first, each with its
+    /// share; under it the hue's strength (a channel's most from its grey).
+    private func drawSwatches() {
+        swatches.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for c in palette ?? [] {
+            let swatch = UIView()
+            swatch.backgroundColor = UIColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
+            swatch.layer.cornerRadius = 8
+            let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+            let chroma = max(abs(c.r - y), abs(c.g - y), abs(c.b - y))
+            let label = UILabel()
+            label.text = String(format: "%.0f%% · %.2f", c.share * 100, chroma)
+            label.font = .monospacedDigitSystemFont(ofSize: 18, weight: .semibold)
+            label.textColor = y > 0.55 ? .black : .white
+            label.textAlignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
+            swatch.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: swatch.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: swatch.centerYAnchor),
+            ])
+            swatches.addArrangedSubview(swatch)
+        }
+    }
+
+    private func drawRows() {
+        let rows = rows
+        selected = min(selected, rows.count - 1)
+        list.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (i, row) in rows.enumerated() {
+            let on = i == selected
+            let line = UIView()
+            line.backgroundColor = on ? UIColor.white : .clear
+            line.layer.cornerRadius = 12
+            line.layer.cornerCurve = .continuous
+            let name = UILabel(), value = UILabel()
+            name.text = row.name
+            name.font = .systemFont(ofSize: 24, weight: .medium)
+            value.text = (on ? "‹  " : "") + row.value(Self.tuning, Self.light) + (on ? "  ›" : "")
+            value.font = .monospacedDigitSystemFont(ofSize: 24, weight: .regular)
+            value.textAlignment = .right
+            let ink = on ? UIColor.black : UIColor.white.withAlphaComponent(FixedFocusText.body)
+            name.textColor = ink
+            value.textColor = ink
+            let pair = UIStackView(arrangedSubviews: [name, value])
+            pair.translatesAutoresizingMaskIntoConstraints = false
+            line.addSubview(pair)
+            NSLayoutConstraint.activate([
+                pair.leadingAnchor.constraint(equalTo: line.leadingAnchor, constant: 16),
+                pair.trailingAnchor.constraint(equalTo: line.trailingAnchor, constant: -16),
+                pair.topAnchor.constraint(equalTo: line.topAnchor, constant: 5),
+                pair.bottomAnchor.constraint(equalTo: line.bottomAnchor, constant: -5),
+            ])
+            list.addArrangedSubview(line)
+        }
+    }
+
+    /// Drawn off the main thread; a newer change wins.
+    private func render() {
+        guard let palette, let url else { return }
+        generation += 1
+        let mine = generation
+        let (tuning, light, seed, backdrop) = (Self.tuning, Self.light, BackgroundPicks.seed(url), backdrop)
+        if tuning.method == .picture, backdrop == nil { return }
+        Task {
+            let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                BandsPicture.drawing(palette: palette, backdrop: backdrop, light: light, seed: seed, tuning: tuning)
+                    .map { UIImage(cgImage: $0) }
+            }.value
+            guard mine == generation, let image else { return }
+            picture.image = image
+        }
+    }
+
+    private func change(_ d: Int) {
+        let rows = rows
+        rows[selected].step(&Self.tuning, &Self.light, d)
+        drawRows()
+        render()
+    }
+
+    // MARK: Presses
+
+    override var preferredFocusEnvironments: [UIFocusEnvironment] { [] }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard let press = presses.first else { return }
+        let shown = plate.alpha > 0
+        switch press.type {
+        case .menu:
+            dismiss(animated: false)
+        case .select, .playPause:
+            UIView.animate(withDuration: Motion.fadeDuration) { self.plate.alpha = shown ? 0 : 1 }
+        case .upArrow where shown:
+            selected = max(0, selected - 1); drawRows()
+        case .downArrow where shown:
+            selected = min(rows.count - 1, selected + 1); drawRows()
+        case .leftArrow, .rightArrow:
+            let d = press.type == .leftArrow ? -1 : 1
+            if shown { change(d) } else if Self.tuning.method == .picture {
+                Self.tuning.mirror.toggle()
+                drawRows()
+                render()
+            } else {
+                Self.tuning.layout = d < 0 && Self.tuning.layout == 0 ? 0 : Self.tuning.layout &+ UInt64(bitPattern: Int64(d))
+                drawRows()
+                render()
+            }
+        default:
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    // Swallowed: the page under it never sees them.
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {}
 }

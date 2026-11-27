@@ -72,6 +72,10 @@ final class TitleMenu {
         } else {
             entries.append(Entry(title: "Use as Background", icon: "photo") { background.use(item) })
         }
+        // A developer tool: the background alone, its values changed live.
+        entries.append(Entry(title: "Background Preview", icon: "slider.horizontal.3") {
+            BackgroundPreview.open(item)
+        })
 
         return entries
     }

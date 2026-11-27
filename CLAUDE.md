@@ -58,7 +58,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   saved or synced), `-playerDemoMKV` (an MKV sample), `-playerDemoFailover`
   (three dead links, then the stream), `-playerDemoDead` (dead links only).
 - Settings → Developer (2026-11-20): three tools, nothing else (no
-  experiment switches): Frame Rate (Off / Compact / Full, `FrameRateOverlay`
+  experiment switches; the cards' Background Preview is the one tool
+  elsewhere): Frame Rate (Off / Compact / Full, `FrameRateOverlay`
   in `FPSOverlay.swift`: its own window above everything, a dark plate,
   not glass; counts the main thread's display-link frames, so GPU drops
   need Instruments), Playback HUD (`PlaybackHUD`, live numbers from the
@@ -804,7 +805,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`captionRoom`: rows with no second line reserve one, not two); About's band white over the page in light. The
   page the title's colours as
   bands (`TitleBands`, end of `ATVTheme.swift`: the app background's
-  bands from its picture, stronger — each colour's saturation 1.5× the picture's (1.8 was before; k-means and the blur greyed them: barely noticeable); dark, the background's grey and warm lean with more of the title's colour (`detailsColour` 0.30, `detailsTint` 0.09; dimmed 30 % with a 0.34 ceiling was before: a dark picture near black, a bright one loud, apart from the background); light a
+  bands from its picture, stronger — each colour's saturation 1.5× the picture's (1.8 was before; k-means and the blur greyed them: barely noticeable); dark, the background's spots stronger (`detailsSpot` 0.09; dimmed 30 % with a 0.34 ceiling was before: a dark picture near black, a bright one loud, apart from the background); light a
   deeper tint, `liftedStrong` — drawn when focus rests on a title, so
   the press finds them; without it Details read as Home; each picture's
   colours (`palette`, a few numbers) kept for 300 titles, worked out as
@@ -1053,7 +1054,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   way into the player goes through Details' card, where Details has it
   (`StagePictureView.detailsCard`, its picture moved for faces, its
   bottom fade), on the title's bands as Details' page, following the
-  setting, a step more vivid (saturation 1.8, 2.2 before: Home 1.2, Details 1.5; dark, `stageColour` 0.38, `stageTint` 0.115;
+  setting, a step more vivid (saturation 1.8, 2.2 before: Home 1.2, Details 1.5; dark, `stageSpot` 0.115;
   the same layout deepening as the stage comes in, closer to the film;
   `BandsPicture.stageSaturation`) (Details passes its backdrop for them; dark bands whatever the
   setting were first: a second change, and lights down goes dark
@@ -1334,7 +1335,30 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Go to Show / Movie (Continue Watching), Discover (title cards: below),
   the watched marks narrow to
   wide (episode, earlier episodes, season, series), Add to / Remove from
-  Library, Not for Me, Use as Background, then Remove from Continue
+  Library, Not for Me, Use as Background, Background Preview (a
+  developer tool, title cards: `BackgroundPreview` at the end of
+  `ATVTheme.swift`: the title's background alone, a dark plate of its
+  values (`BandsPicture.Tuning`) changed with Left/Right, Light/Dark
+  flipped, the palette's swatches with share and strength; light Pools
+  also Base Colour (how much of the base's colour stays, its darker
+  pools too), Base Light (fixed, else the picture's) and Colour Target
+  (every title to one amount of colour, `colourAmount`, by a gain on the
+  saturation within 0.6–3×, `colourGain`; the first press takes the title's
+  own amount); methods,
+  Pools (the app's) and Picture (`BandsPicture.picture`, trying
+  2026-11-27, tvOS's way: the backdrop blurred to its masses, 10 % of the
+  width, its lightness pressed into a band (dark 0.12–0.25, light
+  0.74–0.96: tvOS's 30–64 and 188–244), its colour eased under a ceiling
+  (dark 0.06, light 0.14), optionally mirrored) and Tinted
+  (`BandsPicture.tinted`, trying 2026-11-27: one neutral backdrop of
+  lighter and darker areas for every title, its shape from Shape alone,
+  meant to change now and then; tinted by the title's two hues, the first
+  in the lighter areas, the second in the darker at 40 % (`tintSpread`),
+  dark 0.06, light 0.10); In the App (last row) puts the title up with
+  these values for the run (`BandsPicture.trial`, drawn in tvOS's own
+  mode), Left gives the app its own back; Select hides
+  the plate, Back closes; values kept for the run, the app always draws
+  with the defaults), then Remove from Continue
   Watching. A menu never repeats Select (no Play or Resume: Select plays
   an episode, resumes Continue Watching). Continue Watching's is its own,
   short: Start Over (once started), Choose Source, Go to Show / Movie,
@@ -1489,15 +1513,36 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Pictures' dates (the trim's order) move at most once a day. Playback scratch
   (`aether-*`, `cue-ass-fonts`: 192 MB once) is also swept at launch.
 - **Background** (`BackgroundPicks`, `BackgroundStore` in `ATVTheme.swift`):
-  one Home title's TMDB backdrop as its colours: up to four main ones
-  (k-means), each 1.2× the picture's saturation (1.4× read too
-  colourful; 0.8× and 1.0× tried; Details' 1.5×), the darkest the base, the rest soft pools in a random layout
-  of their own (tvOS's way; seeded by the picture, so it draws the same
-  again), eight across the width, every third the base's colour for dark
-  bands; dark, light's mirror: sunk to 0.12–0.17 (`sunk`, Apple TV's Search measured 33–41 of 255, median 36, from Xcode's screenshot of the box read as raw sRGB (`colorAt` reads them ~15 levels light: don't measure with it); the dark bands only a little darker; 0.05–0.22 sank near black, the cards' edges lost on it; 0.16–0.22, median 47 on the TV, too bright; 0.07–0.30 too light); every colour capped near grey, the same for every picture dark's lightness squeezed but its colour on a scale of its own (`darkColour` 0.16: squeezed with it, a title's colours barely showed), the grey leaning a little warm whatever the title (`warm`, half Apple's red ~8 over blue: the whole too warm) (`darkTint` 0.055, `lightTint` 0.035 (0.035 and 0.03 lost the colour; 0.045 at 0.18–0.24 a bit bright and grey), `capped`: Apple's warm grey with faint tints; scaled alone, a vivid picture, Barbie's pink and cyan, lost the grey and the cards with it), a dark grey
-  with the colours a tint over it (read too colourful dimmed alone
-  beside light's silver); light: lifted to 0.62–0.90, base
-  `Color(white: 0.68)`; grained, app-wide,
+  one Home title's TMDB backdrop as its colours (k-means, up to four).
+  The app's (2026-11-27, `BandsPicture.backdrop`, `Tuning.method`
+  `.backdrop`): tvOS's own backdrop, measured off its Photos screens, light
+  and dark sharing one shape: a coloured band across the top, a neutral
+  middle (warm in dark), a darker coloured mass at one side, the lightest
+  corner below the other side, the darkest beside the mass; the title's
+  first hue in the band, its second in the mass (`hues`: most colourful
+  by share, 40° apart, else the first again; none: tvOS's blue at half),
+  at a set strength whatever the picture: the title gives the hue, never
+  the amount (a channel's most from its grey: light band 0.12, mass 0.12;
+  dark 0.055, 0.045); lightness tvOS's (`Levels`, of 255: light band 230,
+  middle 217, mass 186, lightest 247, darkest 196; dark 52, 50, 31, 57,
+  28: dark's contrast is the cards' edges against it), blur 90. Its
+  shape one of six compositions of the same parts (`compositions`:
+  tvOS's, upside down, a sweep from a corner, two bands, the band down a
+  side, over a corner), mirrored and moved a little; a new shape
+  (`BandsPicture.shape`, `BackgroundStore.reshape`, decided 2026-11-27:
+  tvOS's changes all the time) at each launch, on coming back to the
+  app, and as Home comes into view an hour after the last, faded; the
+  title and its colours stay; never while something plays. Tried the same day and
+  left in the preview: Pools for the app (the darkest colour the base,
+  eight pools of the colours times their saturation: Barbie's maroon
+  everywhere, a dull picture grey; light capped at 0.035 lost the colour,
+  uncapped some titles took the screen; a quieter base and one colour
+  amount for every title were tried on it), spots on a neutral grey
+  (`darkPools`, still Details' and the stage's dark), Picture (the
+  backdrop blurred, its lightness pressed into tvOS's band: some good,
+  others not) and Tinted (one neutral backdrop tinted). Details' light
+  keeps the pools (`liftedStrong`).
+  Grained, app-wide,
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
   too busy at times, and with it the hue-runs rule went); the colours read
   from the sharp picture, small, as Details' (`TitleBands.palette(for:)`;

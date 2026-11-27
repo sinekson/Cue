@@ -643,7 +643,12 @@ struct HomeView: View {
         // page or another tab) and as Cue comes back to the front, and only
         // when due: a new day, or you watched something. Never while it sits
         // open (an hourly check rebuilt them as you browsed, every 6 hours).
-        .onChange(of: active) { _, isActive in if isActive { refreshIfDue() } }
+        .onChange(of: active) { _, isActive in
+            guard isActive else { return }
+            refreshIfDue()
+            // The background's shape, an hour after the last.
+            BackgroundStore.shared.reshape(hourly: true)
+        }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshIfDue() } }
         // Degraded rows: made again at their retry time, once.
         .task(id: viewModel.retryAt) {
