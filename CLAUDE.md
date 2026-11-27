@@ -71,7 +71,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   first frame, stalls, failovers), a `tick` every 10 s (with the frames
   dropped in it), DROP for each stretch of dropped main-thread frames (how
   many, the worst, the tab or page, the press before: `FrameDrops`), HANG past 1 s on
-  the main thread, CRASH from an uncaught exception or fatal signal (tvOS
+  the main thread (with main's stacks, sampled each 0.5 s while stuck:
+  `MainStack`; Debug names the frames, Release gives image + offset), CRASH from an uncaught exception or fatal signal (tvOS
   has no MetricKit), EXIT for a foreground death caught at the next
   launch. Mark a moment: Play/Pause three times, in the player the flag on
   the shelf's tab row. Read it: Settings → Developer → Sessions, or
@@ -1552,7 +1553,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   backdrop blurred, its lightness pressed into tvOS's band: some good,
   others not) and Tinted (one neutral backdrop tinted). Details' light
   keeps the pools (`liftedStrong`).
-  Grained, app-wide,
+  Grained (±1 level of 255: a dither only; ±3 was seen on the TV), app-wide,
   still (`BandsPicture.palette`, `.pools`; the blurred picture itself was
   too busy at times, and with it the hue-runs rule went); the colours read
   from the sharp picture, small, as Details' (`TitleBands.palette(for:)`;

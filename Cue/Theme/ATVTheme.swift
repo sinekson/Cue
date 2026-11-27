@@ -46,8 +46,11 @@ enum BandsPicture {
         Pool(color: 0x2A2A2A, x: 0.20, y: 0.95, rx: 0.16, ry: 0.40),
     ]
 
-    /// The grain's full range (sRGB, 0–1): up to ±3 levels of 255.
-    static let grain: CGFloat = 6.0 / 255
+    /// The grain's full range (sRGB, 0–1): up to ±1 level of 255, a
+    /// dither only, enough to break the dark gradients' steps (±3 was
+    /// seen on the TV: drawn at 1080p, each grain a 2 × 2 dot on the 4K
+    /// panel; decided 2026-11-27: not to be noticed at all).
+    static let grain: CGFloat = 2.0 / 255
     static let size = CGSize(width: 1920, height: 1080)
 
     /// The grain added on the GPU before the picture goes to 8 bits (it
@@ -743,13 +746,18 @@ final class BackgroundStore: ObservableObject {
             prepareOther()
             return
         }
-        guard !loading else { return }
+        guard !loading, changing != now else { return }
+        changing = now
         AppProbe.life("background → \(now), drawn now")
         Task {
             let pick = await BackgroundPicks.shared.current()
             await show(pick, fade: true)
+            changing = nil
         }
     }
+    /// The mode a redraw is under way for: tvOS flips the mode back and
+    /// forth for its snapshots as the app goes away; one redraw each.
+    private var changing: BackgroundPicks.Mode?
 
     /// Another shape for the title up (`BandsPicture.shape`), faded in:
     /// on coming back to the app, and as Home comes into view (`hourly`:
@@ -1014,7 +1022,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands17-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "")
+        folder.appendingPathComponent("bands18-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "")
                                       + "-" + String(BandsPicture.shape % 46656, radix: 36)
                                       + (BandsPicture.trial == nil ? "" : "-trial\(BandsPicture.trialTag)") + ".png")
     }
@@ -1368,7 +1376,9 @@ struct ATVBackground: View {
             picture.load()
             ModeChangeCover.shared.install()
         }
-        .onChange(of: scheme) { _, _ in picture.modeChanged() }
+        // A mode change redraws it through the window's trait change
+        // (`ModeChangeCover`), once: each of these (one per page, ~10)
+        // redrawing it on its own was ten loads at every change.
     }
 }
 
@@ -1399,8 +1409,13 @@ final class ModeChangeCover {
     }
 
     private func changed() {
-        guard let window, cover == nil,
-              let still = window.snapshotView(afterScreenUpdates: false) else { return }
+        guard let window else { return }
+        // No still (one up already, or none to be had while away): the
+        // background changes all the same.
+        guard cover == nil, let still = window.snapshotView(afterScreenUpdates: false) else {
+            BackgroundStore.shared.modeChanged()
+            return
+        }
         still.frame = window.bounds
         still.isUserInteractionEnabled = false
         window.addSubview(still)
