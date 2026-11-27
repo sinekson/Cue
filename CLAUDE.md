@@ -1343,22 +1343,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   developer tool, title cards: `BackgroundPreview` at the end of
   `ATVTheme.swift`: the title's background alone, a dark plate of its
   values (`BandsPicture.Tuning`) changed with Left/Right, Light/Dark
-  flipped, the palette's swatches with share and strength; light Pools
-  also Base Colour (how much of the base's colour stays, its darker
-  pools too), Base Light (fixed, else the picture's) and Colour Target
-  (every title to one amount of colour, `colourAmount`, by a gain on the
-  saturation within 0.6–3×, `colourGain`; the first press takes the title's
-  own amount); methods,
-  Pools (the app's) and Picture (`BandsPicture.picture`, trying
-  2026-11-27, tvOS's way: the backdrop blurred to its masses, 10 % of the
-  width, its lightness pressed into a band (dark 0.12–0.25, light
-  0.74–0.96: tvOS's 30–64 and 188–244), its colour eased under a ceiling
-  (dark 0.06, light 0.14), optionally mirrored) and Tinted
-  (`BandsPicture.tinted`, trying 2026-11-27: one neutral backdrop of
-  lighter and darker areas for every title, its shape from Shape alone,
-  meant to change now and then; tinted by the title's two hues, the first
-  in the lighter areas, the second in the darker at 40 % (`tintSpread`),
-  dark 0.06, light 0.10); In the App (last row) puts the title up with
+  flipped, the palette's swatches with share and strength; Backdrop's
+  colours, levels, blur and Shape (hidden, Left/Right another shape),
+  Reset; In the App (last row) puts the title up with
   these values for the run (`BandsPicture.trial`, drawn in tvOS's own
   mode), Left gives the app its own back; Select hides
   the plate, Back closes; values kept for the run, the app always draws
@@ -1549,7 +1536,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   it swaps in with the text (drawn at the change, it came after even
   under the still). The log says which ("background → light, ready
   ahead" or "drawn now", "appearance → … in front / away"). Tried the same day and
-  left in the preview: Pools for the app (the darkest colour the base,
+  removed: Pools for the app (the darkest colour the base,
   eight pools of the colours times their saturation: Barbie's maroon
   everywhere, a dull picture grey; light capped at 0.035 lost the colour,
   uncapped some titles took the screen; a quieter base and one colour
