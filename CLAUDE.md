@@ -1133,13 +1133,22 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   again; Back returns to it, on that card. Debug builds list a "Test
   Stream" tab, Apple's BipBop (`StreamEntry.test`), played as the demo.
   All links failing brings the row up. The player's cover is clear so the
-  stage stays under it until the first frame; then lights down: the film
-  holds paused (no controls for that pause), the text and row fade
-  (0.25 s), the card's window grows to the screen, corners easing off
-  (0.55 s, the opening's curve) as its picture goes to black (0.7 s in
-  all), then the film rises out of the black (0.45 s, easing out) and
-  plays, its sound rising from silence over 0.8 s; presses but Back are
-  dropped until it has risen; leaving is one fade straight to the page.
+  stage stays under it until the first frame. A link starting (no list,
+  nothing searched), the card grows at its foot to the same 24 pt gap as
+  its top and sides (`StagePictureView.startingCard`, the scroll's move;
+  from the list one move with its way down; back with the list). Then the
+  film grows out of it (trying 2026-11-28, `CuePlayer.reveal`): its first frame,
+  held paused (no controls for that pause), dissolves in over the card's
+  picture in the card (0.35 s; laid out on the whole screen, the card a
+  window onto it, the trailer's way), then the window grows to the
+  screen, corners easing off (0.55 s, the opening's curve), the film
+  playing, its sound rising from silence over 0.8 s; Core Animation in
+  the player's view (a mask). Presses but Back are dropped until it's
+  full, and the controls' wake from the setup ends with it (they came up
+  for its last moment, then went); leaving is one fade straight to the page. (Lights down was
+  before: the stage's SwiftUI card grew as its picture went black, then
+  the film rose out of the black; it glitched while the stream started.
+  To check on the TV: Match Content's blackout mid-grow.)
 - **Discover** (in progress, 2026-11-19; `DiscoverModel`/`DiscoverView`
   at the end of `TMDBBrowseView.swift`): finding by kind, not name. One
   sentence of words to change, "Show me [genre] [style] [movies] about

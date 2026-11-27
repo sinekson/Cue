@@ -6,8 +6,8 @@ import UIKit
 /// card at Details' text's place the logo and what plays (a show's episode,
 /// a film's facts and tagline); where Details' buttons were, a line on
 /// what's happening. With the list up, the card's foot rises and the links
-/// are a row on the page under it. Lights down: the card's window grows to
-/// the screen as its picture goes dark, and the film rises out of the black.
+/// are a row on the page under it. The film grows out of the card
+/// (`CuePlayer.reveal`): the player's own, over the stage.
 /// Back while finding or loading stops it.
 struct PlayStageView<Sources: View>: View {
     @ObservedObject private var picker = SourcePicker.shared
@@ -30,6 +30,10 @@ struct PlayStageView<Sources: View>: View {
     @State private var shownIn = false
     /// On the way out (`leave`).
     @State private var leaving = false
+    /// A link starting: the card grown at its foot to the screen's gap
+    /// (`StagePictureView.startingCard`), the film to grow from it. Only
+    /// once the stage is in.
+    @State private var expanded = false
     /// Back's fade off as a whole.
     @State private var gone = false
     /// Grown out of a card with the links already in: the row waits below
@@ -43,6 +47,8 @@ struct PlayStageView<Sources: View>: View {
     private var searchingNow: Bool { launcher.searching != nil || picker.searching }
     /// At work: a line from the press's set, the light passing through it.
     private var waiting: Bool { !listUp || picker.searching }
+    /// A link is starting (no list, nothing being searched).
+    private var starting: Bool { !listUp && !searchingNow }
     /// The line: at work, or with the list up, why there's nothing to play.
     private var status: String? {
         if waiting {
@@ -56,7 +62,7 @@ struct PlayStageView<Sources: View>: View {
     }
 
     private var card: CGRect {
-        if stage.dark { return CGRect(origin: .zero, size: StagePictureView.pictureSize) }
+        if expanded { return StagePictureView.startingCard }
         let card = StagePictureView.detailsCard
         return short ? card.offsetBy(dx: 0, dy: -ShelfShape.stageScroll) : card
     }
@@ -70,8 +76,6 @@ struct PlayStageView<Sources: View>: View {
             Group {
                 picture
                 text
-                    .opacity(stage.dark ? 0 : 1)
-                    .animation(Motion.fade, value: stage.dark)
             }
             .environment(\.colorScheme, .dark)
             // With the list too, until it has taken focus from Details' Play
@@ -89,7 +93,7 @@ struct PlayStageView<Sources: View>: View {
                 sources(request)
                     .offset(y: below ? StagePictureView.pictureSize.height
                             : ShelfShape.stageTop + (short ? 0 : ShelfShape.stageScroll))
-                    .opacity(listUp && !stage.dark ? 1 : 0)
+                    .opacity(listUp ? 1 : 0)
                     .disabled(!listUp)
             }
         }
@@ -125,6 +129,12 @@ struct PlayStageView<Sources: View>: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + fade) { settle() }
         }
         .onChange(of: stage.coverGoing) { _, going in if going, scene.grown, !settled { settle() } }
+        // A link starting: the card grows at its foot, in the scroll's move
+        // (from the list: one move with its way back down).
+        .onChange(of: starting) { _, on in
+            guard settled, !leaving else { return }
+            withAnimation(ShelfShape.stageScrollAnimation) { expanded = on }
+        }
         .onDisappear { picker.leave = nil }
         // Links in: the scroll, only once the stage is in.
         .onChange(of: picker.request != nil && picker.hasLinks) { _, on in
@@ -158,6 +168,7 @@ struct PlayStageView<Sources: View>: View {
         withAnimation(ShelfShape.stageScrollAnimation) {
             below = false
             short = picker.request != nil && picker.hasLinks && !picker.picked
+            expanded = starting
         }
     }
 
@@ -197,8 +208,7 @@ struct PlayStageView<Sources: View>: View {
         let card = card
         // The picture goes with the card (scrolled with it, as Details').
         let full = StagePictureView.cardPicture(in: StagePictureView.detailsCard, url: scene.art)
-        let shown = stage.dark ? CGRect(origin: CGPoint(x: full.minX, y: 0), size: full.size)
-            : full.offsetBy(dx: 0, dy: card.minY - StagePictureView.detailsCard.minY)
+        let shown = full.offsetBy(dx: 0, dy: card.minY - StagePictureView.detailsCard.minY)
         return ZStack(alignment: .topLeading) {
             Color.black
             ZStack(alignment: .topLeading) {
@@ -209,23 +219,16 @@ struct PlayStageView<Sources: View>: View {
                 LinearGradient(stops: Self.shade, startPoint: .top, endPoint: .bottom)
                     .frame(width: card.width, height: card.height)
             }
-            // Lights down: the picture goes to black as the window grows.
-            .opacity(stage.dark ? 0 : 1)
-            .animation(.easeInOut(duration: PlayStage.lightsDown - Self.darkDelay).delay(Self.darkDelay),
-                       value: stage.dark)
         }
         .frame(width: card.width, height: card.height, alignment: .topLeading)
-        // The cards' edge (Card Outlines), Details' card's; gone as the
-        // window grows to the screen.
+        // The cards' edge (Card Outlines), Details' card's.
         .overlay {
             RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.3), lineWidth: 2)
-                .opacity(stage.dark || FixedFocusRing.outlines == .off ? 0 : 1)
-                .animation(Motion.fade, value: stage.dark)
+                .opacity(FixedFocusRing.outlines == .off ? 0 : 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: stage.dark ? 0 : Spotlight.cornerRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Spotlight.cornerRadius, style: .continuous))
         .offset(x: card.minX, y: card.minY)
-        .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: Self.grow), value: stage.dark)
     }
 
     /// Details' card shade (`StageArt.cardShade`'s stops, eased between),
@@ -332,10 +335,6 @@ extension PlayStageView {
     private static var statusHeight: CGFloat { 36 }
     /// The status's baseline on the second line's.
     private static var statusDrop: CGFloat { 3 }
-    /// Lights down: the window's growth (the opening's zoom), the picture
-    /// going dark after this.
-    private static var grow: Double { 0.55 }
-    private static var darkDelay: Double { 0.2 }
 }
 
 /// The sources on the stage, under the title: the player's shelf with Sources

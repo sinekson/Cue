@@ -50,6 +50,13 @@ final class StagePictureView: UIView {
         return CGRect(x: detailsInset, y: detailsInset, width: 1920 - 2 * detailsInset,
                       height: bottom - detailsInset)
     }
+    /// The stage's card while a link starts: Details' grown at its foot to
+    /// the same gap from the screen's edge as its top and sides; the film
+    /// grows from it to the screen (`CuePlayer.reveal`).
+    static var startingCard: CGRect {
+        CGRect(x: detailsInset, y: detailsInset, width: 1920 - 2 * detailsInset,
+               height: 1080 - 2 * detailsInset)
+    }
     /// Details' buttons, in its card bottom right where Home's dots are:
     /// their foot on the tagline's line, Play's caption ("S1:E5") under
     /// them in the margin.

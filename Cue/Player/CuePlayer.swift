@@ -4246,8 +4246,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Lights down: the first frame is in; the film holds while the stage
-    /// goes dark, then rises out of the black, playing.
+    /// The film grows out of the stage's card: its first frame comes in
+    /// over the card's picture, in the card (held paused, `filmIn`), then
+    /// the card's window grows to the screen, corners easing off (the
+    /// opening's zoom), the film playing, its sound rising. The film is laid
+    /// out on the whole screen, the card a window onto it (the trailer's
+    /// way). All Core Animation in the player's own view: the stage's
+    /// SwiftUI lights-down (its card growing as its picture went black, the
+    /// film rising out of the black) lagged while the stream started.
     private func reveal() {
         guard !revealed, let engine else { return }
         revealed = true
@@ -4255,13 +4261,59 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         arriving = true
         engine.volume = 0
         engine.pause()
-        PlayStage.shared.dark = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + PlayStage.lightsDown) { [weak self] in
+        let window = CALayer()
+        window.backgroundColor = UIColor.black.cgColor
+        window.frame = StagePictureView.startingCard
+        window.cornerRadius = Spotlight.cornerRadius
+        window.cornerCurve = .continuous
+        // A mask is outside the layer tree: `-slowMo`'s window speed
+        // doesn't reach it.
+        window.speed = view.window?.layer.speed ?? 1
+        surface.layer.mask = window
+        // A letterboxed film's bars black in the card, not the still.
+        surface.backgroundColor = .black
+        UIView.animate(withDuration: Self.filmIn, delay: 0, options: .curveEaseInOut) {
+            self.surface.alpha = 1
+        } completion: { [weak self] _ in
             guard let self, !self.closed, !self.closing else { return }
             engine.play()
-            self.rise()
             self.soundUp(engine)
+            self.grow(window)
         }
+    }
+
+    /// The film's first frame dissolving in over the card's picture.
+    nonisolated static let filmIn: Double = 0.35
+
+    /// The card's window to the screen, on the opening's zoom.
+    private func grow(_ window: CALayer) {
+        let from = window.frame
+        let full = surface.bounds
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        window.frame = full
+        window.cornerRadius = 0
+        CATransaction.commit()
+        let duration = DetailTransition.pictureSettle
+        func animate(_ key: String, _ value: Any) {
+            let move = CABasicAnimation(keyPath: key)
+            move.fromValue = value
+            move.duration = duration
+            move.timingFunction = DetailTransition.zoomInCurve
+            window.add(move, forKey: key)
+        }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self else { return }
+            self.surface.layer.mask = nil
+            self.arrived()
+            self.view.backgroundColor = .black
+            self.onShown()
+        }
+        animate("bounds", CGRect(origin: .zero, size: from.size))
+        animate("position", CGPoint(x: from.midX, y: from.midY))
+        animate("cornerRadius", Spotlight.cornerRadius)
+        CATransaction.commit()
     }
 
     /// The sound comes up with the picture: a ramp a little longer than the
@@ -4284,10 +4336,17 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         UIView.animate(withDuration: Motion.presentDuration, delay: 0, options: .curveEaseOut) {
             self.surface.alpha = 1
         } completion: { _ in
-            self.arriving = false
+            self.arrived()
             self.view.backgroundColor = .black
             self.onShown()
         }
+    }
+
+    /// The film is in: no controls left over from the setup's wake (held
+    /// back while arriving, they came up for what was left of it, then went).
+    private func arrived() {
+        transport.expire()
+        arriving = false
     }
 
     /// Runs however the player goes: its own Back, or the system dismissing it
