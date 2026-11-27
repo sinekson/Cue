@@ -176,7 +176,9 @@ class InnerTube {
         
         // TODO: handle oauth auth case again
         
-        let (responseData, _) = try await URLSession.shared.data(for: request)
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+        // (Cue) A refusal is a refusal, not a parse error.
+        if (response as? HTTPURLResponse)?.statusCode == 429 { throw YouTubeKitError.rateLimited }
         
         return try JSONDecoder().decode(T.self, from: responseData)
     }

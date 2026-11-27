@@ -2113,7 +2113,8 @@ extension HomeUIKitView {
         // THE TRAILER: resting on a title, it plays over its picture;
         // another title, or off the buttons, fades it out. At its end, the billboard moves on (as by
         // itself — `autoPageRunning`).
-        .onChange(of: "\(trailerTitle?.id ?? "")|\(homeSettings.heroTrailerSound)", initial: true) { _, _ in
+        // (Idle ending — a press — rests again: `TrailerGate.idle`.)
+        .onChange(of: "\(trailerTitle?.id ?? "")|\(homeSettings.heroTrailerSound)|\(trailerGate.idle)", initial: true) { _, _ in
             // Back from Details: its trailer playing on.
             if let trailerTitle { trailer.adopt(trailerTitle) }
             let about = trailerTitle.map(trailerSeason)

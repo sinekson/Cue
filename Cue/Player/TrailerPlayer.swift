@@ -57,6 +57,14 @@ enum TrailerNetworkGeneration {
     }
 }
 
+/// A trailer line to the console and the Log (`trailer` events), so a TV
+/// evening shows why a trailer did or didn't come.
+nonisolated func trailerLog(_ format: String, _ args: CVarArg...) {
+    let line = String(format: format, arguments: args)
+    NSLog("[CueTrailer] %@", line)
+    PlayerProbe.event("trailer", line)
+}
+
 /// Resolves a YouTube video key to something AVPlayer can play. tvOS has no
 /// WebKit, so the iframe embed is out — YouTubeKit extracts native streams.
 ///
@@ -80,9 +88,10 @@ enum TrailerResolver {
     /// when the box is on a VPN whose exit sits in another country. TMDB
     /// usually lists several (the studio's, a distributor's, a regional cut)
     /// and the ones after the first are frequently not restricted at all.
-    /// Bounded because every miss costs a full extraction (5: a cut below
-    /// `minimumHeight` counts as a miss too).
-    static let maxCandidates = 5
+    /// Bounded because every miss costs a full extraction (a cut below
+    /// `minimumHeight` counts as a miss too); when the first three fail the
+    /// rest nearly always fail the same way (NuvioTV's count).
+    static let maxCandidates = 3
 
     /// The lowest a trailer over the picture may be: a soft 360p cut over a
     /// sharp backdrop looks worse than the still, so it is skipped for the
@@ -107,30 +116,42 @@ enum TrailerResolver {
     /// page was unreadable. See the CUE PATCH in
     /// `Vendor/YouTubeKit/Sources/YouTubeKit/YouTube.swift`.
     private static func extractStreams(youtubeKey: String) async -> (streams: [YouTubeKit.Stream], hls: URL?)? {
-        do {
-            let youtube = YouTube(videoID: youtubeKey, methods: [.local])
-            let streams = try await youtube.streams
-            // The same answer carries the HLS manifest (no request of its own).
-            let hls = try? await youtube.livestreams.first?.url
-            if !streams.isEmpty { return (streams, hls) }
-            NSLog("[CueTrailer] local extraction returned nothing for %@ — trying remote", youtubeKey)
-        } catch {
-            // Age-restricted: the remote extractor spends ~10 s and fails too.
-            if String(describing: error).contains("AgeRestricted") {
-                refuse(youtubeKey: youtubeKey, reason: "age restricted")
-                return nil
+        // A stale session (every client asking to sign in, no bot check
+        // named) is asked once more, with the fresh page config YouTubeKit
+        // fetches after dropping the old one.
+        for attempt in 0..<2 {
+            do {
+                let youtube = YouTube(videoID: youtubeKey, methods: [.local])
+                let streams = try await youtube.streams
+                // The same answer carries the HLS manifest (no request of its own).
+                let hls = try? await youtube.livestreams.first?.url
+                if !streams.isEmpty { return (streams, hls) }
+                trailerLog("local extraction returned nothing for %@ — trying remote", youtubeKey)
+                break
+            } catch {
+                let kit = error as? YouTubeKitError
+                if kit == .staleSession, attempt == 0, !Task.isCancelled {
+                    trailerLog("%@: YouTube's session gone stale — a fresh one", youtubeKey)
+                    continue
+                }
+                // Age-restricted: the remote extractor spends ~10 s and fails too.
+                if kit == .videoAgeRestricted || String(describing: error).contains("AgeRestricted") {
+                    refuse(youtubeKey: youtubeKey, reason: "age restricted", days: 30)
+                    return nil
+                }
+                // The remote extractor asks from this address too: no use.
+                if kit == .botCheck || kit == .rateLimited {
+                    holdOff(kit == .botCheck ? "YouTube's bot check" : "YouTube's rate limit (429)")
+                    return nil
+                }
+                if kit == .regexMatchError {
+                    trailerLog("YouTube's page unreadable for %@ — refused", youtubeKey)
+                    return nil
+                }
+                trailerLog("local extraction failed for %@: %@ — trying remote",
+                      youtubeKey, String(describing: error))
+                break
             }
-            // The remote extractor asks from this address too: no use.
-            if (error as? YouTubeKitError) == .botCheck {
-                holdOff("YouTube's bot check")
-                return nil
-            }
-            if (error as? YouTubeKitError) == .regexMatchError {
-                NSLog("[CueTrailer] YouTube's page unreadable for %@ — refused", youtubeKey)
-                return nil
-            }
-            NSLog("[CueTrailer] local extraction failed for %@: %@ — trying remote",
-                  youtubeKey, String(describing: error))
         }
         // The hero moved on (or the page closed) and took the URLSession
         // requests with it — that is not YouTube refusing us, and the remote
@@ -142,7 +163,8 @@ enum TrailerResolver {
             let hls = try? await youtube.livestreams.first?.url
             return streams.isEmpty ? nil : (streams, hls)
         } catch {
-            NSLog("[CueTrailer] extraction failed for %@: %@", youtubeKey, String(describing: error))
+            if (error as? YouTubeKitError) == .rateLimited { holdOff("YouTube's rate limit (429)") }
+            trailerLog("extraction failed for %@: %@", youtubeKey, String(describing: error))
             return nil
         }
     }
@@ -158,7 +180,7 @@ enum TrailerResolver {
         guard let (data, response) = try? await URLSession.shared.data(from: manifest),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let text = String(data: data, encoding: .utf8) else {
-            NSLog("[CueTrailer] %@: HLS manifest unreadable", key)
+            trailerLog("%@: HLS manifest unreadable", key)
             return nil
         }
         func attribute(_ name: String, in line: String) -> String? {
@@ -189,10 +211,10 @@ enum TrailerResolver {
             codecs.insert(codec)
         }
         guard height > 0 else {
-            NSLog("[CueTrailer] %@: HLS has nothing good enough (%d variants)", key, total)
+            trailerLog("%@: HLS has nothing good enough (%d variants)", key, total)
             return nil
         }
-        NSLog("[CueTrailer] %@: HLS up to %dp, %d of %d variants (%@)", key, height,
+        trailerLog("%@: HLS up to %dp, %d of %d variants (%@)", key, height,
               out.filter { $0.hasPrefix("#EXT-X-STREAM-INF") }.count, total,
               codecs.sorted().joined(separator: " | "))
         return (out.joined(separator: "\n"), height)
@@ -215,6 +237,13 @@ enum TrailerResolver {
     /// matching User-Agent, and AVPlayer's default UA gets "Cannot Open"
     /// (-11828). Rebuild each request with the extracting client's UA.
     private static func asset(for url: URL) -> AVURLAsset {
+        AVURLAsset(url: url, options: [
+            "AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": userAgent(for: url)]
+        ])
+    }
+
+    /// The User-Agent of the client that minted `url` (`asset(for:)`).
+    private static func userAgent(for url: URL) -> String {
         let client = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "c" })?.value
         let userAgent: String
@@ -250,9 +279,7 @@ enum TrailerResolver {
             // browser clients — a browser agent is the matching one.
             userAgent = "Mozilla/5.0"
         }
-        return AVURLAsset(url: url, options: [
-            "AVURLAssetHTTPHeaderFieldsKey": ["User-Agent": userAgent]
-        ])
+        return userAgent
     }
 
     /// Merge a remote video-only and audio-only track into one playable asset.
@@ -294,7 +321,7 @@ enum TrailerResolver {
             }
             return budgeted(AVPlayerItem(asset: composition))
         } catch {
-            NSLog("[CueTrailer] merge failed: %@", String(describing: error))
+            trailerLog("merge failed: %@", String(describing: error))
             return nil
         }
     }
@@ -350,12 +377,16 @@ enum TrailerResolver {
     private struct Refusal: Codable {
         let reason: String
         let at: Date
+        /// How long it holds: a property of the video (age) 30 days; what
+        /// one answer happened to offer (a low cut, nothing playable) a day —
+        /// another client may well have more.
+        var days: Double?
+        var life: TimeInterval { (days ?? 30) * 24 * 60 * 60 }
     }
     private struct Stored: Codable {
         var choices: [String: BackdropChoice] = [:]
         var refused: [String: Refusal] = [:]
     }
-    private static let refusalTTL: TimeInterval = 30 * 24 * 60 * 60
     private static let storeURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("CueCache/trailers.json")
     private static let storeQueue = DispatchQueue(label: "cue.trailer.store", qos: .utility)
@@ -366,7 +397,7 @@ enum TrailerResolver {
         let now = Date(), generation = TrailerNetworkGeneration.current
         value.choices = value.choices.filter { $0.value.expires > now }
             .mapValues { var choice = $0; choice.generation = generation; return choice }
-        value.refused = value.refused.filter { now.timeIntervalSince($0.value.at) < refusalTTL }
+        value.refused = value.refused.filter { now.timeIntervalSince($0.value.at) < $0.value.life }
         return value
     }()
     /// The found trailers' links forgotten (Settings → Storage); the
@@ -388,9 +419,10 @@ enum TrailerResolver {
         }
     }
     /// Extractions running, one per key however many ask (the warm-up and a
-    /// rest on the same title). Not cancelled with an asker: what it finds
-    /// is kept for the next.
-    private static var resolving: [String: Task<BackdropChoice?, Never>] = [:]
+    /// rest on the same title), with how many are waiting on it: the last
+    /// one to leave cancels it (focus moved on: YouTube isn't asked for
+    /// what no one will see — every focus move used to run one to its end).
+    private static var resolving: [String: (task: Task<BackdropChoice?, Never>, token: UUID, askers: Int)] = [:]
 
     /// Keys whose extraction just failed, and when — in memory only (a
     /// failure can be the network's).
@@ -423,7 +455,7 @@ enum TrailerResolver {
         // while a tunnel was coming up would otherwise keep every one of those
         // titles trailer-less for ten more minutes after it settled.
         backdropFailureCache.removeAll()
-        NSLog("[CueTrailer] network path changed — dropped the resolved-URL cache")
+        trailerLog("network path changed — dropped the resolved-URL cache")
     }
 
     /// Remember that a key wouldn't extract — but only if the network we
@@ -440,16 +472,20 @@ enum TrailerResolver {
         }
     }
 
-    /// YouTube's "confirm you're not a bot" (it flags an address that asks
-    /// too much — the warm-up, every launch), or `failuresAllowed` keys in a
-    /// row not resolving (its watch page refused too): no trailer resolved
-    /// for `holdOffPause` — every request would only keep the flag on.
+    /// YouTube refusing this address — its "confirm you're not a bot" or a
+    /// 429, nothing else (an ordinary failure says nothing about the
+    /// address): no trailer resolved for a while, every request would only
+    /// keep the flag on. A minute, doubling with each strike up to 15
+    /// (NuvioTV's); a success clears it (30 min after any three failures
+    /// was before: a minute of browsing took trailers away for half an hour).
     private static func holdOff(_ reason: String) {
-        let first = backdropCacheLock.withLock {
-            defer { heldOffUntil = Date().addingTimeInterval(holdOffPause); failuresInARow = 0 }
-            return heldOffUntil.map { $0 < Date() } ?? true
+        let (pause, strike): (TimeInterval, Int) = backdropCacheLock.withLock {
+            strikes += 1
+            let pause = min(holdOffMax, holdOffBase * pow(2, Double(strikes - 1)))
+            heldOffUntil = Date().addingTimeInterval(pause)
+            return (pause, strikes)
         }
-        if first { NSLog("[CueTrailer] %@ — no trailers for %d min", reason, Int(holdOffPause / 60)) }
+        trailerLog("%@ — no trailers for %.0f min (strike %d)", reason, pause / 60, strike)
     }
     /// Kept in the defaults: a relaunch (or a new build) mustn't start
     /// asking again at once.
@@ -457,25 +493,23 @@ enum TrailerResolver {
         get { UserDefaults.standard.object(forKey: "cue.trailers.heldOffUntil") as? Date }
         set { UserDefaults.standard.set(newValue, forKey: "cue.trailers.heldOffUntil") }
     }
-    private static let holdOffPause: TimeInterval = 30 * 60
-    private static var failuresInARow = 0
-    private static let failuresAllowed = 3
+    private static let holdOffBase: TimeInterval = 60
+    private static let holdOffMax: TimeInterval = 15 * 60
+    private static var strikes = 0
 
-    /// A key extracted or not (a cancelled one doesn't count).
-    private static func noteExtraction(ok: Bool) {
-        guard !Task.isCancelled else { return }
-        let tooMany = backdropCacheLock.withLock {
-            failuresInARow = ok ? 0 : failuresInARow + 1
-            return failuresInARow >= failuresAllowed
+    /// A key extracted: YouTube answers this address again.
+    private static func noteSuccess() {
+        backdropCacheLock.withLock {
+            strikes = 0
+            heldOffUntil = nil
         }
-        if tooMany { holdOff("\(failuresAllowed) trailers in a row not resolving") }
     }
 
-    /// Remember that a key will never do (for `refusalTTL`).
-    private static func refuse(youtubeKey: String, reason: String) {
-        NSLog("[CueTrailer] %@: %@ — not used", youtubeKey, reason)
+    /// Remember that a key won't do (for its `Refusal.life`).
+    private static func refuse(youtubeKey: String, reason: String, days: Double = 1) {
+        trailerLog("%@: %@ — not used for %.0f day(s)", youtubeKey, reason, days)
         backdropCacheLock.withLock {
-            stored.refused[youtubeKey] = Refusal(reason: reason, at: Date())
+            stored.refused[youtubeKey] = Refusal(reason: reason, at: Date(), days: days)
             saveLocked()
         }
     }
@@ -498,15 +532,33 @@ enum TrailerResolver {
 
     /// The first of `candidates` that resolves, with the key it came from.
     /// See `maxCandidates` for why more than one is tried.
+    /// A remembered link found dead is extracted again once; a fresh one
+    /// dead goes on to the next key.
     static func backdropItem(candidates: [String]) async -> (item: AVPlayerItem, youtubeKey: String)? {
         for key in candidates.prefix(maxCandidates) {
-            guard !Task.isCancelled else { return nil }
-            if let choice = await choice(youtubeKey: key), !Task.isCancelled,
-               let item = await backdropPlayerItem(choice, key: key) {
-                return (item, key)
+            for _ in 0..<2 {
+                guard !Task.isCancelled else { return nil }
+                guard let choice = await choice(youtubeKey: key), !Task.isCancelled else { break }
+                if let item = await backdropPlayerItem(choice, key: key) { return (item, key) }
+                guard !Task.isCancelled else { return nil }
+                invalidate(youtubeKey: key)
+                if Date().timeIntervalSince(choice.at) < 60 { break }
             }
         }
         return nil
+    }
+
+    /// One of `candidates` resolved already (kept, not expired): no
+    /// request to YouTube to play it.
+    static func isResolved(_ candidates: [String]) -> Bool {
+        backdropCacheLock.withLock {
+            candidates.prefix(maxCandidates).contains { stored.choices[$0].map { $0.expires > Date() } ?? false }
+        }
+    }
+
+    /// Asking YouTube is paused (`holdOff`).
+    static var heldOff: Bool {
+        backdropCacheLock.withLock { heldOffUntil.map { $0 > Date() } ?? false }
     }
 
     /// Resolved ahead, nothing built: the first of `candidates` that will
@@ -547,29 +599,47 @@ enum TrailerResolver {
                 return Task { hit }
             }
             if let refused = stored.refused[youtubeKey],
-               Date().timeIntervalSince(refused.at) < refusalTTL { return nil }
+               Date().timeIntervalSince(refused.at) < refused.life { return nil }
             if let failed = backdropFailureCache[youtubeKey],
                Date().timeIntervalSince(failed.at) < backdropFailureTTL { return nil }
             if let until = heldOffUntil, until > Date() { return nil }
-            if let running = resolving[youtubeKey] { return running }
+            if var running = resolving[youtubeKey] {
+                running.askers += 1
+                resolving[youtubeKey] = running
+                return running.task
+            }
+            let token = UUID()
             let task = Task.detached(priority: .userInitiated) { () -> BackdropChoice? in
                 let choice = await extractChoice(youtubeKey: youtubeKey, generation: generation)
-                backdropCacheLock.withLock { resolving[youtubeKey] = nil }
+                backdropCacheLock.withLock {
+                    if resolving[youtubeKey]?.token == token { resolving[youtubeKey] = nil }
+                }
                 return choice
             }
-            resolving[youtubeKey] = task
+            resolving[youtubeKey] = (task, token, 1)
             return task
         }
-        return await task?.value
+        guard let task else { return nil }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            let last: Bool = backdropCacheLock.withLock {
+                guard var running = resolving[youtubeKey], running.task == task else { return false }
+                running.askers -= 1
+                if running.askers > 0 { resolving[youtubeKey] = running; return false }
+                resolving[youtubeKey] = nil
+                return true
+            }
+            if last { task.cancel() }
+        }
     }
 
     private static func extractChoice(youtubeKey: String, generation: UInt64) async -> BackdropChoice? {
         guard let found = await extractStreams(youtubeKey: youtubeKey) else {
             rememberFailure(youtubeKey: youtubeKey, generation: generation)
-            noteExtraction(ok: false)
             return nil
         }
-        noteExtraction(ok: true)
+        noteSuccess()
         let streams = found.streams
         let skipHLS = backdropCacheLock.withLock { hlsFailed.contains(youtubeKey) }
         var hls: (text: String, height: Int)?
@@ -620,7 +690,7 @@ enum TrailerResolver {
             stored.choices[youtubeKey] = choice
             saveLocked()
         }
-        NSLog("[CueTrailer] backdrop %@: %dp (%@)", youtubeKey, choice.height,
+        trailerLog("backdrop %@: %dp (%@)", youtubeKey, choice.height,
               choice.playlist != nil ? "HLS" : choice.audio == nil ? "muxed" : "merged")
         return choice
     }
@@ -633,6 +703,16 @@ enum TrailerResolver {
     /// because the Detail page un-mutes this item.
     @MainActor
     private static func backdropPlayerItem(_ choice: BackdropChoice, key: String) async -> AVPlayerItem? {
+        // The first thing the player will fetch, asked for one byte first: a
+        // link YouTube no longer serves (403: another address, expired early)
+        // never reaches the player (NuvioTV's check). No answer in 2 s isn't
+        // proof: played anyway.
+        let first = choice.playlist.flatMap { $0.components(separatedBy: "\n").first { $0.hasPrefix("http") } }
+            .flatMap(URL.init(string:)) ?? choice.video
+        if await isDead(first, agent: choice.playlist == nil) {
+            trailerLog("%@: link dead (%@)", key, choice.playlist != nil ? "HLS" : "stream")
+            return nil
+        }
         if let playlist = choice.playlist {
             return budgeted(AVPlayerItem(asset: TrailerPlaylist.shared.asset(key: key, playlist: playlist)))
         }
@@ -643,10 +723,23 @@ enum TrailerResolver {
             return merged
         }
         if let fallback = choice.muxedFallback {
-            NSLog("[CueTrailer] backdrop merge failed — falling back to the muxed stream")
+            trailerLog("backdrop merge failed — falling back to the muxed stream")
             return budgeted(AVPlayerItem(asset: asset(for: fallback)))
         }
         return budgeted(AVPlayerItem(asset: asset(for: choice.video)))
+    }
+}
+
+extension TrailerResolver {
+    /// A definite refusal (4xx) for `url`; a timeout or network error isn't.
+    /// `agent`: googlevideo's streams want their client's User-Agent.
+    nonisolated static func isDead(_ url: URL, agent: Bool) async -> Bool {
+        var request = URLRequest(url: url, timeoutInterval: 2)
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        if agent { request.setValue(userAgent(for: url), forHTTPHeaderField: "User-Agent") }
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let code = (response as? HTTPURLResponse)?.statusCode else { return false }
+        return (400..<500).contains(code)
     }
 }
 
@@ -688,6 +781,32 @@ final class TrailerGate: ObservableObject {
     @Published var playerUp = false
     /// A full-screen page over the app (the profile gate, the welcome).
     @Published var coverUp = false
+    /// No press for `idleAfter`: no trailer starts by itself (one playing
+    /// plays on) until the next press — a TV left on Home isn't a trailer
+    /// jukebox, and YouTube isn't asked all evening.
+    @Published private(set) var idle = false
+    static let idleAfter: TimeInterval = 5 * 60
+    private var timer: Timer?
+
+    private init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+            MainActor.assumeIsolated { TrailerGate.shared.check() }
+        }
+    }
+
+    /// Any press (`InputHold`): awake again.
+    func pressed() {
+        if idle { idle = false; trailerLog("a press — trailers again") }
+    }
+
+    private func check() {
+        // Before the first press, the launch counts as one.
+        let still = CACurrentMediaTime() - max(InputHold.lastPress, InputHold.launched)
+        if !idle, still >= Self.idleAfter {
+            idle = true
+            trailerLog("no press for %.0f min — no trailers until one", Self.idleAfter / 60)
+        }
+    }
 }
 
 /// THE TRAILER ON THE BILLBOARD (Home) and Details' picture: resting on a
@@ -728,6 +847,22 @@ final class StageTrailer: ObservableObject {
     private var loadedAt = Date()
     private var shownAt: Date?
     private var ended: Set<String> = []
+    /// Titles whose trailer has been seen — played `seenAfter` seconds or
+    /// `seenShare` of it, whichever first — anywhere (billboard, cards):
+    /// not started again for `seenLife` (once played to its end was the
+    /// billboard's rule alone). Details doesn't follow it: there you came for
+    /// the title.
+    private static var seen: [String: Date] = [:]
+    private static let seenAfter: Double = 30
+    private static let seenShare: Double = 0.5
+    private static let seenLife: TimeInterval = 6 * 60 * 60
+    private var seenObserver: (player: AVPlayer, token: Any)?
+    private static func isSeen(_ titleID: String) -> Bool {
+        guard let at = seen[titleID] else { return false }
+        if Date().timeIntervalSince(at) < seenLife { return true }
+        seen[titleID] = nil
+        return false
+    }
     /// The rest's title, for one more try when a remembered URL is dead.
     private var request: (item: MetaItem, season: Int?, aired: Date?, sound: Bool)?
     /// The sound rising from silence as it comes in (a showcase card's).
@@ -742,6 +877,8 @@ final class StageTrailer: ObservableObject {
     /// its player, playing, until that page takes it (`adopt`).
     /// `from`: a card's place on screen (the opening grows the video out of it).
     private static var carried: (titleID: String, player: AVPlayer, key: String, from: CGRect?)?
+    /// The rest before YouTube is asked (`rest`).
+    static let settle: Double = 1
     static let fadeIn: Double = 0.6
     static let fadeOut: Double = 0.35
 
@@ -750,7 +887,9 @@ final class StageTrailer: ObservableObject {
     /// Resolved and loaded at once, hidden (usually already resolved —
     /// `TrailerResolver.warm`): when the rest's delay is up, the first frame
     /// is there.
-    func rest(on item: MetaItem?, season: Int? = nil, aired: Date? = nil, sound: Bool, rise: Bool = false) {
+    /// `honoursSeen`: false on Details (`seen`).
+    func rest(on item: MetaItem?, season: Int? = nil, aired: Date? = nil, sound: Bool, rise: Bool = false,
+              honoursSeen: Bool = true) {
         pending?.cancel()
         self.rise = rise
         guard let item else { return stop() }
@@ -760,22 +899,40 @@ final class StageTrailer: ObservableObject {
         carriedIn = false
         if id != itemID { stop(); itemID = id }
         guard !ended.contains(id) else { return }
+        // Seen: not started again (one paused here goes on).
+        if honoursSeen, player == nil, Self.isSeen(item.id) { return }
         request = (item, season, aired, sound)
         resting = true
         pending = Task { [weak self] in
             let begun = Date()
             guard let self else { return }
             if self.player == nil {
+                guard !TrailerGate.shared.idle else { return }
                 let keys = await TMDBService.trailerKeys(id: item.id, type: item.type,
                                                          season: season, aired: aired)
-                guard !Task.isCancelled, !keys.isEmpty,
-                      let found = await TrailerResolver.backdropItem(candidates: keys),
-                      !Task.isCancelled, self.itemID == id else { return }
+                guard !Task.isCancelled else { return }
+                guard !keys.isEmpty else { return trailerLog("%@: no trailer on TMDB", item.name) }
+                // Asked of YouTube only once the rest has settled: focus
+                // passing over a card costs nothing (a kept one plays at
+                // once).
+                if !TrailerResolver.isResolved(keys) {
+                    let settle = Self.settle - Date().timeIntervalSince(begun)
+                    if settle > 0 { try? await Task.sleep(for: .seconds(settle)) }
+                    guard !Task.isCancelled else { return }
+                    if TrailerResolver.heldOff { return trailerLog("%@: YouTube paused", item.name) }
+                }
+                guard let found = await TrailerResolver.backdropItem(candidates: keys) else {
+                    if !Task.isCancelled { trailerLog("%@: none of %d trailers resolved", item.name, min(keys.count, TrailerResolver.maxCandidates)) }
+                    return
+                }
+                guard !Task.isCancelled, self.itemID == id else { return }
                 self.load(found.item, key: found.youtubeKey)
             }
             let left = Spotlight.trailerDelay - Date().timeIntervalSince(begun)
             if left > 0 { try? await Task.sleep(for: .seconds(left)) }
             guard !Task.isCancelled, self.itemID == id, let player = self.player else { return }
+            // Idle by now: a fresh one doesn't start (one paused goes on).
+            if TrailerGate.shared.idle, player.currentTime().seconds < 1 { return }
             self.setSound(sound && !rise)
             self.show(player)
             if sound && rise {
@@ -845,6 +1002,7 @@ final class StageTrailer: ObservableObject {
         itemID = item.id
         carriedIn = true
         watch(carried.player, key: carried.key)
+        watchSeen(carried.player)
         shownAt = Date()
         playingObserver = nil
         stage?.attachTrailer(surface)
@@ -910,9 +1068,6 @@ final class StageTrailer: ObservableObject {
             player.isMuted = false
         }
         fadeSound(to: 1, over: Self.soundRise)
-        // Loaded just now (nothing on the picture): played at once, it
-        // stalls before its first segment — and, not waiting, never goes on.
-        player.automaticallyWaitsToMinimizeStalling = true
         fullPlayer = player
         // On the picture too, for after.
         show(player)
@@ -955,7 +1110,11 @@ final class StageTrailer: ObservableObject {
     private func load(_ item: AVPlayerItem, key: String) {
         let player = AVPlayer(playerItem: item)
         player.isMuted = true
-        player.automaticallyWaitsToMinimizeStalling = false
+        // Waiting, always: not waiting, one played with little in its buffer
+        // (fetched just as the rest ended: the cards' usual case) stalled at
+        // its first frame and never went on — on the card, in Details that
+        // took it over; only full screen, which set this, played it.
+        player.automaticallyWaitsToMinimizeStalling = true
         // Not the system's Now Playing (it's the page's picture).
         player.allowsExternalPlayback = false
         watch(player, key: key)
@@ -975,7 +1134,7 @@ final class StageTrailer: ObservableObject {
             forName: .AVPlayerItemPlaybackStalled, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let shown = self.shownAt else { return }
-                NSLog("[CueTrailer] %@: stalled %.1f s in", key, Date().timeIntervalSince(shown))
+                trailerLog("%@: stalled %.1f s in", key, Date().timeIntervalSince(shown))
             }
         }
         playingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
@@ -984,7 +1143,7 @@ final class StageTrailer: ObservableObject {
                 guard let self, self.player === player, let shown = self.shownAt,
                       self.playingObserver != nil else { return }
                 self.playingObserver = nil
-                NSLog("[CueTrailer] %@: playing %.2f s after the delay (loading began %.2f s before it)",
+                trailerLog("%@: playing %.2f s after the delay (loading began %.2f s before it)",
                       key, Date().timeIntervalSince(shown), shown.timeIntervalSince(self.loadedAt))
             }
         }
@@ -1001,7 +1160,7 @@ final class StageTrailer: ObservableObject {
         }
         readyObserver = item.observe(\.status) { [weak self] item, _ in
             guard item.status == .failed else { return }
-            NSLog("[CueTrailer] %@: failed — %@", key, String(describing: item.error))
+            trailerLog("%@: failed — %@", key, String(describing: item.error))
             DispatchQueue.main.async {
                 guard let self, self.player === player, let id else { return }
                 if let key = self.youtubeKey { TrailerResolver.invalidate(youtubeKey: key) }
@@ -1023,20 +1182,59 @@ final class StageTrailer: ObservableObject {
         }
     }
 
+    /// Counts its title seen once played far enough (`seen`).
+    private func watchSeen(_ player: AVPlayer) {
+        guard seenObserver?.player !== player, let id = itemID else { return }
+        dropSeen()
+        let titleID = String(id.split(separator: "#", maxSplits: 1).first ?? "")
+        let token = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600),
+                                                   queue: .main) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self, let item = player.currentItem else { return }
+                let length = item.duration.seconds
+                let mark = length.isFinite && length > 0 ? min(Self.seenAfter, length * Self.seenShare) : Self.seenAfter
+                guard time.seconds >= mark else { return }
+                if !Self.isSeen(titleID) { trailerLog("%@: seen (%.0f s)", self.youtubeKey ?? "?", time.seconds) }
+                Self.seen[titleID] = Date()
+                self.dropSeen()
+            }
+        }
+        seenObserver = (player, token)
+    }
+
+    private func dropSeen() {
+        if let seenObserver { seenObserver.player.removeTimeObserver(seenObserver.token) }
+        seenObserver = nil
+    }
+
     /// Plays, fading in once a frame is up.
     private func show(_ player: AVPlayer) {
+        watchSeen(player)
         stage?.attachTrailer(surface)
         surface.player = player
         if shownAt == nil { shownAt = Date() }
         player.play()
         playing = true
+        // In once a frame is up AND it moves: a frame alone, still
+        // buffering, read as a frozen trailer.
         surface.whenReady { [weak self] in
             guard let self, self.player === player, self.playing else { return }
-            self.fade(to: 1)
+            if player.timeControlStatus == .playing { return self.fade(to: 1) }
+            self.movingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
+                guard player.timeControlStatus == .playing else { return }
+                DispatchQueue.main.async {
+                    guard let self, self.player === player, self.playing else { return }
+                    self.movingObserver = nil
+                    self.fade(to: 1)
+                }
+            }
         }
     }
+    private var movingObserver: NSKeyValueObservation?
 
     private func dropObservers() {
+        dropSeen()
+        movingObserver = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let stallObserver { NotificationCenter.default.removeObserver(stallObserver) }
         endObserver = nil
@@ -1049,7 +1247,7 @@ final class StageTrailer: ObservableObject {
         dropObservers()
         guard let player else { return fade(to: 0) }
         if shownAt != nil, let item = player.currentItem, let events = item.accessLog()?.events, !events.isEmpty {
-            NSLog("[CueTrailer] %@: let go — %dp, %.1f of %.1f Mbps, %d stalls, %d frames dropped",
+            trailerLog("%@: let go — %dp, %.1f of %.1f Mbps, %d stalls, %d frames dropped",
                   youtubeKey ?? "?", Int(item.presentationSize.height),
                   (events.last?.observedBitrate ?? 0) / 1e6, (events.last?.indicatedBitrate ?? 0) / 1e6,
                   events.reduce(0) { $0 + $1.numberOfStalls },

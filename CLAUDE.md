@@ -1000,9 +1000,34 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   buttons and the rows fade out at the start (0.25 s) and back over the
   end (`StagePictureView.setFullScreen`; a crossfade to a second
   full-screen view, and a 16:9 card, were talked over), the sound rising from silence
-  (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
-  resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
+  (0.8 s) and falling away on the way out if Details' is off. Trailers
   keep their own `AVPlayer`.
+  When they play by themselves (decided 2026-11-27, one setting for all, as
+  before): after a 2 s rest, everywhere (3 s on the rows' cards was
+  tried); no press for 5 min: none starts until the
+  next press (`TrailerGate.idle`; one playing plays on); a title's trailer
+  played 30 s or half of it (whichever first) is seen: not started again
+  anywhere for 6 h (`StageTrailer.seen`), Details excepted (you came for the
+  title); one paused mid-way goes on.
+  Fetching (reworked 2026-11-27 after NuvioTV's `TrailerService`): YouTube is
+  asked only once a rest has settled 1 s (`StageTrailer.settle`; a kept one
+  plays at once), and an extraction no one waits on any more is cancelled
+  (every focus move ran one to its end: browsing a row was a burst that
+  earned the bot check); 3 keys per title; YouTube's watch page once per
+  session, 3 h, fetched again when every client asks to sign in without
+  naming the bot check (a stale visitor id, `staleSession`); no extra calls
+  per video (embed, creator, mediaConnect clients: patched out of
+  YouTubeKit); a signature solver that can't read YouTube's script keeps the
+  signed streams and HLS instead of failing the video, the script fetched
+  once (it failed every web-client video on 2026-11-27); the first link
+  asked for one byte before playing (a 403 never reaches the player; a
+  kept one dead is extracted again once). Held off only on a 429 or the bot
+  check: 1 min, doubling to 15, a success clears it (30 min after any three
+  failures was before); age-restricted keys left out 30 days, a low cut or
+  nothing playable a day. Every outcome to the Log (`trailer` events).
+  The trailers' `AVPlayer`s wait to minimise stalling (not waiting, one
+  started on a thin buffer froze on its first frame for good, on the card
+  and in Details after it), and fade in only once moving.
 - **Add-ons are for streams and subtitles only** (decided 2026-11-27):
   their catalogs and show info are never asked. Show info (episode lists,
   their ids: what streams are asked by and progress is keyed by) comes from

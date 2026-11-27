@@ -19,16 +19,35 @@ public class YouTube {
     nonisolated(unsafe) private static var __jsURL: URL?
     nonisolated(unsafe) private static var __sessionJSURL: URL?
     nonisolated(unsafe) private static var __sessionYtCfg: Extraction.YtCfg?
+    nonisolated(unsafe) private static var __sessionAt: Date?
+    nonisolated(unsafe) private static var __solverFailedFor: URL?
 #else
     private static var __js: String? // caches js between calls
     private static var __jsURL: URL?
     private static var __sessionJSURL: URL?
     private static var __sessionYtCfg: Extraction.YtCfg?
+    private static var __sessionAt: Date?
+    private static var __solverFailedFor: URL?
 #endif
     // (Cue) The player script's address and the page's config, from the
     // session's first readable watch page — the same for every video, so the
     // next ones skip that page (a request each) and ask only for their
-    // player answers.
+    // player answers. Kept 3 hours (an app open for days kept one visitor
+    // id for days), and dropped at once when every client asks to sign in
+    // without naming the bot check (`staleSession`).
+    private static let sessionLife: TimeInterval = 3 * 60 * 60
+
+    /// The session's page config forgotten: the next video fetches a fresh
+    /// one (Cue).
+    public static func forgetSession() {
+        __sessionYtCfg = nil
+        __sessionJSURL = nil
+        __sessionAt = nil
+    }
+    private static func sessionExpired() -> Bool {
+        guard let at = __sessionAt else { return __sessionYtCfg != nil }
+        return Date().timeIntervalSince(at) > sessionLife
+    }
     
     private var _videoInfos: [InnerTube.VideoInfo]?
     
@@ -114,7 +133,8 @@ public class YouTube {
             request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
             request.setValue("en-US,en", forHTTPHeaderField: "accept-language")
             request.httpShouldHandleCookies = false
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if (response as? HTTPURLResponse)?.statusCode == 429 { throw YouTubeKitError.rateLimited }
             _watchHTML = String(data: data, encoding: .utf8) ?? ""
             return _watchHTML!
         }
@@ -233,12 +253,14 @@ public class YouTube {
                 return cached
             }
             
+            if YouTube.sessionExpired() { YouTube.forgetSession() }
             if let shared = YouTube.__sessionYtCfg {
                 _ytcfg = shared
                 return shared
             }
             _ytcfg = try await Extraction.extractYtCfg(from: watchHTML)
             YouTube.__sessionYtCfg = _ytcfg
+            YouTube.__sessionAt = Date()
             return _ytcfg!
         }
     }
@@ -270,6 +292,7 @@ public class YouTube {
             // (Cue) With the session's config kept, the page isn't asked for at
             // all: an unplayable video shows in its player answers.
             do {
+                if YouTube.sessionExpired() { YouTube.forgetSession() }
                 if YouTube.__sessionYtCfg == nil { try await checkAvailability() }
             } catch YouTubeKitError.regexMatchError {
                 os_log("Couldn't read the watch page for availability — continuing to the extraction methods", log: log, type: .info)
@@ -292,16 +315,35 @@ public class YouTube {
                         
                         var streamManifest = Extraction.applyDescrambler(streamData: streamingData)
                         
-                        do {
-                            try await Extraction.applySignature(streamManifest: &streamManifest, videoInfo: videoInfo, js: js)
-                        } catch {
-                            // to force an update to the js file, we clear the cache and retry
-                            _js = nil
-                            _jsURL = nil
-                            YouTube.__js = nil
-                            YouTube.__jsURL = nil
-                            YouTube.__sessionJSURL = nil
-                            try await Extraction.applySignature(streamManifest: &streamManifest, videoInfo: videoInfo, js: js)
+                        // (Cue) A solver that can't read this player script
+                        // (YouTube changed it) loses only the ciphered
+                        // streams: the rest are signed already (the visionOS
+                        // client's, the HLS manifest), where before the whole
+                        // answer was thrown away. The script is fetched again
+                        // once, not for every video (~2.5 MB each).
+                        func unciphered() {
+                            streamManifest = streamManifest.filter { $0.s == nil && $0.url != nil }
+                        }
+                        if let failed = YouTube.__solverFailedFor, failed == (try? await jsURL) {
+                            unciphered()
+                        } else {
+                            do {
+                                try await Extraction.applySignature(streamManifest: &streamManifest, videoInfo: videoInfo, js: js)
+                            } catch {
+                                // to force an update to the js file, we clear the cache and retry
+                                _js = nil
+                                _jsURL = nil
+                                YouTube.__js = nil
+                                YouTube.__jsURL = nil
+                                YouTube.__sessionJSURL = nil
+                                do {
+                                    try await Extraction.applySignature(streamManifest: &streamManifest, videoInfo: videoInfo, js: js)
+                                } catch {
+                                    os_log("Signature solver failed for this player script — signed streams only", log: log, type: .error)
+                                    YouTube.__solverFailedFor = try? await jsURL
+                                    unciphered()
+                                }
+                            }
                         }
                         
                         // filter out dubbed audio tracks
@@ -321,13 +363,9 @@ public class YouTube {
                         try await process(streamingData: streamingData, videoInfo: videoInfo)
                     }
                     
-                    // if no progressive (audio+video) tracks were found, try to do one more call to maybe get them
-                    if !streams.contains(where: { $0.includesVideoAndAudioTrack }) {
-                        if let videoInfo = try? await loadAdditionalVideoInfos(forClient: .mediaConnectFrontend), let streamingData = videoInfo.streamingData {
-                            os_log("Found no progressive streams. Called mediaConnectFrontend client to get additional video infos", log: log, type: .info)
-                            try await process(streamingData: streamingData, videoInfo: videoInfo)
-                        }
-                    }
+                    // (Cue) No extra call for progressive streams: the HLS
+                    // manifest or the adaptive pair plays; one more request
+                    // per video only fed YouTube's rate limit.
                     
                     return streams
 #endif
@@ -362,20 +400,13 @@ public class YouTube {
             let streamingData = try await videoInfos.compactMap { $0.streamingData }
             if !streamingData.isEmpty {
                 return streamingData
-            } else {
-                if let videoInfo = try? await loadAdditionalVideoInfos(forClient: .webEmbed), let streamingData = videoInfo.streamingData {
-                    _videoInfos = [videoInfo]
-                    return [streamingData]
-                }
-
-                try await bypassAgeGate()
-                let streamingData = try await videoInfos.compactMap { $0.streamingData }
-                if !streamingData.isEmpty {
-                    return streamingData
-                } else {
-                    throw YouTubeKitError.extractError
-                }
             }
+            // (Cue) No embed page, embed client or creator client after it:
+            // three more requests for a video that won't play anyway
+            // (age-restricted, region-blocked), which a trailer simply skips.
+            let reasons = try await videoInfos.compactMap { $0.playabilityStatus?.reason?.lowercased() }
+            if reasons.contains(where: { $0.contains("age") }) { throw YouTubeKitError.videoAgeRestricted }
+            throw YouTubeKitError.extractError
         }
     }
 
@@ -437,8 +468,23 @@ public class YouTube {
             
             // (Cue) Every answer a sign-in wall without the video: YouTube's
             // bot check on this address — retrying only makes it worse.
+            // Not every sign-in wall is the bot check: one that doesn't say
+            // "bot" (or age) is a stale visitor id — a fresh page config
+            // fixes it (`staleSession`), holding off would not.
             if !videoInfos.isEmpty, videoInfos.allSatisfy({ $0.videoDetails == nil && $0.playabilityStatus?.status == "LOGIN_REQUIRED" }) {
-                throw YouTubeKitError.botCheck
+                let reasons = videoInfos.map { ($0.playabilityStatus?.reason ?? "").lowercased() }
+                if reasons.contains(where: { $0.range(of: #"\bbot\b"#, options: .regularExpression) != nil }) {
+                    throw YouTubeKitError.botCheck
+                }
+                if reasons.contains(where: { $0.range(of: #"\bage\b"#, options: .regularExpression) != nil }) {
+                    throw YouTubeKitError.videoAgeRestricted
+                }
+                YouTube.forgetSession()
+                throw YouTubeKitError.staleSession
+            }
+            // Refused outright (429) by every client: say so.
+            if videoInfos.isEmpty, errors.contains(where: { ($0 as? YouTubeKitError) == .rateLimited }) {
+                throw YouTubeKitError.rateLimited
             }
             // remove video infos with incorrect videoID
             for (i, videoInfo) in videoInfos.enumerated() where videoInfo.videoDetails?.videoId != videoID {
@@ -453,43 +499,6 @@ public class YouTube {
             _videoInfos = videoInfos
             return videoInfos
         }
-    }
-    
-    private func loadAdditionalVideoInfos(forClient client: InnerTube.ClientType) async throws -> InnerTube.VideoInfo {
-        let signatureTimestamp = try await signatureTimestamp
-        let ytcfg = if client == .webEmbed {
-            try await Extraction.extractYtCfg(from: embedHTML)
-        } else {
-            try await ytcfg
-        }
-        let innertube = InnerTube(client: client, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache)
-        let videoInfo = try await innertube.player(videoID: videoID)
-        
-        // ignore if incorrect videoID
-        if videoInfo.videoDetails?.videoId != videoID {
-            os_log("Skipping player response from %{public}@ client. Got player response for %{public}@ instead of %{public}@", log: log, type: .info, client.rawValue, videoInfo.videoDetails?.videoId ?? "nil", videoID)
-            throw YouTubeKitError.extractError
-        }
-        
-        return videoInfo
-    }
-    
-    private func bypassAgeGate() async throws {
-        let signatureTimestamp = try await signatureTimestamp
-        let ytcfg = try await ytcfg
-        let innertube = InnerTube(client: .webCreator, signatureTimestamp: signatureTimestamp, ytcfg: ytcfg, useOAuth: useOAuth, allowCache: allowOAuthCache)
-        let innertubeResponse = try await innertube.player(videoID: videoID)
-
-        if innertubeResponse.playabilityStatus?.status == "UNPLAYABLE" || innertubeResponse.playabilityStatus?.status == "LOGIN_REQUIRED" {
-            throw YouTubeKitError.videoAgeRestricted
-        }
-
-        if innertubeResponse.videoDetails?.videoId != videoID {
-            os_log("Skipping player response from webCreator client. Got player response for %{public}@ instead of %{public}@", log: log, type: .info, innertubeResponse.videoDetails?.videoId ?? "nil", videoID)
-            throw YouTubeKitError.extractError
-        }
-
-        _videoInfos = [innertubeResponse]
     }
     
     /// Interface to query both adaptive (DASH) and progressive streams.

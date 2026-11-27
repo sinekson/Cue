@@ -44,6 +44,8 @@ enum InputHold {
     private(set) static var lastPress: CFTimeInterval = 0
     /// Its button, for the Log's DROP lines.
     private(set) static var lastPressName = ""
+    /// The app's start, standing in for a press before the first.
+    static let launched = CACurrentMediaTime()
 
     /// `body` once the remote has been still for `idle` seconds — for
     /// main-thread work that's out of sight but long enough to delay a
@@ -100,6 +102,7 @@ enum InputHold {
                presses.contains(where: { $0.phase == .began }) {
                 MainActor.assumeIsolated {
                     lastPress = CACurrentMediaTime()
+                    TrailerGate.shared.pressed()
                     if let press = presses.first(where: { $0.phase == .began }) { lastPressName = name(press.type) }
                     if presses.contains(where: { $0.type == .playPause && $0.phase == .began }) { playPaused() }
                 }

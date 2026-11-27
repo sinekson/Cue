@@ -706,6 +706,7 @@ struct DetailView: View {
         .onChange(of: summaryShown) { _, _ in restTrailer() }
         .onChange(of: launcher.searching) { _, _ in restTrailer() }
         .onChange(of: trailerGate.playerUp) { _, _ in restTrailer() }
+        .onChange(of: trailerGate.idle) { _, _ in restTrailer() }
         // (Back: a trailer on the card fades off with the parts —
         // `DetailTransition.cardCover`.)
         .onChange(of: trailer.shown) { _, shown in DetailTransition.shared.cardPlays(viewModel.meta.id, shown) }
@@ -1227,7 +1228,7 @@ struct DetailView: View {
         if resting {
             let about = trailerSeason
             trailer.rest(on: viewModel.meta, season: about.season, aired: about.aired,
-                         sound: layout.heroTrailerSound)
+                         sound: layout.heroTrailerSound, honoursSeen: false)
         } else {
             trailer.pause()
         }

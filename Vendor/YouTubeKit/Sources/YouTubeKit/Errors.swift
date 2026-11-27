@@ -21,6 +21,12 @@ public enum YouTubeKitError: String, Error {
     case videoRegionBlocked
     /// "Sign in to confirm you're not a bot": YouTube refusing this address for now (Cue).
     case botCheck
+    /// HTTP 429: YouTube asking this address to slow down (Cue).
+    case rateLimited
+    /// Every client asked to sign in with no bot check named: the session's
+    /// visitor id gone stale. The session's config is dropped; asking again
+    /// fetches a fresh one (Cue).
+    case staleSession
 }
 
 extension YouTubeKitError: LocalizedError {
