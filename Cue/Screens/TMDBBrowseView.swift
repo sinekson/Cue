@@ -1986,7 +1986,8 @@ final class UpcomingStripController: UIViewController {
         view.backgroundColor = .clear
         view.addSubview(strip)
         month.font = FixedFocusRowCell.titleFont
-        month.textColor = CueInk.ui(FixedFocusText.primary)
+        // Home's row names' level.
+        month.textColor = CueInk.ui(FixedFocusText.secondary)
         month.frame = CGRect(x: FixedFocusMetrics.titleInset,
                              y: StagePictureView.homeCard.minY + FixedFocusMetrics.titleDrop,
                              width: 1200, height: FixedFocusMetrics.titleLine)

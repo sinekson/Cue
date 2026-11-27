@@ -143,9 +143,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Four levels, everywhere (`FixedFocusText`): primary 82 %, body 72 %,
   secondary 62 %, tertiary 50 % (75/65/55/45 was too muted). Never
   brighter. A title and its info line, everywhere (under the box, card
-  captions, page headers): the name medium at primary, the line under it
-  regular at body; captions out of focus each two levels down (secondary,
-  tertiary) (`FixedFocusText.titleFont`/`infoFont`/`titleLevel`/`infoLevel`;
+  captions, page headers): the name medium at body, the line under it
+  regular at secondary (primary and body until 2026-11-27, measured
+  brighter than Apple TV's); captions out of focus each a level down
+  (secondary, tertiary); row names secondary (Apple TV's ~50 %, ours were
+  82 %; a level under a focused card's name, chosen knowing names
+  dimmer than captions were dropped once at 55 %) (`FixedFocusText.titleFont`/`infoFont`/`titleLevel`/`infoLevel`;
   both regular, the line a level dimmer, read as one; semibold was tried).
   Text cut short never ends in "…": it fades out over its last 40 pt
   (`EndFadeLabel` in UIKit, `.endFade()` in SwiftUI; Cast & Crew's

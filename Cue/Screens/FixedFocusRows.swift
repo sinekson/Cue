@@ -3835,7 +3835,8 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
         clipsToBounds = false
         contentView.clipsToBounds = false
         title.font = Self.titleFont
-        title.textColor = CueInk.ui(FixedFocusText.primary)
+        // Secondary: Apple TV's are ~50 %, primary read too bright.
+        title.textColor = CueInk.ui(FixedFocusText.secondary)
         // The name in a holder: the holder lifts (`titleLift`), the name in
         // it scales from its left edge (`titleScale`).
         title.layer.anchorPoint = CGPoint(x: 0, y: 0.5)

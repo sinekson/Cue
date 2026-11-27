@@ -1889,21 +1889,25 @@ enum FixedFocusText {
     static let secondary: CGFloat = 0.62
     /// Small labels (kind labels, "SUMMARY", section labels), what's off.
     static let tertiary: CGFloat = 0.5
-    /// (Out of focus, a card's caption steps down one level: its name
-    /// secondary, its second line tertiary. Tried: row and page names at
+    /// (A focused card's caption: its name body, its line secondary; out
+    /// of focus each a level down, secondary and tertiary. Row names
+    /// secondary (decided 2026-11-27, measured against Apple TV's ~50 %:
+    /// primary, 82 %, read too bright; between the two was wanted, the
+    /// names now a level under a focused card's name). Tried: row and page names at
     /// tvOS's heading grey, 55 %, under captions and About's text at 70 % —
     /// the names dimmer than what they named; nine levels in all; 85 /
     /// 75 / 60 / 45 — bright; 75 / 65 / 55 / 45 — too muted.)
 
     /// A title and its info line (under the box, under a card): the name
     /// medium, the line under it regular, one size — weight and level
-    /// tell them apart. Focused: the name primary, the line body; out of
-    /// focus each two levels down (secondary, tertiary). (Tried: semibold; both
+    /// tell them apart. Focused: the name body, the line secondary
+    /// (primary and body until 2026-11-27: brighter than Apple TV's); out
+    /// of focus each a level down (secondary, tertiary). (Tried: semibold; both
     /// regular, the line secondary — they read as one.)
     static func titleFont(_ size: CGFloat) -> UIFont { .systemFont(ofSize: size, weight: .medium) }
     static func infoFont(_ size: CGFloat) -> UIFont { .systemFont(ofSize: size, weight: .regular) }
-    static func titleLevel(focused: Bool) -> CGFloat { focused ? primary : secondary }
-    static func infoLevel(focused: Bool) -> CGFloat { focused ? body : tertiary }
+    static func titleLevel(focused: Bool) -> CGFloat { focused ? body : secondary }
+    static func infoLevel(focused: Bool) -> CGFloat { focused ? secondary : tertiary }
 }
 
 /// The text's colour at a level (`FixedFocusText`), in tvOS's appearance:
