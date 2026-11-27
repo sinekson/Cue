@@ -995,8 +995,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   HLS rewritten to H.264 720p+ (`TrailerPlaylist`). Full screen
   (`TrailerController`) has the player's bar and presses (`PlayerTransport`,
   `PlayerOverlay`, shared with `PlayerController`): the title's name, no
-  buttons, shelf or stills; with the controls up, Up hides them and Down
-  closes ("Back to Details" with a chevron where the shelf's tabs peek).
+  buttons, shelf or stills; Down closes, the controls up or not
+  (2026-11-27: bringing them up first was a press too many), "Back to
+  Details" with a chevron where the shelf's tabs peek while they're up; with
+  them up Up hides them.
   It has no picture of its own: a clear cover, at once, over Details'
   card; the trailer is laid out on the whole screen (the card a window
   onto it), so the card's window grows to the screen, corners easing

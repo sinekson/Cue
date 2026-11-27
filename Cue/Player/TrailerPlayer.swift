@@ -1470,16 +1470,14 @@ final class TrailerController: UIViewController, UIGestureRecognizerDelegate, Tr
         guard press.type != .menu else { return super.pressesBegan(presses, with: event) }
         switch press.type {
         case .upArrow, .downArrow:
-            // Gone, either brings them up; up, Up puts them away and Down
-            // closes. Scrubbing or in the scan, both only keep them up.
-            let up = overlay.isShown && !transport.isScrubbing
-            if up, press.type == .upArrow {
-                transport.dismiss()
-            } else if up, press.type == .downArrow {
+            // Down closes, the controls up or not (bringing them up first
+            // was a press too many); Up puts them away, gone brings them up.
+            // Scrubbing or in the scan, both only keep them up.
+            let scrubbing = transport.isScrubbing
+            if press.type == .downArrow, !scrubbing {
                 return leave()
-            } else if press.type == .downArrow, transport.inBackGrace {
-                // Just after they went by themselves, as Back: meant for them.
-                return
+            } else if press.type == .upArrow, overlay.isShown, !scrubbing {
+                transport.dismiss()
             } else {
                 transport.wake()
             }
