@@ -1,3 +1,4 @@
+import Combine
 import CoreImage
 import simd
 import SwiftUI
@@ -729,7 +730,21 @@ final class BackgroundStore: ObservableObject {
     /// tvOS's mode changed: the same title in the mode's colours (the
     /// page's text turns with it), faded in.
     func modeChanged() {
-        guard image != nil, !loading, drawnMode != BackgroundPicks.Mode.now else { return }
+        let now = BackgroundPicks.Mode.now
+        guard image != nil, drawnMode != now else { return }
+        if let ahead, ahead.mode == now, let shown,
+           ahead.file == BackgroundPicks.file(for: shown.url, mode: now).lastPathComponent {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { image = ahead.image }
+            drawnMode = now
+            self.ahead = nil
+            AppProbe.life("background → \(now), ready ahead")
+            prepareOther()
+            return
+        }
+        guard !loading else { return }
+        AppProbe.life("background → \(now), drawn now")
         Task {
             let pick = await BackgroundPicks.shared.current()
             await show(pick, fade: true)
@@ -822,6 +837,25 @@ final class BackgroundStore: ObservableObject {
         drawnMode = mode
         shown = picked ? pick?.entry : nil
         source = BackgroundPicks.shared.source
+        prepareOther()
+    }
+
+    /// The title up drawn and decoded in the other mode, ahead: tvOS's
+    /// appearance changing swaps it in at once, with the pages' text
+    /// (drawn at the change, it came a moment after the text).
+    private var ahead: (mode: BackgroundPicks.Mode, file: String, image: UIImage)?
+
+    private func prepareOther() {
+        guard let entry = shown, let mode = drawnMode else { ahead = nil; return }
+        let other: BackgroundPicks.Mode = mode == .light ? .dark : .light
+        Task {
+            guard let pick = await BackgroundPicks.shared.current(in: other) else { return }
+            let decoded = await Task.detached(priority: .utility) {
+                UIImage(contentsOfFile: pick.file.path)?.preparingForDisplay()
+            }.value
+            guard let decoded, shown?.id == entry.id else { return }
+            ahead = (other, pick.file.lastPathComponent, decoded)
+        }
     }
 
     /// The Bands picture (~8 MB), from its copy on disk once drawn (a first
@@ -994,9 +1028,8 @@ final class BackgroundPicks {
     var source: Source { state.source ?? .home }
 
     /// The title up, in this mode's colours (drawn now if it isn't yet).
-    func current() async -> (entry: Entry, file: URL)? {
+    func current(in mode: Mode = Mode.now) async -> (entry: Entry, file: URL)? {
         guard let shown = state.shown else { return nil }
-        let mode = Mode.now
         if let ready = drawn(shown, mode) { return ready }
         return await draw(shown.url, mode: mode) ? drawn(shown, mode) : nil
     }
@@ -1331,8 +1364,88 @@ struct ATVBackground: View {
         }
         .animation(.easeInOut(duration: Motion.fadeDuration), value: picture.image)
         .ignoresSafeArea()
-        .onAppear { picture.load() }
+        .onAppear {
+            picture.load()
+            ModeChangeCover.shared.install()
+        }
         .onChange(of: scheme) { _, _ in picture.modeChanged() }
+    }
+}
+
+/// tvOS's appearance changing (light to dark or back, mostly found on
+/// coming back to the app): a still of the screen as it was goes over
+/// everything at once, the pages, their text and the background change
+/// under it, and once the new background is in it dissolves away (0.5 s),
+/// one crossfade from the old look to the new. Before, the screen stood
+/// while every page re-rendered, the text changed, then the background
+/// faded in after.
+@MainActor
+final class ModeChangeCover {
+    static let shared = ModeChangeCover()
+    private weak var window: UIWindow?
+    private var cover: UIView?
+    private var watch: AnyCancellable?
+    private var fallback: DispatchWorkItem?
+    private var returning: NSObjectProtocol?
+
+    /// Once a window is up (the background's first appearance).
+    func install() {
+        guard window == nil, let window = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+        self.window = window
+        window.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: UIWindow, _: UITraitCollection) in
+            self?.changed()
+        }
+    }
+
+    private func changed() {
+        guard let window, cover == nil,
+              let still = window.snapshotView(afterScreenUpdates: false) else { return }
+        still.frame = window.bounds
+        still.isUserInteractionEnabled = false
+        window.addSubview(still)
+        cover = still
+        AppProbe.life("appearance → \(BackgroundPicks.Mode.now), app \(UIApplication.shared.applicationState == .active ? "in front" : "away")")
+        // The new mode's background published: lifted once it's drawn
+        // (its own fade under the still runs out first). With nothing to
+        // redraw (no title up), lifted after a moment anyway.
+        watch = BackgroundStore.shared.$image.dropFirst().first().sink { [weak self] _ in
+            self?.lift(after: Motion.fadeDuration + 0.05)
+        }
+        // The new background at once, under the still, with the text
+        // (`BackgroundStore.modeChanged`: ready ahead, else drawn).
+        BackgroundStore.shared.modeChanged()
+        let item = DispatchWorkItem { [weak self] in self?.lift(after: 0) }
+        fallback = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
+    }
+
+    private func lift(after delay: TimeInterval) {
+        watch = nil
+        fallback?.cancel()
+        fallback = nil
+        guard let still = cover else { return }
+        // Changed while away: the crossfade once Cue is in front again.
+        guard UIApplication.shared.applicationState == .active else {
+            if returning == nil {
+                returning = NotificationCenter.default.addObserver(
+                    forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        if let returning = self.returning { NotificationCenter.default.removeObserver(returning) }
+                        self.returning = nil
+                        self.lift(after: 0.3)
+                    }
+                }
+            }
+            return
+        }
+        cover = nil
+        UIView.animate(withDuration: 0.5, delay: delay, options: [.curveEaseInOut, .beginFromCurrentState]) {
+            still.alpha = 0
+        } completion: { _ in
+            still.removeFromSuperview()
+        }
     }
 }
 

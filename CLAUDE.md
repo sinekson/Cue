@@ -1532,7 +1532,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`BandsPicture.shape`, `BackgroundStore.reshape`, decided 2026-11-27:
   tvOS's changes all the time) at each launch, on coming back to the
   app, and as Home comes into view an hour after the last, faded; the
-  title and its colours stay; never while something plays. Tried the same day and
+  title and its colours stay; never while something plays.
+  tvOS's appearance changing (mostly found on coming back): a still of
+  the screen goes over everything at once, the pages and the new
+  background change under it, and it dissolves once the new background
+  is in and Cue is in front (0.5 s; 2 s at most) (`ModeChangeCover`;
+  before, the screen stood while the pages re-rendered, the text
+  changed, then the background followed). The background up is kept
+  drawn and decoded in the other mode too (`BackgroundStore.ahead`):
+  it swaps in with the text (drawn at the change, it came after even
+  under the still). The log says which ("background → light, ready
+  ahead" or "drawn now", "appearance → … in front / away"). Tried the same day and
   left in the preview: Pools for the app (the darkest colour the base,
   eight pools of the colours times their saturation: Barbie's maroon
   everywhere, a dull picture grey; light capped at 0.035 lost the colour,
