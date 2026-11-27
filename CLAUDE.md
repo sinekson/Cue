@@ -1131,7 +1131,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   the link starts, the row going down under it as it fades (the way in
   reversed); the list back (every link failed, Back from the player), up
   again; Back returns to it, on that card. Debug builds list a "Test
-  Stream" tab, Apple's BipBop (`StreamEntry.test`), played as the demo.
+  Stream" tab, Apple's BipBop (`StreamEntry.test`), played as the demo
+  (nothing saved; the episode's IntroDB spans, so its Skip prompts show).
   All links failing brings the row up. The player's cover is clear so the
   stage stays under it until the first frame. A link starting (no list,
   nothing searched), the card grows at its foot to the same 24 pt gap as
@@ -1712,7 +1713,7 @@ as its show info was read (45 s of dropped frames after a launch).
   not there until its first still, then fading in (0.25 s), only the time under the marker until then (the loading dots, glass breathing as the placeholders, fainter and brighter, a light sweeping the glass, and the last still kept and dimmed while the next is late were tried); nothing lands until Select (which plays), Back cancels.
   Skip (IntroDB, by IMDb id, no key; crowd-sourced, a 5 s intro can be right):
   glass pill left above the bar, no icon, a rounded rectangle as the tall Settings rows (a capsule was wrong), focused white with dark text (a soft veil looked worse), in the title's place while it's up, with where it ends,
-  inside recap, intro or a film's outro; up until 3 s before the span ends, controls or not; focused only with the controls up, so Select skips (controls gone, Up or Select brings them up on it and does nothing else; Left and Right scrub as usual); paused or
+  inside recap, intro or a film's outro; never as the film comes in (1 s after it's full screen, 2026-11-28: one in place at once looked odd); on its own for 5 s, then only with the controls, going with them (no timer of its own after; 3 s was too quick for something that comes up unasked), Up bringing them up on it (Select, nothing seen, pauses); gone 3 s before the span ends; focused only with the controls up, so Select skips (controls gone, Up or Select brings them up on it and does nothing else; Left and Right scrub as usual); paused or
   scrubbing it goes (Select keeps its job); never automatic. A prompt takes focus; Down steps off it to the bar,
   Up back to it. The time always sits under the marker, Apple's icon to its right (pause; a press: 10 s back or on; the scan: rewind or forward, its level from 2 on as a number), the time left stays at the bar's end (it makes way only when they'd touch). In the scan or paused scrubbing the title and buttons go; a press while playing leaves them up. No track line and no "Paused": codecs are in the diagnostics HUD. Next episode: the link is sought
   60 s before the card, same `bingeGroup` first, else the first; the card, right

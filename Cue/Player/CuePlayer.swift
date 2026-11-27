@@ -3573,6 +3573,14 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private var segmentsTask: Task<Void, Never>?
     private var prompt: Prompt?
     private var dismissedPrompt: Prompt?
+    /// The film full screen (`arrived`): prompts wait `promptAfterArrival`
+    /// past it (one already in place as the film came in looked odd).
+    private var arrivedAt: Date?
+    private static let promptAfterArrival: TimeInterval = 1
+    /// When this prompt first showed: a Skip is up on its own
+    /// `skipAlone`, then only with the controls, going with them.
+    private var promptShownAt: Date?
+    private static let skipAlone: TimeInterval = 5
     private var nextUp: PlayLauncher.NextEpisode?
     private var nextPicture: UIImage?
     private var nextTask: Task<Void, Never>?
@@ -4347,6 +4355,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     private func arrived() {
         transport.expire()
         arriving = false
+        arrivedAt = Date()
     }
 
     /// Runs however the player goes: its own Back, or the system dismissing it
@@ -4412,7 +4421,11 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
             return
         }
         // With the controls gone a prompt holds no focus: Up or Select brings them up on it.
-        if !overlay.isShown, promptView.alpha > 0, press.type == .upArrow || press.type == .select {
+        // A Skip gone by itself (`skipAlone`) is still there to come back: Up brings them up
+        // on it (Select, with nothing seen, pauses as usual).
+        let skipAway = promptShownAt != nil && prompt != nil && prompt != dismissedPrompt
+        if !overlay.isShown, promptView.alpha > 0 && (press.type == .upArrow || press.type == .select)
+            || promptView.alpha == 0 && skipAway && press.type == .upArrow {
             showControls()
             updateOverlay(engine)
             updatePrompt(engine)
@@ -4596,7 +4609,8 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
     // MARK: Skip and next episode
 
     private func loadSegments() {
-        guard !isDemo else { return }
+        // A demo too: only read, and the test stream then shows the
+        // episode's own Skip prompts.
         let (meta, video) = (meta, video)
         segmentsTask = Task { [weak self] in
             let found = await PlayerSegments.fetch(meta: meta, video: video)
@@ -4649,6 +4663,7 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         let wanted = wantedPrompt(engine)
         if wanted != prompt {
             prompt = wanted
+            promptShownAt = nil
             promptLeft = false
             switch wanted {
             case .skip(let label, let end):
@@ -4663,7 +4678,13 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         }
         // Scrubbing or paused, Select keeps its usual job, so no prompt.
         let busy = shelfOpen || menu == .tracks || transport.isScrubbing || engine.state == .paused
-        let shown = wanted != nil && wanted != dismissedPrompt && !busy
+        let settled = arrivedAt.map { Date().timeIntervalSince($0) >= Self.promptAfterArrival } ?? false
+        var shown = wanted != nil && wanted != dismissedPrompt && !busy && settled
+        if shown, case .skip = wanted, !overlay.isShown, let at = promptShownAt,
+           Date().timeIntervalSince(at) >= Self.skipAlone {
+            shown = false
+        }
+        if shown, promptShownAt == nil { promptShownAt = Date() }
         let alpha: CGFloat = shown ? 1 : 0
         overlay.setPromptUp(shown)
         if promptView.alpha != alpha {
