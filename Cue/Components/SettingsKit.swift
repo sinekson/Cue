@@ -996,7 +996,7 @@ struct CardFocusPlate: View {
         // two layers for every row.
         Group {
             if lit { GlassHighlight(focused: true, shape: shape) }
-            else if selected { GlassHighlight(focused: false, shape: shape) }
+            else if selected { shape.fill(FlatControl.selected) }
         }
         .padding(.vertical, -CardSettingsRow.plateBleed)
     }
@@ -1733,7 +1733,7 @@ final class UISettingsHosted: UIView {
 }
 
 /// A row's plate: the glass (`GlassHighlight`), lit for focus, faint for
-/// the shown category or a lifted row; concentric with the card, past its
+/// the shown category or a lifted row (flat, the chosen grey); concentric with the card, past its
 /// row by the bleed above and below.
 final class UISettingsPlate {
     private weak var row: UIView?
@@ -1744,7 +1744,10 @@ final class UISettingsPlate {
 
     private func make(_ focused: Bool) -> UISettingsHosted {
         let shape = RoundedRectangle(cornerRadius: UISettings.plateRadius, style: .continuous)
-        let view = UISettingsHosted(AnyView(GlassHighlight(focused: focused, shape: shape)))
+        // The shown one flat, the pills' chosen grey: as glass it read raised
+        // beside the focus.
+        let view = UISettingsHosted(focused ? AnyView(GlassHighlight(focused: true, shape: shape))
+                                            : AnyView(shape.fill(FlatControl.selected)))
         view.alpha = 0
         row?.insertSubview(view, at: 0)
         return view
@@ -2325,8 +2328,9 @@ enum UISettingsRow {
 /// A row that opens a page or does something (`SettingsRowLabel`'s card
 /// look): the name over its description at the left; value, checkmark and
 /// chevron at the end; focused, the lit plate, dark words. Also the
-/// categories (`compact`: 9 pt above and below), the one shown on the
-/// faint plate while focus is in its settings.
+/// categories (`compact`: 9 pt above and below), the one shown on the flat
+/// grey while focus is in its settings; an options list's current choice
+/// on the grey too.
 final class UISettingsLinkRow: UIView, UISettingsRowView {
     private var model: UISettingsRow.Link
     private let compact: Bool
@@ -2339,7 +2343,7 @@ final class UISettingsLinkRow: UIView, UISettingsRowView {
     private let leading = UISettingsLeadingView()
     private lazy var plate = UISettingsPlate(row: self)
     /// The shown category (`compact` rows): the faint plate.
-    var selected = false { didSet { if selected != oldValue { plate.show(lit: isFocused, faint: selected, animated: true) } } }
+    var selected = false { didSet { if selected != oldValue { plate.show(lit: isFocused, faint: marked, animated: true) } } }
     var reachable: () -> Bool = { true }
 
     init(_ model: UISettingsRow.Link, compact: Bool = false) {
@@ -2386,7 +2390,11 @@ final class UISettingsLinkRow: UIView, UISettingsRowView {
         return true
     }
 
+    /// The shown category, or the current choice of a list: the flat grey.
+    private var marked: Bool { selected || model.checked }
+
     private func configure() {
+        plate.show(lit: isFocused, faint: marked, animated: window != nil)
         title.text = model.title
         detail.text = model.description
         detail.isHidden = (model.description ?? "").isEmpty
@@ -2418,7 +2426,7 @@ final class UISettingsLinkRow: UIView, UISettingsRowView {
         super.didUpdateFocus(in: context, with: coordinator)
         let focused = context.nextFocusedView === self
         guard focused || context.previouslyFocusedView === self else { return }
-        plate.show(lit: focused, faint: selected, animated: true)
+        plate.show(lit: focused, faint: marked, animated: true)
         UIView.transition(with: self, duration: 0.12, options: [.transitionCrossDissolve, .beginFromCurrentState,
                                                                 .allowUserInteraction]) {
             self.paint(focused)
@@ -2960,7 +2968,8 @@ final class UISettingsTile: UIView, UISettingsGridTile {
 
     private func plate(_ focused: Bool) -> UISettingsHosted {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        let view = UISettingsHosted(AnyView(GlassHighlight(focused: focused, shape: shape)))
+        let view = UISettingsHosted(focused ? AnyView(GlassHighlight(focused: true, shape: shape))
+                                            : AnyView(shape.fill(FlatControl.selected)))
         view.alpha = 0
         insertSubview(view, at: 0)
         view.frame = bounds.insetBy(dx: 4, dy: 0)

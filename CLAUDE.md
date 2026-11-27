@@ -1370,7 +1370,13 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   above or below it, were talked over) (24, and aligned to the next card, were tried).
 - **Settings** (`CardSettingsRoot`, `SettingsKit`; the Settings tab since
   2026-11-24: the old Apple-TV-style one and the SwiftUI copy are gone).
-  What's only to read takes no focus. Profile management lives under Nuvio.
+  What's only to read takes no focus. The shown category (a lifted row, a
+  chosen tile) on the chosen pills' flat grey (resting glass read raised
+  beside the flat focus, 2026-11-27). An options list's current choice
+  (Language) on the same grey with its check. Rows that open a page
+  light whole, as tvOS's (a whole lit row goes somewhere, a lit pill
+  changes something here); their value and chevron as a button, round
+  with none, was tried 2026-11-27: it felt off. Profile management lives under Nuvio.
   **New profile** (reworked 2026-11-24, trying): a screen at a time,
   centred (`UINewProfilePage` in the settings' controller, create mode;
   left-aligned at the rows' edge was tried the same day: the right half
