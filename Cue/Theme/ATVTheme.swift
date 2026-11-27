@@ -258,7 +258,7 @@ enum BandsPicture {
         let l = light ? t.lightLevels : t.darkLevels
         let (bandColour, massColour) = light ? (t.lightBandColour, t.lightMassColour) : (t.darkBandColour, t.darkMassColour)
         func neutral(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
-            light ? (v, v, v) : (v + warm.r, v + warm.g, v + warm.b)
+            light ? (v, v, v) : (v + lean.r, v + lean.g, v + lean.b)
         }
         func tinted(_ v: CGFloat, _ hue: SIMD3<Double>, _ amount: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
             let d = hue * Double(amount) * k
@@ -286,6 +286,14 @@ enum BandsPicture {
     /// first, each another hue (40° apart) or the first again; each a
     /// direction from grey, its largest channel 1. None for a grey picture.
     static func hues(_ palette: [Colour], count: Int) -> [SIMD3<Double>] {
+        // Orange and skin (10°–55°: faces, lamps, fire, most films'
+        // backdrops) count for less: every background came out warm. A
+        // title's blue, teal, green or purple wins where it has one; a
+        // clearly orange title still gets its orange.
+        func pull(_ angle: Double) -> Double {
+            let degrees = angle * 180 / .pi
+            return (10...55).contains(degrees) ? 0.4 : 1
+        }
         typealias Hue = (d: SIMD3<Double>, chroma: Double, angle: Double, share: Double)
         let hues: [Hue] = palette.compactMap { c in
             let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
@@ -293,7 +301,7 @@ enum BandsPicture {
             let chroma = max(abs(d.x), abs(d.y), abs(d.z))
             guard chroma >= hueFloor else { return nil }
             return (d / chroma, chroma, atan2(sqrt(3) * (c.g - c.b), 2 * c.r - c.g - c.b), c.share)
-        }.sorted { $0.chroma * $0.share.squareRoot() > $1.chroma * $1.share.squareRoot() }
+        }.sorted { $0.chroma * $0.share.squareRoot() * pull($0.angle) > $1.chroma * $1.share.squareRoot() * pull($1.angle) }
         var chosen: [Hue] = []
         for hue in hues where chosen.count < count {
             let apart = chosen.allSatisfy { other in
@@ -312,7 +320,7 @@ enum BandsPicture {
         let (base, lighter, darker) = light ? (t.lightBase, t.lightLighter, t.lightDarker)
                                             : (t.darkBase, t.darkLighter, t.darkDarker)
         func grey(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
-            light ? (v, v, v) : (v + warm.r, v + warm.g, v + warm.b)
+            light ? (v, v, v) : (v + lean.r, v + lean.g, v + lean.b)
         }
         // The backdrop: the title plays no part in its shape.
         var random = SeededRandom(seed: 0x5EED &+ t.layout)
@@ -435,10 +443,12 @@ enum BandsPicture {
     /// A palette colour this far from its grey (a channel) has a hue;
     /// greyer ones give no spot (a grey picture: grey areas only).
     static let hueFloor = 0.035
-    /// Dark's grey leans warm whatever the title (half Apple TV's red
-    /// about 8 levels over blue: the whole read too warm); its lightness
-    /// about kept.
-    static let warm: (r: CGFloat, g: CGFloat, b: CGFloat) = (0.007, 0.0005, -0.0085)
+    /// Dark's grey leans a little cool whatever the title, its lightness
+    /// about kept: half Apple TV's Home (measured 2026-11-27: its neutral
+    /// areas blue ~4 levels over red). A warm lean (from its Search page,
+    /// red ~4 over blue) made every background warm grey with the titles'
+    /// mostly orange hues on top: overwhelming beside Apple TV's.
+    static let lean: (r: CGFloat, g: CGFloat, b: CGFloat) = (-0.006, 0.001, 0.006)
     /// A colour pulled toward its own grey until no channel strays more
     /// than `cap`; its lightness kept.
     static func capped(_ c: (CGFloat, CGFloat, CGFloat), _ cap: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
@@ -624,7 +634,7 @@ enum BandsPicture {
     static func darkPools(from palette: [Colour], seed: UInt64, tuning t: Tuning)
         -> (base: (CGFloat, CGFloat, CGFloat), pools: [Pool])? {
         guard !palette.isEmpty else { return nil }
-        func grey(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) { (v + warm.r, v + warm.g, v + warm.b) }
+        func grey(_ v: CGFloat) -> (CGFloat, CGFloat, CGFloat) { (v + lean.r, v + lean.g, v + lean.b) }
         let chosen = hues(palette, count: t.spots)
 
         var random = SeededRandom(seed: seed)
@@ -1022,7 +1032,7 @@ final class BackgroundPicks {
 
     /// (The drawing's version in the name: older drawings go.)
     nonisolated static func file(for url: String, mode: Mode) -> URL {
-        folder.appendingPathComponent("bands18-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "")
+        folder.appendingPathComponent("bands19-" + String(seed(url), radix: 36) + (mode == .light ? "-light" : "")
                                       + "-" + String(BandsPicture.shape % 46656, radix: 36)
                                       + (BandsPicture.trial == nil ? "" : "-trial\(BandsPicture.trialTag)") + ".png")
     }

@@ -1521,10 +1521,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   The app's (2026-11-27, `BandsPicture.backdrop`, `Tuning.method`
   `.backdrop`): tvOS's own backdrop, measured off its Photos screens, light
   and dark sharing one shape: a coloured band across the top, a neutral
-  middle (warm in dark), a darker coloured mass at one side, the lightest
+  middle (a little cool in dark, `lean`: half Apple TV's Home, blue ~4 over red; a warm lean, from its Search page, made every background warm grey with the titles' orange on top, decided 2026-11-27), a darker coloured mass at one side, the lightest
   corner below the other side, the darkest beside the mass; the title's
   first hue in the band, its second in the mass (`hues`: most colourful
-  by share, 40° apart, else the first again; none: tvOS's blue at half),
+  by share, 40° apart, else the first again; orange and skin, 10°–55°,
+  counted at 0.4: most backdrops' faces and lamps turned every background
+  warm; none: tvOS's blue at half),
   at a set strength whatever the picture: the title gives the hue, never
   the amount (a channel's most from its grey: light band 0.12, mass 0.12;
   dark 0.055, 0.045); lightness tvOS's (`Levels`, of 255: light band 230,
