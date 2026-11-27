@@ -849,6 +849,9 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Home it's a layer over the page
   (`detailLayers`), so Home stays laid out; elsewhere it's pushed. Other pages
   use `PageFade`. `trail`: Back is never more than two pages deep.
+  The opening waits (8 s at most, `DetailPreparer`) for its data and only
+  the seasons it opens on (Play's, the row's first); the rest come after it
+  is up in one change (every season awaited held a long show for seconds).
 - **Back**: on a tab's page, focus to the top bar in one press; below the
   billboard or first row the page goes back up to it on the way, focus
   never on its buttons (`passUp`; landing on Details first was not wanted)
@@ -868,15 +871,21 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   satellites" (`LaunchPreloader.lines`; two lines, then plain wording, were
   tried). Ready at the pick: it flies at once. The curtain lifts once the minimum is in and 3 s have passed
   (`minimum`, the floor), whichever is later, however long the minimum
-  takes; 15 s is only a safety ceiling for a broken network (`ceiling`, then
-  placeholders). Back from the background instant (no curtain; the gate at
+  takes; 45 s is only a safety ceiling for a broken network (`ceiling`, then
+  placeholders; 15 s before the near rows were added). Back from the background instant (no curtain; the gate at
   once after 4 h). The minimum, in order: saved rows; the rows made
   again when due and the Nuvio pull
   (`sync`); the picks from those; what the first screen draws and one press
   reaches (`minimumJobs`: the billboard's first three, the first row's
   cards, the box's first card in the 3 rows below, Continue Watching's
-  stills). Then the rest of Home, nearest first (`deep`: Details' data,
-  every row's records, their pictures on disk at their sizes, not decoded:
+  stills, decoded as the cards read them: `HomeRow.cardPictures`, the
+  same pictures and sizes as each cell; the poster's and landscape's
+  sizes were warmed before, which no card read); then the first 6 rows'
+  first 10 titles whole (`nearRows`, `nearCards`: Details' data, every card
+  picture on disk at its size) — a longer launch for a smooth first
+  browse; warm, all on disk, ~0.5 s. Then the rest of Home, nearest first (`deep`: every title of every row:
+  its record, Details' data (no 250 cap: `launchJob`), its card's pictures
+  on disk at the sizes read, not decoded:
   at 4K that would evict the first screen's), on the curtain until the
   floor, then on behind Home. One queue for all loading ahead
   (`LoadQueue`, after `LaunchPreloader`): bands focus, launch, deep; lanes
@@ -1509,7 +1518,9 @@ billboard follows the row under it by the layout's own tops
 made the gap breathe; Up/Down into moving-focus rows runs through
 `enterRow`, not `didUpdateFocus`'s move. Never trim a logo (`LogoFit`) on the main thread: it reads every
 pixel (~30 ms); `RemoteImage` and the preloads trim it ahead (a grow froze
-mid-move).
+mid-move). Dates are parsed by hand (`ReleaseDateParser.fast`): Foundation's
+ISO parsing, ~0.3 ms a date, held the main thread seconds per long soap
+as its show info was read (45 s of dropped frames after a launch).
 
 ## Removed / rejected (don't bring back)
 

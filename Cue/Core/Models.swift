@@ -553,8 +553,48 @@ enum ReleaseDateParser {
     }()
     /// Full ISO 8601 (with or without fractional seconds), else bare date.
     static func parse(_ released: String) -> Date? {
+        if let d = fast(released) { return d }
         if let d = isoFull(released) { return d }
         return ymdGMT.date(from: String(released.prefix(10)))
+    }
+
+    /// "yyyy-MM-dd", or with "THH:mm:ss" (fraction ignored) and "Z", by
+    /// hand: what add-ons and TMDB send. Foundation's ISO parsing is ~0.3 ms
+    /// a date (ICU): a long soap's thousands of episodes held the main
+    /// thread for seconds each time its show info was read from disk (the
+    /// memo below, emptied at 20,000, was emptied over and over by Home's
+    /// ~465 shows). Anything else: nil, the formatters.
+    static func fast(_ text: String) -> Date? {
+        let b = Array(text.utf8.prefix(24))
+        func num(_ from: Int, _ count: Int) -> Int? {
+            guard from + count <= b.count else { return nil }
+            var n = 0
+            for i in from ..< from + count {
+                let c = b[i]
+                guard c >= 48, c <= 57 else { return nil }
+                n = n * 10 + Int(c - 48)
+            }
+            return n
+        }
+        guard b.count >= 10, b[4] == 45, b[7] == 45,
+              let y = num(0, 4), let m = num(5, 2), let d = num(8, 2),
+              (1...12).contains(m), (1...31).contains(d) else { return nil }
+        var seconds = 0
+        if b.count > 10 {
+            // Only the full form with a Z (or a fraction, then Z): no offsets.
+            guard b.count >= 20, b[10] == 84, b[13] == 58, b[16] == 58,
+                  let h = num(11, 2), let mi = num(14, 2), let se = num(17, 2),
+                  b.last == 90, b[19] == 90 || b[19] == 46 else { return nil }
+            seconds = h * 3600 + mi * 60 + se
+        }
+        // Days from 1970-01-01 (Howard Hinnant's days_from_civil).
+        let yy = m <= 2 ? y - 1 : y
+        let era = (yy >= 0 ? yy : yy - 399) / 400
+        let yoe = yy - era * 400
+        let doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        let days = era * 146_097 + doe - 719_468
+        return Date(timeIntervalSince1970: TimeInterval(days * 86_400 + seconds))
     }
 
     /// Full ISO 8601 only (with or without fractional seconds) — each string

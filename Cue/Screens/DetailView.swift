@@ -1908,7 +1908,7 @@ enum DetailOpenProbe {
     }
     static func note(_ what: String) {
         let ms = (CACurrentMediaTime() - pressedAt) * 1000
-        guard pressedAt > 0, ms < 4000 else { return }
+        guard pressedAt > 0, ms < 10_000 else { return }
         counts[what, default: 0] += 1
         PlayerProbe.event("details", String(format: "%@ #%d at %.0f ms", what, counts[what]!, ms))
     }
@@ -2049,23 +2049,28 @@ final class DetailPreparer {
             let meta = await SeriesEpisodes.fullMeta(for: item, addonManager: context.addonManager)
             // (Before the record is marked ready: the window draws with them.)
             prepared.ratings = await ratings
-            if meta.isSeries, TMDBService.hasAPIKey {
-                let id = meta.id, type = meta.type, videos = meta.videos ?? []
-                prepared.extras = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
-                    for season in meta.seasons {
-                        group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season,
-                                                                                  videos: videos)) }
-                    }
-                    var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
-                    for await (season, extras) in group where !extras.isEmpty { all[season] = extras }
-                    return all
-                }
-            }
             if meta.isSeries {
                 let order = SeriesEpisodes.inPlayOrder(meta)
                 let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress,
                                                        watched: context.watched)
                 let seasons = meta.seasons.sorted { ($0 == 0 ? Int.max : $0) < ($1 == 0 ? Int.max : $1) }
+                // Only the seasons the page opens on (Play's, and the one
+                // first in the row): the rest come after it's up, in one
+                // change (`loadSeasons`). Every season was awaited here — a
+                // long show (One Piece, 20+) held the opening for seconds.
+                if TMDBService.hasAPIKey {
+                    let id = meta.id, type = meta.type, videos = meta.videos ?? []
+                    let shown = Set([target?.season, meta.regularSeasons.first ?? meta.seasons.first].compactMap { $0 })
+                    prepared.extras = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
+                        for season in shown {
+                            group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season,
+                                                                                      videos: videos)) }
+                        }
+                        var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
+                        for await (season, extras) in group where !extras.isEmpty { all[season] = extras }
+                        return all
+                    }
+                }
                 prepared.firstRowName = (target?.season ?? seasons.first).map { $0 == 0 ? "Specials" : "Season \($0)" }
                     ?? "Episodes"
                 prepared.rowNameReady = true

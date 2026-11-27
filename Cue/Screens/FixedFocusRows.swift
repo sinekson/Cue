@@ -3208,7 +3208,7 @@ enum FixedFocusImages {
     /// A picture's key in memory and how it's decoded: by its longest side
     /// (`maxDimension`, points), or to cover a card (`fill`, points).
     @MainActor
-    private static func sizing(_ url: String, maxDimension: CGFloat, fill: CGSize?)
+    static func sizing(_ url: String, maxDimension: CGFloat, fill: CGSize?)
         -> (key: String, budget: CGFloat?, fill: CGSize?) {
         guard let fill else {
             return (RemoteImage.memoryKey(url, maxDimension: maxDimension, maxPixels: nil),
@@ -3217,6 +3217,28 @@ enum FixedFocusImages {
         let scale = UIScreen.main.scale
         let pixels = CGSize(width: (fill.width * scale).rounded(.up), height: (fill.height * scale).rounded(.up))
         return ("\(url)#\(Int(pixels.width))x\(Int(pixels.height))", nil, pixels)
+    }
+
+    /// A card's picture decoded into memory under the key the card reads
+    /// (as `load`): on screen from the card's first frame.
+    @MainActor
+    static func preload(_ url: String, maxDimension: CGFloat, fill: CGSize?) async {
+        let (key, budget, fillPixels) = sizing(url, maxDimension: maxDimension, fill: fill)
+        if ImageCache.shared.image(for: key) != nil { return }
+        if await ImageCache.shared.diskImage(for: url, budget: budget, fill: fillPixels, memoryKey: key) != nil { return }
+        guard let remote = URL(string: url), let data = try? await ImageCache.shared.download(remote),
+              let image = await DecodeGate.shared.run(.now, {
+                  ImageCache.decodeDownsampled(data, budget: budget, fill: fillPixels)
+              }) else { return }
+        ImageCache.shared.insert(image, for: url, data: data, memoryKey: key)
+    }
+
+    /// A card's picture on disk at the size the card reads, not decoded
+    /// into memory (the launch's further rows).
+    @MainActor
+    static func keepOnDisk(_ url: String, maxDimension: CGFloat, fill: CGSize?) async {
+        let (key, budget, fillPixels) = sizing(url, maxDimension: maxDimension, fill: fill)
+        await ImageCache.shared.keepOnDisk(url, key: key, budget: budget, fill: fillPixels)
     }
 
     @MainActor

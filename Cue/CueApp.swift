@@ -1806,7 +1806,10 @@ final class LaunchPreloader: ObservableObject {
     static let minimum: Double = 3
     /// The safety ceiling: the curtain waits for the minimum however long
     /// it takes — only a broken network gets here; then placeholders.
-    static let ceiling: Double = 15
+    static let ceiling: Double = 45
+    /// The curtain waits for these rows' first titles whole (`minimumJobs`).
+    static let nearRows = 6
+    static let nearCards = 10
     /// The account's sync (Continue Watching, library), waited for at launch.
     weak var sync: NuvioSyncManager?
     /// Away this long, the gate asks again.
@@ -2095,15 +2098,40 @@ final class LaunchPreloader: ObservableObject {
                 })
             }
         }
+        // In memory, as the cards read them (`HomeRow.cardPictures`; these
+        // were the poster's and landscape's sizes, which no card here
+        // reads): the first row's cards in view, the first card of the
+        // next three (the box: its open card).
+        func card(_ row: HomeRow, _ item: MetaItem) {
+            for want in row.cardPictures(item) {
+                jobs.append(.init(key: "card:\(want.url)|\(want.maxDimension)|\(want.fill.map { "\($0)" } ?? "")",
+                                  kind: "picture", lane: .picture, band: .launch, order: jobs.count, source: "launch") {
+                    await FixedFocusImages.preload(want.url, maxDimension: want.maxDimension, fill: want.fill)
+                })
+            }
+        }
         for item in (rows.first?.items ?? []).prefix(8) {
             record(item)
-            picture(item.poster ?? item.background, PictureSize.poster)
+            card(rows[0], item)
         }
-        for row in rows.prefix(4) {
+        for row in rows.dropFirst().prefix(3) {
             guard let first = row.items.first else { continue }
             record(first)
-            picture(first.background ?? first.poster, PictureSize.landscape)
-            picture(first.logo, PictureSize.cardLogo)
+            card(row, first)
+        }
+        // The rows a few presses reach, whole (smoothness over a quicker
+        // launch): the first `nearRows` rows' first `nearCards` titles —
+        // their Details data and every card picture on disk at the size
+        // read. Warm, all on disk already: no wait.
+        for (r, row) in rows.prefix(Self.nearRows).enumerated() {
+            for (i, item) in row.items.prefix(Self.nearCards).enumerated() {
+                if let job = TitlePreloader.shared.launchJob(item, band: .launch, order: 1_000 + r * 100 + i) {
+                    jobs.append(job)
+                }
+                for want in row.cardPictures(item) {
+                    jobs.append(.cardOnDisk(want, band: .launch, order: 1_000 + r * 100 + i))
+                }
+            }
         }
         if let progress, let homeSettings {
             let watching = Array(progress.continueWatching(sortMode: homeSettings.continueWatchingSortMode).prefix(6))
@@ -2155,18 +2183,16 @@ final class LaunchPreloader: ObservableObject {
             }
             if let logo = item.logo { jobs.append(.disk(logo, PictureSize.logo, order: i)) }
         }
+        // Every row's every title, nearest first: its record, its Details
+        // data, its card's pictures on disk at the sizes read (each row's
+        // first 15 at the poster's size, the box's for the first 4, was
+        // before: Right past them loaded the open card from the network).
         for (r, row) in rows.enumerated() {
-            for (i, item) in row.items.enumerated().dropFirst(15) {
-                jobs.append(.record(item, band: .deep, order: 10_000 + r * 100 + i, source: "deep"))
-            }
-            for (i, item) in row.items.prefix(15).enumerated() {
+            for (i, item) in row.items.enumerated() {
                 let order = (r + 1) * 100 + i
                 jobs.append(.record(item, band: .deep, order: order, source: "deep"))
-                if let url = item.poster ?? item.background { jobs.append(.disk(url, PictureSize.poster, order: order)) }
-                // The box's picture for the first few (Left/Right's next).
-                guard i < 4 else { continue }
-                if let url = item.background ?? item.poster { jobs.append(.disk(url, PictureSize.landscape, order: order)) }
-                if let logo = item.logo { jobs.append(.disk(logo, PictureSize.cardLogo, order: order)) }
+                if let job = TitlePreloader.shared.launchJob(item, band: .deep, order: order) { jobs.append(job) }
+                for want in row.cardPictures(item) { jobs.append(.cardOnDisk(want, band: .deep, order: order)) }
             }
         }
         // The background's pool (`BackgroundPicks`): last, one job.
@@ -2224,6 +2250,14 @@ final class LoadQueue {
                 lane: .picture, band: band, order: order, source: source) {
                 _ = await ImageCache.shared.preload(url, maxDimension: size, turn: band == .launch ? .now : .ahead,
                                                     still: still)
+            }
+        }
+
+        /// A card's picture on disk at the size it's read, not in memory.
+        static func cardOnDisk(_ want: HomeRow.CardPicture, band: Band, order: Int) -> Job {
+            Job(key: "card-disk:\(want.url)|\(want.maxDimension)|\(want.fill.map { "\($0)" } ?? "")",
+                kind: "disk", lane: .picture, band: band, order: order, source: band == .deep ? "deep" : "launch") {
+                await FixedFocusImages.keepOnDisk(want.url, maxDimension: want.maxDimension, fill: want.fill)
             }
         }
 
@@ -2619,15 +2653,24 @@ final class TitlePreloader {
         Task.detached(priority: .utility) { await MDBListService.prefetch(items, settings: context.mdb) }
     }
 
+    /// A Home title's Details data and pictures on disk (`.record`), for the
+    /// launch: every Home title, no `cap` (Home's ~465 passed the 250 and
+    /// the rest waited on the network when opened).
+    func launchJob(_ item: MetaItem, band: LoadQueue.Band, order: Int) -> LoadQueue.Job? {
+        guard Self.wanted(item) else { return nil }
+        return job(item, .record, order: order, band: band, capped: false)
+    }
+
     /// One title to `depth`, as a queue job (once per launch per depth;
-    /// past `cap` titles from the network, records no more).
-    private func job(_ item: MetaItem, _ depth: Depth, order: Int) -> LoadQueue.Job {
-        LoadQueue.Job(key: "details:\(item.id):\(depth)", kind: "details", lane: .data, band: .focus,
-                      order: order, source: "details") { [weak self] in
+    /// past `cap` titles from the network, records no more — browsing's).
+    private func job(_ item: MetaItem, _ depth: Depth, order: Int,
+                     band: LoadQueue.Band = .focus, capped: Bool = true) -> LoadQueue.Job {
+        LoadQueue.Job(key: "details:\(item.id):\(depth)", kind: "details", lane: .data, band: band,
+                      order: order, source: band == .focus ? "details" : "launch-details") { [weak self] in
             guard let self else { return }
             if let had = self.done[item.id], had >= depth { return }
             let first = self.done[item.id] == nil
-            if first, self.networkTitles >= Self.cap, depth < .pictures { return }
+            if capped, first, self.networkTitles >= Self.cap, depth < .pictures { return }
             self.done[item.id] = depth
             let t = CACurrentMediaTime()
             let net = await self.warm(item, depth: depth, first: first)

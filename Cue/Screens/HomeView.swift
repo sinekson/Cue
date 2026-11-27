@@ -19,6 +19,39 @@ struct HomeRow: Identifiable {
         return urls
     }
 
+    /// What a Home card of this row loads, as its cell does (the same
+    /// pictures at the same sizes, so the launch warms what's read): a
+    /// large row's poster, open card and logo; a tall, ranked or Today's
+    /// Pick card's picture cut to cover it and its logo; an episode or
+    /// plain card's picture.
+    struct CardPicture { let url: String; let maxDimension: CGFloat; let fill: CGSize? }
+    @MainActor func cardPictures(_ item: MetaItem) -> [CardPicture] {
+        var out: [CardPicture] = []
+        func add(_ url: String?, _ maxDimension: CGFloat, fill: CGSize? = nil) {
+            if let url { out.append(CardPicture(url: url, maxDimension: maxDimension, fill: fill)) }
+        }
+        let own = art[item.id]
+        switch shape {
+        case .poster:
+            let poster = own ?? item.poster ?? item.background
+            add(poster, PictureSize.featurePoster)
+            add(item.background ?? poster, PictureSize.openCard)
+            add(item.logo, PictureSize.cardLogo)
+        case .tall, .spotlight, .ranked:
+            let spotlight = shape == .spotlight
+            let card = spotlight ? FixedFocusMetrics.spotlightCard
+                : shape == .ranked ? FixedFocusMetrics.rankedCard : FixedFocusMetrics.showcaseCard
+            add(spotlight ? own ?? item.background ?? item.poster : own ?? item.poster ?? item.background,
+                0, fill: PictureSize.fill(card))
+            add(item.logo, PictureSize.cardLogo)
+        case .episode:
+            add(own ?? item.background ?? item.poster, PictureSize.landscape)
+        case .plain:
+            add(own ?? item.poster ?? item.background, PictureSize.card(FixedFocusMetrics.posterCard))
+        }
+        return out
+    }
+
     /// What a row shows, to tell whether it changed: each title and its art.
     var contentKey: [String] { items.map { "\($0.id)|\(art[$0.id] ?? $0.background ?? "")" } }
 

@@ -699,6 +699,14 @@ final class ImageCache: @unchecked Sendable {
     @discardableResult
     @MainActor func keepOnDisk(_ value: String, maxDimension: CGFloat) async -> Bool {
         let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: nil)
+        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
+        return await keepOnDisk(value, key: key, budget: budget, fill: nil)
+    }
+
+    /// As above, for the size a card reads under `key` (`FixedFocusImages`'
+    /// sizing: by its longest side, `budget`, or to cover it, `fill`).
+    @discardableResult
+    @MainActor func keepOnDisk(_ value: String, key: String, budget: CGFloat?, fill: CGSize?) async -> Bool {
         if image(for: key) != nil || keptOnDisk.contains(key) { return true }
         let resizedURL = copyURL(of: value, size: key)
         if fm.fileExists(atPath: resizedURL.path) { keptOnDisk.insert(key); return true }
@@ -711,8 +719,7 @@ final class ImageCache: @unchecked Sendable {
             let fileURL = fileURL(for: value)
             ioQueue.async { self.writeOriginal(downloaded, to: fileURL) }
         }
-        let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
-        if let image = await DecodeGate.shared.run(.ahead, { ImageCache.decodeDownsampled(data, budget: budget) }) {
+        if let image = await DecodeGate.shared.run(.ahead, { ImageCache.decodeDownsampled(data, budget: budget, fill: fill) }) {
             ioQueue.async { self.keepResized(image, of: data, at: resizedURL) }
         }
         keptOnDisk.insert(key)
