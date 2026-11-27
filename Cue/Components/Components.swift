@@ -115,7 +115,21 @@ final class ImageCache: @unchecked Sendable {
                                         qos: .userInitiated, attributes: .concurrent)
     private let fm = FileManager.default
     private let diskURL: URL
-    static let diskLimit = 512 * 1024 * 1024   // ~512 MB of encoded images
+    /// Encoded pictures on disk: Home's (`protectHome`) up to 2 GB, the
+    /// rest (Details, pages, the player) 1 GB, oldest out first; in all a
+    /// tenth of the free space when that's less, 768 MB at least. Home's
+    /// worst case is ~1.2 GB (~1.9 with heavy files); one Details page
+    /// 5–75 MB. One budget for both let an evening of Details push out
+    /// Home's pictures, the oldest (written at launch): empty cards, the
+    /// network again. 512 MB was before: less than one Home preload.
+    static let homeLimit = 2 << 30
+    static let restLimit = 1 << 30
+    static let diskLimit: Int = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let free = (try? caches.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
+            .volumeAvailableCapacity ?? 0
+        return min(homeLimit + restLimit, max(768 << 20, free / 10))
+    }()
     private let diskBudget = ImageCache.diskLimit
     /// Its folder on disk (Settings → Storage measures it).
     static var diskFolder: URL {
@@ -196,6 +210,10 @@ final class ImageCache: @unchecked Sendable {
         return UIImage(cgImage: cg)
     }
 
+    /// Every decoded picture out of memory (the player coming up): what's
+    /// on screen stays, held by its views.
+    func emptyMemory() { memory.removeAllObjects() }
+
     /// Synchronous memory-only lookup.
     func image(for key: String) -> UIImage? { memory.object(forKey: key as NSString) }
 
@@ -217,7 +235,7 @@ final class ImageCache: @unchecked Sendable {
         let fileURL = fileURL(for: key)
         // Its copy at this size, if one was kept (`keepResized`): a small
         // file, decoded as it is.
-        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.fileURL(for: $0) }
+        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.copyURL(of: key, size: $0) }
         return await withCheckedContinuation { continuation in
             ioQueue.async { [weak self] in
                 guard let self else { continuation.resume(returning: nil); return }
@@ -236,11 +254,18 @@ final class ImageCache: @unchecked Sendable {
                       // while a row is scrolling.
                       let prepared = Self.decodeDownsampled(data, budget: budget, fill: fill) else {
                     continuation.resume(returning: nil)
+                    // A file that isn't a picture (an error page stored
+                    // before downloads were checked): gone, so the warm-ups,
+                    // which skip what's on disk, fetch it again.
+                    if self.fm.fileExists(atPath: fileURL.path) { try? self.fm.removeItem(at: fileURL) }
                     return
                 }
                 self.insertMemory(prepared, for: memoryKey ?? key)
                 continuation.resume(returning: prepared)
                 if let resizedURL { self.keepResized(prepared, of: data, at: resizedURL) }
+                // Saved before originals were capped: capped now.
+                let kept = Self.keptBytes(data)
+                if kept.count < data.count { self.writeCacheFile(kept, to: fileURL) }
                 // LRU bookkeeping only — never make the caller wait on a
                 // filesystem attribute write.
                 self.ioQueue.async { [weak self] in
@@ -259,9 +284,9 @@ final class ImageCache: @unchecked Sendable {
         let payload = data ?? image.jpegData(compressionQuality: 0.9)
         guard let payload else { return }
         let fileURL = fileURL(for: key)
-        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.fileURL(for: $0) }
+        let resizedURL = memoryKey.flatMap { $0 == key ? nil : self.copyURL(of: key, size: $0) }
         ioQueue.async { [self] in
-            writeCacheFile(payload, to: fileURL)
+            writeOriginal(payload, to: fileURL)
             if let resizedURL { keepResized(image, of: payload, at: resizedURL) }
         }
     }
@@ -283,6 +308,50 @@ final class ImageCache: @unchecked Sendable {
         guard let small = opaque ? image.jpegData(compressionQuality: 0.85) : image.pngData(),
               small.count < original.count * 7 / 10 else { return }
         writeCacheFile(small, to: fileURL)
+    }
+
+    /// The longest side kept on disk of a poster (any portrait) and of a
+    /// logo (any picture with transparency): the largest either is ever
+    /// drawn — a text-free poster filling a tall card by its width
+    /// (~1750 px tall), the billboard's and Details' logo (560 pt, 1120 px).
+    /// TMDB's originals are 3000 px posters and logos up to 12 MB; at
+    /// full size they were most of the disk cache (Home's worst case
+    /// ~1.7 GB, 80 % of it originals never drawn). Backdrops and stills
+    /// stay whole: full screen draws them at the panel's 3840.
+    private static let portraitKept = (1800 * PerformanceProfile.maxImagePixelSize / 3840).rounded()
+    private static let logoKept = (1120 * PerformanceProfile.maxImagePixelSize / 3840).rounded()
+
+    /// A downloaded picture as it's kept on disk (`keptBytes`). On `ioQueue`.
+    private func writeOriginal(_ data: Data, to fileURL: URL) {
+        writeCacheFile(Self.keptBytes(data), to: fileURL)
+    }
+
+    /// `data`, or — a poster or logo larger than it's ever drawn — a copy
+    /// at that size (JPEG, PNG for transparency). One frame only: an
+    /// animation is left as it is.
+    static func keptBytes(_ data: Data) -> Data {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) == 1,
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+              let h = props[kCGImagePropertyPixelHeight] as? CGFloat, w > 0, h > 0 else { return data }
+        let alpha = props[kCGImagePropertyHasAlpha] as? Bool ?? false
+        let cap: CGFloat
+        if alpha { cap = logoKept } else if h > w * 1.1 { cap = portraitKept } else { return data }
+        guard max(w, h) > cap * 1.1 else { return data }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: cap
+        ]
+        guard let small = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return data }
+        let out = NSMutableData()
+        let type = (alpha ? "public.png" : "public.jpeg") as CFString
+        guard let destination = CGImageDestinationCreateWithData(out, type, 1, nil) else { return data }
+        CGImageDestinationAddImage(destination, small,
+                                   alpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), out.length < data.count else { return data }
+        return out as Data
     }
 
     /// A file read: its date moved to now for the trim (oldest go first),
@@ -332,7 +401,17 @@ final class ImageCache: @unchecked Sendable {
         func data(for url: URL) async throws -> Data {
             let key = url.absoluteString
             if let existing = inFlight[key] { return try await existing.value }
-            let task = Task { try await ImageCache.downloadSession.data(from: url).0 }
+            let task = Task {
+                let (data, response) = try await ImageCache.downloadSession.data(from: url)
+                // An error page (404, 429, a CDN's 5xx) is no picture: it
+                // was stored on disk as one, never decoded, and the disk
+                // copy kept the warm-ups from fetching it again.
+                if let http = response as? HTTPURLResponse, !(200 ..< 300).contains(http.statusCode) {
+                    throw DownloadError.status(http.statusCode)
+                }
+                guard !data.isEmpty else { throw DownloadError.empty }
+                return data
+            }
             inFlight[key] = task
             let result = await task.result
             inFlight[key] = nil
@@ -342,8 +421,37 @@ final class ImageCache: @unchecked Sendable {
 
     private let downloads = DownloadCoalescer()
 
+    enum DownloadError: Error {
+        case status(Int), empty
+        /// Worth asking again: anything but the server saying it has none.
+        var transient: Bool {
+            guard case .status(let code) = self else { return true }
+            return code == 408 || code == 429 || code >= 500
+        }
+    }
+
     func download(_ url: URL) async throws -> Data {
         try await downloads.data(for: url)
+    }
+
+    /// `download`, asked again after a failure that may pass (the network,
+    /// a timeout, a busy server) while `still` holds: 1, 3, 8, then 20 s
+    /// apart, six tries in all. A card whose one try failed stayed empty —
+    /// its edge and nothing else — until it was made again.
+    func downloadRetrying(_ url: URL, still: (@MainActor () -> Bool)? = nil) async -> Data? {
+        let waits: [Double] = [1, 3, 8, 20, 20]
+        for attempt in 0 ... waits.count {
+            do {
+                return try await download(url)
+            } catch {
+                if let error = error as? DownloadError, !error.transient { return nil }
+                guard attempt < waits.count else { return nil }
+                try? await Task.sleep(for: .seconds(waits[attempt]))
+                if Task.isCancelled { return nil }
+                if let still, !(await still()) { return nil }
+            }
+        }
+        return nil
     }
 
     /// Write one cached image body, recreating the cache directory if it has
@@ -379,7 +487,13 @@ final class ImageCache: @unchecked Sendable {
     private let bytesWrittenSinceTrim = Atomic<Int>(wrappedValue: 0)
     private static let trimRearmBytes = 64 << 20
 
+    /// Off while the player is up (`PictureRelease`): pictures still
+    /// decode for whoever asked, the cache keeps none (the launch's preload
+    /// filled it back to 255 MB under a playing film).
+    let keepsInMemory = Atomic<Bool>(wrappedValue: true)
+
     private func insertMemory(_ image: UIImage, for key: String) {
+        guard keepsInMemory.wrappedValue else { return }
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale) * 4
         if let old = memory.object(forKey: key as NSString) { costs.remove(old) }
         costs.add(image, cost, key: key)
@@ -387,9 +501,34 @@ final class ImageCache: @unchecked Sendable {
     }
 
     private func fileURL(for key: String) -> URL {
-        let digest = SHA256.hash(data: Data(key.utf8))
-        let name = digest.map { String(format: "%02x", $0) }.joined()
-        return diskURL.appendingPathComponent(name)
+        diskURL.appendingPathComponent(Self.fileName(key))
+    }
+
+    private static func fileName(_ key: String) -> String {
+        SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A picture's copy at a size (`keepResized`): named after the picture
+    /// first, so the trim knows whose it is (`protectHome`).
+    private func copyURL(of url: String, size key: String) -> URL {
+        diskURL.appendingPathComponent(Self.fileName(url) + "-" + Self.fileName(key).prefix(32))
+    }
+
+    /// Home's pictures, by file name (the picture's; its copies start with
+    /// it): kept by the trim over everything else. Nil until Home has
+    /// said, and the trim waits until then.
+    private let homeFiles = Atomic<Set<String>?>(wrappedValue: nil)
+    private var homeURLs = Set<String>()
+
+    /// The pictures today's Home shows (every row's and the billboard's):
+    /// protected from the trim. Called as Home's rows are drawn; only a
+    /// change does anything.
+    @MainActor func protectHome(_ urls: Set<String>) {
+        guard urls != homeURLs else { return }
+        homeURLs = urls
+        trimQueue.async { [weak self] in
+            self?.homeFiles.wrappedValue = Set(urls.map(Self.fileName))
+        }
     }
 
     /// Warm the cache for images that will be needed soon (posters in rows
@@ -440,7 +579,7 @@ final class ImageCache: @unchecked Sendable {
                         // and a visible cell never download the same poster
                         // twice.
                         guard let data = try? await self.download(url) else { return }
-                        self.ioQueue.async { self.writeCacheFile(data, to: fileURL) }
+                        self.ioQueue.async { self.writeOriginal(data, to: fileURL) }
                     }
                 }
                 for _ in 0 ..< min(window, candidates.count) { startNext() }
@@ -475,7 +614,7 @@ final class ImageCache: @unchecked Sendable {
                 // `download` coalesces, so warming a URL a visible view is
                 // already fetching costs one request, not two.
                 guard let data = try? await self.download(url) else { return }
-                self.ioQueue.async { self.writeCacheFile(data, to: fileURL) }
+                self.ioQueue.async { self.writeOriginal(data, to: fileURL) }
             }
         }
     }
@@ -516,6 +655,31 @@ final class ImageCache: @unchecked Sendable {
         return true
     }
 
+    /// On disk as a picture, downloaded if it isn't: true when it is,
+    /// false when the server has none (a 404, or not a picture), nil when
+    /// the network failed (worth asking again later).
+    func fetchPicture(_ value: String) async -> Bool? {
+        if let data = await diskData(for: value), Self.isPicture(data) { return true }
+        guard let url = URL(string: value) else { return false }
+        do {
+            let data = try await download(url)
+            guard Self.isPicture(data) else { return false }
+            let fileURL = fileURL(for: value)
+            ioQueue.async { self.writeOriginal(data, to: fileURL) }
+            return true
+        } catch let error as DownloadError where !error.transient {
+            return false
+        } catch {
+            return nil
+        }
+    }
+
+    static func isPicture(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return false }
+        return (props[kCGImagePropertyPixelWidth] as? Int ?? 0) > 0
+    }
+
     /// Downloaded into the DISK cache only, not decoded (the background
     /// queue further from focus). True when it's on disk.
     @discardableResult
@@ -523,7 +687,7 @@ final class ImageCache: @unchecked Sendable {
         let fileURL = fileURL(for: value)
         if fm.fileExists(atPath: fileURL.path) { return true }
         guard let url = URL(string: value), let data = try? await download(url) else { return false }
-        ioQueue.async { self.writeCacheFile(data, to: fileURL) }
+        ioQueue.async { self.writeOriginal(data, to: fileURL) }
         return true
     }
 
@@ -536,7 +700,7 @@ final class ImageCache: @unchecked Sendable {
     @MainActor func keepOnDisk(_ value: String, maxDimension: CGFloat) async -> Bool {
         let key = RemoteImage.memoryKey(value, maxDimension: maxDimension, maxPixels: nil)
         if image(for: key) != nil || keptOnDisk.contains(key) { return true }
-        let resizedURL = fileURL(for: key)
+        let resizedURL = copyURL(of: value, size: key)
         if fm.fileExists(atPath: resizedURL.path) { keptOnDisk.insert(key); return true }
         let data: Data
         if let saved = await diskData(for: value) {
@@ -545,7 +709,7 @@ final class ImageCache: @unchecked Sendable {
             guard let url = URL(string: value), let downloaded = try? await download(url) else { return false }
             data = downloaded
             let fileURL = fileURL(for: value)
-            ioQueue.async { self.writeCacheFile(downloaded, to: fileURL) }
+            ioQueue.async { self.writeOriginal(downloaded, to: fileURL) }
         }
         let budget = RemoteImage.pixelBudget(maxDimension: maxDimension, maxPixels: nil)
         if let image = await DecodeGate.shared.run(.ahead, { ImageCache.decodeDownsampled(data, budget: budget) }) {
@@ -591,27 +755,51 @@ final class ImageCache: @unchecked Sendable {
     /// take the barrier, and those are fast.
     private let trimQueue = DispatchQueue(label: "cue.imagecache.trim", qos: .utility)
 
+    /// Home's pictures kept, the rest within `restLimit`, oldest out first;
+    /// then, past the whole budget or Home's own, Home's oldest too.
+    private var trimWaiting = false   // on trimQueue
     private func trimDisk() {
         trimQueue.async { [weak self] in
             guard let self else { return }
+            // Before Home has said what it shows, everything looks
+            // unprotected: later.
+            guard let home = self.homeFiles.wrappedValue else {
+                guard !self.trimWaiting else { return }
+                self.trimWaiting = true
+                self.trimQueue.asyncAfter(deadline: .now() + 30) { [weak self] in
+                    self?.trimWaiting = false
+                    self?.trimDisk()
+                }
+                return
+            }
             let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
             guard let contents = try? self.fm.contentsOfDirectory(
                 at: self.diskURL, includingPropertiesForKeys: keys
             ) else { return }
-            var files = contents.compactMap { url -> (url: URL, size: Int, date: Date)? in
+            var homeSide: [(url: URL, size: Int, date: Date)] = []
+            var rest: [(url: URL, size: Int, date: Date)] = []
+            for url in contents {
                 guard let values = try? url.resourceValues(forKeys: Set(keys)),
                       let size = values.fileSize,
-                      let date = values.contentModificationDate else { return nil }
-                return (url, size, date)
+                      let date = values.contentModificationDate else { continue }
+                let name = url.lastPathComponent
+                let picture = name.firstIndex(of: "-").map { String(name[..<$0]) } ?? name
+                if home.contains(picture) { homeSide.append((url, size, date)) } else { rest.append((url, size, date)) }
             }
-            var total = files.reduce(0) { $0 + $1.size }
-            guard total > self.diskBudget else { return }
-            files.sort { $0.date < $1.date }   // oldest first
+            var homeTotal = homeSide.reduce(0) { $0 + $1.size }
+            var restTotal = rest.reduce(0) { $0 + $1.size }
             var doomed: [URL] = []
-            for file in files {
-                if total <= self.diskBudget { break }
+            rest.sort { $0.date < $1.date }   // oldest first
+            for file in rest {
+                if restTotal <= Self.restLimit, homeTotal + restTotal <= self.diskBudget { break }
                 doomed.append(file.url)
-                total -= file.size
+                restTotal -= file.size
+            }
+            homeSide.sort { $0.date < $1.date }
+            for file in homeSide {
+                if homeTotal <= Self.homeLimit, homeTotal + restTotal <= self.diskBudget { break }
+                doomed.append(file.url)
+                homeTotal -= file.size
             }
             guard !doomed.isEmpty else { return }
             self.ioQueue.sync(flags: .barrier) { [weak self] in
@@ -619,6 +807,54 @@ final class ImageCache: @unchecked Sendable {
                 for url in doomed { try? self.fm.removeItem(at: url) }
             }
         }
+    }
+}
+
+// MARK: - Pictures while the player is up
+
+/// While the player is up the pages out of sight (the other tabs, the
+/// pages on them) let their pictures go and the memory cache is emptied:
+/// ~350–450 MB back for the film (tvOS can end an app over memory with no
+/// warning; two deaths in ten episodes on the TV). The page under the
+/// player — Details, the stage, Home under Continue Watching — keeps what
+/// it shows, so the way back is as before. A second after the player
+/// closes, the rest takes its pictures back from disk, before a switch.
+@MainActor
+enum PictureRelease {
+    static let release = Notification.Name("cue.picturesRelease")
+    static let restore = Notification.Name("cue.picturesRestore")
+    private static var playerUp = false
+
+    static func player(up: Bool) {
+        guard up != playerUp else { return }
+        playerUp = up
+        if up {
+            NotificationCenter.default.post(name: release, object: nil)
+            let before = ImageCache.shared.memoryCost
+            ImageCache.shared.keepsInMemory.wrappedValue = false
+            ImageCache.shared.emptyMemory()
+            AppProbe.nav("pictures let go for the player (cache \(before >> 20) MB)")
+        } else {
+            ImageCache.shared.keepsInMemory.wrappedValue = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                guard !playerUp else { return }
+                NotificationCenter.default.post(name: restore, object: nil)
+                AppProbe.nav("pictures back after the player")
+            }
+        }
+    }
+
+    /// Out of sight: in no window, or under a hidden or transparent layer
+    /// (a hidden tab is only transparent; SwiftUI's opacity may sit on a
+    /// layer of its own, so layers, not views).
+    static func outOfSight(_ view: UIView) -> Bool {
+        guard view.window != nil else { return true }
+        var layer: CALayer? = view.layer
+        while let current = layer {
+            if current.isHidden || current.opacity < 0.01 { return true }
+            layer = current.superlayer
+        }
+        return false
     }
 }
 
@@ -941,7 +1177,7 @@ struct RemoteImage: View {
         // Coalesced: the same poster can appear in two rows at once, or race the
         // prefetch already fetching it, and each of those used to be its own
         // download.
-        guard let data = try? await ImageCache.shared.download(parsed) else {
+        guard let data = await ImageCache.shared.downloadRetrying(parsed) else {
             if !Task.isCancelled, image == nil { withAnimation(.easeOut(duration: 0.2)) { failed = true } }
             return
         }

@@ -340,13 +340,30 @@ final class AddonManager: ObservableObject {
     /// Ordered: add-ons that declare the id prefix first, then the rest as a
     /// long shot — the same two-tier logic `metaAddon` had, spelled out.
     func metaAddons(for type: String, id: String) -> [InstalledAddon] {
-        // Honour `enabled`, as every other capability lookup does: a disabled
-        // meta addon stopped serving catalogs and streams but still answered
-        // episode lists, Continue Watching enrichment and next-episode lookups.
-        let enabled = addons.filter { $0.enabled && $0.manifest.providesMeta }
-        let claiming = enabled.filter { $0.handles(id: id) }
-        let rest = enabled.filter { addon in !claiming.contains { $0.id == addon.id } }
-        return claiming + rest
+        // Show info (episode lists and their ids) only from Cue's own
+        // Cinemeta, never an installed add-on (decided 2026-11-27): installed
+        // add-ons are for streams and subtitles. IMDb's numbering, the one
+        // stream add-ons are asked in (TMDB's differs: Frieren's S2:E3 is its
+        // S1:E31); the same ids Xperience gave, so progress keeps its keys.
+        id.hasPrefix("tt") ? [Self.cinemeta] : []
+    }
+    private static let cinemeta = bundledCinemeta()
+
+    /// An installed add-on Cue makes no use of: no streams, no subtitles
+    /// (a catalog or show-info add-on). Settings says so; it stays on the
+    /// account for the other Nuvio apps.
+    nonisolated static func isUnused(_ manifest: AddonManifest) -> Bool {
+        !manifest.providesStreams && !manifest.providesSubtitles
+    }
+
+    enum InstallError: LocalizedError {
+        case noStreams(String)
+        var errorDescription: String? {
+            switch self {
+            case .noStreams(let name):
+                return "\(name) finds no streams or subtitles. Cue only uses add-ons that do."
+            }
+        }
     }
 
     /// Install an add-on. A new link for an add-on installed exactly ONCE
@@ -356,6 +373,7 @@ final class AddonManager: ObservableObject {
     func install(manifestURL rawURL: String) async throws {
         let urlString = Self.normalizeManifestURL(rawURL)
         let manifest = try await StremioAPI.manifest(url: urlString)
+        if Self.isUnused(manifest) { throw InstallError.noStreams(manifest.name) }
         if let existing = addons.firstIndex(where: { $0.manifestURL == urlString }) {
             addons[existing] = InstalledAddon(manifestURL: urlString, manifest: manifest,
                                               enabled: addons[existing].enabled,

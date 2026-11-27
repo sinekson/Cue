@@ -222,8 +222,28 @@ final class StagePictureView: UIView {
     private let dim = UIView()
     private var blurredFor: String?
 
+    /// Its picture let go while the player is up (`PictureRelease`): the
+    /// billboard card or Details on a tab out of sight.
+    private var releasedForPlayer = false
+    @objc private func releaseForPlayer() {
+        guard PictureRelease.outOfSight(self) else { return }
+        releasedForPlayer = true
+        FixedFocusImages.load(nil, into: page.picture, maxDimension: 0)
+        blurred.image = nil
+    }
+    @objc private func restoreAfterPlayer() {
+        guard releasedForPlayer else { return }
+        releasedForPlayer = false
+        load(page.url, into: page.picture)
+        if blursBelow { blurredFor = nil; loadBlurred(shownURL) }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseForPlayer),
+                                               name: PictureRelease.release, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
+                                               name: PictureRelease.restore, object: nil)
         isUserInteractionEnabled = false
         clipsToBounds = false
         addSubview(sheet)

@@ -347,8 +347,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Rows out of focus, peeking above and below or under a billboard (Home's,
   Details' episodes), gently dimmed: 80 % (`peekAlpha`; 45 % too dark,
   full brightness too loud).
-  Continue Watching's art is the episode's TMDB still as Details', else the
-  add-on's, looked up under the launch curtain (`ContinueStills`). The
+  Continue Watching's art (and the Top Shelf's) is the episode's TMDB still
+  as Details'; where TMDB numbers the show otherwise (Frieren's S2:E3 is
+  its S1:E31) the add-on's original numbering, else the TMDB episode aired
+  the same day in an earlier season; else an add-on thumbnail that really
+  loads (metahub 404s some); else the show's backdrop. Looked up under the
+  launch curtain (`ContinueStills`). The
   account's TMDB `use…` switches (`TMDBSettings`, NuvioTV's) are kept
   only for the sync's round-trip: Cue ignores them (an account with
   Episodes off left Continue Watching on the show's picture).
@@ -912,7 +916,26 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   cards let their pictures go once out of view (`didEndDisplaying`:
   `setArtHeld`, `releaseArt`) and take them back from the image cache when
   shown again: parked for reuse they kept them, ~700 MB after a short
-  browse. The census (`curl <ip>:8123/census`) says what views hold. The same titles'
+  browse. On disk: Home's pictures protected up to 2 GB (`protectHome`, every
+  title's card picture, poster, backdrop, logo; copies named after their
+  picture so the trim knows them), the rest (Details: 5–75 MB a page)
+  1 GB, oldest out first; a tenth of free space if less (one budget let
+  an evening of Details push Home's out; 512 MB was less than one
+  Home preload).
+  While the player is up (`PictureRelease`): the pages out of sight (other
+  tabs, pages on them; by layer opacity) let their pictures go, the memory
+  cache is emptied and keeps nothing; the page under the player keeps
+  what it shows, so the way back is as before; a second after it closes
+  the rest takes its pictures back from disk (on the sim: footprint
+  480 → 377 MB, cache 255 → 0).
+  Posters and logos are kept at their largest drawn size, not
+  TMDB's original (`keptBytes`: portraits 1800 px, logos 1120 px,
+  ~0.8 MB saved a file; backdrops and stills whole for full screen):
+  Home's worst case (~465 titles) ~1.2 GB, ~1.9 GB with heavy files.
+  A download that isn't a picture (an HTTP error) is never stored; a
+  failed one is tried again (1, 3, 8, 20, 20 s) while the card wants it,
+  and a card with none keeps its placeholder (an empty card inside its
+  edge was the symptom). The census (`curl <ip>:8123/census`) says what views hold. The same titles'
   records are brought up to date ahead too, after a 0.3 s rest (MDBList
   counts requests), chips drawn ahead (`TitleExtras`).
 - **Title records** (`TitleRecords`, end of `RequestCache.swift`): per title
@@ -966,6 +989,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (0.8 s) and falling away on the way out if Details' is off. Be gentle on YouTube:
   resolve ahead for 3 titles only, hold off 30 min on a bot check. Trailers
   keep their own `AVPlayer`.
+- **Add-ons are for streams and subtitles only** (decided 2026-11-27):
+  their catalogs and show info are never asked. Show info (episode lists,
+  their ids: what streams are asked by and progress is keyed by) comes from
+  Cue's own Cinemeta (`AddonManager.metaAddons`), IMDb's numbering, the one
+  stream add-ons use (TMDB's differs: Frieren's S2:E3 is its S1:E31; TMDB's
+  list only when Cinemeta has none); everything shown is TMDB's, episode
+  stills matched by air date where the numbering differs
+  (`TMDBService.seasonEpisodes(…videos:)`). Installing one with neither
+  is refused; one already on the account is marked "Not used by Cue: no
+  streams" in Settings, left for the user to remove (removing syncs to
+  the other Nuvio apps).
 - **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
   take the first link (`PlayLauncher`); a link that fails or shows
   no frame in 20 s: the next, silently, once (3 was the fork's: two failing usually share a cause), then the source list; 5-min cache; none remembered; each add-on gets 20 s to answer (Play waits on them in order). Hold Play: the source list

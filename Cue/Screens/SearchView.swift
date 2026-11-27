@@ -739,9 +739,26 @@ final class SearchRowController: UIViewController, UICollectionViewDataSource,
     private let layout = UICollectionViewFlowLayout()
     private var collectionView: UICollectionView!
 
+    /// Its cards' pictures let go while the player is up (`PictureRelease`).
+    private var releasedForPlayer = false
+    @objc private func releaseForPlayer() {
+        guard isViewLoaded, collectionView != nil, PictureRelease.outOfSight(view) else { return }
+        releasedForPlayer = true
+        for case let card as FixedFocusDestinationCell in collectionView.visibleCells { card.releaseArt() }
+    }
+    @objc private func restoreAfterPlayer() {
+        guard releasedForPlayer else { return }
+        releasedForPlayer = false
+        collectionView.reconfigureItems(at: collectionView.indexPathsForVisibleItems)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseForPlayer),
+                                               name: PictureRelease.release, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
+                                               name: PictureRelease.restore, object: nil)
         layout.scrollDirection = .horizontal
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]

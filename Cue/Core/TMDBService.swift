@@ -1683,6 +1683,41 @@ enum TMDBService {
         return map
     }
 
+    /// A season's extras in the episode lists' numbering (IMDb's, Cinemeta's:
+    /// what stream add-ons are asked in): TMDB's own season, and for the
+    /// episodes it lacks, the TMDB episode aired the same day (a day either
+    /// side when that's the only one) in an earlier season — TMDB numbers
+    /// some shows otherwise (Frieren's second season is its season 1 from
+    /// episode 29). `videos`: the list's episodes, with their dates.
+    static func seasonEpisodes(imdbID: String, type: String, season: Int,
+                               videos: [MetaVideo]) async -> [Int: EpisodeExtra] {
+        var extras = await seasonEpisodes(imdbID: imdbID, type: type, season: season)
+        let missing = videos.filter { $0.season == season && $0.episode.map { extras[$0] == nil } == true }
+        guard season > 1, !missing.isEmpty else { return extras }
+        func day(_ text: String?) -> Date? {
+            guard let text else { return nil }
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = TimeZone(identifier: "UTC")
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.date(from: String(text.prefix(10)))
+        }
+        var dated: [(Date, EpisodeExtra)] = []
+        for earlier in stride(from: season - 1, through: 1, by: -1) {
+            let found = await seasonEpisodes(imdbID: imdbID, type: type, season: earlier)
+            dated += found.values.compactMap { extra in day(extra.airDate).map { ($0, extra) } }
+        }
+        for video in missing {
+            guard let episode = video.episode, let aired = day(video.released) else { continue }
+            let same = dated.filter { $0.0 == aired }
+            let near = dated.filter { abs($0.0.timeIntervalSince(aired)) <= 86_400 }
+            if let match = same.count == 1 ? same.first : (same.isEmpty && near.count == 1 ? near.first : nil) {
+                extras[episode] = match.1
+            }
+        }
+        return extras
+    }
+
     /// The YouTube trailer keys for a title — the hero's billboard preview.
     ///
     /// The dedicated /videos endpoint rather than `detail`: a hero rest

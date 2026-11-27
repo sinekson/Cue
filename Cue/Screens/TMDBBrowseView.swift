@@ -1973,6 +1973,23 @@ final class UpcomingStripController: UIViewController {
                              y: StagePictureView.homeCard.minY + FixedFocusMetrics.titleDrop,
                              width: 1200, height: FixedFocusMetrics.titleLine)
         view.addSubview(month)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseForPlayer),
+                                               name: PictureRelease.release, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
+                                               name: PictureRelease.restore, object: nil)
+    }
+
+    /// The days' pictures let go while the player is up (`PictureRelease`).
+    private var releasedForPlayer = false
+    @objc private func releaseForPlayer() {
+        guard isViewLoaded, PictureRelease.outOfSight(view) else { return }
+        releasedForPlayer = true
+        days.forEach { $0.releasePicture() }
+    }
+    @objc private func restoreAfterPlayer() {
+        guard releasedForPlayer, !days.isEmpty else { return }
+        releasedForPlayer = false
+        for index in max(0, shown - 2)...min(days.count - 1, shown + Self.across + 1) { days[index].loadPicture() }
     }
 
     /// Down from the tab's bar: the day the strip holds, its first title
@@ -2339,6 +2356,11 @@ final class UpcomingDayView: UIView, UIScrollViewDelegate {
 
     func refreshSeen(_ seen: (UpcomingModel.Entry) -> Bool) {
         for line in lines { line.setSeen(seen(line.entry)) }
+    }
+
+    func releasePicture() {
+        picture.image = nil
+        pictureAsked = false
     }
 
     /// The day's first title's picture, once near the strip's view.

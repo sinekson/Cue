@@ -802,7 +802,11 @@ struct RootView: View {
         .overlay { FusionToastHost() }
         // Playing: no billboard trailer under it.
         .onChange(of: playback == nil && stage.scene == nil) { _, none in TrailerGate.shared.playerUp = !none }
-        .onChange(of: playback == nil) { _, none in if none { playerClosed() } }
+        .onChange(of: playback == nil) { _, none in
+            // Before the cover is presented: the page under it still in view.
+            PictureRelease.player(up: !none)
+            if none { playerClosed() }
+        }
         .onChange(of: launch.gate != nil || showWelcome, initial: true) { _, up in TrailerGate.shared.coverUp = up }
         .fullScreenCover(item: $playback) { request in
             CuePlayer(request: request, progress: progressStore, settings: playerSettings.settings,
@@ -2686,7 +2690,8 @@ final class TitlePreloader {
         if let target = SeriesEpisodes.playTarget(meta.id, in: order, progress: context.progress, watched: context.watched),
            let at = order.firstIndex(where: { $0.id == target.id }) {
             let season = target.season ?? 0
-            let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season)
+            let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season,
+                                                          videos: meta.videos ?? [])
             for episode in order[max(0, at - 1)..<min(order.count, at + 5)] {
                 let still = episode.episode.flatMap { extras[$0]?.still }
                 if let url = TMDBService.originalSize(still) ?? episode.thumbnail {

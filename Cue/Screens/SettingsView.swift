@@ -2114,7 +2114,8 @@ private final class UIPrivacyPage: UISettingsPage {
             UISettingsSection(rows: [.info(title: "Cue collects nothing about you", value: "No analytics, no tracking")]),
             UISettingsSection(label: "What Cue Talks To", rows: [
                 ("Nuvio", "Syncs your account"), ("TMDB", "Search, details and pictures"),
-                ("MDBList", "Ratings, with your key"), ("Your Add-ons", "Titles and sources"), ("YouTube", "Trailers"),
+                ("MDBList", "Ratings, with your key"), ("Your Add-ons", "Streams and subtitles"),
+                ("Cinemeta", "Episode lists"), ("YouTube", "Trailers"),
             ].map { .info(title: $0.0, value: $0.1) } + [
                 .note("What they receive is covered by their own privacy policies."),
             ]),
@@ -2225,7 +2226,8 @@ private final class UIAddonsPage: UISettingsPage {
             return .actions(.init(
                 id: addon.id,
                 leading: .init(key: addon.id + (addon.manifest.logo ?? "") + "\(addon.enabled)") { AnyView(AddonLogo(addon: addon)) },
-                title: addon.displayName, detail: AddonsCardPage.detail(addon), dimmed: !addon.enabled,
+                title: addon.displayName, detail: AddonsCardPage.detail(addon),
+                dimmed: !addon.enabled || AddonManager.isUnused(addon.manifest),
                 actions: actions(addon),
                 moving: moving == addon.id, anyMoving: moving != nil,
                 onMove: { manager.move(addon, to: index + $0) },

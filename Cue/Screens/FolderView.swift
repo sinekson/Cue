@@ -125,9 +125,26 @@ final class FolderGridController: UIViewController, UICollectionViewDataSource, 
     /// Between the header and the first line.
     static let firstLineGap: CGFloat = 12
 
+    /// Its cards' pictures let go while the player is up (`PictureRelease`).
+    private var releasedForPlayer = false
+    @objc private func releaseForPlayer() {
+        guard isViewLoaded, collectionView != nil, PictureRelease.outOfSight(view) else { return }
+        releasedForPlayer = true
+        for case let card as FixedFocusDestinationCell in collectionView.visibleCells { card.releaseArt() }
+    }
+    @objc private func restoreAfterPlayer() {
+        guard releasedForPlayer else { return }
+        releasedForPlayer = false
+        collectionView.reconfigureItems(at: collectionView.indexPathsForVisibleItems)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseForPlayer),
+                                               name: PictureRelease.release, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
+                                               name: PictureRelease.restore, object: nil)
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         collectionView.backgroundColor = .clear

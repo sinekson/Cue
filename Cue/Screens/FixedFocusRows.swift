@@ -1000,8 +1000,25 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return super.preferredFocusEnvironments
     }
 
+    /// Its rows' pictures let go while the player is up (`PictureRelease`).
+    private var releasedForPlayer = false
+    @objc private func releaseForPlayer() {
+        guard isViewLoaded, PictureRelease.outOfSight(view) else { return }
+        releasedForPlayer = true
+        for case let cell as FixedFocusRowCell in outer.visibleCells { cell.setArtHeld(false) }
+    }
+    @objc private func restoreAfterPlayer() {
+        guard releasedForPlayer else { return }
+        releasedForPlayer = false
+        for case let cell as FixedFocusRowCell in outer.visibleCells { cell.setArtHeld(true) }
+    }
+
     override func loadView() {
         Self.all.add(self)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseForPlayer),
+                                               name: PictureRelease.release, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
+                                               name: PictureRelease.restore, object: nil)
         let root = UIView()
         let layout = FixedFocusRowsLayout()
         layout.focusedRow = { [weak self] in self?.focusedRow ?? 0 }
@@ -3211,8 +3228,6 @@ enum FixedFocusImages {
         guard let remote = URL(string: url), let data = try? await ImageCache.shared.download(remote) else { return }
         if let image = await DecodeGate.shared.run(.now, { ImageCache.decodeDownsampled(data, budget: budget) }) {
             ImageCache.shared.insert(image, for: url, data: data, memoryKey: memoryKey)
-        } else {
-            ImageCache.shared.insertData(data, for: url)
         }
     }
 
@@ -3273,7 +3288,7 @@ enum FixedFocusImages {
             var image = await ImageCache.shared.diskImage(for: url, budget: budget, fill: fillPixels,
                                                           memoryKey: memoryKey, still: still)
             if image == nil, still(), let remote = URL(string: url),
-               let data = try? await ImageCache.shared.download(remote) {
+               let data = await ImageCache.shared.downloadRetrying(remote, still: still) {
                 // Off the main thread (it decoded here, mid-scroll).
                 image = await DecodeGate.shared.run(.now) {
                     ImageCache.decodeDownsampled(data, budget: budget, fill: fillPixels)
@@ -3281,13 +3296,14 @@ enum FixedFocusImages {
                 // In memory too (under the same key a SwiftUI RemoteImage of
                 // this size uses): the Detail page opened from the billboard
                 // shows the very same picture from its first frame.
-                if let image {
-                    ImageCache.shared.insert(image, for: url, data: data, memoryKey: memoryKey)
-                } else {
-                    ImageCache.shared.insertData(data, for: url)
-                }
+                // Not stored when it doesn't decode: on disk it passed
+                // for the picture.
+                if let image { ImageCache.shared.insert(image, for: url, data: data, memoryKey: memoryKey) }
             }
             guard let view, requested[slot] == url else { return }
+            // None after every try: the placeholder stays (the card
+            // made again tries anew), not an empty card inside its edge.
+            guard let image else { return }
             show(image, in: view, key: memoryKey, url: url, waiting: waiting)
         }
     }

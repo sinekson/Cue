@@ -3,6 +3,22 @@ import AVFoundation
 import Combine
 
 struct HomeRow: Identifiable {
+    /// Every picture these rows can show or open on (`ImageCache.protectHome`):
+    /// each title's card picture, poster, backdrop (full size too, as the
+    /// billboard and Details draw it) and logo.
+    static func pictures(_ rows: [HomeRow]) -> Set<String> {
+        var urls = Set<String>()
+        for row in rows {
+            for item in row.items {
+                for url in [row.art[item.id], item.poster, item.background,
+                            TMDBService.originalSize(item.background), item.logo] {
+                    if let url { urls.insert(url) }
+                }
+            }
+        }
+        return urls
+    }
+
     /// What a row shows, to tell whether it changed: each title and its art.
     var contentKey: [String] { items.map { "\($0.id)|\(art[$0.id] ?? $0.background ?? "")" } }
 
@@ -545,7 +561,10 @@ struct HomeView: View {
             // Animation movement to the fixed box. Continue Watching, then
             // Saved for Later (the library), then the catalogs — on Movies /
             // Series, filtered to that type.
-            HomeUIKitView(rows: homeRows(featuredRow, cw?.row),
+            let shownRows = homeRows(featuredRow, cw?.row)
+            // Their pictures kept on disk over everything else.
+            let _ = ImageCache.shared.protectHome(HomeRow.pictures(shownRows))
+            HomeUIKitView(rows: shownRows,
                           featuredRowID: Spotlight.featuredRowID,
                           active: active,
                           continueRowID: Spotlight.continueRowID,
@@ -1046,7 +1065,8 @@ struct HomeView: View {
     /// (TMDB's, else the add-on's), else the show's backdrop/poster.
     private func continueImage(_ progress: WatchProgress) -> String? {
         if let still = stills.still(for: progress) { return still }
-        if let thumb = progress.episodeThumbnail, !thumb.isEmpty { return thumb }
+        // Looked up and none of its own loads: the backdrop, not a dead link.
+        if !stills.hasNone(progress), let thumb = progress.episodeThumbnail, !thumb.isEmpty { return thumb }
         return progress.background ?? progress.poster ?? catalogMeta(for: progress.metaID)?.background ?? catalogMeta(for: progress.metaID)?.poster
     }
 
@@ -1073,14 +1093,21 @@ struct HomeView: View {
     }
 }
 
-/// TMDB's episode stills for Continue Watching, as Details' episodes show
-/// them; the add-on's thumbnail only where TMDB has none (Cinemeta's are
-/// often missing). Looked up under the launch curtain (`LaunchPreloader`),
-/// then whenever the row's episodes change; TMDB's seasons are on disk.
+/// Continue Watching's episode pictures (Home's cards and the Top Shelf):
+/// TMDB's still, as Details' episodes show it; where TMDB numbers the show
+/// otherwise (Frieren's second season is TMDB's season 1 from episode 29:
+/// S2:E3 is its S1:E31), the add-on's original numbering, else the TMDB
+/// episode that aired the same day in an earlier season; else the add-on
+/// thumbnails that really load (metahub's 404 for that episode left the card
+/// empty for weeks, the Top Shelf on the show's backdrop); none: the caller's
+/// backdrop. Looked up under the launch curtain (`LaunchPreloader`), then
+/// whenever the row's episodes change; TMDB's seasons are on disk.
 @MainActor
 final class ContinueStills: ObservableObject {
     static let shared = ContinueStills()
+    /// By episode: its picture, "" when it has none (the backdrop then).
     @Published private(set) var stills: [String: String] = [:]
+    private var running: [String: Task<String?, Never>] = [:]
 
     nonisolated static func key(_ progress: WatchProgress) -> String? {
         guard let season = progress.season, let episode = progress.episode else { return nil }
@@ -1088,37 +1115,80 @@ final class ContinueStills: ObservableObject {
     }
 
     func still(for progress: WatchProgress) -> String? {
-        Self.key(progress).flatMap { stills[$0] }
+        Self.key(progress).flatMap { stills[$0] }.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// Looks up the episodes not yet known, a season at a time; returns
-    /// the stills of `rows` (known or found).
+    /// Looked up and found to have no picture of its own: not the stored
+    /// thumbnail either (the backdrop instead).
+    func hasNone(_ progress: WatchProgress) -> Bool {
+        Self.key(progress).flatMap { stills[$0] } == ""
+    }
+
+    /// Looks up the episodes not yet known; returns the pictures of `rows`.
     @discardableResult
     func load(_ rows: [WatchProgress]) async -> [String] {
-        guard TMDBService.hasAPIKey else { return [] }
-        var seasons: [String: (metaID: String, type: String, season: Int, episodes: [Int: String])] = [:]
-        for row in rows {
-            guard let key = Self.key(row), stills[key] == nil,
-                  let season = row.season, let episode = row.episode else { continue }
-            seasons["\(row.metaID):\(season)", default: (row.metaID, row.type, season, [:])].episodes[episode] = key
-        }
-        if !seasons.isEmpty {
-            let found = await withTaskGroup(of: [String: String].self) { group in
-                for job in seasons.values {
-                    group.addTask {
-                        let extras = await TMDBService.seasonEpisodes(imdbID: job.metaID, type: job.type, season: job.season)
-                        var out: [String: String] = [:]
-                        for (episode, key) in job.episodes {
-                            if let still = TMDBService.originalSize(extras[episode]?.still) { out[key] = still }
-                        }
-                        return out
-                    }
+        await withTaskGroup(of: Void.self) { group in
+            for row in rows {
+                guard let season = row.season, let episode = row.episode else { continue }
+                group.addTask { @MainActor in
+                    _ = await self.picture(metaID: row.metaID, type: row.type, season: season, episode: episode,
+                                           thumbnail: row.episodeThumbnail)
                 }
-                return await group.reduce(into: [String: String]()) { $0.merge($1) { a, _ in a } }
             }
-            if !found.isEmpty { stills.merge(found) { _, new in new } }
         }
         return rows.compactMap(still(for:))
+    }
+
+    /// One episode's picture (nil: none — the backdrop), once per launch;
+    /// a lookup that failed on the network is tried again next time.
+    func picture(metaID: String, type: String, season: Int, episode: Int, thumbnail: String?) async -> String? {
+        let key = "\(metaID):\(season):\(episode)"
+        if let known = stills[key] { return known.isEmpty ? nil : known }
+        if let task = running[key] { return await task.value }
+        let task = Task { @MainActor () -> String? in
+            let (found, definite) = await Self.find(metaID: metaID, type: type, season: season,
+                                                    episode: episode, thumbnail: thumbnail)
+            if found != nil || definite { self.stills[key] = found ?? "" }
+            return found
+        }
+        running[key] = task
+        let found = await task.value
+        running[key] = nil
+        return found
+    }
+
+    /// The picture, and whether a nil is the answer (not a network failure).
+    private static func find(metaID: String, type: String, season: Int, episode: Int,
+                             thumbnail: String?) async -> (String?, Bool) {
+        func tmdb(_ season: Int, _ episode: Int) async -> String? {
+            guard TMDBService.hasAPIKey else { return nil }
+            let extras = await TMDBService.seasonEpisodes(imdbID: metaID, type: type, season: season)
+            return TMDBService.originalSize(extras[episode]?.still)
+        }
+        if let still = await tmdb(season, episode) { return (still, true) }
+        // The add-on's episode: its original numbering, air date, thumbnail.
+        var video: MetaVideo?
+        // Without the add-ons (Home not set up yet): asked again later.
+        var failed = TitlePreloader.shared.context == nil
+        if let addons = TitlePreloader.shared.context?.addonManager {
+            let meta = await SeriesEpisodes.fullMeta(for: MetaItem(id: metaID, type: type, name: ""),
+                                                     addonManager: addons)
+            video = meta.videos?.first { $0.season == season && $0.episode == episode }
+        }
+        if let s = video?.originalSeason, let e = video?.originalEpisode, (s, e) != (season, episode),
+           let still = await tmdb(s, e) { return (still, true) }
+        if TMDBService.hasAPIKey, let video, season > 1 {
+            let extras = await TMDBService.seasonEpisodes(imdbID: metaID, type: type, season: season, videos: [video])
+            if let still = TMDBService.originalSize(extras[episode]?.still) { return (still, true) }
+        }
+        for url in [video?.thumbnail, thumbnail].compactMap({ $0 }).filter({ !$0.isEmpty }) {
+            switch await ImageCache.shared.fetchPicture(url) {
+            case .some(true): return (url, true)
+            case .some(false): continue
+            case .none: failed = true
+            }
+        }
+        return (nil, !failed)
     }
 }
 

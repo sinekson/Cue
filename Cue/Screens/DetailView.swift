@@ -242,10 +242,11 @@ final class DetailViewModel: ObservableObject {
         guard meta.isSeries else { return }
         let wanted = seasons.filter { episodeExtras[$0] == nil }
         guard !wanted.isEmpty else { return }
-        let id = meta.id, type = meta.type
+        let id = meta.id, type = meta.type, videos = meta.videos ?? []
         let found = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
             for season in wanted {
-                group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season)) }
+                group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season,
+                                                                          videos: videos)) }
             }
             var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
             for await (season, extras) in group where !extras.isEmpty { all[season] = extras }
@@ -430,7 +431,8 @@ final class DetailViewModel: ObservableObject {
     /// Load per-episode ratings + air dates for a season (once, cached).
     func loadSeason(_ season: Int) async {
         guard episodeExtras[season] == nil, meta.isSeries else { return }
-        let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season)
+        let extras = await TMDBService.seasonEpisodes(imdbID: meta.id, type: meta.type, season: season,
+                                                      videos: meta.videos ?? [])
         if !extras.isEmpty { episodeExtras[season] = extras }
     }
 
@@ -2048,10 +2050,11 @@ final class DetailPreparer {
             // (Before the record is marked ready: the window draws with them.)
             prepared.ratings = await ratings
             if meta.isSeries, TMDBService.hasAPIKey {
-                let id = meta.id, type = meta.type
+                let id = meta.id, type = meta.type, videos = meta.videos ?? []
                 prepared.extras = await withTaskGroup(of: (Int, [Int: TMDBService.EpisodeExtra]).self) { group in
                     for season in meta.seasons {
-                        group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season)) }
+                        group.addTask { (season, await TMDBService.seasonEpisodes(imdbID: id, type: type, season: season,
+                                                                                  videos: videos)) }
                     }
                     var all: [Int: [Int: TMDBService.EpisodeExtra]] = [:]
                     for await (season, extras) in group where !extras.isEmpty { all[season] = extras }

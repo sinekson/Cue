@@ -38,7 +38,7 @@ enum TopShelfExporter {
         var backdropURL: String? = nil
         var posterURL: String? = nil
         /// Episode coordinates, so the renderer can fetch the episode's TMDB
-        /// still in full resolution (see `EpisodeStill`).
+        /// picture (`ContinueStills`).
         var season: Int? = nil
         var episode: Int? = nil
         /// "40m left", drawn into the card beside the bar (as on Home).
@@ -217,8 +217,9 @@ private actor TopShelfWriter {
             // The card shows the EPISODE — its TMDB still in full
             // resolution, the same image the app's Continue Watching uses.
             var wideSource = entry.backdropURL
-            if let still = await EpisodeStill.url(
-                metaID: entry.id, type: entry.type, season: entry.season, episode: entry.episode) {
+            if let season = entry.season, let episode = entry.episode,
+               let still = await ContinueStills.shared.picture(
+                   metaID: entry.id, type: entry.type, season: season, episode: episode, thumbnail: nil) {
                 wideSource = still
             }
             guard let source = wideSource ?? entry.posterURL,
@@ -383,14 +384,3 @@ enum TopShelfCardRenderer {
     }
 }
 
-/// The episode's still from TMDB, in full resolution. The stills stored with
-/// Continue Watching come from whichever add-on served the episode list and
-/// are often small (or missing); TMDB has a consistent, sharp one for
-/// practically every episode. Needs a TMDB key; TMDBService caches seasons.
-enum EpisodeStill {
-    static func url(metaID: String, type: String, season: Int?, episode: Int?) async -> String? {
-        guard TMDBService.hasAPIKey, let season, let episode else { return nil }
-        let extras = await TMDBService.seasonEpisodes(imdbID: metaID, type: type, season: season)
-        return TMDBService.originalSize(extras[episode]?.still)
-    }
-}

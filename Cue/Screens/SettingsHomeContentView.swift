@@ -391,18 +391,12 @@ struct AddonsCardPage: View {
         return list
     }
 
-    /// "v1.4 · Streams, Subtitles": its version and what it gives.
+    /// What Cue uses it for: streams, subtitles (its catalogs and show
+    /// info never: Cue's own); neither, it says so.
     static func detail(_ addon: InstalledAddon) -> String {
-        let kinds = (addon.manifest.resources ?? []).map(\.name).filter { $0 != "manifest" }
-        let named = Array(Set(kinds)).sorted().map { name -> String in
-            switch name {
-            case "stream": return "Streams"
-            case "subtitles": return "Subtitles"
-            case "catalog": return "Catalogs"
-            case "meta": return "Details"
-            default: return name.capitalized
-            }
-        }
+        if AddonManager.isUnused(addon.manifest) { return "Not used by Cue: no streams" }
+        let named = [addon.manifest.providesStreams ? "Streams" : nil,
+                     addon.manifest.providesSubtitles ? "Subtitles" : nil].compactMap { $0 }
         return ([addon.manifest.version.map { "v\($0)" }] + [named.isEmpty ? nil : named.joined(separator: ", ")])
             .compactMap { $0 }.joined(separator: " · ")
     }
