@@ -1030,9 +1030,17 @@ struct RootView: View {
                 CardSettingsRoot { focusSidebar(tab.rawValue) }
                     .ignoresSafeArea()
                     .probeScreen("Settings")
-                    // A title's Details from a list (Watch Progress, Library).
+                    // A title's Details from a list (Watch Progress, Library);
+                    // a person's or studio's page (Search History).
                     .environment(\.settingsOpenTitle) { item in
-                        openDetail(item) { settingsPath.append($0) }
+                        switch item.type {
+                        case "person", "company":
+                            guard let id = SearchViewModel.tmdbID(item) else { return }
+                            browse(.init(kind: item.type == "person" ? .person : .company, id: id, name: item.name),
+                                   backdrop: nil, $settingsPath)
+                        default:
+                            openDetail(item) { settingsPath.append($0) }
+                        }
                     }
                     .navigationDestination(for: Route.self) { destination(for: $0, path: trail($settingsPath)) }
             }

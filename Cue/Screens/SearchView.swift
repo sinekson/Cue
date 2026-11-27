@@ -104,7 +104,8 @@ final class SearchViewModel: ObservableObject {
         ProfileScopedDefaults.forget([Self.recentTitlesKey, Self.recentSearchesKey], profile: id)
     }
 
-    /// A title opened from Search: first among the recent ones.
+    /// A title, person or studio opened from Search: first among the
+    /// recent ones.
     func opened(_ item: MetaItem) {
         let list = [item] + recentTitles.filter { $0.id != item.id }
         recentTitles = Array(list.prefix(Self.recentTitlesLimit))
@@ -536,18 +537,18 @@ struct SearchView: View {
             .foregroundStyle(AppGlass.textMuted)
     }
 
-    /// A card's Select: a title into Details (`DetailTransition`) — it
-    /// joins the recent titles; a person's or studio's page. The query
+    /// A card's Select: a title into Details (`DetailTransition`), a
+    /// person's or studio's page; either joins the recent ones. The query
     /// joins the recent searches.
     private func open(_ item: MetaItem) {
         viewModel.remember()
+        viewModel.opened(item)
         switch item.type {
         case "person":
             if let id = SearchViewModel.tmdbID(item) { onOpenPerson(id, item.name) }
         case "company":
             if let id = SearchViewModel.tmdbID(item) { onOpenStudio(id, item.name) }
         default:
-            viewModel.opened(item)
             DetailTransition.shared.open(item) { onOpenInPlace(item) }
         }
     }

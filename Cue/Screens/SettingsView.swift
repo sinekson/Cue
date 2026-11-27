@@ -1575,7 +1575,7 @@ private final class StorageSettingsPage: UISettingsPage {
         let searches = search.recentSearches.count, titles = search.recentTitles.count
         guard searches + titles > 0 else { return "Empty" }
         return [searches > 0 ? (searches == 1 ? "1 search" : "\(searches) searches") : nil,
-                titles > 0 ? (titles == 1 ? "1 title" : "\(titles) titles") : nil]
+                titles > 0 ? "\(titles) opened" : nil]
             .compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -1907,8 +1907,8 @@ private final class UIWatchedEpisodesPage: UISettingsPage {
     }
 }
 
-/// The profile's recent searches and the titles opened from Search: a row
-/// each, Remove (undo in place), the titles Open too.
+/// The profile's recent searches and what was opened from Search (titles,
+/// people, studios): a row each, Remove (undo in place), the opened Open too.
 private final class UISearchHistoryPage: UISettingsPage {
     private var pending: Set<String> = [] { didSet { changed() } }
 
@@ -1962,7 +1962,7 @@ private final class UISearchHistoryPage: UISettingsPage {
         if !titles.isEmpty {
             let left = titles.filter { !pending.contains($0) }.count
             sections.append(UISettingsSection(label: "Opened from Search", rows: [
-                header("s.titles", left == 1 ? "1 Title" : "\(left) Titles",
+                header("s.titles", left == 1 ? "1 Opened" : "\(left) Opened",
                        "Shown in Search before you type.", keys: titles),
             ] + search.recentTitles.map { item in
                 let key = "t." + item.id
@@ -1970,13 +1970,22 @@ private final class UISearchHistoryPage: UISettingsPage {
                 let open = env.openTitle
                 return .actions(.init(
                     id: key, leading: .poster(item.poster), title: item.name,
-                    detail: gone ? "Removed" : item.type == "movie" ? "Movie" : "Series", dimmed: gone,
+                    detail: gone ? "Removed" : Self.kind(item), dimmed: gone,
                     actions: (gone || open == nil ? [] : [
                         SettingsAction(title: "Open", icon: "info.circle", key: "open") { open?(item) },
                     ]) + [remove(key, gone: gone)]))
             }))
         }
         return sections
+    }
+
+    private static func kind(_ item: MetaItem) -> String {
+        switch item.type {
+        case "movie": return "Movie"
+        case "person": return "Person"
+        case "company": return "Studio"
+        default: return "Series"
+        }
     }
 }
 
