@@ -176,6 +176,9 @@ final class StreamsViewModel: ObservableObject {
         }
         // Every add-on asked, listed from the start (the picker's filter).
         addonNames = queriedAddonNames
+        #if DEBUG
+        addonNames.append(StreamEntry.testAddon)
+        #endif
         // Surface every enabled addon that is NOT being queried, with why —
         // and mirror it to the console for debugging.
         var skipped: [(id: String, name: String, reason: String)] = []
@@ -305,6 +308,27 @@ final class StreamsViewModel: ObservableObject {
             let (a, b) = (rank[$0.element.addonName] ?? .max, rank[$1.element.addonName] ?? .max)
             return a == b ? $0.offset < $1.offset : a < b
         }.map(\.element)
+        #if DEBUG
+        // A stream that always plays, in a tab of its own (never Play's
+        // first link: that's from `pool`).
+        entries.append(.test)
+        #endif
         evaluateFirstLink()
     }
+}
+
+extension StreamEntry {
+    #if DEBUG
+    /// Debug builds: Apple's BipBop HLS stream as a source card of its own
+    /// add-on, to see the way from the list into the player. Played as the
+    /// demo is: nothing saved or synced.
+    static let testAddon = "Test Stream"
+    static let test = StreamEntry(addonName: testAddon, stream: Stream(
+        name: "Apple HLS\n1080p", title: "BipBop advanced fMP4 example", description: nil,
+        url: "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8",
+        infoHash: nil, behaviorHints: nil))
+    var isTest: Bool { addonName == Self.testAddon }
+    #else
+    var isTest: Bool { false }
+    #endif
 }

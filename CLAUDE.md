@@ -1127,7 +1127,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Back stuck). Back with the list up closes it, the way in reversed: the card
   scrolls back to Details' place, then the stage fades off over Details'
   same card (0.3 s; `SourcePicker.leave`; moving while fading was before); otherwise it stops the
-  stage. After a pick the row fades; Back returns to it, on that card.
+  stage. After a pick the card slides back down to Details' place while
+  the link starts, the row going down under it as it fades (the way in
+  reversed); the list back (every link failed, Back from the player), up
+  again; Back returns to it, on that card. Debug builds list a "Test
+  Stream" tab, Apple's BipBop (`StreamEntry.test`), played as the demo.
   All links failing brings the row up. The player's cover is clear so the
   stage stays under it until the first frame; then lights down: the film
   holds paused (no controls for that pause), the text and row fade
@@ -1644,6 +1648,10 @@ as its show info was read (45 s of dropped frames after a launch).
 
 ## Open / later
 
+- The billboard's auto-paging is still buggy (found 2026-11-27, to come
+  back to; Select opening the first title is fixed). Its rules to talk
+  over then: a press only restarts the 5 s; it stops at the last title for
+  the visit; any leave restarts the clock; a trailer pages at its end.
 - On the TV (next time on it): in light mode the launch starts on a
   dark screen for a moment, tvOS's own launch snapshot (cached dark on
   the sim whatever the app gave: a light launch image variant, a launch

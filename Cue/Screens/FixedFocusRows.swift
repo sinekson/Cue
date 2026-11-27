@@ -2514,9 +2514,17 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
 
     private var heldSelectToken = 0
 
-    func select(_ item: MetaItem, rowIndex: Int) {
+    func select(_ pressed: MetaItem, rowIndex: Int) {
         // (Back's scroll up running: dropped, as a move.)
         guard !backing else { return }
+        // The billboard: the title it shows. Paged by itself (`page`), its
+        // hidden cards jump but focus stays on the card it had: Select
+        // opened that one, the first title.
+        var item = pressed
+        if isFeatured(rowIndex), rows.indices.contains(rowIndex),
+           let shown = selected[rows[rowIndex].id], rows[rowIndex].items.indices.contains(shown) {
+            item = rows[rowIndex].items[shown]
+        }
         // A showcase card's trailer: playing, it goes on into Details
         // (`perform`); still to come, it stops at the press.
         if showcaseTrailer.playingTitle != item.id { restShowcase(on: nil) }

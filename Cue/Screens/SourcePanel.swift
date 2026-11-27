@@ -131,7 +131,17 @@ struct PlayStageView<Sources: View>: View {
             // In while still under the cover: below, to come up with the scroll.
             if !settled, scene.grown, on { below = true }
             guard settled, !leaving else { return }
-            withAnimation(ShelfShape.stageScrollAnimation) { short = on }
+            withAnimation(ShelfShape.stageScrollAnimation) { short = on && !picker.picked }
+        }
+        // A pick: the card slides back down to Details' place while the
+        // link starts, the row going down under it as it fades (the way in
+        // reversed); the list back (every link failed, Back from the
+        // player), up again.
+        .onChange(of: picker.picked) { _, picked in
+            guard settled, !leaving else { return }
+            withAnimation(ShelfShape.stageScrollAnimation) {
+                short = !picked && picker.request != nil && picker.hasLinks
+            }
         }
         // Up while it already holds focus (Play found nothing): it goes
         // now, or it kept focus and the list never got it.
@@ -147,7 +157,7 @@ struct PlayStageView<Sources: View>: View {
         settled = true
         withAnimation(ShelfShape.stageScrollAnimation) {
             below = false
-            short = picker.request != nil && picker.hasLinks
+            short = picker.request != nil && picker.hasLinks && !picker.picked
         }
     }
 

@@ -1501,8 +1501,11 @@ struct RootView: View {
     private func play(_ meta: MetaItem, _ video: MetaVideo?, _ entry: StreamEntry, _ all: [StreamEntry],
                       fromStart: Bool) {
         let key = ProgressStore.key(metaID: meta.id, video: video)
+        // The test stream (Debug) as the demo: from the start, nothing saved.
         startPlayback(PlaybackRequest(meta: meta, video: video, entry: entry, allEntries: all,
-                                      resumePosition: fromStart ? nil : progressStore.progress(for: key)?.positionSeconds))
+                                      resumePosition: fromStart || entry.isTest ? nil
+                                          : progressStore.progress(for: key)?.positionSeconds,
+                                      isDemo: entry.isTest))
     }
 
     /// In and out at once: the fades are the stage's and the player's own.
