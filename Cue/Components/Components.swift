@@ -835,6 +835,7 @@ enum PictureRelease {
     static func player(up: Bool) {
         guard up != playerUp else { return }
         playerUp = up
+        DiskWrites.player(up: up)
         if up {
             NotificationCenter.default.post(name: release, object: nil)
             let before = ImageCache.shared.memoryCost

@@ -3404,10 +3404,12 @@ private final class PlayerPrompt: UIView {
 }
 
 final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
-    /// What's on disk around the playhead: 10 minutes ahead at most, and the
-    /// budget (the engine keeps it under a quarter of free space) holds that
-    /// and what's behind. Seeks and stills inside it never touch the network.
-    private static let windowSegments = 150
+    /// What's on disk around the playhead: 2 minutes ahead at most (every
+    /// byte fetched is written once; ahead more was mostly thrown away on a
+    /// stop or skip), and the budget (the engine keeps it under a quarter of
+    /// free space) holds that and what's behind. Seeks and stills inside it
+    /// never touch the network.
+    private static let windowSegments = 30
     private static let windowBytes = 6 << 30
 
     /// Background preloading stands down while a title plays.
@@ -3785,7 +3787,6 @@ final class PlayerController: UIViewController, UIGestureRecognizerDelegate {
         )
         options.forwardBufferSegments = Self.windowSegments
         options.sessionCacheByteBudget = Self.windowBytes
-        options.softwarePacketCacheStorage = .disk
         options.preserveASSMarkup = true
         // What Apple TV can't send as it is (TrueHD, DTS-HD, …) goes out as
         // lossless PCM, up to 7.1, as Infuse's (the default, E-AC-3 5.1 at

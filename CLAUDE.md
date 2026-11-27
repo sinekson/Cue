@@ -75,6 +75,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   launch. Mark a moment: Play/Pause three times, in the player the flag on
   the shelf's tab row. Read it: Settings → Developer → Sessions, or
   `scripts/probe.sh <ip> log [days]` (`curl <ip>:8123/log?days=2`).
+  Disk writes, for flash wear (`DiskWrites`, 2026-11-27: the kernel's
+  count of the app's bytes written, playback and the rest, per day for
+  400 days, saved every 15 min and on background): `curl <ip>:8123/writes`,
+  "disk" on each tick. Estimated ~4.5 TB a year for the user's watching:
+  fine; look again after a few months.
 
 ## Code map
 
@@ -1591,9 +1596,12 @@ as its show info was read (45 s of dropped frames after a launch).
   second (the same way faster, the other way slower, then it turns round;
   Select, Play or Back land there and play). Not real fast-forward: the
   engine plays 2× at most, never backwards. The bar follows at 30 Hz, stills never wait:
-  a disk window, 10 min ahead in a 6 GB budget (a quarter of free space at
-  most; packets on disk on both engine paths, the software default is
-  memory; a kill's leftovers go at launch, `PlayerTempSweep`), so seeks and
+  a disk window, 2 min ahead in a 6 GB budget (a quarter of free space at
+  most; 10 min was before: every byte streamed is written once, ahead
+  more was mostly thrown away on a stop or skip, SSD wear; the main path
+  has no memory option, the software path (AV1, VC-1, MPEG-2, interlaced
+  H.264: rare) keeps the engine's tvOS default, memory; a kill's leftovers
+  go at launch, `PlayerTempSweep`), so seeks and
   stills inside it use no network; `loadPreview` asks
   the engine first, its own connection only for what it doesn't hold);
   the bar shows every span on disk in the dimmer white wherever the fill isn't (`residentRanges`: islands left by a seek stay; what's behind shows when the fill pulls back in a scrub); in the scan or paused scrubbing the scrub's span is only a thin line where it began and one at the marker (the span in that white took its meaning; two levels: a third wouldn't read on the bar). A press while playing doesn't detach: line, fill, time and preview glide as one on the move spring, as Apple's. Paused, with the bar focused: a swipe

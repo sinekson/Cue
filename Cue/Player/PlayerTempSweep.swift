@@ -623,6 +623,8 @@ final class LogServer {
             let text = MemoryCensus.report()
             PlayerProbe.event("mem", text.replacingOccurrences(of: "\n", with: " | "))
             sendText(on: connection, text + "\n")
+        case "/writes":
+            sendText(on: connection, DiskWrites.report() + "\n")
         case "/health":
             sendText(on: connection, PlayerProbe.healthLines().joined(separator: "\n") + "\n")
         case "/probe":
@@ -765,6 +767,7 @@ enum Watchdog {
         timers = [heart, watch]
         observeLifecycle()
         MainActor.assumeIsolated { FrameDrops.shared.start() }
+        queue.async { CueLog.write("writes", DiskWrites.summary()) }
     }
 
     private static func look() {
@@ -788,10 +791,10 @@ enum Watchdog {
         }
         if now - lastTick >= tickEvery {
             lastTick = now
-            CueLog.write("tick", String(format: "mem %.0f MB · cpu %.0f %% · thermal %@ · dropped %d",
+            CueLog.write("tick", String(format: "mem %.0f MB · cpu %.0f %% · thermal %@ · dropped %d · disk %.1f MB",
                                         PlayerProbe.footprintMB(), PlayerProbe.cpuPercent(),
                                         AppProbe.thermalLabel(ProcessInfo.processInfo.thermalState),
-                                        FrameDrops.takeWindow()))
+                                        FrameDrops.takeWindow(), Double(DiskWrites.sample()) / 1e6))
         }
     }
 
@@ -807,6 +810,9 @@ enum Watchdog {
         watch(UIApplication.didBecomeActiveNotification, "active", active: true)
         watch(UIApplication.willResignActiveNotification, "inactive", active: false)
         watch(UIApplication.didEnterBackgroundNotification, "background", active: false)
+        centre.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { _ in
+            queue.async { DiskWrites.sample(save: true) }
+        }
         watch(UIApplication.willEnterForegroundNotification, "foreground", active: false)
     }
 }
@@ -1153,6 +1159,112 @@ extension View {
     func probeScreen(_ name: String, _ detail: @escaping () -> String = { "" }) -> some View {
         modifier(ProbeScreen(name: name, detail: detail))
     }
+}
+
+/// What Cue writes to the box's flash, to watch wear (`/writes` on the log
+/// server, a `writes` line at launch, the tick's "disk"): the kernel's own
+/// count of the process's bytes written to disk (`proc_pid_rusage`), so the
+/// player's segments, pictures, logs and the rest alike, split by whether
+/// the player is up; per day for 400 days in the defaults, saved every
+/// 15 min and on going to the background (a death loses at most that).
+enum DiskWrites {
+    private static let key = "cue.diskWrites"
+    private static let keepDays = 400
+    private static let saveEvery: TimeInterval = 900
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var playing = false
+    nonisolated(unsafe) private static var last: UInt64?
+    nonisolated(unsafe) private static var lastSave: TimeInterval = 0
+    /// Day ("2026-11-27") → [player, other] bytes.
+    nonisolated(unsafe) private static var days: [String: [Int64]] = [:]
+    nonisolated(unsafe) private static var since = ""
+    nonisolated(unsafe) private static var loaded = false
+
+    @_silgen_name("proc_pid_rusage")
+    private static func rusage(_ pid: Int32, _ flavor: Int32, _ buffer: UnsafeMutableRawPointer) -> Int32
+
+    private static func written() -> UInt64? {
+        var info = rusage_info_v4()
+        let ok = withUnsafeMutablePointer(to: &info) { rusage(getpid(), RUSAGE_INFO_V4, $0) }
+        return ok == 0 ? info.ri_diskio_byteswritten : nil
+    }
+
+    private static func today() -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// Only under `lock`.
+    private static func loadOnce() {
+        guard !loaded else { return }
+        loaded = true
+        let stored = UserDefaults.standard.dictionary(forKey: key)
+        since = stored?["since"] as? String ?? today()
+        for (day, value) in stored?["days"] as? [String: [NSNumber]] ?? [:] where value.count == 2 {
+            days[day] = value.map(\.int64Value)
+        }
+    }
+
+    /// Adds what was written since the last look to today; the bytes added.
+    @discardableResult
+    static func sample(save force: Bool = false) -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        loadOnce()
+        guard let now = written() else { return 0 }
+        defer { last = now }
+        let delta = last.map { now >= $0 ? Int64(now - $0) : Int64(now) } ?? Int64(now)
+        if delta > 0 {
+            var entry = days[today()] ?? [0, 0]
+            entry[playing ? 0 : 1] += delta
+            days[today()] = entry
+        }
+        let clock = CACurrentMediaTime()
+        if force || clock - lastSave >= saveEvery {
+            lastSave = clock
+            let kept = days.keys.sorted().suffix(keepDays)
+            days = days.filter { kept.contains($0.key) }
+            UserDefaults.standard.set(["since": since, "days": days], forKey: key)
+        }
+        return delta
+    }
+
+    /// The player came up or went: what came before counts to the old side.
+    static func player(up: Bool) {
+        sample()
+        lock.lock(); playing = up; lock.unlock()
+    }
+
+    static func report() -> String {
+        sample()
+        lock.lock(); defer { lock.unlock() }
+        func gb(_ b: Int64) -> String { b < 1_000_000_000 ? "\(b / 1_000_000) MB" : String(format: "%.1f GB", Double(b) / 1e9) }
+        let sorted = days.keys.sorted()
+        let player = days.values.reduce(0) { $0 + $1[0] }
+        let other = days.values.reduce(0) { $0 + $1[1] }
+        let count = max(1, sorted.count)
+        var lines = ["since \(since) · \(sorted.count) days with the app run · \(gb(player + other)) "
+            + "(playback \(gb(player)), the rest \(gb(other))) · \(gb((player + other) / Int64(count))) a day on those days"]
+        var months: [String: [Int64]] = [:]
+        for day in sorted {
+            let month = String(day.prefix(7))
+            var m = months[month] ?? [0, 0]
+            m[0] += days[day]![0]; m[1] += days[day]![1]
+            months[month] = m
+        }
+        lines.append("")
+        for month in months.keys.sorted() {
+            let m = months[month]!
+            lines.append("\(month)  \(gb(m[0] + m[1]))  playback \(gb(m[0]))  rest \(gb(m[1]))")
+        }
+        lines.append("")
+        for day in sorted.suffix(31) {
+            let d = days[day]!
+            lines.append("\(day)  \(gb(d[0] + d[1]))  playback \(gb(d[0]))  rest \(gb(d[1]))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func summary() -> String { report().split(separator: "\n").first.map(String.init) ?? "" }
 }
 
 /// What the views hold in decoded pictures (`/census` on the log server):
