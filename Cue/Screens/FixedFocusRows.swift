@@ -317,8 +317,8 @@ enum FixedFocusMetrics {
     /// The row below: this much of its posters shows at the bottom (as on
     /// the original Home — a little under half).
     static var belowVisible: CGFloat { Spotlight.previewVisibleHeight }
-    /// Rows out of focus that peek (above and below, under a billboard):
-    /// gently dimmed (45 % was too dark, full brightness too loud).
+    /// Upcoming's past days: gently dimmed. (Rows' peeks were too, until
+    /// 2026-11-28: full brightness now, trying.)
     static let peekAlpha: CGFloat = 0.8
     /// Rows waiting under a rigid billboard (Details) that don't peek.
     static let dimmedAlpha: CGFloat = 0.45
@@ -1272,7 +1272,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             let id = self.beginMove()
             FixedFocusMotion.run(duration: duration) {
                 self.applyDimming()
-                self.dimGridLines()
                 oldRowCell?.relayout()
                 rowCell.focus(index: itemIndex)
                 // The row list doesn't scroll: its layout places every row
@@ -1555,19 +1554,6 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
             if fromBillboard { self.liftNextTitle(down: true) }
         }
         move()
-    }
-
-    /// The focused grid's lines out of view peek as rows do (`peekAlpha`);
-    /// a grid out of focus whole (its row dims).
-    func dimGridLines() {
-        for case let cell as FixedFocusRowCell in outer.visibleCells { cell.dimGridLines() }
-    }
-    /// A grid's card's level: dimmed on a line out of view while the row
-    /// has focus.
-    func gridAlpha(_ rowIndex: Int, item: Int) -> CGFloat {
-        guard isGrid(rowIndex), rowIndex == focusedRow, hasFocus else { return 1 }
-        let line = item / gridColumns(rowIndex), start = gridStart(rowIndex)
-        return line >= start && line < start + Self.gridLinesShown ? 1 : FixedFocusMetrics.peekAlpha
     }
 
     /// The title you rest on, its records brought up to date. (The ones
@@ -2606,13 +2592,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         // (The billboard's picture is never dimmed: it scrolls away whole.)
         // (Under the billboard the rows are full: the scroll is a move.)
         if isFeatured(focusedRow) {
-            // Rigid: the row peeking under it (`rigidPeek`) gently dimmed;
-            // the others waiting there dimmed.
-            if rigidPeek != nil, isNext(rowIndex) { return FixedFocusMetrics.peekAlpha }
+            // Rigid: the row peeking under it (`rigidPeek`) at full
+            // brightness; the others waiting there dimmed.
+            if rigidPeek != nil, isNext(rowIndex) { return 1 }
             return rigidRest != nil && !isFeatured(rowIndex) ? FixedFocusMetrics.dimmedAlpha : 1
         }
-        // (Rows out of focus, peeking above and below: gently dimmed.)
-        return rowIndex == focusedRow || isFeatured(rowIndex) ? 1 : FixedFocusMetrics.peekAlpha
+        // (Rows out of focus, peeking above and below: full brightness,
+        // trying 2026-11-28; 80 % was before.)
+        return 1
     }
 
     /// Waiting under the billboard (at the bottom edge) the rows are hidden:
@@ -4283,20 +4270,10 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
                            captionOnCard: controller.captionsOnCards(rowIndex))
             cell.setCaptionShown(captionsShown)
             cell.setDetailsShown(isFocusRow, animated: false)
-            cell.alpha = controller.gridAlpha(rowIndex, item: indexPath.item)
         }
     }
 
     private var billboardCardsOff: Bool { isFeatured && controller?.billboardFocusOutside == true }
-
-    /// A grid's lines out of view dimmed (`gridAlpha`).
-    func dimGridLines() {
-        guard let cv = destinationStrip, let controller, controller.isGrid(rowIndex) else { return }
-        for cell in cv.visibleCells {
-            guard let index = cv.indexPath(for: cell)?.item else { continue }
-            cell.alpha = controller.gridAlpha(rowIndex, item: index)
-        }
-    }
 
     /// A card gone from the row's view (parked for reuse) lets its
     /// pictures go; shown again, it's configured anew.

@@ -356,8 +356,8 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   Watching showed one title and played another); other rows update at once,
   new pictures in place (`heldRows`, `refreshArt`).
   Rows out of focus, peeking above and below or under a billboard (Home's,
-  Details' episodes), gently dimmed: 80 % (`peekAlpha`; 45 % too dark,
-  full brightness too loud).
+  Details' episodes), and a grid's lines out of view, at full brightness
+  (trying 2026-11-28; 80 % was before, 45 % too dark).
   Continue Watching's art (and the Top Shelf's) is the episode's TMDB still
   as Details'; where TMDB numbers the show otherwise (Frieren's S2:E3 is
   its S1:E31) the add-on's original numbering, else the TMDB episode aired
@@ -799,7 +799,7 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   crossfade of the two layouts was before: the name in two places) (running text is rejected for cards; six
   across left ~38 pt peeks); two lines in view,
   a third coming in a line at a time, the focused line and the one
-  before it centred, the rest peeking as rows and dimmed as them
+  before it centred, the rest peeking as rows
   (`gridStart`); square cut off the shoulders, circles disliked); Network & Studios a grid of
   Top 10's squares on the page's flat grey, a black, white or grey logo
   in the page's ink, one with a clear colour of its own (Netflix's red)
