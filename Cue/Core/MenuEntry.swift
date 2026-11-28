@@ -420,6 +420,8 @@ private final class HoldMenuController: UIViewController {
         }
         dismiss(animated: false) {
             HoldMenu.shared.closed()
+            // A pick is yours: the rows answer it at once (`UserAction`).
+            if action != nil { UserAction.mark() }
             action?()
         }
         UIView.animate(withDuration: Self.closeDuration, delay: 0, options: [.curveEaseIn]) {

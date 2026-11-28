@@ -843,6 +843,9 @@ enum PictureRelease {
             ImageCache.shared.emptyMemory()
             AppProbe.nav("pictures let go for the player (cache \(before >> 20) MB)")
         } else {
+            // Back from the player: what it changed (Continue Watching's
+            // order, progress) is yours, shown at once (`UserAction`).
+            UserAction.mark()
             ImageCache.shared.keepsInMemory.wrappedValue = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 guard !playerUp else { return }

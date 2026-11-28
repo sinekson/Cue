@@ -351,10 +351,17 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   made in the press, its cards cost 2–3 frames before the move began).
   A large row's box is never taken out of the window: kept hidden and
   reused (`spareBox`; removing it cost UIKit ~20 ms each time).
-  What a row shows is what Select acts on: the row focus is in keeps its
-  titles, order and pictures until focus leaves it (a reordered Continue
-  Watching showed one title and played another); other rows update at once,
-  new pictures in place (`heldRows`, `refreshArt`).
+  What a row shows is what Select acts on: a change you didn't make (a
+  sync, a rebuild) waits in the row focus is in until focus leaves it (a
+  reordered Continue Watching showed one title and played another); other
+  rows update at once, new pictures in place (`heldRows`, `refreshArt`).
+  A change you made goes in at once everywhere (decided 2026-11-28: a
+  removed card stayed until focus left the row): a hold menu's pick and
+  coming back from the player open a 2 s window (`UserAction`), held rows
+  go in at its start; focus follows the title acted on (moved to the
+  front after watching), else the card in its place. A row's card index
+  never points past its end (a removal left it there: Up and Down passed
+  the row by).
   Rows out of focus, peeking above and below or under a billboard (Home's,
   Details' episodes), and a grid's lines out of view, at full brightness
   (trying 2026-11-28; 80 % was before, 45 % too dark).

@@ -806,6 +806,13 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         return cell.rowIndex
     }
 
+    /// A change you made: rows held from before go in now (`UserAction`).
+    @objc private func userActed() {
+        guard let held = heldRows else { return }
+        heldRows = nil
+        update(held.rows)
+    }
+
     /// Focus moved: held rows go in once it has left their row.
     private func applyHeldRows() {
         guard let held = heldRows else { return }
@@ -814,26 +821,44 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         update(held.rows)
     }
 
-    /// What a row shows is what Select acts on: the row focus is in keeps
-    /// its titles, order and pictures until focus leaves it (else a
-    /// reordered Continue Watching showed one title and played another);
-    /// every other row takes its new content at once.
+    /// What a row shows is what Select acts on: a change you didn't make
+    /// (a sync, a rebuild) waits in the row focus is in until focus leaves
+    /// it (else a reordered Continue Watching showed one title and played
+    /// another); every other row takes its new content at once. A change
+    /// you made (`UserAction`: a hold menu's pick, back from the player)
+    /// goes in at once there too, focus following the title acted on (by
+    /// id, below), else on the card that took its place.
     func update(_ incoming: [HomeRow]) {
         var rows = incoming
         heldRows = nil
+        var refocus: Int?
         if !startsOverOnChange, let index = rowHoldingFocus, !isFeatured(index), self.rows.indices.contains(index) {
             let shown = self.rows[index]
             if let at = rows.firstIndex(where: { $0.id == shown.id }), rows[at].contentKey != shown.contentKey {
-                rows[at] = shown
-                heldRows = (incoming, shown.id)
+                if UserAction.recent {
+                    refocus = at
+                } else {
+                    rows[at] = shown
+                    heldRows = (incoming, shown.id)
+                }
             }
         }
-        // A row's titles reordered: its selected title kept by id.
+        // Focus was in the row you changed: on its title (where it moved),
+        // else the card in its place, once the change is laid out.
+        defer { if let refocus, isViewLoaded { refocusAfterChange(refocus) } }
+        // A row's titles changed: its selected title kept by id; gone (taken
+        // out), the one after it in its place, the last at the end (an index
+        // past the row's end left focus nowhere to land: Up and Down passed
+        // the row by).
         for row in rows {
             guard let was = self.rows.first(where: { $0.id == row.id }), was.contentKey != row.contentKey,
-                  let index = selected[row.id], was.items.indices.contains(index),
-                  let now = row.items.firstIndex(where: { $0.id == was.items[index].id }), now != index else { continue }
-            selected[row.id] = now
+                  let index = selected[row.id] else { continue }
+            if was.items.indices.contains(index),
+               let now = row.items.firstIndex(where: { $0.id == was.items[index].id }) {
+                if now != index { selected[row.id] = now }
+            } else {
+                selected[row.id] = row.items.isEmpty ? nil : min(index, row.items.count - 1)
+            }
         }
         // The titles and their art compared, not just the counts — a new
         // search brings as many results; a setting changes the art — except
@@ -902,6 +927,14 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         applyDimming()
         revealNextNameIfNew()
         startOnRowIfAsked()
+    }
+
+    private func refocusAfterChange(_ index: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.rows.indices.contains(index) else { return }
+            self.outer.layoutIfNeeded()
+            self.requestFocus(row: index)
+        }
     }
 
     /// Dev (`-homeFocusRow`): start on a row.
@@ -993,7 +1026,7 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
         if let index = pendingFocusRow {
             pendingFocusRow = nil
             if let rowCell = outer.cellForItem(at: IndexPath(item: index, section: 0)) as? FixedFocusRowCell,
-               let cell = rowCell.posterCell(at: selected[rows[index].id] ?? 0) {
+               let cell = rowCell.posterCell(at: min(selected[rows[index].id] ?? 0, max(rows[index].items.count - 1, 0))) {
                 return [cell]
             }
         }
@@ -1019,6 +1052,8 @@ final class FixedFocusRowsController: UIViewController, UICollectionViewDataSour
                                                name: PictureRelease.release, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(restoreAfterPlayer),
                                                name: PictureRelease.restore, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(userActed),
+                                               name: UserAction.acted, object: nil)
         let root = UIView()
         let layout = FixedFocusRowsLayout()
         layout.focusedRow = { [weak self] in self?.focusedRow ?? 0 }
@@ -4133,7 +4168,14 @@ final class FixedFocusRowCell: UICollectionViewCell, UICollectionViewDataSource,
     func posterCell(at index: Int) -> UIView? {
         let shown = destinationStrip.flatMap { isDestination ? $0 : nil } ?? strip
         shown.layoutIfNeeded()
-        return shown.cellForItem(at: IndexPath(item: index, section: 0))
+        let path = IndexPath(item: index, section: 0)
+        if let cell = shown.cellForItem(at: path) { return cell }
+        // Out of view (a title you acted on moved to the front): the row
+        // brought to it, so focus can land there.
+        guard index < shown.numberOfItems(inSection: 0) else { return nil }
+        shown.scrollToItem(at: path, at: .left, animated: false)
+        shown.layoutIfNeeded()
+        return shown.cellForItem(at: path)
     }
 
     /// A destination row's strip: the system's horizontal scrolling — focus
@@ -4810,3 +4852,21 @@ final class TopAlignedLabel: UILabel {
     }
 }
 
+/// A change you made (a hold menu's pick, back from the player): for a
+/// moment the rows take new content at once, even the row focus is in.
+/// Only what you didn't do waits there for focus to leave
+/// (`FixedFocusRowsController.update`): an action needs its answer on
+/// screen at once (a removed card stayed until focus left the row).
+@MainActor
+enum UserAction {
+    /// Long enough for the stores and Home's rows to follow the action.
+    static let window: CFTimeInterval = 2
+    static let acted = Notification.Name("cue.userActed")
+    private static var until: CFTimeInterval = 0
+    static var recent: Bool { CACurrentMediaTime() < until }
+
+    static func mark() {
+        until = CACurrentMediaTime() + window
+        NotificationCenter.default.post(name: acted, object: nil)
+    }
+}
