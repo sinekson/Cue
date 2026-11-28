@@ -1390,7 +1390,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   What's only to read takes no focus. The shown category (a lifted row, a
   chosen tile) on the chosen pills' flat grey (resting glass read raised
   beside the flat focus, 2026-11-27). An options list's current choice
-  (Language) on the same grey with its check. Rows that open a page
+  (Language) on the same grey with its check. A row lifted to move
+  the same grey, 2 % larger, its shadow outside the plate only (the grey
+  is see-through: a shadow under it greyed the row, read dirty), the
+  handle a ✓ (2026-11-28: flat with no lift, and grown only to the
+  card's edges with ⇅, were tried). Rows that open a page
   light whole, as tvOS's (a whole lit row goes somewhere, a lit pill
   changes something here); their value and chevron as a button, round
   with none, was tried 2026-11-27: it felt off. Profile management lives under Nuvio.

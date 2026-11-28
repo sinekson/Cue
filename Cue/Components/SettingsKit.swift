@@ -1107,7 +1107,21 @@ struct ActionListRow: View {
         // (a plate following focus from row to row flickered).
         .background {
             CardFocusPlate(lit: false, selected: moving)
-                .shadow(color: .black.opacity(moving ? 0.35 : 0), radius: 18, y: 9)
+                .background {
+                    // The shadow outside the plate only: the chosen grey is
+                    // see-through, a shadow under it greyed the row.
+                    RoundedRectangle(cornerRadius: UISettings.plateRadius, style: .continuous)
+                        .fill(.black)
+                        .padding(.vertical, -CardSettingsRow.plateBleed)
+                        .shadow(color: .black.opacity(moving ? 0.35 : 0), radius: 18, y: 9)
+                        .mask {
+                            Rectangle().padding(-80)
+                                .overlay(RoundedRectangle(cornerRadius: UISettings.plateRadius, style: .continuous)
+                                    .padding(.vertical, -CardSettingsRow.plateBleed)
+                                    .blendMode(.destinationOut))
+                                .compositingGroup()
+                        }
+                }
         }
         .scaleEffect(moving ? 1.02 : 1)
         .animation(.smooth(duration: 0.18), value: moving)
@@ -2557,7 +2571,7 @@ final class UISettingsChoiceRow: UISettingsControlRow, UISettingsRowView {
 /// A list item with its actions on the row as round buttons, 14 apart
 /// (`ActionListRow`): its picture, name over detail; dimmed (removed, to
 /// undo) its words and picture faded; lifted to move, the faint plate, a
-/// shadow, 2 % larger, Up and Down moving it.
+/// shadow outside it, 2 % larger, Up and Down moving it.
 final class UISettingsActionRow: UISettingsControlRow, UISettingsRowView {
     private var model: UISettingsRow.Actions
     private var buttons: [String: UISettingsRoundButton] = [:]
@@ -2623,28 +2637,55 @@ final class UISettingsActionRow: UISettingsControlRow, UISettingsRowView {
         }
     }
 
+    /// The lifted row's shadow, outside the plate only: the chosen grey is
+    /// see-through (white 55 % in light), a shadow under it greyed the row
+    /// (read dirty, 2026-11-28).
+    private lazy var liftShadow: CALayer = {
+        let shadow = CALayer()
+        shadow.shadowColor = UIColor.black.cgColor
+        shadow.shadowRadius = 18
+        shadow.shadowOffset = CGSize(width: 0, height: 9)
+        shadow.shadowOpacity = 0.35
+        shadow.opacity = 0
+        let cut = CAShapeLayer()
+        cut.fillRule = .evenOdd
+        shadow.mask = cut
+        layer.insertSublayer(shadow, at: 0)
+        return shadow
+    }()
+
     private func lift(_ up: Bool) {
         plate.show(lit: false, faint: up, animated: true)
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowRadius = 18
-        layer.shadowOffset = CGSize(width: 0, height: 9)
+        if up { layoutLiftShadow() }
         UIView.animate(springDuration: 0.18, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.transform = up ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
         }
-        let shadow = CABasicAnimation(keyPath: "shadowOpacity")
-        shadow.fromValue = layer.presentation()?.shadowOpacity ?? layer.shadowOpacity
-        layer.shadowOpacity = up ? 0.35 : 0
-        shadow.toValue = layer.shadowOpacity
-        shadow.duration = 0.18
-        layer.add(shadow, forKey: "lift")
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = liftShadow.presentation()?.opacity ?? liftShadow.opacity
+        liftShadow.opacity = up ? 1 : 0
+        fade.toValue = liftShadow.opacity
+        fade.duration = 0.18
+        liftShadow.add(fade, forKey: "lift")
+    }
+
+    private func layoutLiftShadow() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let plateRect = bounds.insetBy(dx: 0, dy: -UISettings.plateBleed)
+        let shape = UIBezierPath(roundedRect: plateRect, cornerRadius: UISettings.plateRadius)
+        liftShadow.frame = bounds
+        liftShadow.shadowPath = shape.cgPath
+        let cut = UIBezierPath(rect: plateRect.insetBy(dx: -80, dy: -80))
+        cut.append(shape)
+        (liftShadow.mask as? CAShapeLayer)?.path = cut.cgPath
+        CATransaction.commit()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         plate.layout()
-        layer.shadowPath = UIBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: -UISettings.plateBleed),
-                                        cornerRadius: UISettings.plateRadius).cgPath
+        if model.moving { layoutLiftShadow() }
     }
 
     /// Coming in: the button nearest the one focus leaves, across.
