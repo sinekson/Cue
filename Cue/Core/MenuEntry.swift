@@ -656,6 +656,18 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
         return UICollectionView(frame: .zero, collectionViewLayout: layout)
     }()
     private let heading = UILabel()
+    /// The heading and the list, cut to the glass's shape while a page
+    /// turns (`turn`): the rows never show past the glass as it moves.
+    private let content = UIView()
+    private let contentMask = UIView()
+    /// The glass is SwiftUI's: resized in a UIKit animation it takes its
+    /// new size at once and only slides (a shrinking page's rows hung out
+    /// of it). So it stays at the larger of the two sizes while a page
+    /// turns, cut to the moving shape by this.
+    private let glassMask = UIView()
+    /// A page turning: the glass and the mask move on their own.
+    private var turning = 0
+    private let radius = MenuPanelRow.height / 2 + MenuPanel.inset
     /// Built anew on the way back, so a row shows what its page changed.
     private var pages: [(menu: () -> Menu, from: Int)] = []
     private var rows: [Row] = []
@@ -672,16 +684,23 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
                              untinted: untinted)
         super.init(frame: .zero)
         addSubview(glass)
+        addSubview(content)
+        contentMask.backgroundColor = .black
+        contentMask.layer.cornerRadius = radius
+        contentMask.layer.cornerCurve = .continuous
+        glassMask.backgroundColor = .black
+        glassMask.layer.cornerRadius = radius
+        glassMask.layer.cornerCurve = .continuous
         heading.font = Self.headingFont
         heading.textColor = CueInk.ui(FixedFocusText.secondary)
-        addSubview(heading)
+        content.addSubview(heading)
         list.backgroundColor = .clear
         list.contentInsetAdjustmentBehavior = .never
         list.dataSource = self
         list.delegate = self
         list.remembersLastFocusedIndexPath = false
         list.register(MenuPanelRow.self, forCellWithReuseIdentifier: "row")
-        addSubview(list)
+        content.addSubview(list)
     }
 
     @available(*, unavailable)
@@ -691,7 +710,8 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glass.frame = bounds
+        content.frame = bounds
+        if turning == 0 { glass.frame = bounds }
         heading.frame = CGRect(x: Self.inset + 24, y: Self.inset, width: bounds.width - Self.inset * 2 - 48, height: Self.headingHeight)
         // The margins are the list's own insets, not outside it: a focused
         // row grows and casts a shadow, which the list's edge would cut.
@@ -751,15 +771,63 @@ final class MenuPanel: UIView, UICollectionViewDataSource, UICollectionViewDeleg
         return true
     }
 
+    /// A page to another: the panel takes the new page's size at once,
+    /// laid out there; only the glass moves to it from the old one (from
+    /// the corner it opens from), the rows cut to it, the old ones fading
+    /// out over the new. (A crossfade of the list while the whole panel
+    /// resized laid the new rows out mid-move over a stretched picture of
+    /// the old: they jumped and clipped.)
     private func turn(to menu: Menu, focus: Int?) {
+        let old = bounds.size
+        let leaving = content.snapshotView(afterScreenUpdates: false)
         show(menu, focus: focus)
-        UIView.transition(with: list, duration: Motion.fadeDuration, options: .transitionCrossDissolve) {
-            self.list.reloadData()
-            self.toTop()
+        let new = size
+        let anchor = layer.anchorPoint
+        let from = CGRect(x: anchor.x * (new.width - old.width), y: anchor.y * (new.height - old.height),
+                          width: old.width, height: old.height)
+        turning += 1
+        UIView.performWithoutAnimation {
+            bounds.size = new
+            layoutIfNeeded()
+            list.reloadData()
+            toTop()
+            list.layoutIfNeeded()
+            let whole = from.union(bounds)
+            glass.frame = whole
+            glass.layoutIfNeeded()
+            glassMask.frame = from.offsetBy(dx: -whole.minX, dy: -whole.minY)
+            glass.mask = glassMask
+            contentMask.frame = from
+            content.mask = contentMask
+            if let leaving {
+                leaving.frame = CGRect(origin: from.origin, size: leaving.bounds.size)
+                content.addSubview(leaving)
+            }
         }
-        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0) {
-            self.bounds.size = self.size
-            self.layoutIfNeeded()
+        // The new rows in as the old go; their alpha lands at 1 at once
+        // (tvOS wouldn't focus into them otherwise).
+        // (Old out first, the new after: both at once read as a double
+        // exposure of two lists.)
+        heading.alpha = 0
+        list.alpha = 0
+        UIView.animate(withDuration: 0.2, delay: 0.1, options: [.curveEaseOut, .allowUserInteraction]) {
+            self.heading.alpha = 1
+            self.list.alpha = 1
+        }
+        UIView.animate(withDuration: 0.1, delay: 0, options: [.curveEaseIn]) {
+            leaving?.alpha = 0
+        } completion: { _ in leaving?.removeFromSuperview() }
+        let whole = glass.frame
+        UIView.animate(withDuration: Motion.moveDuration, delay: 0, usingSpringWithDamping: 1, initialSpringVelocity: 0,
+                       options: [.allowUserInteraction]) {
+            self.glassMask.frame = self.bounds.offsetBy(dx: -whole.minX, dy: -whole.minY)
+            self.contentMask.frame = self.content.bounds
+        } completion: { _ in
+            self.turning -= 1
+            guard self.turning == 0 else { return }
+            self.content.mask = nil
+            self.glass.mask = nil
+            self.setNeedsLayout()
         }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()

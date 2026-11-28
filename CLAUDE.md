@@ -1620,7 +1620,11 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 
 **Lessons:** a UIView animation nested in the moves' spring takes the spring's
 timing, so its own timing needs Core Animation; a bare sublayer resizes on Core
-Animation's own 0.25 s, so make it a view (`FixedFocusShade`); two identical
+Animation's own 0.25 s, so make it a view (`FixedFocusShade`); SwiftUI's
+glass in a UIKit view resized in an animation takes its new size at once
+and only slides: keep it at the larger size and move a mask view
+(`MenuPanel.turn`: a page turn's glass, a shrinking page's rows hung out
+of it); two identical
 layers crossfading dip (flicker); a SwiftUI hosting view's own opacity darkens
 the screen mid-fade, so fade a plain view holding it; never draw text twice;
 `CATransaction.flush()` or CA starts a runloop late; Core Image adds an image premultiplied, so noise with alpha 0 adds nothing (the backgrounds' grain was lost, their bands' steps plain): a colour kernel adds it (`BandsPicture.grained`); a view going out is frozen,
