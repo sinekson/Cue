@@ -116,9 +116,10 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
 - **Light and dark** follow tvOS's setting (no `UIUserInterfaceStyle` in
   Info.plist). Text and page fills go through `CueInk` (end of the
   `FixedFocusText` part of `HomeView.swift`): dark, white at the level;
-  light, black at tvOS's text grey (primary 58 %, then 52, 46, 40; the
-  controls' words to full black; 85 % read near-black, tvOS's 38 % title
-  grey too light). Dark always, whatever the setting: everything on a
+  light, black at 77, 69, 60, 49 % (secondary, the row names, at Apple
+  TV's light row names, measured ~60 %, 2026-11-28; 58/52/46/40 was
+  before: row names at 46 % read faint; the controls' words to full
+  black; 85 % read near-black, tvOS's 38 % title grey too light). Dark always, whatever the setting: everything on a
   picture (the billboard card's text and dots, Details' card (its text
   and buttons) and About panel, the stage's card, player,
   trailers, cards' contents, menus and panels, glass). The top bar,

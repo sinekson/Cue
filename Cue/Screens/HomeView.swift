@@ -1912,7 +1912,7 @@ enum FixedFocusText {
 
 /// The text's colour at a level (`FixedFocusText`), in tvOS's appearance:
 /// dark, white at the level; light, near-black (tvOS's own light grey
-/// text) at 85, 70, 55, 42 % for the four levels. What sits on a picture
+/// text) at 77, 69, 60, 49 % for the four levels. What sits on a picture
 /// (Details, the billboard, a card's art, the player, glass) is kept dark
 /// (`overrideUserInterfaceStyle`, `colorScheme`), so it stays white there.
 enum CueInk {
@@ -1931,12 +1931,13 @@ enum CueInk {
     static let secondary = color(FixedFocusText.secondary)
     static let tertiary = color(FixedFocusText.tertiary)
 
-    /// A level on light: tvOS's text grey (~58 % black: 0.32 on its 0.75)
-    /// for primary, the rest a step dimmer each; between them in
-    /// step (dimmer on dark is dimmer on light too).
+    /// A level on light, the dark rules kept: secondary (row names) at
+    /// Apple TV's light row names, measured ~60 % black (2026-11-28; the
+    /// ladder was 40/46/52/58 % before: row names read 46 %, too faint),
+    /// the rest in the dark ladder's steps; between them in step.
     static func onLight(_ level: CGFloat) -> CGFloat {
         let dark: [CGFloat] = [FixedFocusText.tertiary, FixedFocusText.secondary, FixedFocusText.body, FixedFocusText.primary]
-        let light: [CGFloat] = [0.40, 0.46, 0.52, 0.58]
+        let light: [CGFloat] = [0.49, 0.60, 0.69, 0.77]
         if level <= dark[0] { return light[0] * level / dark[0] }
         for i in 1..<dark.count where level <= dark[i] {
             let t = (level - dark[i - 1]) / (dark[i] - dark[i - 1])
