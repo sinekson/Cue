@@ -1046,7 +1046,12 @@ xcrun simctl launch --terminate-running-process 2DF61D5F-2062-4C19-A952-EB24AC6E
   (`TMDBService.seasonEpisodes(…videos:)`). Installing one with neither
   is refused; one already on the account is marked "Not used by Cue: no
   streams" in Settings, left for the user to remove (removing syncs to
-  the other Nuvio apps).
+  the other Nuvio apps). Synced (2026-11-28): a pull takes the account's
+  order (it only appended before, so the order went with whichever device
+  pushed last); an add-on is its manifest id, not its URL (AIOStreams
+  writes a new URL each time its config is saved): a new URL replaces it
+  in place, two URLs of one collapse to the one the account lists first,
+  and the list goes up (`AddonManager.collapseDuplicates`, `takeOrder`).
 - **Sources**: no sorting or filtering of the links themselves, the add-ons' order; only what can play is a link (a donation entry or other `externalUrl` isn't) (the source list's add-on pills and refresh stay: they choose whose links show); Play, Resume and Start Over
   take the first link (`PlayLauncher`); a link that fails or shows
   no frame in 20 s: the next, silently, once (3 was the fork's: two failing usually share a cause), then the source list; 5-min cache; none remembered; each add-on gets 20 s to answer (Play waits on them in order). Hold Play: the source list

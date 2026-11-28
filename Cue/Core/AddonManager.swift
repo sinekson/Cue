@@ -181,10 +181,11 @@ final class AddonManager: ObservableObject {
         let existing = Set(addons.map { $0.baseURL })
         // Keep only genuinely-new addons, in their incoming order.
         let toInstall = normalizedStates.filter { !existing.contains($0.baseURL) }
+        let remoteBases = Set(normalizedStates.map(\.baseURL))
+        collapsedOnPull = false
         // Removals first, so the count logged below reflects the real delta.
         var removed = 0
         if reconcile {
-            let remoteBases = Set(normalizedStates.map(\.baseURL))
             let before = addons.count
             addons.removeAll { !remoteBases.contains($0.baseURL) }
             removed = before - addons.count
@@ -213,7 +214,67 @@ final class AddonManager: ObservableObject {
         NSLog("[CueAddonSync] pull: %d from account, %d already installed, %d to add, %d removed (reconcile=%@)",
               normalizedStates.count, normalizedStates.count - toInstall.count, toInstall.count, removed,
               reconcile ? "yes" : "no")
-        guard !toInstall.isEmpty else { return 0 }
+        let added = toInstall.isEmpty ? 0 : await install(toInstall, remoteBases: remoteBases)
+        // One add-on under two URLs: one. Then the account's order.
+        let rank = Dictionary(normalizedStates.enumerated().map { ($1.baseURL, $0) }, uniquingKeysWith: { a, _ in a })
+        let collapsed = collapseDuplicates(rank: rank)
+        let reordered = takeOrder(rank: rank)
+        if collapsed || reordered { save() }
+        collapsedOnPull = collapsed
+        return added
+    }
+
+    /// The last pull found one add-on under two URLs and kept one: the
+    /// account still lists both until this device's list goes up
+    /// (`NuvioSyncManager.pullAddons` pushes it).
+    private(set) var collapsedOnPull = false
+
+    /// The same add-on: one manifest id (AIOStreams' carries its config's
+    /// uuid, so EN and DE differ). Its URL isn't: AIOStreams writes a new one
+    /// each time its config is saved, and a re-saved one came in as a second
+    /// add-on beside the old.
+    private static func sameAddon(_ a: AddonManifest, _ b: AddonManifest) -> Bool {
+        !a.isPlaceholder && !b.isPlaceholder && !a.id.isEmpty && a.id == b.id
+    }
+
+    /// Two URLs of one add-on (`sameAddon`): the one the account lists first
+    /// stays, else the first here. True if any went.
+    private func collapseDuplicates(rank: [String: Int]) -> Bool {
+        var kept: [String: Int] = [:]
+        var drop = IndexSet()
+        for (index, addon) in addons.enumerated() where !addon.manifest.isPlaceholder && !addon.manifest.id.isEmpty {
+            let id = addon.manifest.id
+            guard let other = kept[id] else { kept[id] = index; continue }
+            if rank[addon.baseURL] ?? .max < rank[addons[other].baseURL] ?? .max {
+                drop.insert(other)
+                kept[id] = index
+            } else {
+                drop.insert(index)
+            }
+        }
+        guard !drop.isEmpty else { return false }
+        NSLog("[CueAddonSync] pull: %d add-on(s) listed twice under different URLs, kept one", drop.count)
+        addons = addons.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
+        return true
+    }
+
+    /// The account's order for the add-ons it lists; those only on this
+    /// device after them, in their own order. Before, a pull only appended
+    /// what was new, every push sent this device's order up, and the order
+    /// went with whichever device pushed last. True if anything moved.
+    private func takeOrder(rank: [String: Int]) -> Bool {
+        let ordered = addons.enumerated().sorted {
+            let (a, b) = (rank[$0.element.baseURL] ?? .max, rank[$1.element.baseURL] ?? .max)
+            return a == b ? $0.offset < $1.offset : a < b
+        }.map(\.element)
+        guard ordered.map(\.baseURL) != addons.map(\.baseURL) else { return false }
+        addons = ordered
+        return true
+    }
+
+    /// The account's add-ons this device lacks, their manifests fetched.
+    private func install(_ toInstall: [(manifestURL: String, baseURL: String, enabled: Bool, authoritative: Bool, name: String?)],
+                         remoteBases: Set<String>) async -> Int {
 
         // Fetch the new manifests a few at a time, then apply in the original
         // order so the installed list is deterministic. A manifest that fails
@@ -234,6 +295,12 @@ final class AddonManager: ObservableObject {
                                        customName: state.name.flatMap { Self.customName($0, manifestName: manifest.name) })
             if let existing = addons.firstIndex(where: { $0.manifestURL == state.manifestURL }) {
                 addons[existing] = addon
+            } else if let same = addons.firstIndex(where: {
+                Self.sameAddon($0.manifest, manifest) && !remoteBases.contains($0.baseURL)
+            }) {
+                // This device's add-on under the URL the account no longer
+                // lists: the new one in its place, not a second beside it.
+                addons[same] = addon
             } else {
                 addons.append(addon)
                 added += 1

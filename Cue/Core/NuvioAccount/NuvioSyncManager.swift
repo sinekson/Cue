@@ -1331,6 +1331,14 @@ final class NuvioSyncManager: ObservableObject {
         }
         await addonManager.applyRemote(addons: orderedAddons, reconcile: mayReconcile)
         if !localEditPending { setSeeded("addons", profile: profile) }
+        // One add-on was on the account under two URLs and this device kept
+        // one: its list goes up, so the account (and the other apps) follow.
+        if addonManager.collapsedOnPull {
+            NuvioSyncDiagnostics.record(.info, area: "Nuvio",
+                                        "An add-on was listed twice under different URLs; kept one and updating the account.")
+            setDirty("addons", profile: profile, true)
+            try await pushAddons(profile: profile)
+        }
     }
 
     // MARK: - Watch progress
