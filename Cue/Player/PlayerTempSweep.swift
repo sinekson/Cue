@@ -760,6 +760,7 @@ enum Watchdog {
         heart.schedule(deadline: .now() + beat, repeating: beat, leeway: .milliseconds(20))
         heart.setEventHandler { beatAt.wrappedValue = CACurrentMediaTime() }
         heart.resume()
+        MainStack.prepare()
         let watch = DispatchSource.makeTimerSource(queue: queue)
         watch.schedule(deadline: .now() + check, repeating: check, leeway: .milliseconds(50))
         watch.setEventHandler { look() }
@@ -774,17 +775,21 @@ enum Watchdog {
         guard ProbeGate.isEnabled else { return }
         let now = CACurrentMediaTime()
         // Suspended or just back: the beat's age says nothing.
-        guard active.wrappedValue else { stuckSince = nil; return }
+        guard active.wrappedValue else { stuckSince = nil; samples = []; return }
         let stall = now - beatAt.wrappedValue
         if stall > hangAfter {
             if stuckSince == nil { stuckSince = beatAt.wrappedValue }
+            sample()
             if stall > 5, !toldOngoing {
                 toldOngoing = true
+                // Its stacks so far, in case it never comes back.
+                let so = samples
                 CueLog.write("HANG", String(format: "main thread stuck %.0f s and counting · %.0f MB",
-                                            stall, PlayerProbe.footprintMB()))
+                                            stall, PlayerProbe.footprintMB()) + stacks())
+                samples = so
             }
         } else if let since = stuckSince {
-            CueLog.write("HANG", String(format: "main thread stuck %.1f s", beatAt.wrappedValue - since))
+            CueLog.write("HANG", String(format: "main thread stuck %.1f s", beatAt.wrappedValue - since) + stacks())
             PlayerProbe.count("hang")
             stuckSince = nil
             toldOngoing = false
@@ -796,6 +801,28 @@ enum Watchdog {
                                         AppProbe.thermalLabel(ProcessInfo.processInfo.thermalState),
                                         FrameDrops.takeWindow(), Double(DiskWrites.sample()) / 1e6))
         }
+    }
+
+    /// Where main is while stuck: a sample each check (0.5 s), up to 12,
+    /// written with the HANG line, the most frequent stack first. Only on
+    /// `queue`.
+    nonisolated(unsafe) private static var samples: [[UInt]] = []
+
+    private static func sample() {
+        guard samples.count < 12, let stack = MainStack.sample() else { return }
+        samples.append(stack)
+    }
+
+    /// The distinct stacks seen, most samples first (at most three).
+    private static func stacks() -> String {
+        defer { samples = [] }
+        guard !samples.isEmpty else { return "" }
+        var counts: [[UInt]: Int] = [:]
+        for stack in samples { counts[stack, default: 0] += 1 }
+        let total = samples.count
+        return counts.sorted { $0.value > $1.value }.prefix(3).map { stack, count in
+            "\n  stack \(count) of \(total) samples\n" + MainStack.symbolicate(stack)
+        }.joined()
     }
 
     private static func observeLifecycle() {
@@ -814,6 +841,97 @@ enum Watchdog {
             queue.async { DiskWrites.sample(save: true) }
         }
         watch(UIApplication.willEnterForegroundNotification, "foreground", active: false)
+    }
+}
+
+/// The main thread's stack, read from the watchdog's queue (`Watchdog`'s
+/// HANG lines say where main was stuck). Main is suspended only while its
+/// registers and frame records are copied into a buffer made ahead: nothing
+/// in that window may allocate or lock (main may hold malloc's lock); names
+/// are looked up after it runs again. Frames by their frame pointers, so
+/// Release's are image + offset for `atos`; Debug names them.
+enum MainStack {
+    private static let depth = 48
+    nonisolated(unsafe) private static var thread: thread_t = 0
+    nonisolated(unsafe) private static var stackLow: UInt = 0
+    nonisolated(unsafe) private static var stackHigh: UInt = 0
+    nonisolated(unsafe) private static var buffer = UnsafeMutablePointer<UInt>.allocate(capacity: depth)
+
+    /// On main, once.
+    static func prepare() {
+        guard thread == 0 else { return }
+        thread = mach_thread_self()
+        let me = pthread_self()
+        stackHigh = UInt(bitPattern: pthread_get_stackaddr_np(me))
+        stackLow = stackHigh - UInt(pthread_get_stacksize_np(me))
+    }
+
+    /// The return addresses, innermost first; nil if it couldn't be read.
+    static func sample() -> [UInt]? {
+        #if arch(arm64)
+        guard thread != 0 else { return nil }
+        // Pointer authentication's bits off (the system's code is arm64e).
+        let mask: UInt = 0x0000_000F_FFFF_FFFF
+        guard thread_suspend(thread) == KERN_SUCCESS else { return nil }
+        var state = arm_thread_state64_t()
+        var count = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
+        let read = withUnsafeMutablePointer(to: &state) {
+            $0.withMemoryRebound(to: natural_t.self, capacity: Int(count)) {
+                thread_get_state(thread, thread_state_flavor_t(ARM_THREAD_STATE64), $0, &count)
+            }
+        }
+        var n = 0
+        if read == KERN_SUCCESS {
+            buffer[n] = UInt(state.__pc) & mask; n += 1
+            buffer[n] = UInt(state.__lr) & mask; n += 1
+            var fp = UInt(state.__fp)
+            while n < depth, fp >= stackLow, fp + 16 <= stackHigh, fp & 7 == 0 {
+                let record = UnsafePointer<UInt>(bitPattern: fp)!
+                let next = record[0]
+                let ret = record[1] & mask
+                if ret == 0 { break }
+                buffer[n] = ret; n += 1
+                guard next > fp else { break }
+                fp = next
+            }
+        }
+        thread_resume(thread)
+        guard n > 0 else { return nil }
+        return Array(UnsafeBufferPointer(start: buffer, count: n))
+        #else
+        return nil
+        #endif
+    }
+
+    private typealias Demangle = @convention(c) (UnsafePointer<CChar>?, Int, UnsafeMutablePointer<CChar>?,
+                                                 UnsafeMutablePointer<Int>?, UInt32) -> UnsafeMutablePointer<CChar>?
+    private static let demangle: Demangle? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "swift_demangle")
+        .map { unsafeBitCast($0, to: Demangle.self) }
+
+    /// One line a frame: image, then the name and offset, else the offset
+    /// in the image.
+    static func symbolicate(_ stack: [UInt]) -> String {
+        stack.enumerated().map { i, address in
+            // A return address points past its call: look up the call.
+            let pc = i == 0 ? address : address - 1
+            var info = Dl_info()
+            guard dladdr(UnsafeRawPointer(bitPattern: pc), &info) != 0 else {
+                return String(format: "    %2d  ? 0x%lx", i, address)
+            }
+            let image = info.dli_fname.map { (String(cString: $0) as NSString).lastPathComponent } ?? "?"
+            let base = UInt(bitPattern: info.dli_fbase)
+            var name = String(format: "0x%lx", address - base)
+            if let symbol = info.dli_sname, String(cString: symbol) != "<redacted>" {
+                var text = String(cString: symbol)
+                if let demangle, let out = demangle(symbol, strlen(symbol), nil, nil, 0) {
+                    text = String(cString: out)
+                    free(out)
+                }
+                if text.count > 180 { text = String(text.prefix(180)) + "…" }
+                name = text + String(format: " + %lu", address - UInt(bitPattern: info.dli_saddr))
+            }
+            return String(format: "    %2d  %@  %@", i, image, name)
+        }.joined(separator: "\n")
     }
 }
 
